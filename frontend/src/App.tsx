@@ -78,27 +78,50 @@ function App() {
     const width5 = data.group5 * 100;
 
     return (
-      <div style={{ border: "1px solid #ccc", padding: "4px", margin: "0", height: "40px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-        <div>{data.hand}</div>
-        <div style={{ display: "flex", height: "100%" }}>
+      <div style={{
+        border: "1px solid #ccc",
+        padding: "0px",
+        margin: "0",
+        height: "40px",
+        display: "flex",
+        flexDirection: "row",
+        justifyContent: "flex-start", // Align items to the left
+        position: "relative", // To allow absolute positioning of the text inside the cell
+        width: "100%",
+      }}>
+        <div style={{
+          display: "flex",
+          height: "100%",
+          width: "100%",
+        }}>
           <div
             style={{
               width: `${width0}%`,
-              backgroundColor: groupColorMapping["0"]
+              backgroundColor: groupColorMapping["0"],
             }}
           />
           <div
             style={{
               width: `${width3}%`,
-              backgroundColor: groupColorMapping["3"]
+              backgroundColor: groupColorMapping["3"],
             }}
           />
           <div
             style={{
               width: `${width5}%`,
-              backgroundColor: groupColorMapping["5"]
+              backgroundColor: groupColorMapping["5"],
             }}
           />
+        </div>
+        <div style={{
+          position: "absolute", // Position the hand text on top of the colors
+          left: "50%", // Center the text horizontally
+          top: "50%", // Center the text vertically
+          transform: "translate(-50%, -50%)", // Fine-tune centering
+          color: "white", // Change text color to stand out against the background
+          fontWeight: "bold", // Optional: make the text stand out more
+        }}>
+          {data.hand}
         </div>
       </div>
     );
