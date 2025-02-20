@@ -6,11 +6,13 @@ import HandCell from "./HandCell";
 import ColorKey from "./ColorKey";
 
 interface DecisionMatrixProps {
-  folder: string;
-  file: string;
-}
+    folder: string;
+    file: string;
+    // Optional render prop to pass combined data back
+    onSelectAction: (parentPrefix: string, action: string) => void;
+  }
 
-const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file }) => {
+const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectAction }) => {
   const [rawData, setRawData] = useState<FileData | null>(null);
   const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
   const [loading, setLoading] = useState(false);
@@ -60,12 +62,20 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file }) => {
     combinedData.find((item) => item.hand === hand)
   );
 
+  const parentPrefix = file.replace(".json", "");
+
   return (
     <div style={{ marginBottom: "20px" }}>
       <h2>{file}</h2>
       {loading && <div>Loading file data...</div>}
       {error && <div style={{ color: "red" }}>{error}</div>}
-      {combinedData.length > 0 && <ColorKey data={combinedData} />}
+      {combinedData.length > 0 && (
+        <ColorKey
+          data={combinedData}
+          // Wrap the callback so that it passes parentPrefix along with the action.
+          onSelectAction={(action) => onSelectAction(parentPrefix, action)}
+        />
+      )}
       {rawData && !loading && (
         <div
           style={{

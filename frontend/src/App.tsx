@@ -1,12 +1,21 @@
 // src/App.tsx
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import axios from "axios";
 import DecisionMatrix from "./components/DecisionMatrix";
+
+const actionToPrefix: Record<string, string> = {
+  Fold: "0",
+  ALLIN: "3",
+  Min: "5",
+  Call: "1",
+  15: "15",
+};
 
 function App() {
   const [folders, setFolders] = useState<string[]>([]);
   const [files, setFiles] = useState<string[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<string>("");
+  const [rootPrefix, setRootPrefix] = useState<string>("root");
   const [error, setError] = useState<string | null>(null);
 
   // Fetch folders on component mount.
@@ -39,11 +48,26 @@ function App() {
       });
   }, [selectedFolder]);
 
-  // Filter files to only those that are decision matrices:
-  // For example, "root.json" or files that match the pattern 0.json, 0.0.json, 0.0.0.json, etc.
-  const decisionMatrixFiles = files.filter(
-    (file) => file === "root.json" || /^0(?:\.0+)*\.json$/.test(file)
-  );
+  // Filter files based on the selected rootPrefix.
+  const decisionMatrixFiles = files.filter((file) => {
+    if (rootPrefix === "root") {
+      return file === "root.json" || /^0(?:\.0+)*\.json$/.test(file);
+    }
+    // Build a regex pattern: for prefix "5", match files like "5.json", "5.0.json", "5.0.0.json", etc.
+    const pattern = new RegExp(`^${rootPrefix}(?:\\.0+)*\\.json$`);
+    return pattern.test(file);
+  });
+
+  // Global onSelectAction handler.
+  const handleSelectAction = (parentPrefix: string, action: string) => {
+    const mapping = actionToPrefix[action];
+    if (!mapping) {
+      setRootPrefix("root");
+      return;
+    }
+    const newRoot = parentPrefix === "root" ? mapping : `${parentPrefix}.${mapping}`;
+    setRootPrefix(newRoot);
+  };
 
   return (
     <div style={{ padding: "20px" }}>
@@ -56,7 +80,11 @@ function App() {
           Select Folder:{" "}
           <select
             value={selectedFolder}
-            onChange={(e) => setSelectedFolder(e.target.value)}
+            onChange={(e) => {
+              setSelectedFolder(e.target.value);
+              // Optionally reset the rootPrefix when the folder changes.
+              setRootPrefix("root");
+            }}
           >
             {folders.map((folder, index) => (
               <option key={index} value={folder}>
@@ -67,10 +95,22 @@ function App() {
         </label>
       </div>
       
-      {/* Render each decision matrix */}
+      {/* Show current root prefix */}
+      <div style={{ marginBottom: "10px" }}>
+        <strong>Current Root: </strong>
+        {rootPrefix}
+      </div>
+
+      {/* Render each decision matrix based on filtered files */}
       {decisionMatrixFiles.map((file) => (
-        <DecisionMatrix key={file} folder={selectedFolder} file={file} />
+        <DecisionMatrix
+          key={file}
+          folder={selectedFolder}
+          file={file}
+          onSelectAction={handleSelectAction}  // Pass the global callback down
+        />
       ))}
+
     </div>
   );
 }

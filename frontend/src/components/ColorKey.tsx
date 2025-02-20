@@ -1,13 +1,14 @@
-// ColorKey.tsx
+// src/components/ColorKey.tsx
 import React from "react";
 import { HandCellData, getColorForAction } from "../utils/utils";
 
 interface ColorKeyProps {
   data: HandCellData[];
+  onSelectAction: (action: string) => void;
 }
 
-const ColorKey: React.FC<ColorKeyProps> = ({ data }) => {
-  // Extract unique actions from the grid data.
+const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
+  // Extract a unique set of actions from the grid data.
   const uniqueActions = Array.from(
     data.reduce((set, cell) => {
       Object.keys(cell.actions).forEach((action) => set.add(action));
@@ -25,7 +26,16 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data }) => {
       }}
     >
       {uniqueActions.map((action) => (
-        <div key={action} style={{ display: "flex", alignItems: "center" }}>
+        <div
+          key={action}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            cursor: "pointer",
+          }}
+          onClick={() => onSelectAction(action)}
+          title={`Click to set ${action} as the new root`}
+        >
           <div
             style={{
               width: "20px",
