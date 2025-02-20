@@ -20,8 +20,8 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
     <div
       style={{
         display: "flex",
-        gap: "10px",
-        marginBottom: "10px",
+        gap: "15px",
+        marginBottom: "5px",
         alignItems: "center",
       }}
     >

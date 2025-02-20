@@ -22,18 +22,22 @@ export function stringToColor(str: string): string {
 
 // Predefined color mappings for known actions.
 const actionColorMapping: Record<string, string> = {
-  Fold: "lightblue",
-  ALLIN: "red",
-  Min: "lightcoral",
-  Call: "lightgreen",
+  Fold: "#3d7cb8",
+  ALLIN: "#7d1f1e",
+  Min: "#F03c3c",
+  Call: "#5ab964",
   // Add more known mappings if needed.
 };
 
 export const getColorForAction = (action: string): string => {
-  return actionColorMapping[action] || stringToColor(action);
+  return actionColorMapping[action] || "#F03c39";
 };
+// export const getColorForAction = (action: string): string => {
+//   return actionColorMapping[action] || stringToColor(action);
+// };
 
 // Combines API data into grid data.
+
 export const combineDataByHand = (data: FileData): HandCellData[] => {
   const combined: { [hand: string]: HandCellData } = {};
   for (const action in data) {

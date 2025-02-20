@@ -8,7 +8,6 @@ import ColorKey from "./ColorKey";
 interface DecisionMatrixProps {
     folder: string;
     file: string;
-    // Optional render prop to pass combined data back
     onSelectAction: (parentPrefix: string, action: string) => void;
   }
 
@@ -82,7 +81,7 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectA
             display: "grid",
             gridTemplateColumns: "repeat(13, 1fr)",
             gridTemplateRows: "repeat(13, 1fr)",
-            gap: "0",
+            gap: "0px",
             width: "600px",
             maxWidth: "1000px",
           }}

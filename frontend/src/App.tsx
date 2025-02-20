@@ -77,7 +77,7 @@ function App() {
       {/* Folder selector */}
       <div style={{ marginBottom: "10px" }}>
         <label>
-          Select Folder:{" "}
+          Preflop Sim:{" "}
           <select
             value={selectedFolder}
             onChange={(e) => {

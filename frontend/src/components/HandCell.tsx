@@ -11,8 +11,8 @@ const HandCell: React.FC<HandCellProps> = ({ data }) => {
     <div
       tabIndex={-1}
       style={{
-        border: "1px solid #ccc",
-        height: "20px",
+        border: "1px solid #999",
+        height: "24px",
         position: "relative",
         width: "100%",
         userSelect: "none",
@@ -37,10 +37,12 @@ const HandCell: React.FC<HandCellProps> = ({ data }) => {
           position: "absolute",
           left: "50%",
           top: "50%",
-          transform: "translate(-50%, -50%)",
+          transform: "translate(-80%, -55%)",
           color: "white",
           pointerEvents: "none",
-          fontFamily: "Arial",
+          fontFamily: "Arial-Narrow, sans-serif", // Change the font here.
+          fontSize: "0.9rem", // Adjust the text size here.
+          textShadow: "2px 2px 4px rgba(0, 0, 0, 0.5)", // Add a shadow.
         }}
       >
         {data.hand}
@@ -50,3 +52,4 @@ const HandCell: React.FC<HandCellProps> = ({ data }) => {
 };
 
 export default HandCell;
+
