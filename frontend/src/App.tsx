@@ -1,30 +1,9 @@
+// App.tsx
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-
-interface HandCellData {
-  hand: string;
-  actions: Record<string, number>;
-}
-
-// Data returned from file API: Record<string, Record<string, [number, number]>>
-type FileData = Record<string, Record<string, [number, number]>>;
-
-// Generate a consistent color from a string using a hash function.
-function stringToColor(str: string): string {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  let color = '#';
-  for (let i = 0; i < 3; i++) {
-    const value = (hash >> (i * 8)) & 0xFF;
-    color += ('00' + value.toString(16)).substr(-2);
-  }
-  return color;
-}
-
-
-
+import HandCell from "./HandCell";
+import ColorKey from "./ColorKey";
+import { combineDataByHand, HandCellData, FileData } from "./utils";
 
 function App() {
   // State for folders, files, and selected folder/file
@@ -35,8 +14,6 @@ function App() {
   const [rawData, setRawData] = useState<FileData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  //const combined: { [hand: string]: HandCellData } = {};
-
 
   // State for grid data
   const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
@@ -47,10 +24,8 @@ function App() {
       .get<string[]>("http://localhost:5192/api/Files/folders")
       .then((response) => {
         setFolders(response.data);
-        // Optionally select the first folder automatically
         if (response.data.length > 0) {
           setSelectedFolder(response.data[0]);
-          console.log(response)
         }
       })
       .catch((err) => {
@@ -62,12 +37,10 @@ function App() {
   // Fetch files when selectedFolder changes
   useEffect(() => {
     if (!selectedFolder) return;
-
     axios
       .get<string[]>(`http://localhost:5192/api/Files/listJSONs/${selectedFolder}`)
       .then((response) => {
         setFiles(response.data);
-        // Optionally select the first file automatically
         if (response.data.length > 0) {
           setSelectedFile(response.data[0]);
         }
@@ -93,74 +66,14 @@ function App() {
         setError("Error fetching file data");
         setLoading(false);
       });
-  }, [selectedFile]);
+  }, [selectedFile, selectedFolder]);
 
-  // Combine data into grid format if rawData exists
+  // Combine data into grid format when rawData exists
   useEffect(() => {
     if (!rawData) return;
     const combined = combineDataByHand(rawData);
     setCombinedData(combined);
   }, [rawData]);
-
-  const combineDataByHand = (data: FileData): HandCellData[] => {
-    const combined: { [hand: string]: HandCellData } = {};
-    for (const action in data) {
-      const actionData = data[action];
-      for (const hand in actionData) {
-        const [strategy] = actionData[hand];
-        if (!combined[hand]) {
-          combined[hand] = { hand, actions: {} };
-        }
-        combined[hand].actions[action] = strategy;
-      }
-    }
-    return Object.values(combined);
-  };
-  
-  
-
-  // Mapping group keys to colors
-  const actionColorMapping: Record<string, string> = {
-    Fold: "lightblue",
-    ALLIN: "red",
-    Min: "lightcoral",
-    Call: "lightgreen",
-    // You can add any known mappings here
-  };
-  
-  const getColorForAction = (action: string): string => {
-    return actionColorMapping[action] || stringToColor(action);
-  };
-  
-  // A component to display the color key.
-const ColorKey = ({ data }: { data: HandCellData[] }) => {
-  // Extract a unique set of actions from the combined data.
-  const uniqueActions = Array.from(
-    data.reduce((set, cell) => {
-      Object.keys(cell.actions).forEach((action) => set.add(action));
-      return set;
-    }, new Set<string>())
-  );
-
-  return (
-    <div style={{ display: "flex", gap: "10px", marginBottom: "10px", alignItems: "center" }}>
-      {uniqueActions.map((action) => (
-        <div key={action} style={{ display: "flex", alignItems: "center" }}>
-          <div
-            style={{
-              width: "20px",
-              height: "20px",
-              backgroundColor: getColorForAction(action),
-              marginRight: "5px",
-              border: "1px solid #ccc",
-            }}
-          />
-          <span>{action}</span>
-        </div>
-      ))}
-    </div>
-  );
-};
 
   // Standard poker hand order grid
   const handOrder = [
@@ -179,48 +92,7 @@ const ColorKey = ({ data }: { data: HandCellData[] }) => {
     "A2o", "K2o", "Q2o", "J2o", "T2o", "92o", "82o", "72o", "62o", "52o", "42o", "32o", "22"
   ];
 
-  // Component for rendering one hand cell with a composite bar
-  const HandCell = ({ data }: { data: HandCellData }) => {
-    return (
-      <div style={{
-        border: "1px solid #ccc",
-        height: "20px",
-        position: "relative",
-        width: "100%",
-        userSelect: "none", // Prevents text selection
-      }}>
-        <div style={{ display: "flex", height: "100%", width: "100%" }}>
-          {Object.entries(data.actions).map(([action, strategy]) => {
-            const width = strategy * 100;
-            return (
-              <div
-                key={action}
-                style={{
-                  width: `${width}%`,
-                  backgroundColor: getColorForAction(action),
-                }}
-              />
-            );
-          })}
-        </div>
-        <div style={{
-          position: "absolute",
-          left: "50%",
-          top: "50%",
-          transform: "translate(-50%, -50%)",
-          color: "white",
-          pointerEvents: "none",
-          fontFamily: "Arial",
-        }}>
-          {data.hand}
-        </div>
-      </div>
-    );
-  };
-  
-  //{ ColorKey, HandCell };
-
-  // Generate grid data based on the selected hand order
+  // Generate grid data based on the hand order.
   const gridData = handOrder.map((hand) =>
     combinedData.find((item) => item.hand === hand)
   );
@@ -229,7 +101,7 @@ const ColorKey = ({ data }: { data: HandCellData[] }) => {
     <div style={{ padding: "20px" }}>
       <h1>Poker Strategy Grid</h1>
       
-      {/* Dropdown for selecting folder */}
+      {/* Folder selector */}
       <div style={{ marginBottom: "10px" }}>
         <label>
           Select Folder:{" "}
@@ -237,7 +109,6 @@ const ColorKey = ({ data }: { data: HandCellData[] }) => {
             value={selectedFolder}
             onChange={(e) => {
               setSelectedFolder(e.target.value);
-              // Reset file selection when folder changes
               setSelectedFile("");
               setRawData(null);
             }}
@@ -251,7 +122,7 @@ const ColorKey = ({ data }: { data: HandCellData[] }) => {
         </label>
       </div>
       
-      {/* Dropdown for selecting file */}
+      {/* File selector */}
       <div style={{ marginBottom: "20px" }}>
         <label>
           Select File:{" "}
@@ -272,13 +143,14 @@ const ColorKey = ({ data }: { data: HandCellData[] }) => {
         </label>
       </div>
       
-      {/* Display error or loading state */}
+      {/* Loading and error messages */}
       {loading && <div>Loading file data...</div>}
       {error && <div style={{ color: "red" }}>{error}</div>}
       
+      {/* Render ColorKey if grid data exists */}
       {combinedData.length > 0 && <ColorKey data={combinedData} />}
       
-      {/* Render grid only when data exists */}
+      {/* Render grid only when rawData exists and not loading */}
       {rawData && !loading && (
         <div
           style={{
