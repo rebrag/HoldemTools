@@ -64,6 +64,7 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectA
   const parentPrefix = file.replace(".json", "");
 
   return (
+    <div className="matrix-item">
     <div style={{ marginBottom: "20px" }}>
       <h2>{file}</h2>
       {loading && <div>Loading file data...</div>}
@@ -82,7 +83,7 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectA
             gridTemplateColumns: "repeat(13, 1fr)",
             gridTemplateRows: "repeat(13, 1fr)",
             gap: "0px",
-            width: "600px",
+            width: "430px",
             maxWidth: "1000px",
           }}
         >
@@ -91,6 +92,7 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectA
           )}
         </div>
       )}
+    </div>
     </div>
   );
 };

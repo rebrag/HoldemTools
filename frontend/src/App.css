@@ -1,5 +1,29 @@
 @import "tailwindcss";
 
+
+.matrix-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.matrix-item {
+  position: relative;
+  width: 600x;  /* ideal width */
+  height: 350px; /* ideal height */
+  overflow: none; /* allow scrolling if the container is too small */
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+
+.decision-grid {
+  grid-template-columns: repeat(13, 90px);
+}
+
+
+
 /* #root {
   max-width: 1280px;
   margin: 0 auto;

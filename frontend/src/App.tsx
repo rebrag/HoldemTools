@@ -2,13 +2,16 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 import DecisionMatrix from "./components/DecisionMatrix";
+// In App.tsx (or index.tsx)
+import "./App.css";
+
 
 const actionToPrefix: Record<string, string> = {
   Fold: "0",
   ALLIN: "3",
   Min: "5",
   Call: "1",
-  15: "15",
+  Raise2bb: "15",
 };
 
 function App() {
@@ -76,7 +79,6 @@ function App() {
       
       {/* Folder selector */}
       <div style={{ marginBottom: "10px" }}>
-        <label>
           Preflop Sim:{" "}
           <select
             value={selectedFolder}
@@ -92,7 +94,6 @@ function App() {
               </option>
             ))}
           </select>
-        </label>
       </div>
       
       {/* Show current root prefix */}
@@ -101,15 +102,19 @@ function App() {
         {rootPrefix}
       </div>
 
-      {/* Render each decision matrix based on filtered files */}
-      {decisionMatrixFiles.map((file) => (
-        <DecisionMatrix
-          key={file}
-          folder={selectedFolder}
-          file={file}
-          onSelectAction={handleSelectAction}  // Pass the global callback down
-        />
-      ))}
+      <div className="matrix-grid">
+      {decisionMatrixFiles.map((file) => {
+        return (
+          <DecisionMatrix
+            key={file}
+            folder={selectedFolder}
+            file={file}
+            onSelectAction={handleSelectAction}
+          />
+        );
+      })}
+      </div>
+
 
     </div>
   );
