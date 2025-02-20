@@ -3,17 +3,28 @@ import axios from "axios";
 
 interface HandCellData {
   hand: string;
-  group0: number;
-  group3: number;
-  group5: number;
+  actions: Record<string, number>;
 }
 
 // Data returned from file API: Record<string, Record<string, [number, number]>>
 type FileData = Record<string, Record<string, [number, number]>>;
 
-// Example response types for folders and files
-// type Folder = { id: string; name: string };
-type File = { id: string; name: string };
+// Generate a consistent color from a string using a hash function.
+function stringToColor(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  let color = '#';
+  for (let i = 0; i < 3; i++) {
+    const value = (hash >> (i * 8)) & 0xFF;
+    color += ('00' + value.toString(16)).substr(-2);
+  }
+  return color;
+}
+
+
+
 
 function App() {
   // State for folders, files, and selected folder/file
@@ -24,6 +35,8 @@ function App() {
   const [rawData, setRawData] = useState<FileData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  //const combined: { [hand: string]: HandCellData } = {};
+
 
   // State for grid data
   const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
@@ -51,12 +64,12 @@ function App() {
     if (!selectedFolder) return;
 
     axios
-      .get<File[]>(`http://localhost:5192/api/Files/listJSONs/${selectedFolder}`)
+      .get<string[]>(`http://localhost:5192/api/Files/listJSONs/${selectedFolder}`)
       .then((response) => {
         setFiles(response.data);
         // Optionally select the first file automatically
         if (response.data.length > 0) {
-          setSelectedFile(response.data[0].id);
+          setSelectedFile(response.data[0]);
         }
       })
       .catch((err) => {
@@ -89,44 +102,65 @@ function App() {
     setCombinedData(combined);
   }, [rawData]);
 
-  // Helper function to combine the data by hand.
-  const combineDataByHand = (
-    data: FileData
-  ): HandCellData[] => {
-    const combined: { [hand: string]: Partial<HandCellData> } = {};
-    // Iterate over each group ("0", "3", "5")
-    for (const group in data) {
-      const groupData = data[group];
-      for (const hand in groupData) {
-        const [strategy] = groupData[hand];
+  const combineDataByHand = (data: FileData): HandCellData[] => {
+    const combined: { [hand: string]: HandCellData } = {};
+    for (const action in data) {
+      const actionData = data[action];
+      for (const hand in actionData) {
+        const [strategy] = actionData[hand];
         if (!combined[hand]) {
-          combined[hand] = { hand };
+          combined[hand] = { hand, actions: {} };
         }
-        if (group === "Fold") {
-          combined[hand].group0 = strategy;
-        } else if (group === "ALLIN") {
-          combined[hand].group3 = strategy;
-        } else if (group === "Call") {
-          combined[hand].group3 = strategy;
-        } else if (group === "Min") {
-          combined[hand].group5 = strategy;
-        }
+        combined[hand].actions[action] = strategy;
       }
     }
-    return Object.values(combined).map((item) => ({
-      hand: item.hand!,
-      group0: item.group0 ?? 0,
-      group3: item.group3 ?? 0,
-      group5: item.group5 ?? 0,
-    }));
+    return Object.values(combined);
   };
+  
+  
 
   // Mapping group keys to colors
-  const groupColorMapping: Record<string, string> = {
-    "0": "lightblue",
-    "3": "red",
-    "5": "lightcoral"
+  const actionColorMapping: Record<string, string> = {
+    Fold: "lightblue",
+    ALLIN: "red",
+    Min: "lightcoral",
+    Call: "lightgreen",
+    // You can add any known mappings here
   };
+  
+  const getColorForAction = (action: string): string => {
+    return actionColorMapping[action] || stringToColor(action);
+  };
+  
+  // A component to display the color key.
+const ColorKey = ({ data }: { data: HandCellData[] }) => {
+  // Extract a unique set of actions from the combined data.
+  const uniqueActions = Array.from(
+    data.reduce((set, cell) => {
+      Object.keys(cell.actions).forEach((action) => set.add(action));
+      return set;
+    }, new Set<string>())
+  );
+
+  return (
+    <div style={{ display: "flex", gap: "10px", marginBottom: "10px", alignItems: "center" }}>
+      {uniqueActions.map((action) => (
+        <div key={action} style={{ display: "flex", alignItems: "center" }}>
+          <div
+            style={{
+              width: "20px",
+              height: "20px",
+              backgroundColor: getColorForAction(action),
+              marginRight: "5px",
+              border: "1px solid #ccc",
+            }}
+          />
+          <span>{action}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
 
   // Standard poker hand order grid
   const handOrder = [
@@ -147,40 +181,44 @@ function App() {
 
   // Component for rendering one hand cell with a composite bar
   const HandCell = ({ data }: { data: HandCellData }) => {
-    const width0 = data.group0 * 100;
-    const width3 = data.group3 * 100;
-    const width5 = data.group5 * 100;
-
     return (
-      <div
-        style={{
-          border: "1px solid #ccc",
-          height: "20px",
-          position: "relative",
-          width: "100%",
-        }}
-      >
+      <div style={{
+        border: "1px solid #ccc",
+        height: "20px",
+        position: "relative",
+        width: "100%",
+        userSelect: "none", // Prevents text selection
+      }}>
         <div style={{ display: "flex", height: "100%", width: "100%" }}>
-          <div style={{ width: `${width0}%`, backgroundColor: groupColorMapping["0"] }} />
-          <div style={{ width: `${width3}%`, backgroundColor: groupColorMapping["3"] }} />
-          <div style={{ width: `${width5}%`, backgroundColor: groupColorMapping["5"] }} />
+          {Object.entries(data.actions).map(([action, strategy]) => {
+            const width = strategy * 100;
+            return (
+              <div
+                key={action}
+                style={{
+                  width: `${width}%`,
+                  backgroundColor: getColorForAction(action),
+                }}
+              />
+            );
+          })}
         </div>
-        <div
-          style={{
-            position: "absolute",
-            left: "50%",
-            top: "50%",
-            transform: "translate(-50%, -50%)",
-            color: "white",
-            pointerEvents: "none",
-            fontFamily: "Arial",
-          }}
-        >
+        <div style={{
+          position: "absolute",
+          left: "50%",
+          top: "50%",
+          transform: "translate(-50%, -50%)",
+          color: "white",
+          pointerEvents: "none",
+          fontFamily: "Arial",
+        }}>
           {data.hand}
         </div>
       </div>
     );
   };
+  
+  //{ ColorKey, HandCell };
 
   // Generate grid data based on the selected hand order
   const gridData = handOrder.map((hand) =>
@@ -237,6 +275,8 @@ function App() {
       {/* Display error or loading state */}
       {loading && <div>Loading file data...</div>}
       {error && <div style={{ color: "red" }}>{error}</div>}
+      
+      {combinedData.length > 0 && <ColorKey data={combinedData} />}
       
       {/* Render grid only when data exists */}
       {rawData && !loading && (
