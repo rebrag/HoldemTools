@@ -1,6 +1,6 @@
 // ColorKey.tsx
 import React from "react";
-import { HandCellData, getColorForAction } from "./utils";
+import { HandCellData, getColorForAction } from "../utils/utils";
 
 interface ColorKeyProps {
   data: HandCellData[];

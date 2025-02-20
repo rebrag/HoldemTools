@@ -1,6 +1,6 @@
 // HandCell.tsx
 import React from "react";
-import { HandCellData, getColorForAction } from "./utils";
+import { HandCellData, getColorForAction } from "../utils/utils";
 
 interface HandCellProps {
   data: HandCellData;
