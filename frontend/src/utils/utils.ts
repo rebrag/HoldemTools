@@ -1,5 +1,13 @@
-// utils.ts
-export type FileData = Record<string, Record<string, [number, number]>>;
+export interface ActionData {
+  [hand: string]: [number, number];
+}
+
+export interface FileData {
+  Position: string;
+  bb: number;
+  // All other keys (like "Fold", "Call", etc.) will be action data.
+  [action: string]: string | number | ActionData;
+}
 
 export interface HandCellData {
   hand: string;
@@ -20,7 +28,6 @@ export function stringToColor(str: string): string {
   return color;
 }
 
-// Predefined color mappings for known actions.
 const actionColorMapping: Record<string, string> = {
   Fold: "#3d7cb8",
   ALLIN: "#7d1f1e",
@@ -32,7 +39,6 @@ const actionColorMapping: Record<string, string> = {
 export const getColorForAction = (action: string): string => {
   return actionColorMapping[action] || "#F03c39";
 };
-// export const getColorForAction = (action: string): string => {
 //   return actionColorMapping[action] || stringToColor(action);
 // };
 
@@ -40,15 +46,24 @@ export const getColorForAction = (action: string): string => {
 
 export const combineDataByHand = (data: FileData): HandCellData[] => {
   const combined: { [hand: string]: HandCellData } = {};
-  for (const action in data) {
-    const actionData = data[action];
-    for (const hand in actionData) {
-      const [strategy] = actionData[hand];
-      if (!combined[hand]) {
-        combined[hand] = { hand, actions: {} };
+
+  for (const key in data) {
+    if (key === "Position" || key === "bb") continue;
+
+    const actionData = data[key];
+    if (typeof actionData === "object" && actionData !== null) {
+      for (const hand in actionData) {
+        const value = actionData[hand];
+        if (Array.isArray(value)) {
+          const [strategy] = value;
+          if (!combined[hand]) {
+            combined[hand] = { hand, actions: {} };
+          }
+          combined[hand].actions[key] = strategy;
+        }
       }
-      combined[hand].actions[action] = strategy;
     }
   }
   return Object.values(combined);
 };
+

@@ -11,16 +11,24 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
   // Extract a unique set of actions from the grid data.
   const uniqueActions = Array.from(
     data.reduce((set, cell) => {
-      Object.keys(cell.actions).forEach((action) => set.add(action));
+      Object.keys(cell.actions)
+        .filter(action => action !== "Position")
+        .forEach(action => set.add(action));
       return set;
     }, new Set<string>())
   );
+
+  const actionMapping: Record<string, string> = {
+    "Raise 2bb": "15",
+    "Raise 54%": "40054",
+    // add other mappings as needed
+  };  
 
   return (
     <div
       style={{
         display: "flex",
-        gap: "15px",
+        gap: "10px",
         marginBottom: "5px",
         alignItems: "center",
       }}
@@ -28,12 +36,12 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
       {uniqueActions.map((action) => (
         <div
           key={action}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            cursor: "pointer",
+          style={{display: "flex",alignItems: "center",cursor: "pointer",}}
+          onClick={() => {
+            //console.log(action)
+            onSelectAction(actionMapping[action] || action)
           }}
-          onClick={() => onSelectAction(action)}
+          
           title={`Click to set ${action} as the new root`}
         >
           <div

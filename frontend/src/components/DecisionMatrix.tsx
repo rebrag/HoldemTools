@@ -6,10 +6,10 @@ import HandCell from "./HandCell";
 import ColorKey from "./ColorKey";
 
 interface DecisionMatrixProps {
-    folder: string;
-    file: string;
-    onSelectAction: (parentPrefix: string, action: string) => void;
-  }
+  folder: string;
+  file: string;
+  onSelectAction: (parentPrefix: string, action: string) => void;
+}
 
 const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectAction }) => {
   const [rawData, setRawData] = useState<FileData | null>(null);
@@ -65,36 +65,44 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectA
 
   return (
     <div className="matrix-item">
-    <div style={{ marginBottom: "20px" }}>
-      <h2>{file}</h2>
-      {loading && <div>Loading file data...</div>}
-      {error && <div style={{ color: "red" }}>{error}</div>}
-      {combinedData.length > 0 && (
-        <ColorKey
-          data={combinedData}
-          // Wrap the callback so that it passes parentPrefix along with the action.
-          onSelectAction={(action) => onSelectAction(parentPrefix, action)}
-        />
-      )}
-      {rawData && !loading && (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(13, 1fr)",
-            gridTemplateRows: "repeat(13, 1fr)",
-            gap: "0px",
-            width: "430px",
-            maxWidth: "1000px",
-          }}
-        >
-          {gridData.map((handData, index) =>
-            handData ? <HandCell key={index} data={handData} /> : <div key={index} />
+      <div style={{ marginBottom: "10px" }}>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: "0px" }}>
+          {rawData ? (
+            <h2 style={{ marginRight: "30px" }}>
+              {rawData.Position} {rawData.bb}bb
+            </h2>
+          ) : (
+            <h2 style={{ marginRight: "10px" }}>{file}</h2>
+          )}
+          {combinedData.length > 0 && (
+            <ColorKey
+              data={combinedData}
+              onSelectAction={(action) => onSelectAction(parentPrefix, action)}
+            />
           )}
         </div>
-      )}
-    </div>
+        {loading && <div>Loading file data...</div>}
+        {error && <div style={{ color: "red" }}>{error}</div>}
+        {rawData && !loading && (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(13, 1fr)",
+              gridTemplateRows: "repeat(13, 1fr)",
+              gap: "0px",
+              width: "430px",
+              maxWidth: "1000px",
+            }}
+          >
+            {gridData.map((handData, index) =>
+              handData ? <HandCell key={index} data={handData} /> : <div key={index} />
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
+  
 };
 
 export default DecisionMatrix;

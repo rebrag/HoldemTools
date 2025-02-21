@@ -2,16 +2,16 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 import DecisionMatrix from "./components/DecisionMatrix";
-// In App.tsx (or index.tsx)
 import "./App.css";
-
 
 const actionToPrefix: Record<string, string> = {
   Fold: "0",
   ALLIN: "3",
-  Min: "5",
+  "Min": "5",
   Call: "1",
-  Raise2bb: "15",
+  "15": "15",
+  "40054": "40054",
+  "40078": "40078"
 };
 
 function App() {
@@ -64,11 +64,13 @@ function App() {
   // Global onSelectAction handler.
   const handleSelectAction = (parentPrefix: string, action: string) => {
     const mapping = actionToPrefix[action];
+    console.log(action)
     if (!mapping) {
       setRootPrefix("root");
       return;
     }
     const newRoot = parentPrefix === "root" ? mapping : `${parentPrefix}.${mapping}`;
+    console.log(mapping)
     setRootPrefix(newRoot);
   };
 
