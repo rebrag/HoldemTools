@@ -11,7 +11,12 @@ const actionToPrefix: Record<string, string> = {
   Call: "1",
   "15": "15",
   "40054": "40054",
-  "40078": "40078"
+  "40075": "40075",
+  "40078": "40078",
+  "Raise 2bb": "15",
+  "Raise 54%": "40054",
+  "Raise 75%": "40075",
+  "Raise 78%": "40078",
 };
 
 function App() {
