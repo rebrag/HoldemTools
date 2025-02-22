@@ -20,10 +20,12 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectA
   // Fetch file data when the component mounts or folder/file changes.
   useEffect(() => {
     setLoading(true);
+    console.log(file)
     axios
       .get<FileData>(`http://localhost:5192/api/Files/${folder}/${file}`)
       .then((response) => {
         setRawData(response.data);
+        
         setLoading(false);
       })
       .catch((err) => {

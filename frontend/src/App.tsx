@@ -7,7 +7,7 @@ import "./App.css";
 const actionToPrefix: Record<string, string> = {
   Fold: "0",
   ALLIN: "3",
-  "Min": "5",
+  Min: "5",
   Call: "1",
   "15": "15",
   "40054": "40054",
@@ -24,6 +24,7 @@ function App() {
   const [files, setFiles] = useState<string[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<string>("");
   const [rootPrefix, setRootPrefix] = useState<string>("root");
+  const [clickedRoot, setClickedRoot] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
 
   // Fetch folders on component mount.
@@ -56,27 +57,38 @@ function App() {
       });
   }, [selectedFolder]);
 
-  // Filter files based on the selected rootPrefix.
-  const decisionMatrixFiles = files.filter((file) => {
+  // Filter files based on the current rootPrefix.
+  const currentMatrixFiles = files.filter((file) => {
     if (rootPrefix === "root") {
       return file === "root.json" || /^0(?:\.0+)*\.json$/.test(file);
     }
-    // Build a regex pattern: for prefix "5", match files like "5.json", "5.0.json", "5.0.0.json", etc.
     const pattern = new RegExp(`^${rootPrefix}(?:\\.0+)*\\.json$`);
     return pattern.test(file);
   });
 
-  // Global onSelectAction handler.
+  // When a key is clicked, update both the current branch (rootPrefix)
+  // and store the clicked-on matrix's root in clickedRoot.
   const handleSelectAction = (parentPrefix: string, action: string) => {
     const mapping = actionToPrefix[action];
-    console.log(action)
+    console.log("Clicked action:", action);
     if (!mapping) {
       setRootPrefix("root");
+      setClickedRoot("root");
       return;
     }
     const newRoot = parentPrefix === "root" ? mapping : `${parentPrefix}.${mapping}`;
-    console.log(mapping)
+    console.log("Mapping:", mapping, "New root:", newRoot);
     setRootPrefix(newRoot);
+    // Store the matrix where the click occurred.
+    setClickedRoot(parentPrefix);
+  };
+
+  const renderSingleDecisionMatrix = (file: string) => {
+    return (
+      <div className="bg-gray-200 p-0 rounded-md w-[432px]">
+        <DecisionMatrix key={file} folder={selectedFolder} file={file} onSelectAction={handleSelectAction} />
+      </div>
+    );
   };
 
   return (
@@ -86,43 +98,49 @@ function App() {
       
       {/* Folder selector */}
       <div style={{ marginBottom: "10px" }}>
-          Preflop Sim:{" "}
-          <select
-            value={selectedFolder}
-            onChange={(e) => {
-              setSelectedFolder(e.target.value);
-              // Optionally reset the rootPrefix when the folder changes.
-              setRootPrefix("root");
-            }}
-          >
-            {folders.map((folder, index) => (
-              <option key={index} value={folder}>
-                {folder}
-              </option>
-            ))}
-          </select>
+        Preflop Sim:{" "}
+        <select
+          value={selectedFolder}
+          onChange={(e) => {
+            setSelectedFolder(e.target.value);
+            setRootPrefix("root");
+            setClickedRoot("");
+          }}
+        >
+          {folders.map((folder, index) => (
+            <option key={index} value={folder}>
+              {folder}
+            </option>
+          ))}
+        </select>
       </div>
       
-      {/* Show current root prefix */}
+      {/* Display the current and clicked roots */}
       <div style={{ marginBottom: "10px" }}>
         <strong>Current Root: </strong>
         {rootPrefix}
       </div>
-
+      {clickedRoot && (
+        <div style={{ marginBottom: "10px" }}>
+          <strong>Clicked Root: </strong>
+          {clickedRoot}
+        </div>
+      )}
+      
+      {/* Render the matrices */}
       <div className="matrix-grid">
-      {decisionMatrixFiles.map((file) => {
-        return (
+        {/* Matrices from the current root branch */}
+        {currentMatrixFiles.map((file) => (
           <DecisionMatrix
             key={file}
             folder={selectedFolder}
             file={file}
             onSelectAction={handleSelectAction}
           />
-        );
-      })}
+        ))}
+        {/* Additionally render matrices from the clicked-on root */}
+        {clickedRoot.length > 0 && renderSingleDecisionMatrix(clickedRoot+".json")}
       </div>
-
-
     </div>
   );
 }

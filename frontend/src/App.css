@@ -3,16 +3,18 @@
 
 .matrix-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  /* Set columns to exactly 600px per item; auto-fit will place as many as possible */
+  grid-template-columns: repeat(auto-fit, minmax(450px, 450px));
   gap: 5px;
   margin-top: 5px;
+  justify-content: center; /* centers grid items if there's extra space */
 }
 
 .matrix-item {
   position: relative;
-  width: 600x;  /* ideal width */
-  height: 350px; /* ideal height */
-  overflow: none; /* allow scrolling if the container is too small */
+  width: 432px;  /* fixed width */
+  height: 320px; /* fixed height */
+  overflow: none; /* allow scrolling if content overflows */
   border: 1px solid #ccc;
   border-radius: 8px;
   box-sizing: border-box;
@@ -21,6 +23,7 @@
 .decision-grid {
   grid-template-columns: repeat(13, 90px);
 }
+
 
 
 
