@@ -30,7 +30,8 @@ function App() {
   // Fetch folders on component mount.
   useEffect(() => {
     axios
-      .get<string[]>("http://localhost:5192/api/Files/folders")
+      //.get<string[]>("http://localhost:5192/api/Files/folders")
+      .get<string[]>("https://gtotest1.azurewebsites.net/api/Files/folders")
       .then((response) => {
         setFolders(response.data);
         if (response.data.length > 0) {
@@ -47,7 +48,8 @@ function App() {
   useEffect(() => {
     if (!selectedFolder) return;
     axios
-      .get<string[]>(`http://localhost:5192/api/Files/listJSONs/${selectedFolder}`)
+      //.get<string[]>(`http://localhost:5192/api/Files/listJSONs/${selectedFolder}`)
+      .get<string[]>(`https://gtotest1.azurewebsites.net/api/Files/listJSONs/${selectedFolder}`)
       .then((response) => {
         setFiles(response.data);
       })

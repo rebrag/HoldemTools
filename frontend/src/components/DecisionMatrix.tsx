@@ -22,7 +22,8 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectA
     setLoading(true);
     console.log(file)
     axios
-      .get<FileData>(`http://localhost:5192/api/Files/${folder}/${file}`)
+      //.get<FileData>(`http://localhost:5192/api/Files/${folder}/${file}`)
+      .get<FileData>(`https://gtotest1.azurewebsites.net/api/Files/${folder}/${file}`)
       .then((response) => {
         setRawData(response.data);
         
