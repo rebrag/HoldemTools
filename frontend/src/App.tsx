@@ -87,7 +87,7 @@ function App() {
 
   const renderSingleDecisionMatrix = (file: string) => {
     return (
-      <div className="bg-gray-200 p-0 rounded-md w-[432px]">
+      <div className="bg-gray-900 p-0 rounded-md w-[432px]">
         <DecisionMatrix key={file} folder={selectedFolder} file={file} onSelectAction={handleSelectAction} />
       </div>
     );
