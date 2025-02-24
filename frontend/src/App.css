@@ -4,10 +4,12 @@
 .matrix-grid {
   display: grid;
   /* Set columns to exactly 600px per item; auto-fit will place as many as possible */
-  grid-template-columns: repeat(auto-fit, minmax(450px, 450px));
+  grid-template-columns: repeat(auto-fit, minmax(460px, 460px));
   gap: 5px;
   margin-top: 5px;
   justify-content: center; /* centers grid items if there's extra space */
+  padding-left: 1rem;
+  padding-right: 1rem;
 }
 
 .matrix-item {
