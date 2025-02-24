@@ -67,10 +67,10 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectA
 
   return (
     <div className="matrix-item">
-      <div style={{ marginBottom: "10px" }}>
+      <div style={{ marginBottom: "50px" }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: "0px" }}>
           {rawData ? (
-            <h2 style={{ marginRight: "30px" }}>
+            <h2 style={{ marginRight: "20px" }}>
               {rawData.Position} {rawData.bb}bb
             </h2>
           ) : (
@@ -92,7 +92,7 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectA
               gridTemplateColumns: "repeat(13, 1fr)",
               gridTemplateRows: "repeat(13, 1fr)",
               gap: "0px",
-              width: "430px",
+              width: "400px", //width of whole 13x13 matrix
               maxWidth: "1000px",
             }}
           >
