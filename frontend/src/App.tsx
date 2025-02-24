@@ -94,28 +94,29 @@ function App() {
   };
 
   return (
-    <div style={{ padding: "20px" }}>
-      <h1>Poker Strategy Grids</h1>
+    <div className="min-h-screen bg-gradient-to-r from-blue-100 to-purple-100 items-center p-4">
+      <h1 className="text-3xl font-bold mb-4 text-center">GTO Lite</h1>
       {error && <div style={{ color: "red" }}>{error}</div>}
       
       {/* Folder selector */}
-      <div style={{ marginBottom: "10px" }}>
-        Preflop Sim:{" "}
-        <select
-          value={selectedFolder}
-          onChange={(e) => {
-            setSelectedFolder(e.target.value);
-            setRootPrefix("root");
-            setClickedRoot("");
-          }}
-        >
-          {folders.map((folder, index) => (
-            <option key={index} value={folder}>
-              {folder}
-            </option>
-          ))}
-        </select>
-      </div>
+    <div className="mb-6 flex flex-col items-center">
+      <span className="text-xl font-medium mb-2">Preflop Sim:</span>
+      <select
+        className="border border-gray-300 rounded px-4 py-2 bg-white shadow-md"
+        value={selectedFolder}
+        onChange={(e) => {
+          setSelectedFolder(e.target.value);
+          setRootPrefix("root");
+          setClickedRoot("");
+        }}
+      >
+        {folders.map((folder, index) => (
+          <option key={index} value={folder}>
+            {folder}
+          </option>
+        ))}
+      </select>
+    </div>
       
       {/* Display the current and clicked roots */}
       <div style={{ marginBottom: "10px" }}>
@@ -130,9 +131,11 @@ function App() {
       )}
       
       {/* Render the matrices */}
-      <div className="matrix-grid">
+      <div className="matrix-grid pl-4 pr-4">
+        {/* Additionally render matrices from the clicked-on root */}
+        {clickedRoot.length > 0 && renderSingleDecisionMatrix(clickedRoot+".json")}
         {/* Matrices from the current root branch */}
-        {currentMatrixFiles.map((file) => (
+        {[...currentMatrixFiles].reverse().map((file) => (
           <DecisionMatrix
             key={file}
             folder={selectedFolder}
@@ -140,8 +143,6 @@ function App() {
             onSelectAction={handleSelectAction}
           />
         ))}
-        {/* Additionally render matrices from the clicked-on root */}
-        {clickedRoot.length > 0 && renderSingleDecisionMatrix(clickedRoot+".json")}
       </div>
     </div>
   );
