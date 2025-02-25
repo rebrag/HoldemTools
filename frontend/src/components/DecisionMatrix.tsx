@@ -9,6 +9,7 @@ interface DecisionMatrixProps {
   folder: string;
   file: string;
   onSelectAction: (parentPrefix: string, action: string) => void;
+  randomize?: boolean;
 }
 
 const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectAction }) => {

@@ -19,7 +19,7 @@ const HandCell: React.FC<HandCellProps> = ({ data }) => {
       }}
     >
       <div style={{ display: "flex", height: "100%", width: "100%" }}>
-        {Object.entries(data.actions).map(([action, strategy]) => {
+        {Object.entries(data.actions).reverse().map(([action, strategy]) => {
           const width = strategy * 100;
           return (
             <div

@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import DecisionMatrix from "./components/DecisionMatrix";
 import "./App.css";
+import RandomizeModeButton from "./components/RandomizeModeButton";
+import FolderSelector from "./components/FolderSelector";
 
 const actionToPrefix: Record<string, string> = {
   Fold: "0",
@@ -26,6 +28,7 @@ function App() {
   const [rootPrefix, setRootPrefix] = useState<string>("root");
   const [clickedRoot, setClickedRoot] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  const [randomizeMode, setRandomizeMode] = useState<boolean>(false);
 
   // Fetch folders on component mount.
   useEffect(() => {
@@ -68,7 +71,6 @@ function App() {
     return pattern.test(file);
   });
 
-  // When a key is clicked, update both the current branch (rootPrefix)
   // and store the clicked-on matrix's root in clickedRoot.
   const handleSelectAction = (parentPrefix: string, action: string) => {
     const mapping = actionToPrefix[action];
@@ -87,7 +89,7 @@ function App() {
 
   const renderSingleDecisionMatrix = (file: string) => {
     return (
-      <div className="bg-gray-900 p-0 rounded-md w-[432px]">
+      <div className="bg-gray-400 p-0 rounded-md w-[400px]">
         <DecisionMatrix key={file} folder={selectedFolder} file={file} onSelectAction={handleSelectAction} />
       </div>
     );
@@ -99,25 +101,21 @@ function App() {
       {error && <div style={{ color: "red" }}>{error}</div>}
       
       {/* Folder selector */}
-    <div className="mb-6 flex flex-col items-center">
-      <span className="text-xl font-medium mb-2">Preflop Sim:</span>
-      <select
-        className="border border-gray-300 rounded px-4 py-2 bg-white shadow-md"
-        value={selectedFolder}
-        onChange={(e) => {
-          setSelectedFolder(e.target.value);
+      <FolderSelector
+        folders={folders}
+        onFolderSelect={(folder) => {
+          setSelectedFolder(folder);
           setRootPrefix("root");
           setClickedRoot("");
         }}
-      >
-        {folders.map((folder, index) => (
-          <option key={index} value={folder}>
-            {folder}
-          </option>
-        ))}
-      </select>
-    </div>
+      />
       
+    {/* Toggle Randomization */}
+    <RandomizeModeButton
+        randomize={randomizeMode}
+        toggleRandomize={() => setRandomizeMode((prev) => !prev)}
+      />
+
       {/* Display the current and clicked roots */}
       <div style={{ marginBottom: "10px" }}>
         <strong>Current Root: </strong>
@@ -132,9 +130,7 @@ function App() {
       
       {/* Render the matrices */}
       <div className="matrix-grid pl-4 pr-4">
-        {/* Additionally render matrices from the clicked-on root */}
         {clickedRoot.length > 0 && renderSingleDecisionMatrix(clickedRoot+".json")}
-        {/* Matrices from the current root branch */}
         {[...currentMatrixFiles].reverse().map((file) => (
           <DecisionMatrix
             key={file}

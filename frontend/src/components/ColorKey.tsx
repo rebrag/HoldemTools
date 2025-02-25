@@ -42,7 +42,7 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
             onSelectAction(actionMapping[action] || action)
           }}
           
-          title={`Click to set ${action} as the new root`}
+          title={`Click to see reactions to ${action}`}
         >
           <div
             style={{
