@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import DecisionMatrix from "./components/DecisionMatrix";
 import "./App.css";
-import RandomizeModeButton from "./components/RandomizeModeButton";
+// import RandomizeModeButton from "./components/RandomizeModeButton";
 import FolderSelector from "./components/FolderSelector";
 
 const actionToPrefix: Record<string, string> = {
@@ -111,10 +111,10 @@ function App() {
       />
       
     {/* Toggle Randomization */}
-    <RandomizeModeButton
+    {/* <RandomizeModeButton
         randomize={randomizeMode}
         toggleRandomize={() => setRandomizeMode((prev) => !prev)}
-      />
+      /> */}
 
       {/* Display the current and clicked roots */}
       <div style={{ marginBottom: "10px" }}>

@@ -71,8 +71,9 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectA
       <div style={{ marginBottom: "50px" }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: "0px" }}>
           {rawData ? (
-            <h2 style={{ marginRight: "20px" }}>
-              {rawData.Position} {rawData.bb}bb
+            <h2 className=" decoration-solid font-bold mr-4 mb-1" style={{textShadow: "1px 1px 1px rgba(0, 0, 0, 0.7)",}}> 
+            {/* position and BB text */}
+              {rawData.Position} {rawData.bb}bb 
             </h2>
           ) : (
             <h2 style={{ marginRight: "10px" }}>{file}</h2>

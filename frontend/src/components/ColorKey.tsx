@@ -29,8 +29,9 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
       style={{
         display: "flex",
         gap: "10px",
-        marginBottom: "5px",
+        marginBottom: "0px",
         alignItems: "center",
+        border: "1px solid #ccc"
       }}
     >
       {uniqueActions.map((action) => (
