@@ -28,7 +28,7 @@ function App() {
   const [rootPrefix, setRootPrefix] = useState<string>("root");
   const [clickedRoot, setClickedRoot] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  const [randomizeMode, setRandomizeMode] = useState<boolean>(false);
+  // const [randomizeMode, setRandomizeMode] = useState<boolean>(false);
 
   // Fetch folders on component mount.
   useEffect(() => {
