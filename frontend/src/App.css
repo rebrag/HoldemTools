@@ -1,14 +1,17 @@
 @import "tailwindcss";
+:root {
+  --boxwidth: 300;
+  --white: #faf0e6;
+}
 
 
 .matrix-grid {
   display: grid;
-  /* Set columns to exactly 600px per item; auto-fit will place as many as possible */
-  grid-template-columns: repeat(auto-fit, minmax(300px, 404px));
+  grid-template-columns: repeat(auto-fit, minmax(300px, 402px));
   gap: 3px;
   margin-top: 5px;
   margin: 0 auto;
-  justify-content: center; /* centers grid items if there's extra space */
+  justify-content: center;
   padding-left: 0rem;
   padding-right: 0rem;
   /* border: 1px solid #ccc; */
@@ -16,11 +19,11 @@
 
 .matrix-item {
   position: relative;
-  width: 402px;  /* fixed width */
-  height: 320px; /* fixed height */
+  width: 400;  /* fixed width */
+  height: 318px; /* fixed height */
   overflow: none; /* allow scrolling if content overflows */
   border: 1px solid #ccc;
-  border-radius: 7px;
+  border-radius: 1px;
   box-sizing: border-box;
 }
 
@@ -34,3 +37,19 @@ html, body {
   padding: 0;
   background: linear-gradient(to right, #bfdbfe, #e9d5ff);
 }
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none; /* IE/Edge */
+  scrollbar-width: none; /* Firefox */
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none; /* Hide scrollbar in Chrome, Safari */
+}
+.scrollbar-none {
+  -ms-overflow-style: none;  /* Hide scrollbar in IE/Edge */
+  scrollbar-width: none; /* Hide scrollbar in Firefox */
+}
+

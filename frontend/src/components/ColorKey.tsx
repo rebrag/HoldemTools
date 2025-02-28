@@ -20,7 +20,10 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
 
   const actionMapping: Record<string, string> = {
     "Raise 2bb": "15",
+    "Raise 1.5bb": "14",
     "Raise 54%": "40054",
+    "Raise 75%": "40075",
+    "Raise 50%": "40050",
     // add other mappings as needed
   };  
 
@@ -28,34 +31,41 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
     <div
       style={{
         display: "flex",
-        gap: "10px",
-        marginBottom: "0px",
+        gap: "5px",
+        marginBottom: "3px",
         alignItems: "center",
-        border: "1px solid #ccc"
+        //border: "1px solid #ccc"
       }}
     >
-      {uniqueActions.map((action) => (
+      {uniqueActions.slice().reverse().map((action) => (
         <div
-          key={action}
-          style={{display: "flex",alignItems: "center",cursor: "pointer",}}
-          onClick={() => {
-            //console.log(action)
-            onSelectAction(actionMapping[action] || action)
+        key={action}
+        style={{
+          display: "flex",
+          cursor: "pointer",
+        }}
+        onClick={() => {
+          onSelectAction(actionMapping[action] || action)
+        }}
+        title={`Click to see reactions to ${action}`}
+      >
+        <div
+          style={{
+            width: "70px",
+            height: "30px",
+            backgroundColor: getColorForAction(action),
+            //border: "1px solid #ccc",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: "7px",
           }}
-          
-          title={`Click to see reactions to ${action}`}
         >
-          <div
-            style={{
-              width: "20px",
-              height: "20px",
-              backgroundColor: getColorForAction(action),
-              marginRight: "5px",
-              border: "1px solid #ccc",
-            }}
-          />
-          <span>{action}</span>
+
+          <span style={{ color: "#fff", fontSize: "14px" }}>{action}</span>
         </div>
+      </div>
+      
       ))}
     </div>
   );

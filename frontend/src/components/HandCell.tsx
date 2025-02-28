@@ -12,7 +12,7 @@ const HandCell: React.FC<HandCellProps> = ({ data }) => {
       tabIndex={-1}
       style={{
         border: "1px solid #999",
-        height: "22px",
+        height: "22px", //actual effective changing height of cell and in turn grid
         position: "relative",
         width: "100%",
         userSelect: "none",
@@ -41,7 +41,7 @@ const HandCell: React.FC<HandCellProps> = ({ data }) => {
           color: "white",
           pointerEvents: "none",
           fontFamily: "Arial-Narrow, sans-serif", // Change the font here.
-          fontSize: "0.8rem", // Adjust the text size here.
+          fontSize: "0.7rem", // Adjust the text size here.
           textShadow: "3px 3px 6px rgba(0, 0, 0, 0.7)", // Add a shadow.
         }}
       >

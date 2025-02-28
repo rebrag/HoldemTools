@@ -2,24 +2,11 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 import DecisionMatrix from "./components/DecisionMatrix";
-import "./App.css";
-// import RandomizeModeButton from "./components/RandomizeModeButton";
 import FolderSelector from "./components/FolderSelector";
+import "./App.css";
+import { actionToPrefixMap } from "./constants";
 
-const actionToPrefix: Record<string, string> = {
-  Fold: "0",
-  ALLIN: "3",
-  Min: "5",
-  Call: "1",
-  "15": "15",
-  "40054": "40054",
-  "40075": "40075",
-  "40078": "40078",
-  "Raise 2bb": "15",
-  "Raise 54%": "40054",
-  "Raise 75%": "40075",
-  "Raise 78%": "40078",
-};
+
 
 function App() {
   const [folders, setFolders] = useState<string[]>([]);
@@ -28,12 +15,10 @@ function App() {
   const [rootPrefix, setRootPrefix] = useState<string>("root");
   const [clickedRoot, setClickedRoot] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  // const [randomizeMode, setRandomizeMode] = useState<boolean>(false);
 
-  // Fetch folders on component mount.
+  // Fetch folders on mount.
   useEffect(() => {
     axios
-      //.get<string[]>("http://localhost:5192/api/Files/folders")
       .get<string[]>("https://gtotest1.azurewebsites.net/api/Files/folders")
       .then((response) => {
         setFolders(response.data);
@@ -51,7 +36,6 @@ function App() {
   useEffect(() => {
     if (!selectedFolder) return;
     axios
-      //.get<string[]>(`http://localhost:5192/api/Files/listJSONs/${selectedFolder}`)
       .get<string[]>(`https://gtotest1.azurewebsites.net/api/Files/listJSONs/${selectedFolder}`)
       .then((response) => {
         setFiles(response.data);
@@ -71,35 +55,32 @@ function App() {
     return pattern.test(file);
   });
 
-  // and store the clicked-on matrix's root in clickedRoot.
+  // Handle the action selection by converting the action string to a numeric prefix.
   const handleSelectAction = (parentPrefix: string, action: string) => {
-    const mapping = actionToPrefix[action];
-    console.log("Clicked action:", action);
+    const mapping = actionToPrefixMap[action];
     if (!mapping) {
       setRootPrefix("root");
       setClickedRoot("root");
       return;
     }
     const newRoot = parentPrefix === "root" ? mapping : `${parentPrefix}.${mapping}`;
-    console.log("Mapping:", mapping, "New root:", newRoot);
     setRootPrefix(newRoot);
-    // Store the matrix where the click occurred.
+    // Keep track of the parent prefix for display or further logic.
     setClickedRoot(parentPrefix);
   };
 
-  const renderSingleDecisionMatrix = (file: string) => {
-    return (
-      <div className="bg-gray-400 p-0 rounded-md w-[400px]">
-        <DecisionMatrix key={file} folder={selectedFolder} file={file} onSelectAction={handleSelectAction} />
-      </div>
-    );
-  };
+  const renderSingleDecisionMatrix = (file: string) => (
+    <div className="bg-gray-400 p-0 rounded-md w-[400px]">
+      <DecisionMatrix key={file} folder={selectedFolder} file={file} onSelectAction={handleSelectAction} />
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-r from-blue-100 to-purple-100 items-center p-4">
+      
       <h1 className="text-3xl font-bold mb-4 text-center">GTO Lite</h1>
       {error && <div style={{ color: "red" }}>{error}</div>}
-      
+      <div className="flex-grow">
       {/* Folder selector */}
       <FolderSelector
         folders={folders}
@@ -109,12 +90,6 @@ function App() {
           setClickedRoot("");
         }}
       />
-      
-    {/* Toggle Randomization */}
-    {/* <RandomizeModeButton
-        randomize={randomizeMode}
-        toggleRandomize={() => setRandomizeMode((prev) => !prev)}
-      /> */}
 
       {/* Display the current and clicked roots */}
       <div style={{ marginBottom: "10px" }}>
@@ -127,10 +102,10 @@ function App() {
           {clickedRoot}
         </div>
       )}
-      
+
       {/* Render the matrices */}
       <div className="matrix-grid pl-4 pr-4">
-        {clickedRoot.length > 0 && renderSingleDecisionMatrix(clickedRoot+".json")}
+        {clickedRoot && renderSingleDecisionMatrix(`${clickedRoot}.json`)}
         {[...currentMatrixFiles].reverse().map((file) => (
           <DecisionMatrix
             key={file}
@@ -139,6 +114,8 @@ function App() {
             onSelectAction={handleSelectAction}
           />
         ))}
+      </div>
+      <footer className="text-center mt-4"> © Josh Garber 2025</footer>
       </div>
     </div>
   );
