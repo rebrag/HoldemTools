@@ -62,7 +62,7 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
           }}
         >
 
-          <span style={{ color: "#fff", fontSize: "14px" }}>{action}</span>
+          <span style={{ color: "#fff", fontSize: "13px" }}>{action}</span>
         </div>
       </div>
       
