@@ -20,20 +20,22 @@ const AccountMenu = () => {
   };
 
   return (
-    <div className="border-b-neutral-800" style={{ padding: "1rem", textAlign: "right" }}>
+    <div className="p-2 text-right">
       {user ? (
-        <>
-          <div>
-            <strong>Account:</strong> {user.email}
-          </div>
-          <button onClick={handleLogout} style={{ marginTop: "0.5rem" }}>
+        <div className="inline-flex items-center space-x-2 border border-gray-200 rounded p-2">
+          <span className="text-sm font-bold">Account:</span>
+          <span className="text-sm">{user.email}</span>
+          <button
+            onClick={handleLogout}
+            className="cursor-pointer text-xs text-blue-500 hover:underline"
+          >
             Logout
           </button>
-        </>
+        </div>
       ) : (
-        <div>No user signed in.</div>
+        <div className="text-sm text-gray-600">No user signed in.</div>
       )}
-      {error && <p style={{ color: "red" }}>{error}</p>}
+      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
     </div>
   );
 };

@@ -1,8 +1,5 @@
 @import "tailwindcss";
-:root {
-  --boxwidth: 300;
-  --white: #faf0e6;
-}
+
 
 
 .matrix-grid {
@@ -31,7 +28,7 @@
   grid-template-columns: repeat(13, 90px);
 }
 
-html, body {
+html, body, footer {
   height: 100%;
   margin: 0;
   padding: 0;

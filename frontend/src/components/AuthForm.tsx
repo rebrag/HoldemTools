@@ -2,6 +2,7 @@ import { useState } from "react";
 import { auth, createUserWithEmailAndPassword, signInWithEmailAndPassword } from "../firebase";
 import { useNavigate } from "react-router-dom";
 import { sendEmailVerification } from "firebase/auth";
+import { FirebaseError } from "firebase/app";
 
 const AuthForm = () => {
   const [email, setEmail] = useState("");
@@ -21,23 +22,29 @@ const AuthForm = () => {
         const userCredential = await signInWithEmailAndPassword(auth, email, password);
         if (!userCredential.user.emailVerified) {
           setMessage("Please verify your email address before logging in.");
-          // Optionally, sign the user out
-          // await auth.signOut();
           return;
         }
       } else {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        // Send verification email
         await sendEmailVerification(userCredential.user);
         setMessage("A verification email has been sent. Please check your inbox and verify your email.");
-        // Optionally sign the user out to prevent unverified access
-        // await auth.signOut();
         return;
       }
-      // Redirect if authentication is successful and email is verified
       navigate("/");
     } catch (err: unknown) {
-      if (err instanceof Error) {
+      if (err instanceof FirebaseError) {
+        switch (err.code) {
+          case "auth/email-already-in-use":
+            setError("This email is already registered. Please log in or use a different email address.");
+            break;
+          case "auth/invalid-email":
+            setError("The email address is not valid. Please enter a valid email.");
+            break;
+          // add other cases as needed...
+          default:
+            setError(err.message);
+        }
+      } else if (err instanceof Error) {
         setError(err.message);
       } else {
         setError(String(err));
@@ -46,18 +53,18 @@ const AuthForm = () => {
   };
 
   return (
-    <div className="auth-container" style={{ maxWidth: 400, margin: "auto", padding: "2rem" }}>
-      <h2>{isLogin ? "Login" : "Sign Up"}</h2>
-      {error && <p style={{ color: "red" }}>{error}</p>}
-      {message && <p style={{ color: "green" }}>{message}</p>}
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+    <div className="max-w-md mx-auto p-8 bg-white shadow-lg rounded-lg mt-[25%]">
+      <h2 className="text-2xl font-bold mb-6 text-center">{isLogin ? "GTO Lite Login" : "Sign Up"}</h2>
+      {error && <p className="text-red-500 mb-4">{error}</p>}
+      {message && <p className="text-green-500 mb-4">{message}</p>}
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <input
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="Email"
           required
-          style={{ padding: "0.5rem" }}
+          className="px-4 py-2 border border-gray-300 rounded focus:outline-none focus:border-blue-500 transition duration-200 ease-in-out hover:border-blue-400"
         />
         <input
           type="password"
@@ -65,21 +72,18 @@ const AuthForm = () => {
           onChange={(e) => setPassword(e.target.value)}
           placeholder="Password"
           required
-          style={{ padding: "0.5rem" }}
+          className="px-4 py-2 border border-gray-300 rounded focus:outline-none focus:border-blue-500 transition duration-200 ease-in-out hover:border-blue-400"
         />
-        <button type="submit" style={{ padding: "0.5rem", fontSize: "1rem" }}>
+        <button
+          type="submit"
+          className="cursor-pointer px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition duration-200 ease-in-out"
+        >
           {isLogin ? "Login" : "Sign Up"}
         </button>
       </form>
       <button
         onClick={() => setIsLogin((prev) => !prev)}
-        style={{
-          marginTop: "1rem",
-          background: "none",
-          border: "none",
-          color: "blue",
-          textDecoration: "underline"
-        }}
+        className="mt-6 text-blue-500 hover:underline cursor-pointer"
       >
         {isLogin ? "Need an account? Sign Up" : "Already have an account? Login"}
       </button>

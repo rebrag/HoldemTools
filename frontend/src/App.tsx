@@ -20,15 +20,23 @@ function App() {
 
   if (loading) return <div>Loading...</div>;
 
+  let content;
   if (!user) {
-    return <AuthForm />;
+    content = <AuthForm />;
+  } else if (!user.emailVerified) {
+    content = <VerifyEmailPrompt />;
+  } else {
+    content = <MainApp />;
   }
 
-  if (user && !user.emailVerified) {
-    return <VerifyEmailPrompt />;
-  }
-
-  return <MainApp />;
+  return (
+    <div className="min-h-screen flex flex-col">
+      <div className="flex-grow">{content}</div>
+      <footer className="text-center mb-4">
+        © Josh Garber 2025
+      </footer>
+    </div>
+  );
 }
 
 export default App;
