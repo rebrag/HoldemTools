@@ -1,3 +1,4 @@
+// MainApp.tsx
 import { useEffect, useState } from "react";
 import axios from "axios";
 import DecisionMatrix from "./DecisionMatrix";
@@ -13,6 +14,8 @@ function App() {
   const [rootPrefix, setRootPrefix] = useState<string>("root");
   const [clickedRoot, setClickedRoot] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  // Global toggle for random fill.
+  const [randomFillEnabled, setRandomFillEnabled] = useState<boolean>(false);
 
   // Fetch folders on mount.
   useEffect(() => {
@@ -44,7 +47,7 @@ function App() {
       });
   }, [selectedFolder]);
 
-  //backspace functionality
+  // Backspace functionality.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
@@ -59,26 +62,31 @@ function App() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
+
+  // Filter files based on the current rootPrefix.
+  const currentMatrixFiles = files.filter((file) => {
+    // Special handling for the root case
+    if (rootPrefix === "root") {
+      const numPlayers = selectedFolder.split('_').length;
+      const maxSegments = numPlayers - 2;
+      const regex = new RegExp(`^0(?:\\.0){0,${maxSegments - 1}}\\.json$`);
+      return file === "root.json" || regex.test(file);
+    }
+  
+    // Map certain node labels to their corresponding file prefix
+    let prefix = rootPrefix;
+    if (rootPrefix.toLowerCase() === "min") {
+      // For example, map "min" to "5.0"
+      prefix = "5.0";
+    }
+  
+    const regex = new RegExp(`^${prefix}(?:\\.0)*\\.json$`);
+    return regex.test(file);
+  });
+  
   
 
-  // Filter multiple files based on the current rootPrefix.
-const currentMatrixFiles = files.filter((file) => {
-  if (rootPrefix === "root") {
-    const numPlayers = selectedFolder.split('_').length;
-    const maxSegments = numPlayers - 2;
-    const regex = new RegExp(`^0(?:\\.0){0,${maxSegments - 1}}\\.json$`);
-    return file === "root.json" || regex.test(file);
-  }
-  const numPlayers = selectedFolder.split('_').length;
-  const maxSegments = numPlayers - 2;
-  const currentCount = rootPrefix === "root" ? 0 : rootPrefix.split('.').length;
-  const remaining = maxSegments - currentCount;
-  const regex = new RegExp(`^${rootPrefix}(?:\\.0){0,${remaining}}\\.json$`);
-  return regex.test(file);
-});
-
-
-  // Handle the action selection by converting the action string to a numeric prefix.
+  // Handle action selection.
   const handleSelectAction = (parentPrefix: string, action: string) => {
     const mapping = actionToPrefixMap[action];
     if (!mapping) {
@@ -95,12 +103,16 @@ const currentMatrixFiles = files.filter((file) => {
     setRootPrefix(newRoot);
     setClickedRoot(parentPrefix);
   };
-  
-  
 
   const renderSingleDecisionMatrix = (file: string) => (
     <div className="bg-gray-400 p-0 rounded-md w-[402px]">
-      <DecisionMatrix key={file} folder={selectedFolder} file={file} onSelectAction={handleSelectAction} />
+      <DecisionMatrix
+        key={file}
+        folder={selectedFolder}
+        file={file}
+        onSelectAction={handleSelectAction}
+        randomFillEnabled={randomFillEnabled}
+      />
     </div>
   );
 
@@ -110,8 +122,13 @@ const currentMatrixFiles = files.filter((file) => {
       <div className="absolute z-10 top-4 right-4">
         <AccountMenu />
       </div>
-  
-      {/* Main content with some top margin so it doesn't overlap the AccountMenu */}
+
+      {/* Global toggle button at the top */}
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: "20px" }}>
+        
+      </div>
+
+      {/* Main content */}
       <div className="mt-2">
         <h1 className="text-3xl font-bold mb-4 text-center">GTO Lite</h1>
         {error && <div style={{ color: "red" }}>{error}</div>}
@@ -125,31 +142,36 @@ const currentMatrixFiles = files.filter((file) => {
               setClickedRoot("");
             }}
           />
-  
-          {/* Display selected folder, current root, and clicked root */}
-          <div
-            className="mt-1 cursor-unselectable"
-            style={{ marginBottom: "10px"}}
-            // onClick={() => {
-            //   setRootPrefix("root");
-            //   setClickedRoot("");
-            // }}
-            //title="Click to reset current root"
+          <button
+            onClick={() => setRandomFillEnabled((prev) => !prev)}
+            style={{
+              padding: "8px 16px",
+              fontSize: "1rem",
+              cursor: "pointer",
+              backgroundColor: "#007BFF", // A blue background
+              color: "#fff", // White text
+              border: "none",
+              borderRadius: "4px",
+              boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
+              textShadow: "1px 1px 2px rgba(0, 0, 0, 0.2)",
+              transition: "background-color 0.3s ease",
+            }}
+            onMouseOver={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor = "#0056b3";
+            }}
+            onMouseOut={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor = "#007BFF";
+            }}
           >
+            {randomFillEnabled ? "Un-Randomize" : "Randomize"}
+          </button>
+
+          {/* Display selected folder */}
+          <div className="mt-1 cursor-unselectable" style={{ marginBottom: "10px" }}>
             <strong>Selected Folder: </strong>
             {selectedFolder}
           </div>
-          {/* <div style={{ marginBottom: "10px" }}>
-            <strong>Current Root: </strong>
-            {rootPrefix}
-          </div>
-          {clickedRoot && (
-            <div style={{ marginBottom: "10px" }}>
-              <strong>Clicked Root: </strong>
-              {clickedRoot}
-            </div>
-          )}
-   */}
+
           {/* Render the matrices */}
           <div className="matrix-grid pl-4 pr-4">
             {clickedRoot && renderSingleDecisionMatrix(`${clickedRoot}.json`)}
@@ -159,6 +181,7 @@ const currentMatrixFiles = files.filter((file) => {
                 folder={selectedFolder}
                 file={file}
                 onSelectAction={handleSelectAction}
+                randomFillEnabled={randomFillEnabled}
               />
             ))}
           </div>
@@ -166,7 +189,6 @@ const currentMatrixFiles = files.filter((file) => {
       </div>
     </div>
   );
-  
 }
 
 export default App;

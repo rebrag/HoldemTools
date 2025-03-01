@@ -4,34 +4,42 @@ import { HandCellData, getColorForAction } from "../utils/utils";
 
 interface HandCellProps {
   data: HandCellData;
+  randomFillColor?: string;
 }
 
-const HandCell: React.FC<HandCellProps> = ({ data }) => {
+const HandCell: React.FC<HandCellProps> = ({ data, randomFillColor }) => {
   return (
     <div
       tabIndex={-1}
       style={{
         border: "1px solid #999",
-        height: "22px", //actual effective changing height of cell and in turn grid
+        height: "22px",
         position: "relative",
         width: "100%",
         userSelect: "none",
+        // If a random fill color is provided, apply it as the background.
+        backgroundColor: randomFillColor || "transparent",
       }}
     >
-      <div style={{ display: "flex", height: "100%", width: "100%" }}>
-        {Object.entries(data.actions).reverse().map(([action, strategy]) => {
-          const width = strategy * 100;
-          return (
-            <div
-              key={action}
-              style={{
-                width: `${width}%`,
-                backgroundColor: getColorForAction(action),
-              }}
-            />
-          );
-        })}
-      </div>
+      {/* Only render the layered colored segments if not in random fill mode */}
+      {!randomFillColor && (
+        <div style={{ display: "flex", height: "100%", width: "100%" }}>
+          {Object.entries(data.actions)
+            .reverse()
+            .map(([action, strategy]) => {
+              const width = strategy * 100;
+              return (
+                <div
+                  key={action}
+                  style={{
+                    width: `${width}%`,
+                    backgroundColor: getColorForAction(action),
+                  }}
+                />
+              );
+            })}
+        </div>
+      )}
       <div
         style={{
           position: "absolute",
@@ -40,9 +48,9 @@ const HandCell: React.FC<HandCellProps> = ({ data }) => {
           transform: "translate(-50%, -50%)",
           color: "white",
           pointerEvents: "none",
-          fontFamily: "Arial-Narrow, sans-serif", // Change the font here.
-          fontSize: "0.7rem", // Adjust the text size here.
-          textShadow: "3px 3px 6px rgba(0, 0, 0, 0.7)", // Add a shadow.
+          fontFamily: "Arial-Narrow, sans-serif",
+          fontSize: "0.7rem",
+          textShadow: "3px 3px 6px rgba(0, 0, 0, 0.7)",
         }}
       >
         {data.hand}
@@ -52,4 +60,3 @@ const HandCell: React.FC<HandCellProps> = ({ data }) => {
 };
 
 export default HandCell;
-

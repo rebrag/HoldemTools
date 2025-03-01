@@ -1,7 +1,7 @@
 // src/components/DecisionMatrix.tsx
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-import { FileData, combineDataByHand, HandCellData } from "../utils/utils";
+import { FileData, combineDataByHand, HandCellData, getColorForAction } from "../utils/utils";
 import HandCell from "./HandCell";
 import ColorKey from "./ColorKey";
 
@@ -9,14 +9,21 @@ interface DecisionMatrixProps {
   folder: string;
   file: string;
   onSelectAction: (parentPrefix: string, action: string) => void;
-  randomize?: boolean;
+  randomFillEnabled?: boolean;
 }
 
-const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectAction }) => {
+const DecisionMatrixComponent: React.FC<DecisionMatrixProps> = ({
+  folder,
+  file,
+  onSelectAction,
+  randomFillEnabled,
+}) => {
   const [rawData, setRawData] = useState<FileData | null>(null);
   const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Array to store a random fill color for each cell (aligned with gridData order)
+  const [randomColors, setRandomColors] = useState<(string | null)[]>([]);
 
   // Fetch file data when the component mounts or folder/file changes.
   useEffect(() => {
@@ -26,7 +33,6 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectA
       .get<FileData>(`https://gtotest1.azurewebsites.net/api/Files/${folder}/${file}`)
       .then((response) => {
         setRawData(response.data);
-        
         setLoading(false);
       })
       .catch((err) => {
@@ -41,6 +47,8 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectA
     if (!rawData) return;
     const data = combineDataByHand(rawData);
     setCombinedData(data);
+    // Reset any random colors when new data is loaded.
+    setRandomColors([]);
   }, [rawData]);
 
   // Standard poker hand order (adjust as needed)
@@ -66,14 +74,51 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectA
 
   const parentPrefix = file.replace(".json", "");
 
+  // Expects an object of actions with probabilities (values as decimals summing to 1).
+  const selectRandomAction = (actions: { [action: string]: number }): string => {
+    const rand = Math.random();
+    let cumulative = 0;
+    for (const [action, probability] of Object.entries(actions)) {
+      cumulative += probability;
+      if (rand < cumulative) {
+        return action;
+      }
+    }
+    // Fallback (should not normally reach here if probabilities sum to 1)
+    return Object.keys(actions)[0];
+  };
+
+  // Function to calculate random fill colors.
+  const calculateRandomColors = () => {
+    const newColors = gridData.map((cellData) => {
+      if (!cellData) return null;
+      const chosenAction = selectRandomAction(cellData.actions);
+      return getColorForAction(chosenAction);
+    });
+    setRandomColors(newColors);
+  };
+
+  // When randomFillEnabled changes, recalc or reset random colors.
+  useEffect(() => {
+    if (randomFillEnabled) {
+      calculateRandomColors();
+    } else {
+      // Reset to original view (no random color override)
+      setRandomColors([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [randomFillEnabled, rawData, combinedData]);
+
   return (
     <div className="matrix-item">
       <div style={{ marginBottom: "50px" }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: "0px" }}>
           {rawData ? (
-            <h2 className=" decoration-solid font-bold mr-4 mb-1" style={{textShadow: "1px 1px 1px rgba(0, 0, 0, 0.7)",}}> 
-            {/* position and BB text */}
-              {rawData.Position} {rawData.bb}bb 
+            <h2
+              className="decoration-solid font-bold mr-4 mb-1"
+              style={{ textShadow: "1px 1px 1px rgba(0, 0, 0, 0.7)" }}
+            >
+              {rawData.Position} {rawData.bb}bb
             </h2>
           ) : (
             <h2 style={{ marginRight: "10px" }}>{file}</h2>
@@ -94,19 +139,26 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ folder, file, onSelectA
               gridTemplateColumns: "repeat(13, 1fr)",
               gridTemplateRows: "repeat(13, 1fr)",
               gap: "0px",
-              width: "400px", //width of whole 13x13 matrix
+              width: "400px", // width of whole 13x13 matrix
               maxWidth: "1000px",
             }}
           >
             {gridData.map((handData, index) =>
-              handData ? <HandCell key={index} data={handData} /> : <div key={index} />
+              handData ? (
+                <HandCell
+                  key={index}
+                  data={handData}
+                  randomFillColor={randomColors[index] || undefined}
+                />
+              ) : (
+                <div key={index} />
+              )
             )}
           </div>
         )}
       </div>
     </div>
   );
-  
 };
 
-export default DecisionMatrix;
+export default React.memo(DecisionMatrixComponent);
