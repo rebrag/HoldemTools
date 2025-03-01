@@ -1,5 +1,5 @@
 // MainApp.tsx
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import DecisionMatrix from "./DecisionMatrix";
 import FolderSelector from "./FolderSelector";
@@ -14,7 +14,6 @@ function App() {
   const [rootPrefix, setRootPrefix] = useState<string>("root");
   const [clickedRoot, setClickedRoot] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  // Global toggle for random fill.
   const [randomFillEnabled, setRandomFillEnabled] = useState<boolean>(false);
 
   // Fetch folders on mount.
@@ -65,54 +64,33 @@ function App() {
 
   // Filter files based on the current rootPrefix.
   const currentMatrixFiles = files.filter((file) => {
-    // Special handling for the root case
     if (rootPrefix === "root") {
-      const numPlayers = selectedFolder.split('_').length;
-      const maxSegments = numPlayers - 2;
-      const regex = new RegExp(`^0(?:\\.0){0,${maxSegments - 1}}\\.json$`);
-      return file === "root.json" || regex.test(file);
+      return file === "root.json" || /^0(?:\.0+)*\.json$/.test(file);
     }
-  
-    // Map certain node labels to their corresponding file prefix
-    let prefix = rootPrefix;
-    if (rootPrefix.toLowerCase() === "min") {
-      // For example, map "min" to "5.0"
-      prefix = "5.0";
-    }
-  
-    const regex = new RegExp(`^${prefix}(?:\\.0)*\\.json$`);
-    return regex.test(file);
+    const pattern = new RegExp(`^${rootPrefix}(?:\\.0+)*\\.json$`);
+    return pattern.test(file);
   });
-  
-  
 
-  // Handle action selection.
-  const handleSelectAction = (parentPrefix: string, action: string) => {
-    const mapping = actionToPrefixMap[action];
-    if (!mapping) {
-      setRootPrefix("root");
-      setClickedRoot("root");
-      return;
-    }
-    const numPlayers = selectedFolder.split('_').length;
-    const currentSegments = parentPrefix === "root" ? 0 : parentPrefix.split('.').length;
-    if (currentSegments + 1 > numPlayers - 2) {
-      return;
-    }
-    const newRoot = parentPrefix === "root" ? mapping : `${parentPrefix}.${mapping}`;
-    setRootPrefix(newRoot);
-    setClickedRoot(parentPrefix);
-  };
+  // Handle the action selection by converting the action string to a numeric prefix.
+  const handleSelectAction = useCallback(
+    (parentPrefix: string, action: string) => {
+      const mapping = actionToPrefixMap[action];
+      if (!mapping) {
+        setRootPrefix("root");
+        setClickedRoot("root");
+        return;
+      }
+      const newRoot = parentPrefix === "root" ? mapping : `${parentPrefix}.${mapping}`;
+      setRootPrefix(newRoot);
+      setClickedRoot(parentPrefix);
+    },
+    []
+  );
+
 
   const renderSingleDecisionMatrix = (file: string) => (
-    <div className="bg-gray-400 p-0 rounded-md w-[402px]">
-      <DecisionMatrix
-        key={file}
-        folder={selectedFolder}
-        file={file}
-        onSelectAction={handleSelectAction}
-        randomFillEnabled={randomFillEnabled}
-      />
+    <div className="bg-gray-400 p-0 rounded-md w-[400px]">
+      <DecisionMatrix key={file} folder={selectedFolder} file={file} onSelectAction={handleSelectAction} />
     </div>
   );
 
@@ -125,7 +103,7 @@ function App() {
 
       {/* Global toggle button at the top */}
       <div style={{ display: "flex", justifyContent: "center", marginBottom: "20px" }}>
-        
+        {/* Add any global controls if needed */}
       </div>
 
       {/* Main content */}
@@ -148,8 +126,8 @@ function App() {
               padding: "8px 16px",
               fontSize: "1rem",
               cursor: "pointer",
-              backgroundColor: "#007BFF", // A blue background
-              color: "#fff", // White text
+              backgroundColor: "#007BFF",
+              color: "#fff",
               border: "none",
               borderRadius: "4px",
               boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
@@ -171,6 +149,18 @@ function App() {
             <strong>Selected Folder: </strong>
             {selectedFolder}
           </div>
+
+          {/* Debugging Information
+          <div style={{ marginBottom: "10px" }}>
+            <strong>Current Root: </strong>
+            {rootPrefix}
+          </div>
+          {clickedRoot && (
+            <div style={{ marginBottom: "10px" }}>
+              <strong>Clicked Root: </strong>
+              {clickedRoot}
+            </div>
+      )} */}
 
           {/* Render the matrices */}
           <div className="matrix-grid pl-4 pr-4">

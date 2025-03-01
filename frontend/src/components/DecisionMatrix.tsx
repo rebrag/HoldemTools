@@ -9,10 +9,10 @@ interface DecisionMatrixProps {
   folder: string;
   file: string;
   onSelectAction: (parentPrefix: string, action: string) => void;
-  randomFillEnabled?: boolean;
+  randomFillEnabled?: boolean; // Updated prop name to match App.tsx
 }
 
-const DecisionMatrixComponent: React.FC<DecisionMatrixProps> = ({
+const DecisionMatrix: React.FC<DecisionMatrixProps> = ({
   folder,
   file,
   onSelectAction,
@@ -29,7 +29,6 @@ const DecisionMatrixComponent: React.FC<DecisionMatrixProps> = ({
   useEffect(() => {
     setLoading(true);
     axios
-      //.get<FileData>(`http://localhost:5192/api/Files/${folder}/${file}`)
       .get<FileData>(`https://gtotest1.azurewebsites.net/api/Files/${folder}/${file}`)
       .then((response) => {
         setRawData(response.data);
@@ -47,8 +46,6 @@ const DecisionMatrixComponent: React.FC<DecisionMatrixProps> = ({
     if (!rawData) return;
     const data = combineDataByHand(rawData);
     setCombinedData(data);
-    // Reset any random colors when new data is loaded.
-    setRandomColors([]);
   }, [rawData]);
 
   // Standard poker hand order (adjust as needed)
@@ -74,7 +71,7 @@ const DecisionMatrixComponent: React.FC<DecisionMatrixProps> = ({
 
   const parentPrefix = file.replace(".json", "");
 
-  // Expects an object of actions with probabilities (values as decimals summing to 1).
+  // Function to compute a weighted random action for a cell.
   const selectRandomAction = (actions: { [action: string]: number }): string => {
     const rand = Math.random();
     let cumulative = 0;
@@ -84,11 +81,10 @@ const DecisionMatrixComponent: React.FC<DecisionMatrixProps> = ({
         return action;
       }
     }
-    // Fallback (should not normally reach here if probabilities sum to 1)
-    return Object.keys(actions)[0];
+    return Object.keys(actions)[0]; // fallback
   };
 
-  // Function to calculate random fill colors.
+  // Calculate random colors for each cell.
   const calculateRandomColors = () => {
     const newColors = gridData.map((cellData) => {
       if (!cellData) return null;
@@ -98,12 +94,11 @@ const DecisionMatrixComponent: React.FC<DecisionMatrixProps> = ({
     setRandomColors(newColors);
   };
 
-  // When randomFillEnabled changes, recalc or reset random colors.
+  // When randomFillEnabled changes, recalculate random colors.
   useEffect(() => {
     if (randomFillEnabled) {
       calculateRandomColors();
     } else {
-      // Reset to original view (no random color override)
       setRandomColors([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -139,7 +134,7 @@ const DecisionMatrixComponent: React.FC<DecisionMatrixProps> = ({
               gridTemplateColumns: "repeat(13, 1fr)",
               gridTemplateRows: "repeat(13, 1fr)",
               gap: "0px",
-              width: "400px", // width of whole 13x13 matrix
+              width: "400px", //width of whole 13x13 matrix
               maxWidth: "1000px",
             }}
           >
@@ -161,4 +156,4 @@ const DecisionMatrixComponent: React.FC<DecisionMatrixProps> = ({
   );
 };
 
-export default React.memo(DecisionMatrixComponent);
+export default DecisionMatrix;

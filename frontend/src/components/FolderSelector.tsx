@@ -63,16 +63,20 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
 
   useEffect(() => {
     if (inputValue === "") {
-      setFilteredFolders(folders);
+      setFilteredFolders([...folders].sort((a, b) => a.length - b.length));
       setHighlightedIndex(-1);
     } else {
-      const filtered = folders.filter((folder) =>
-        folder.replace(/_/g, " ").toLowerCase().includes(inputValue.toLowerCase())
-      );
+      const filtered = folders
+        .filter((folder) =>
+          folder.replace(/_/g, " ").toLowerCase().includes(inputValue.toLowerCase())
+        )
+        .sort((a, b) => a.length - b.length); // Sort by string length
+  
       setFilteredFolders(filtered);
       setHighlightedIndex(filtered.length > 0 ? 0 : -1); // Default highlight first item
     }
   }, [inputValue, folders]);
+  
 
   const handleSelect = (folder: string) => {
     setInputValue("");
