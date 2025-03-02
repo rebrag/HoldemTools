@@ -106,7 +106,7 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({
 
   return (
     <div className="matrix-item">
-      <div style={{ marginBottom: "50px" }}>
+      <div style={{ marginBottom: "2px" }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: "0px" }}>
           {rawData ? (
             <h2

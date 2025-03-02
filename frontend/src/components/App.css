@@ -16,13 +16,13 @@
 
 .matrix-item {
   position: relative;
-  width: 400;  /* fixed width */
-  height: 318px; /* fixed height */
-  overflow: none; /* allow scrolling if content overflows */
+  width: fit-content; /* Automatically adjusts to content width */
+  height: auto; /* Adjust height dynamically */
   border: 1px solid #ccc;
   border-radius: 1px;
   box-sizing: border-box;
 }
+
 
 .decision-grid {
   grid-template-columns: repeat(13, 90px);

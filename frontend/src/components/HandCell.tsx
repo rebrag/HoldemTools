@@ -13,12 +13,12 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFillColor }) => {
       tabIndex={-1}
       style={{
         border: "1px solid #999",
-        height: "22px",
+        height: "22px", //determines
         position: "relative",
         width: "100%",
         userSelect: "none",
-        // If a random fill color is provided, apply it as the background.
         backgroundColor: randomFillColor || "transparent",
+        transition: "background-color 0.8s ease", // <-- This line adds the transition
       }}
     >
       {/* Only render the layered colored segments if not in random fill mode */}
