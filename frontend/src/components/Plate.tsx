@@ -1,16 +1,16 @@
-import React from "react";
-import ColorKey from "./ColorKey"; // Action buttons
-import HandCell from "./HandCell"; // Individual cell component
-import { HandCellData } from "../utils/utils";
+import React, { useEffect, useState, useMemo } from "react";
+import ColorKey from "./ColorKey";
+import HandCell from "./HandCell";
+import { HandCellData, getColorForAction } from "../utils/utils";
 
 interface PlateProps {
   position: string;
   bb: string;
   gridData: HandCellData[];
-  width?: number;  // Customizable width
-  height?: number; // Customizable height
+  width?: number;
+  height?: number;
   onSelectAction: (action: string) => void;
-  randomFillEnabled?: boolean;  // ✅ Add this prop
+  randomFillEnabled?: boolean;
 }
 
 // Standard poker hand order (13x13 grid)
@@ -34,34 +34,71 @@ const Plate: React.FC<PlateProps> = ({
   position,
   bb,
   gridData,
+  width = 400,
+  //height = 500,
   onSelectAction,
+  randomFillEnabled,
 }) => {
-  // Ensure gridData is sorted correctly according to handOrder
-  const orderedGridData = handOrder.map((hand) =>
-    gridData.find((item) => item.hand === hand) || null
-  );
+  const [randomColors, setRandomColors] = useState<(string | null)[]>([]);
+
+  const orderedGridData = useMemo(() => {
+    return handOrder.map(
+      (hand) => gridData.find((item) => item.hand === hand) || null
+    );
+  }, [gridData]);
+
+  // Function to pick a random weighted action
+  const selectRandomAction = (actions: { [action: string]: number }): string => {
+    const rand = Math.random();
+    let cumulative = 0;
+    for (const [action, probability] of Object.entries(actions)) {
+      cumulative += probability;
+      if (rand < cumulative) {
+        return action;
+      }
+    }
+    return String(Object.keys(actions)[0]); // Fallback to first action
+  };
+
+  useEffect(() => {
+    if (randomFillEnabled) {
+      const newColors = orderedGridData.map((cellData) => {
+        if (!cellData) return null;
+        const chosenAction = selectRandomAction(cellData.actions);
+        return getColorForAction(chosenAction);
+      });
+      setRandomColors(newColors);
+    } else {
+      setRandomColors([]);
+    }
+  // Now you can safely include orderedGridData as well
+  }, [randomFillEnabled, gridData, orderedGridData]);
 
   return (
-    <div className="plate-container flex flex-col items-center border rounded-xl shadow-md p-2 bg-white">
+    <div
+      className="plate-container flex flex-col items-center border rounded-xl shadow-md p-2 bg-white"
+      style={{ width }}
+    >
       {/* Header Section: Position + BB Info & ColorKey Side by Side */}
       <div className="flex w-full items-center justify-between px-4">
         {/* Position & BB Info */}
         <h2 className="whitespace-nowrap font-bold text-lg text-gray-800 pr-1">
           {position} {bb}bb
         </h2>
-  
+
         {/* Action Buttons (ColorKey) */}
-        <ColorKey
-          data={gridData}
-          onSelectAction={(action) => onSelectAction(action)}
-        />
+        <ColorKey data={gridData} onSelectAction={onSelectAction} />
       </div>
-  
+
       {/* 13x13 Grid */}
       <div className="grid-container grid grid-cols-13 w-full">
         {orderedGridData.map((handData, index) =>
           handData ? (
-            <HandCell key={index} data={handData} />
+            <HandCell
+              key={index}
+              data={handData}
+              randomFillColor={randomColors[index] || undefined} // ✅ Uses random colors when enabled
+            />
           ) : (
             <div key={index} className="empty-cell" />
           )
@@ -69,7 +106,6 @@ const Plate: React.FC<PlateProps> = ({
       </div>
     </div>
   );
-  
 };
 
 export default Plate;
