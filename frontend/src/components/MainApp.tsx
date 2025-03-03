@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
-import DecisionMatrix from "./DecisionMatrix";
+import Plate from "./Plate";
 import FolderSelector from "./FolderSelector";
 import RandomizeButton from "./RandomizeButton";
 import "./App.css";
@@ -14,9 +14,9 @@ function App() {
   const [rootPrefix, setRootPrefix] = useState<string>("root");
   const [clickedRoot, setClickedRoot] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  const [randomFillEnabled, setRandomFillEnabled] = useState<boolean>(false); // ✅ Global state for randomization
+  const [randomFillEnabled, setRandomFillEnabled] = useState<boolean>(false);
 
-  // Toggle function for randomization
+  // Toggle global randomization
   const toggleRandomization = () => {
     setRandomFillEnabled((prev) => !prev);
   };
@@ -51,9 +51,10 @@ function App() {
       });
   }, [selectedFolder]);
 
-  // Backspace functionality for resetting root
+  // Backspace resets the root prefix
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      console.log('Viewport width:', window.innerWidth);
       if (
         e.key === "Backspace" &&
         document.activeElement &&
@@ -61,6 +62,7 @@ function App() {
       ) {
         setRootPrefix("root");
         setClickedRoot("");
+        
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -76,7 +78,7 @@ function App() {
     return pattern.test(file);
   });
 
-  // Handle the action selection by converting the action string to a numeric prefix
+  // Convert action string to numeric prefix and update state
   const handleSelectAction = useCallback(
     (parentPrefix: string, action: string) => {
       const mapping = actionToPrefixMap[action];
@@ -93,25 +95,25 @@ function App() {
   );
 
   return (
-    <div className="min-h-screen relative p-4">
-      {/* Account info positioned at the top-right */}
+    <div className="min-h-screen relative p-3">
+      {/* Account info at top-right */}
       <div className="absolute z-10 top-4 right-4">
         <AccountMenu />
       </div>
 
-      {/* ✅ Global Randomize Button */}
-      <div className="flex justify-center mb-4">
-        <RandomizeButton
-          randomFillEnabled={randomFillEnabled}
-          setRandomFillEnabled={toggleRandomization} // ✅ Toggle function
-        />
-      </div>
+      {/* Global Randomize Button */}
+      <div className="absolute flex top-4 left-4">
+  <RandomizeButton
+    randomFillEnabled={randomFillEnabled}
+    setRandomFillEnabled={toggleRandomization}
+  />
+</div>
+
 
       <h1 className="text-3xl font-bold mb-4 text-center">GTO Lite</h1>
       {error && <div style={{ color: "red" }}>{error}</div>}
 
       <div className="flex-grow">
-        {/* Folder selector */}
         <FolderSelector
           folders={folders}
           onFolderSelect={(folder) => {
@@ -121,33 +123,35 @@ function App() {
           }}
         />
 
-        {/* Display selected folder */}
         <div className="mt-1 cursor-unselectable mb-2">
           <strong>Selected Folder: </strong> {selectedFolder}
         </div>
 
-        {/* Render Decision Matrices */}
-        <div>
+        <div className="grid grid-cols-1 gap-0 
+        [@media(min-width:650px)]:grid-cols-2 
+        [@media(min-width:950px)]:grid-cols-3 
+        [@media(min-width:1200px)]:grid-cols-4">
           {clickedRoot && (
-            <DecisionMatrix
+            <Plate
               key={clickedRoot}
               folder={selectedFolder}
               file={`${clickedRoot}.json`}
               onSelectAction={handleSelectAction}
-              randomFillEnabled={randomFillEnabled} // ✅ Pass global random state
+              randomFillEnabled={randomFillEnabled}
             />
           )}
-
           {[...currentMatrixFiles].reverse().map((file) => (
-            <DecisionMatrix
+            <Plate
               key={file}
               folder={selectedFolder}
               file={file}
               onSelectAction={handleSelectAction}
-              randomFillEnabled={randomFillEnabled} // ✅ Pass global random state
+              randomFillEnabled={randomFillEnabled}
             />
           ))}
         </div>
+
+
       </div>
     </div>
   );

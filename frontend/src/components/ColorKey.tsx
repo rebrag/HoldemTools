@@ -1,4 +1,3 @@
-// src/components/ColorKey.tsx
 import React from "react";
 import { HandCellData, getColorForAction } from "../utils/utils";
 
@@ -8,12 +7,12 @@ interface ColorKeyProps {
 }
 
 const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
-  // Extract a unique set of actions from the grid data.
+  // Get a unique set of actions from the grid data (ignoring "Position")
   const uniqueActions = Array.from(
     data.reduce((set, cell) => {
       Object.keys(cell.actions)
-        .filter(action => action !== "Position")
-        .forEach(action => set.add(action));
+        .filter((action) => action !== "Position")
+        .forEach((action) => set.add(action));
       return set;
     }, new Set<string>())
   );
@@ -25,47 +24,24 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
     "Raise 75%": "40075",
     "Raise 50%": "40050",
     // add other mappings as needed
-  };  
+  };
 
   return (
-    <div
-      style={{
-        display: "flex",
-        gap: "5px",
-        marginBottom: "3px",
-        alignItems: "center",
-        //border: "1px solid #ccc"
-      }}
-    >
+    <div className="flex gap-1 mb-1 items-center">
       {uniqueActions.slice().reverse().map((action) => (
         <div
-        key={action}
-        style={{
-          display: "flex",
-          cursor: "pointer",
-        }}
-        onClick={() => {
-          onSelectAction(actionMapping[action] || action)
-        }}
-        title={`Click to see reactions to ${action}`}
-      >
-        <div
-          style={{
-            width: "70px",
-            height: "30px",
-            backgroundColor: getColorForAction(action),
-            //border: "1px solid #ccc",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            borderRadius: "7px",
-          }}
+          key={action}
+          className="flex cursor-pointer"
+          onClick={() => onSelectAction(actionMapping[action] || action)}
+          title={`Click to see reactions to ${action}`}
         >
-
-          <span style={{ color: "#fff", fontSize: "13px" }}>{action}</span>
+          <div
+            className="w-[50px] h-[30px] flex items-center justify-center rounded-md"
+            style={{ backgroundColor: getColorForAction(action) }}
+          >
+            <span className="text-white text-[10px]">{action}</span>
+          </div>
         </div>
-      </div>
-      
       ))}
     </div>
   );

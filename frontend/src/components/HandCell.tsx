@@ -11,19 +11,11 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFillColor }) => {
   return (
     <div
       tabIndex={-1}
-      style={{
-        border: "1px solid #999",
-        height: "22px", //determines
-        position: "relative",
-        width: "100%",
-        userSelect: "none",
-        backgroundColor: randomFillColor || "transparent",
-        transition: "background-color 0.8s ease", // <-- This line adds the transition
-      }}
+      className="w-full h-full aspect-square border border-gray-400 relative select-none transition-colors duration-700"
+      style={{ backgroundColor: randomFillColor || "transparent" }}
     >
-      {/* Only render the layered colored segments if not in random fill mode */}
       {!randomFillColor && (
-        <div style={{ display: "flex", height: "100%", width: "100%" }}>
+        <div className="flex h-full w-full">
           {Object.entries(data.actions)
             .reverse()
             .map(([action, strategy]) => {
@@ -31,27 +23,15 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFillColor }) => {
               return (
                 <div
                   key={action}
-                  style={{
-                    width: `${width}%`,
-                    backgroundColor: getColorForAction(action),
-                  }}
+                  style={{ width: `${width}%`, backgroundColor: getColorForAction(action) }}
                 />
               );
             })}
         </div>
       )}
       <div
-        style={{
-          position: "absolute",
-          left: "50%",
-          top: "50%",
-          transform: "translate(-50%, -50%)",
-          color: "white",
-          pointerEvents: "none",
-          fontFamily: "Arial-Narrow, sans-serif",
-          fontSize: "0.7rem",
-          textShadow: "3px 3px 6px rgba(0, 0, 0, 0.7)",
-        }}
+        className="absolute inset-0 flex items-center justify-center text-white text-[8px] md:text-[10px] font-semibold"
+        style={{ textShadow: "3px 3px 6px rgba(0, 0, 0, 0.7)" }}
       >
         {data.hand}
       </div>
