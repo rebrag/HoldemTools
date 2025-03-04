@@ -16,10 +16,10 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [randomFillEnabled, setRandomFillEnabled] = useState<boolean>(false);
 
-  // Toggle global randomization
-  const toggleRandomization = () => {
+  // Toggle global randomization using useCallback for a stable reference.
+  const toggleRandomization = useCallback(() => {
     setRandomFillEnabled((prev) => !prev);
-  };
+  }, []);
 
   // Fetch folders on mount
   useEffect(() => {
@@ -41,7 +41,9 @@ function App() {
   useEffect(() => {
     if (!selectedFolder) return;
     axios
-      .get<string[]>(`https://gtotest1.azurewebsites.net/api/Files/listJSONs/${selectedFolder}`)
+      .get<string[]>(
+        `https://gtotest1.azurewebsites.net/api/Files/listJSONs/${selectedFolder}`
+      )
       .then((response) => {
         setFiles(response.data);
       })
@@ -54,7 +56,7 @@ function App() {
   // Backspace resets the root prefix
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      console.log('Viewport width:', window.innerWidth);
+      console.log("Viewport width:", window.innerWidth);
       if (
         e.key === "Backspace" &&
         document.activeElement &&
@@ -62,12 +64,26 @@ function App() {
       ) {
         setRootPrefix("root");
         setClickedRoot("");
-        
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
+
+  // Toggle randomization when the 'r' key is pressed (if focus is not on an input/textarea)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.key.toLowerCase() === "r" &&
+        document.activeElement &&
+        !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)
+      ) {
+        toggleRandomization();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [toggleRandomization]);
 
   // Filter files based on the current rootPrefix
   const currentMatrixFiles = files.filter((file) => {
@@ -87,7 +103,8 @@ function App() {
         setClickedRoot("root");
         return;
       }
-      const newRoot = parentPrefix === "root" ? mapping : `${parentPrefix}.${mapping}`;
+      const newRoot =
+        parentPrefix === "root" ? mapping : `${parentPrefix}.${mapping}`;
       setRootPrefix(newRoot);
       setClickedRoot(parentPrefix);
     },
@@ -103,12 +120,11 @@ function App() {
 
       {/* Global Randomize Button */}
       <div className="absolute flex top-4 left-4">
-  <RandomizeButton
-    randomFillEnabled={randomFillEnabled}
-    setRandomFillEnabled={toggleRandomization}
-  />
-</div>
-
+        <RandomizeButton
+          randomFillEnabled={randomFillEnabled}
+          setRandomFillEnabled={toggleRandomization}
+        />
+      </div>
 
       <h1 className="text-3xl font-bold mb-4 text-center">GTO Lite</h1>
       {error && <div style={{ color: "red" }}>{error}</div>}
@@ -127,10 +143,12 @@ function App() {
           <strong>Selected Folder: </strong> {selectedFolder}
         </div>
 
-        <div className="grid grid-cols-1 gap-0 
+        <div
+          className="grid grid-cols-1 gap-0 
         [@media(min-width:650px)]:grid-cols-2 
         [@media(min-width:950px)]:grid-cols-3 
-        [@media(min-width:1200px)]:grid-cols-4">
+        [@media(min-width:1200px)]:grid-cols-4"
+        >
           {clickedRoot && (
             <Plate
               key={clickedRoot}
@@ -140,18 +158,18 @@ function App() {
               randomFillEnabled={randomFillEnabled}
             />
           )}
-          {[...currentMatrixFiles].reverse().map((file) => (
-            <Plate
-              key={file}
-              folder={selectedFolder}
-              file={file}
-              onSelectAction={handleSelectAction}
-              randomFillEnabled={randomFillEnabled}
-            />
-          ))}
+          {[...currentMatrixFiles]
+            .reverse()
+            .map((file) => (
+              <Plate
+                key={file}
+                folder={selectedFolder}
+                file={file}
+                onSelectAction={handleSelectAction}
+                randomFillEnabled={randomFillEnabled}
+              />
+            ))}
         </div>
-
-
       </div>
     </div>
   );

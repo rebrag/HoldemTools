@@ -1,3 +1,4 @@
+// src/components/AuthForm.tsx
 import { useState } from "react";
 import { auth, createUserWithEmailAndPassword, signInWithEmailAndPassword } from "../firebase";
 import { useNavigate } from "react-router-dom";
@@ -53,40 +54,44 @@ const AuthForm = () => {
   };
 
   return (
-    <div className="max-w-md mx-auto p-8 bg-white shadow-lg rounded-lg mt-[25%]">
-      <h2 className="text-2xl font-bold mb-6 text-center">{isLogin ? "GTO Lite Login" : "Sign Up"}</h2>
-      {error && <p className="text-red-500 mb-4">{error}</p>}
-      {message && <p className="text-green-500 mb-4">{message}</p>}
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <input
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="Email"
-          required
-          className="px-4 py-2 border border-gray-300 rounded focus:outline-none focus:border-blue-500 transition duration-200 ease-in-out hover:border-blue-400"
-        />
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Password"
-          required
-          className="px-4 py-2 border border-gray-300 rounded focus:outline-none focus:border-blue-500 transition duration-200 ease-in-out hover:border-blue-400"
-        />
+    <div className="min-h-screen flex items-center justify-center p-4">
+      <div className="max-w-md w-full p-8 bg-white shadow-lg rounded-lg">
+        <h2 className="text-2xl font-bold mb-6 text-center">
+          {isLogin ? "GTO Lite Login" : "Sign Up"}
+        </h2>
+        {error && <p className="text-red-500 mb-4">{error}</p>}
+        {message && <p className="text-green-500 mb-4">{message}</p>}
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="Email"
+            required
+            className="px-4 py-2 border border-gray-300 rounded focus:outline-none focus:border-blue-500 transition duration-200 ease-in-out hover:border-blue-400"
+          />
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Password"
+            required
+            className="px-4 py-2 border border-gray-300 rounded focus:outline-none focus:border-blue-500 transition duration-200 ease-in-out hover:border-blue-400"
+          />
+          <button
+            type="submit"
+            className="cursor-pointer px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition duration-200 ease-in-out"
+          >
+            {isLogin ? "Login" : "Sign Up"}
+          </button>
+        </form>
         <button
-          type="submit"
-          className="cursor-pointer px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition duration-200 ease-in-out"
+          onClick={() => setIsLogin((prev) => !prev)}
+          className="mt-6 text-blue-500 hover:underline cursor-pointer"
         >
-          {isLogin ? "Login" : "Sign Up"}
+          {isLogin ? "Need an account? Sign Up" : "Already have an account? Login"}
         </button>
-      </form>
-      <button
-        onClick={() => setIsLogin((prev) => !prev)}
-        className="mt-6 text-blue-500 hover:underline cursor-pointer"
-      >
-        {isLogin ? "Need an account? Sign Up" : "Already have an account? Login"}
-      </button>
+      </div>
     </div>
   );
 };

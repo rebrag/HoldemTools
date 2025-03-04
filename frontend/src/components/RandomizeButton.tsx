@@ -16,7 +16,7 @@ const RandomizeButton: React.FC<RandomizeButtonProps> = ({
         randomFillEnabled ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"
       }`}
     >
-      {randomFillEnabled ? "Disable Randomization" : "Enable Randomization"}
+      {randomFillEnabled ? "Disable Randomization (r)" : "Enable Randomization (r)"}
     </button>
   );
 };

@@ -51,7 +51,7 @@ const Plate: React.FC<PlateProps> = ({ folder, file, onSelectAction, randomFillE
       {!loading && !error && rawData && (
         <>
           {/* Header: Position, BB Info and ColorKey */}
-          <div className="flex w-full items-center justify-between px-0 mb-0">
+          <div className="select-none flex w-full items-center justify-between px-0 mb-0">
             <h2 className="whitespace-nowrap font-bold text-lg text-gray-800">
               {rawData.Position || file} {rawData.bb}bb
             </h2>

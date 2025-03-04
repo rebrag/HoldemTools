@@ -2,8 +2,8 @@
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { auth } from "./firebase";
-import AuthForm from "./components/AuthForm";
-import MainApp from "./components/MainApp";
+import AuthForm from "./components/Login-Signup";
+import MainApp from "./components/Main";
 import VerifyEmailPrompt from "./components/VerifyEmailPrompt";
 
 function App() {
