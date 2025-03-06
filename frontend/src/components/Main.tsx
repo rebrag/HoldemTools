@@ -121,18 +121,16 @@ function MainApp() {
       />
 
       {/* Main Content */}
-      <div className="pt-15 p-3">
+      <div className="pt-18 p-1">
+        {/* Optionally, add a header */}
         {/* <h1 className="text-3xl font-bold mb-4 text-center">GTO Lite</h1> */}
         {error && <div style={{ color: "red" }}>{error}</div>}
         <div className="flex-grow">
-          <div className="mt-1 mb-2">
-            <strong>Selected Folder: </strong> {selectedFolder}
-          </div>
+          {/* Grid container using auto-fit with a minmax of 190px */}
           <div
-            className="grid grid-cols-1 gap-0 
-              [@media(min-width:650px)]:grid-cols-2 
-              [@media(min-width:950px)]:grid-cols-3 
-              [@media(min-width:1200px)]:grid-cols-4"
+            className="grid gap-2 
+                      max-[440px]:grid-cols-2 
+                      min-[441px]:grid-cols-[repeat(auto-fit,minmax(300px,1fr))]"
           >
             {clickedRoot && (
               <Plate

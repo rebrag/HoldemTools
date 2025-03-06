@@ -1,4 +1,4 @@
-// Plate.tsx
+// src/components/Plate.tsx
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { FileData, combineDataByHand, HandCellData } from "../utils/utils";
@@ -18,7 +18,7 @@ const Plate: React.FC<PlateProps> = ({ folder, file, onSelectAction, randomFillE
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load file data when folder/file change
+  // Load file data when folder/file changes
   useEffect(() => {
     setLoading(true);
     axios
@@ -45,14 +45,19 @@ const Plate: React.FC<PlateProps> = ({ folder, file, onSelectAction, randomFillE
   const parentPrefix = file.replace(".json", "");
 
   return (
-    <div className="mb-2 w-[300px] mx-auto border rounded-xl shadow-md p-1.5 bg-white">
+    <div
+      className="mb-2 mx-auto border rounded-xl shadow-md p-1.5 bg-white
+                 w-[300px] max-[440px]:w-[190px]
+                 transition-all duration-200
+                 text-base max-[440px]:text-[0.8rem]"
+    >
       {loading && <p>Loading data...</p>}
       {error && <p className="text-red-500">{error}</p>}
       {!loading && !error && rawData && (
         <>
           {/* Header: Position, BB Info and ColorKey */}
-          <div className="select-none flex w-full items-center justify-between px-0 mb-0">
-            <h2 className="whitespace-nowrap font-bold text-lg text-gray-800">
+          <div className="select-none flex w-full items-center justify-between">
+            <h2 className="whitespace-nowrap font-bold text-lg max-[440px]:text-sm text-gray-800">
               {rawData.Position || file} {rawData.bb}bb
             </h2>
             <ColorKey

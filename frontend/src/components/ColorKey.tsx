@@ -1,3 +1,4 @@
+// src/components/ColorKey.tsx
 import React from "react";
 import { HandCellData, getColorForAction } from "../utils/utils";
 
@@ -27,7 +28,7 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
   };
 
   return (
-    <div className="flex gap-1 mb-1 items-center">
+    <div className="flex gap-0.5 mb-1 items-center">
       {uniqueActions.slice().reverse().map((action) => (
         <div
           key={action}
@@ -36,10 +37,13 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
           title={`Click to see reactions to ${action}`}
         >
           <div
-            className="w-[50px] h-[30px] flex items-center justify-center rounded-md"
+            className="w-[50px] h-[30px] flex items-center justify-center rounded-md hover:border-3 hover:border-black
+                       max-[440px]:w-[32px] max-[440px]:h-[24px]"
             style={{ backgroundColor: getColorForAction(action) }}
           >
-            <span className="text-white text-[10px]">{action}</span>
+            <span className="text-white text-[10px] max-[420px]:text-[8px] whitespace-nowrap">
+              {action}
+            </span>
           </div>
         </div>
       ))}
