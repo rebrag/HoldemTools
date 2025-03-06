@@ -20,21 +20,21 @@ const AccountMenu = () => {
   };
 
   return (
-    <div className="p-2 text-right">
-      {user ? (
-        <div className="inline-flex items-center space-x-2 border border-gray-200 rounded p-2">
-          <span className="text-sm font-bold">Account:</span>
-          <span className="text-sm">{user.email}</span>
-          <button
-            onClick={handleLogout}
-            className="cursor-pointer text-xs text-blue-500 hover:underline"
-          >
-            Logout
-          </button>
-        </div>
-      ) : (
-        <div className="text-sm text-gray-600">No user signed in.</div>
-      )}
+    <div>
+      {/* Desktop view: show full account info */}
+      <div className="hidden sm:flex items-center space-x-2">
+        <span className="text-sm font-bold">Account:</span>
+        <span className="text-sm">{user?.email}</span>
+        <button onClick={handleLogout} className="text-xs text-blue-500 hover:underline">
+          Logout
+        </button>
+      </div>
+      {/* Mobile view: show only a small logout button */}
+      <div className="flex sm:hidden ">
+        <button onClick={handleLogout} className="text-xs text-blue-500 cursor-pointer hover:underline">
+          Logout
+        </button>
+      </div>
       {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
     </div>
   );

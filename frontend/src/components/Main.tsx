@@ -1,13 +1,12 @@
+// src/components/Main.tsx
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import Plate from "./Plate";
-import FolderSelector from "./FolderSelector";
-import RandomizeButton from "./RandomizeButton";
+import NavBar from "./NavBar";
 import "./App.css";
 import { actionToPrefixMap } from "../constants";
-import AccountMenu from "./AccountMenu";
 
-function App() {
+function MainApp() {
   const [folders, setFolders] = useState<string[]>([]);
   const [files, setFiles] = useState<string[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<string>("");
@@ -21,7 +20,7 @@ function App() {
     setRandomFillEnabled((prev) => !prev);
   }, []);
 
-  // Fetch folders on mount
+  // Fetch folders on mount.
   useEffect(() => {
     axios
       .get<string[]>("https://gtotest1.azurewebsites.net/api/Files/folders")
@@ -37,13 +36,11 @@ function App() {
       });
   }, []);
 
-  // Fetch files when selectedFolder changes
+  // Fetch files when selectedFolder changes.
   useEffect(() => {
     if (!selectedFolder) return;
     axios
-      .get<string[]>(
-        `https://gtotest1.azurewebsites.net/api/Files/listJSONs/${selectedFolder}`
-      )
+      .get<string[]>(`https://gtotest1.azurewebsites.net/api/Files/listJSONs/${selectedFolder}`)
       .then((response) => {
         setFiles(response.data);
       })
@@ -53,10 +50,9 @@ function App() {
       });
   }, [selectedFolder]);
 
-  // Backspace resets the root prefix
+  // Backspace resets the root prefix.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      console.log("Viewport width:", window.innerWidth);
       if (
         e.key === "Backspace" &&
         document.activeElement &&
@@ -85,7 +81,7 @@ function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [toggleRandomization]);
 
-  // Filter files based on the current rootPrefix
+  // Filter files based on the current rootPrefix.
   const currentMatrixFiles = files.filter((file) => {
     if (rootPrefix === "root") {
       return file === "root.json" || /^0(?:\.0+)*\.json$/.test(file);
@@ -94,7 +90,7 @@ function App() {
     return pattern.test(file);
   });
 
-  // Convert action string to numeric prefix and update state
+  // Convert action string to numeric prefix and update state.
   const handleSelectAction = useCallback(
     (parentPrefix: string, action: string) => {
       const mapping = actionToPrefixMap[action];
@@ -103,8 +99,7 @@ function App() {
         setClickedRoot("root");
         return;
       }
-      const newRoot =
-        parentPrefix === "root" ? mapping : `${parentPrefix}.${mapping}`;
+      const newRoot = parentPrefix === "root" ? mapping : `${parentPrefix}.${mapping}`;
       setRootPrefix(newRoot);
       setClickedRoot(parentPrefix);
     },
@@ -112,67 +107,58 @@ function App() {
   );
 
   return (
-    <div className="min-h-screen relative p-3">
-      {/* Account info at top-right */}
-      <div className="absolute z-10 top-4 right-4">
-        <AccountMenu />
-      </div>
+    <div className="min-h-screen relative">
+      {/* Fixed Navigation Bar */}
+      <NavBar
+        randomFillEnabled={randomFillEnabled}
+        toggleRandomization={toggleRandomization}
+        folders={folders}
+        onFolderSelect={(folder) => {
+          setSelectedFolder(folder);
+          setRootPrefix("root");
+          setClickedRoot("");
+        }}
+      />
 
-      {/* Global Randomize Button */}
-      <div className="absolute flex top-4 left-4">
-        <RandomizeButton
-          randomFillEnabled={randomFillEnabled}
-          setRandomFillEnabled={toggleRandomization}
-        />
-      </div>
-
-      <h1 className="text-3xl font-bold mb-4 text-center">GTO Lite</h1>
-      {error && <div style={{ color: "red" }}>{error}</div>}
-
-      <div className="flex-grow">
-        <FolderSelector
-          folders={folders}
-          onFolderSelect={(folder) => {
-            setSelectedFolder(folder);
-            setRootPrefix("root");
-            setClickedRoot("");
-          }}
-        />
-
-        <div className="mt-1 cursor-unselectable mb-2">
-          <strong>Selected Folder: </strong> {selectedFolder}
-        </div>
-
-        <div
-          className="grid grid-cols-1 gap-0 
-        [@media(min-width:650px)]:grid-cols-2 
-        [@media(min-width:950px)]:grid-cols-3 
-        [@media(min-width:1200px)]:grid-cols-4"
-        >
-          {clickedRoot && (
-            <Plate
-              key={clickedRoot}
-              folder={selectedFolder}
-              file={`${clickedRoot}.json`}
-              onSelectAction={handleSelectAction}
-              randomFillEnabled={randomFillEnabled}
-            />
-          )}
-          {[...currentMatrixFiles]
-            .reverse()
-            .map((file) => (
+      {/* Main Content */}
+      <div className="pt-15 p-3">
+        {/* <h1 className="text-3xl font-bold mb-4 text-center">GTO Lite</h1> */}
+        {error && <div style={{ color: "red" }}>{error}</div>}
+        <div className="flex-grow">
+          <div className="mt-1 mb-2">
+            <strong>Selected Folder: </strong> {selectedFolder}
+          </div>
+          <div
+            className="grid grid-cols-1 gap-0 
+              [@media(min-width:650px)]:grid-cols-2 
+              [@media(min-width:950px)]:grid-cols-3 
+              [@media(min-width:1200px)]:grid-cols-4"
+          >
+            {clickedRoot && (
               <Plate
-                key={file}
+                key={clickedRoot}
                 folder={selectedFolder}
-                file={file}
+                file={`${clickedRoot}.json`}
                 onSelectAction={handleSelectAction}
                 randomFillEnabled={randomFillEnabled}
               />
-            ))}
+            )}
+            {[...currentMatrixFiles]
+              .reverse()
+              .map((file) => (
+                <Plate
+                  key={file}
+                  folder={selectedFolder}
+                  file={file}
+                  onSelectAction={handleSelectAction}
+                  randomFillEnabled={randomFillEnabled}
+                />
+              ))}
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-export default App;
+export default MainApp;

@@ -1,22 +1,27 @@
+// src/components/RandomizeButton.tsx
 import React from "react";
 
 interface RandomizeButtonProps {
   randomFillEnabled: boolean;
-  setRandomFillEnabled: (enabled: boolean) => void;
+  setRandomFillEnabled: () => void;
+  square?: boolean;
 }
 
 const RandomizeButton: React.FC<RandomizeButtonProps> = ({
   randomFillEnabled,
   setRandomFillEnabled,
+  square = false,
 }) => {
   return (
     <button
-      onClick={() => setRandomFillEnabled(!randomFillEnabled)}
-      className={`px-4 py-2 rounded-lg font-bold text-white transition ${
-        randomFillEnabled ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"
+      onClick={setRandomFillEnabled}
+      className={`rounded transition duration-200 ease-in-out ${
+        square
+          ? "w-10 h-10 text-sm bg-green-500 hover:bg-green-600"
+          : "px-4 py-2 text-sm bg-green-500 hover:bg-green-600"
       }`}
     >
-      {randomFillEnabled ? "Disable Randomization (r)" : "Enable Randomization (r)"}
+      {square ? "R" : randomFillEnabled ? "Disable Random" : "Randomize"}
     </button>
   );
 };
