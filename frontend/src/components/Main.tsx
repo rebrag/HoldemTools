@@ -128,7 +128,7 @@ function MainApp() {
         <div className="flex-grow">
           {/* Grid container using auto-fit with a minmax of 190px */}
           <div
-            className="grid gap-2 
+            className="grid gap-1 
                       max-[440px]:grid-cols-2 
                       min-[441px]:grid-cols-[repeat(auto-fit,minmax(300px,1fr))]"
           >

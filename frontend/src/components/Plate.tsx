@@ -46,7 +46,7 @@ const Plate: React.FC<PlateProps> = ({ folder, file, onSelectAction, randomFillE
 
   return (
     <div
-      className="mb-2 mx-auto border rounded-xl shadow-md p-1.5 bg-white
+      className="mb-0 mx-auto border rounded-xl shadow-md p-1.5 bg-white
                  w-[300px] max-[440px]:w-[190px]
                  transition-all duration-200
                  text-base max-[440px]:text-[0.8rem]"
