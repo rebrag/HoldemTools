@@ -37,11 +37,11 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
           title={`Click to see reactions to ${action}`}
         >
           <div
-            className="w-[50px] h-[30px] flex items-center justify-center rounded-md hover:border-3 hover:border-black
-                       max-[440px]:w-[32px] max-[440px]:h-[24px]"
+            className="w-[55px] h-[30px] flex items-center justify-center rounded-md hover:border-3 hover:border-black
+                       max-[440px]:w-[33px] max-[440px]:h-[24px]"
             style={{ backgroundColor: getColorForAction(action) }}
           >
-            <span className="text-white text-[10px] max-[420px]:text-[8px] whitespace-nowrap">
+            <span className="text-white text-[10px] max-[440px]:text-[8px] whitespace-nowrap">
               {action}
             </span>
           </div>

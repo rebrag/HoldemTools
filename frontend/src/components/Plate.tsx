@@ -46,10 +46,8 @@ const Plate: React.FC<PlateProps> = ({ folder, file, onSelectAction, randomFillE
 
   return (
     <div
-      className="mb-0 mx-auto border rounded-xl shadow-md p-1.5 bg-white
-                 w-[300px] max-[440px]:w-[190px]
-                 transition-all duration-200
-                 text-base max-[440px]:text-[0.8rem]"
+      className="mb-0 mx-auto border rounded-[6px] shadow-md p-1 bg-white
+                 w-full transition-all duration-200 text-base"
     >
       {loading && <p>Loading data...</p>}
       {error && <p className="text-red-500">{error}</p>}
@@ -57,7 +55,7 @@ const Plate: React.FC<PlateProps> = ({ folder, file, onSelectAction, randomFillE
         <>
           {/* Header: Position, BB Info and ColorKey */}
           <div className="select-none flex w-full items-center justify-between">
-            <h2 className="whitespace-nowrap font-bold text-lg max-[440px]:text-sm text-gray-800">
+            <h2 className="whitespace-nowrap font-bold text-lg max-[440px]:text-[11px] text-gray-800">
               {rawData.Position || file} {rawData.bb}bb
             </h2>
             <ColorKey
