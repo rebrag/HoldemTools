@@ -60,6 +60,18 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   const [filteredFolders, setFilteredFolders] = useState<string[]>(folders);
   const [showDropdown, setShowDropdown] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState<number>(-1);
+  
+  // State to track if the viewport width is less than 440
+  const [isSmallViewport, setIsSmallViewport] = useState(window.innerWidth < 440);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsSmallViewport(window.innerWidth < 440);
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   useEffect(() => {
     if (inputValue === "") {
@@ -154,7 +166,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
                   onClick={() => handleSelect(folder)}
                   className={`px-4 py-2 cursor-pointer hover:bg-gray-100 border-b last:border-0 ${
                     highlightedIndex === index ? "bg-blue-200" : ""
-                  }`}
+                  } ${isSmallViewport ? "text-xs" : ""}`}
                 >
                   {highlightMatch(displayName, inputValue)}
                 </li>

@@ -9,10 +9,18 @@ interface PlateProps {
   folder: string;
   file: string;
   onSelectAction: (parentPrefix: string, action: string) => void;
+  // Optional callback to update history when a colorkey is clicked
+  onColorKeyClick?: (newColorKey: string) => void;
   randomFillEnabled?: boolean;
 }
 
-const Plate: React.FC<PlateProps> = ({ folder, file, onSelectAction, randomFillEnabled }) => {
+const Plate: React.FC<PlateProps> = ({
+  folder,
+  file,
+  onSelectAction,
+  onColorKeyClick,
+  randomFillEnabled,
+}) => {
   const [rawData, setRawData] = useState<FileData | null>(null);
   const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
   const [loading, setLoading] = useState(false);
@@ -60,7 +68,14 @@ const Plate: React.FC<PlateProps> = ({ folder, file, onSelectAction, randomFillE
             </h2>
             <ColorKey
               data={combinedData}
-              onSelectAction={(action) => onSelectAction(parentPrefix, action)}
+              onSelectAction={(action) => {
+                // Call the main onSelectAction with the parent prefix and action
+                onSelectAction(parentPrefix, action);
+                // Additionally, if provided, call onColorKeyClick to update history
+                if (onColorKeyClick) {
+                  onColorKeyClick(action);
+                }
+              }}
             />
           </div>
           {/* DecisionMatrix (grid of hand cells) */}
