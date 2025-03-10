@@ -7,6 +7,7 @@ import "./App.css";
 import { actionToPrefixMap } from "../constants";
 
 function MainApp() {
+  // ...existing states...
   const [folders, setFolders] = useState<string[]>([]);
   const [files, setFiles] = useState<string[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<string>("");
@@ -15,6 +16,9 @@ function MainApp() {
   const [error, setError] = useState<string | null>(null);
   const [randomFillEnabled, setRandomFillEnabled] = useState<boolean>(false);
   const [windowWidth, setWindowWidth] = useState<number>(window.innerWidth);
+  // New state to toggle view mode
+  const [isSpiralView, setIsSpiralView] = useState<boolean>(true);
+  
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
   // Push updated state to browser history.
@@ -113,24 +117,21 @@ function MainApp() {
   }, []);
 
   // Compute the maximum allowed number of ".0" groups based on the folder name.
-// For example, if the folder name is "25LJ_25HJ_25CO_20BTN_25SB_8BB", then there are 6 segments,
-// so we allow at most 6 - 1 = 5 groups of ".0".
-const maxZeros = useMemo(() => {
-  return selectedFolder ? selectedFolder.split("_").length - 1 : 0;
-}, [selectedFolder]);
+  const maxZeros = useMemo(() => {
+    return selectedFolder ? selectedFolder.split("_").length - 1 : 0;
+  }, [selectedFolder]);
 
-// Filter files based on the current rootPrefix.
-const currentMatrixFiles = useMemo(() => {
-  return files.filter((file) => {
-    if (rootPrefix === "root") {
-      const pattern = new RegExp(`^0(?:\\.0){0,${maxZeros}}\\.json$`);
-      return file === "root.json" || pattern.test(file);
-    }
-    const pattern = new RegExp(`^${rootPrefix}(?:\\.0){0,${maxZeros}}\\.json$`);
-    return pattern.test(file);
-  });
-}, [files, rootPrefix, maxZeros]);
-
+  // Filter files based on the current rootPrefix.
+  const currentMatrixFiles = useMemo(() => {
+    return files.filter((file) => {
+      if (rootPrefix === "root") {
+        const pattern = new RegExp(`^0(?:\\.0){0,${maxZeros}}\\.json$`);
+        return file === "root.json" || pattern.test(file);
+      }
+      const pattern = new RegExp(`^${rootPrefix}(?:\\.0){0,${maxZeros}}\\.json$`);
+      return pattern.test(file);
+    });
+  }, [files, rootPrefix, maxZeros]);
 
   // Combine the clickedRoot file with currentMatrixFiles.
   const displayFiles = useMemo(() => {
@@ -200,6 +201,16 @@ const currentMatrixFiles = useMemo(() => {
     return gridArray;
   }, [displayFiles, gridRows, gridCols]);
 
+  // Determine which order to render based on view mode.
+  const finalFiles = useMemo(() => {
+    return isSpiralView ? orderedFiles : displayFiles;
+  }, [isSpiralView, orderedFiles, displayFiles]);
+
+  // Toggle view mode (to be triggered by a button in the NavBar)
+  const toggleViewMode = useCallback(() => {
+    setIsSpiralView((prev) => !prev);
+  }, []);
+
   // Update state when a Plate triggers an action.
   const handleSelectAction = useCallback(
     (parentPrefix: string, action: string) => {
@@ -236,6 +247,9 @@ const currentMatrixFiles = useMemo(() => {
         toggleRandomization={() => setRandomFillEnabled((prev) => !prev)}
         folders={folders}
         onFolderSelect={handleFolderSelect}
+        // Pass the toggle function and current view mode to NavBar
+        toggleViewMode={toggleViewMode}
+        isSpiralView={isSpiralView}
       />
       <div className="pt-13 p-1 flex-grow">
         {error && <div style={{ color: "red" }}>{error}</div>}
@@ -256,7 +270,7 @@ const currentMatrixFiles = useMemo(() => {
                   }
             }
           >
-            {orderedFiles.map((file, index) =>
+            {finalFiles.map((file, index) =>
               file ? (
                 <Plate
                   key={file}
@@ -277,7 +291,6 @@ const currentMatrixFiles = useMemo(() => {
       </footer>
     </div>
   );
-  
 }
 
 export default MainApp;

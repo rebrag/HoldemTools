@@ -4,11 +4,14 @@ import FolderSelector from "./FolderSelector";
 import RandomizeButton from "./RandomizeButton";
 import AccountMenu from "./AccountMenu";
 
-interface NavBarProps {
+export interface NavBarProps {
   randomFillEnabled: boolean;
   toggleRandomization: () => void;
   folders: string[];
   onFolderSelect: (folder: string) => void;
+  // New props for view mode toggle:
+  toggleViewMode: () => void;
+  isSpiralView: boolean;
 }
 
 const NavBar: React.FC<NavBarProps> = ({
@@ -16,6 +19,8 @@ const NavBar: React.FC<NavBarProps> = ({
   toggleRandomization,
   folders,
   onFolderSelect,
+  toggleViewMode,
+  isSpiralView,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -68,6 +73,12 @@ const NavBar: React.FC<NavBarProps> = ({
               randomFillEnabled={randomFillEnabled}
               setRandomFillEnabled={toggleRandomization}
             />
+            <button
+              onClick={toggleViewMode}
+              className="px-4 py-2 rounded bg-blue-500 text-white hover:bg-blue-600 transition duration-150"
+            >
+              {isSpiralView ? "Default View" : "Table View"}
+            </button>
             <AccountMenu />
           </div>
         </div>
