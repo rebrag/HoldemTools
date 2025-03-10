@@ -24,6 +24,7 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
     "Raise 54%": "40054",
     "Raise 75%": "40075",
     "Raise 50%": "40050",
+    "Raise 78%": "40078",
     // add other mappings as needed
   };
 

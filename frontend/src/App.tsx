@@ -33,7 +33,7 @@ function App() {
     <div className="min-h-screen flex flex-col">
       <div className="flex-grow">{content}</div>
       <div className="text-center">
-        © Josh Garber 2025
+        
       </div>
     </div>
   );

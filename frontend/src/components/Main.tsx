@@ -112,16 +112,25 @@ function MainApp() {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // Filter files based on the current rootPrefix.
-  const currentMatrixFiles = useMemo(() => {
-    return files.filter((file) => {
-      if (rootPrefix === "root") {
-        return file === "root.json" || /^0(?:\.0+)*\.json$/.test(file);
-      }
-      const pattern = new RegExp(`^${rootPrefix}(?:\\.0+)*\\.json$`);
-      return pattern.test(file);
-    });
-  }, [files, rootPrefix]);
+  // Compute the maximum allowed number of ".0" groups based on the folder name.
+// For example, if the folder name is "25LJ_25HJ_25CO_20BTN_25SB_8BB", then there are 6 segments,
+// so we allow at most 6 - 1 = 5 groups of ".0".
+const maxZeros = useMemo(() => {
+  return selectedFolder ? selectedFolder.split("_").length - 1 : 0;
+}, [selectedFolder]);
+
+// Filter files based on the current rootPrefix.
+const currentMatrixFiles = useMemo(() => {
+  return files.filter((file) => {
+    if (rootPrefix === "root") {
+      const pattern = new RegExp(`^0(?:\\.0){0,${maxZeros}}\\.json$`);
+      return file === "root.json" || pattern.test(file);
+    }
+    const pattern = new RegExp(`^${rootPrefix}(?:\\.0){0,${maxZeros}}\\.json$`);
+    return pattern.test(file);
+  });
+}, [files, rootPrefix, maxZeros]);
+
 
   // Combine the clickedRoot file with currentMatrixFiles.
   const displayFiles = useMemo(() => {
@@ -221,52 +230,54 @@ function MainApp() {
   );
 
   return (
-    <div className="min-h-screen relative">
+    <div className="flex flex-col min-h-screen">
       <NavBar
         randomFillEnabled={randomFillEnabled}
         toggleRandomization={() => setRandomFillEnabled((prev) => !prev)}
         folders={folders}
         onFolderSelect={handleFolderSelect}
       />
-      <div className="pt-13 p-1">
+      <div className="pt-13 p-1 flex-grow">
         {error && <div style={{ color: "red" }}>{error}</div>}
         <div className="flex-grow">
-        <div
-          className="grid gap-1 select-none"
-          style={
-            isNarrow
-              ? {
-                  gridTemplateColumns: "repeat(2, minmax(170px, 280px))",
-                  gridTemplateRows: `repeat(${gridRows}, 1fr)`,
-                  justifyContent: "center", // centers the grid in the container
-                }
-              : {
-                  gridTemplateRows: "repeat(2, 1fr)",
-                  gridTemplateColumns: `repeat(${gridCols}, minmax(210px, 280px))`,
-                  justifyContent: "center", // centers the grid in the container
-                }
-          }
-        >
-          {orderedFiles.map((file, index) =>
-            file ? (
-              <Plate
-                key={file}
-                folder={selectedFolder}
-                file={file}
-                onSelectAction={handleSelectAction}
-                randomFillEnabled={randomFillEnabled}
-              />
-            ) : (
-              // Render an empty placeholder for blank cells.
-              <div key={`blank-${index}`} />
-            )
-          )}
-        </div>
-
+          <div
+            className="grid gap-1 select-none"
+            style={
+              isNarrow
+                ? {
+                    gridTemplateColumns: "repeat(2, minmax(170px, 280px))",
+                    gridTemplateRows: `repeat(${gridRows}, 1fr)`,
+                    justifyContent: "center",
+                  }
+                : {
+                    gridTemplateRows: "repeat(2, 1fr)",
+                    gridTemplateColumns: `repeat(${gridCols}, minmax(210px, 280px))`,
+                    justifyContent: "center",
+                  }
+            }
+          >
+            {orderedFiles.map((file, index) =>
+              file ? (
+                <Plate
+                  key={file}
+                  folder={selectedFolder}
+                  file={file}
+                  onSelectAction={handleSelectAction}
+                  randomFillEnabled={randomFillEnabled}
+                />
+              ) : (
+                <div key={`blank-${index}`} />
+              )
+            )}
+          </div>
         </div>
       </div>
+      <footer className="text-center select-none">
+        © Josh Garber 2025
+      </footer>
     </div>
   );
+  
 }
 
 export default MainApp;

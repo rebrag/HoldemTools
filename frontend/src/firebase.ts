@@ -4,12 +4,12 @@ import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, si
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: "AIzaSyDrkOzqPzF6aGeXUSpusm-4zX_E1P-6ZH4",
+  authDomain: "gto-lite.firebaseapp.com",
+  projectId: "gto-lite",
+  storageBucket: "gto-lite.firebasestorage.app",
+  messagingSenderId: "893831218985",
+  appId: "1:893831218985:web:f5850d35e1a4937255d938",
   measurementId: "G-M6TKS917P8"
 };
 
