@@ -30,7 +30,7 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFillColor }) => {
         </div>
       )}
       <div
-        className="absolute inset-0 flex items-center justify-center text-white text-[5px] md:text-[10px] font-semibold"
+        className="absolute inset-0 flex items-center justify-center text-white text-[5px] md:text-[8px] font-semibold"
         style={{ textShadow: "3px 3px 6px rgba(0, 0, 0, 0.7)" }}
       >
         {data.hand}

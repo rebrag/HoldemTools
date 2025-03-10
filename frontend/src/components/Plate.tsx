@@ -54,8 +54,8 @@ const Plate: React.FC<PlateProps> = ({
 
   return (
     <div
-      className="mb-0 mx-auto border rounded-[6px] shadow-md p-1 bg-white
-                 w-full transition-all duration-200 text-base"
+      className="mb-0 justify-self-center border rounded-[6px] shadow-md p-1 bg-white
+                 w-full transition-all duration-200 text-base max-w-[280px]"
     >
       {loading && <p>Loading data...</p>}
       {error && <p className="text-red-500">{error}</p>}
@@ -63,9 +63,13 @@ const Plate: React.FC<PlateProps> = ({
         <>
           {/* Header: Position, BB Info and ColorKey */}
           <div className="select-none flex w-full items-center justify-between">
-            <h2 className="whitespace-nowrap font-bold text-lg max-[440px]:text-[11px] text-gray-800">
-              {rawData.Position || file} {rawData.bb}bb
-            </h2>
+          <h2
+            className="whitespace-nowrap font-bold text-gray-800"
+            style={{ fontSize: "calc(0.6rem + 0.3vw)" }}
+           >
+            {rawData.Position || file} {rawData.bb}bb
+          </h2>
+
             <ColorKey
               data={combinedData}
               onSelectAction={(action) => {
