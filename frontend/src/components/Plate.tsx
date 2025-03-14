@@ -9,7 +9,6 @@ interface PlateProps {
   folder: string;
   file: string;
   onSelectAction: (parentPrefix: string, action: string) => void;
-  // Optional callback to update history when a colorkey is clicked
   onColorKeyClick?: (newColorKey: string) => void;
   randomFillEnabled?: boolean;
 }
@@ -30,7 +29,9 @@ const Plate: React.FC<PlateProps> = ({
   useEffect(() => {
     setLoading(true);
     axios
-      .get<FileData>(`https://gtotest1.azurewebsites.net/api/Files/${folder}/${file}`)
+      .get<FileData>(
+        `${import.meta.env.VITE_API_BASE_URL}/api/Files/${folder}/${file}`
+      )
       .then((response) => {
         setRawData(response.data);
         setLoading(false);
@@ -63,13 +64,12 @@ const Plate: React.FC<PlateProps> = ({
         <>
           {/* Header: Position, BB Info and ColorKey */}
           <div className="select-none flex w-full items-center justify-between">
-          <h2
-            className="whitespace-nowrap font-bold text-gray-800"
-            style={{ fontSize: "calc(0.6rem + 0.3vw)" }}
-           >
-            {rawData.Position || file} {rawData.bb}bb
-          </h2>
-
+            <h2
+              className="whitespace-nowrap font-bold text-gray-800"
+              style={{ fontSize: "calc(0.6rem + 0.3vw)" }}
+            >
+              {rawData.Position || file} {rawData.bb}bb
+            </h2>
             <ColorKey
               data={combinedData}
               onSelectAction={(action) => {

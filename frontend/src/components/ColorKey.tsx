@@ -61,7 +61,7 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
         <div
           className="flex items-center justify-center rounded-md hover:border-3 hover:border-black"
           style={{
-            width: "calc(26px + 1.2vw)",
+            width: "calc(26px + 1.3vw)",
             height: "calc(20px + 0.5vw)",
             background: `radial-gradient(circle at top left, ${getColorForAction(action)} 0%, ${shadeColor(getColorForAction(action), -15)} 50%, ${shadeColor(getColorForAction(action), -35)} 100%)`
           }}
