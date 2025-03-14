@@ -1,5 +1,5 @@
 // src/components/MainApp.tsx
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback,useEffect, useMemo } from "react";
 import NavBar from "./NavBar";
 import PlateGrid from "./PlateGrid";
 import Layout from "./Layout";
@@ -23,6 +23,19 @@ const MainApp = () => {
   const [randomFillEnabled, setRandomFillEnabled] = useState<boolean>(false);
   const [isSpiralView, setIsSpiralView] = useState<boolean>(true);
 
+  useEffect(() => {
+    const onPopState = (event: PopStateEvent) => {
+      if (event.state) {
+        const { rootPrefix, clickedRoot, folder } = event.state;
+        if (typeof rootPrefix === "string") setRootPrefix(rootPrefix);
+        if (typeof clickedRoot === "string") setClickedRoot(clickedRoot);
+        if (typeof folder === "string") setSelectedFolder(folder);
+      }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [setRootPrefix, setClickedRoot, setSelectedFolder]);
+  
   // Calculate maxZeros based on folder name.
   const maxZeros = useMemo(() => {
     return selectedFolder ? selectedFolder.split("_").length - 1 : 0;
