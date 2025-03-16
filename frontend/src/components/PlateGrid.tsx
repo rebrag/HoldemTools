@@ -52,7 +52,7 @@ const PlateGrid = ({
             }
           : {
               gridTemplateRows: "repeat(2, 1fr)",
-              gridTemplateColumns: `repeat(${gridCols}, minmax(210px, 280px))`,
+              gridTemplateColumns: `repeat(${gridCols}, minmax(210px, 300px))`,
               justifyContent: "center",
             }
       }

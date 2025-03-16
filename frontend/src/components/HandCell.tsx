@@ -32,7 +32,7 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFillColor }) => {
       <div
         className="absolute inset-0 flex items-center justify-center text-white font-semibold"
         style={{
-          fontSize: "calc(3.9px + .37vw)", // scales font size similar to your ColorKey dimensions
+          fontSize: "calc(4px + .28vw)", // scales font size similar to your ColorKey dimensions
           textShadow:
             "calc(2px) calc(2px) calc(3px) rgba(0, 0, 0, .7)" // scales shadow offsets and blur responsively
         }}

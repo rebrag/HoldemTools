@@ -55,10 +55,11 @@ const AuthForm = () => {
 
   return (
     <Layout>
-      <div className="flex items-center justify-center p-4 flex-grow">
-        <div className="max-w-md w-full p-8 bg-white shadow-lg rounded-lg">
-          <h2 className="text-2xl font-bold mb-6 text-center">
-            {isLogin ? "GTO Lite Login" : "Sign Up"}
+      <div className="flex flex-col items-center justify-start p-4 flex-grow space-y-6">
+        {/* Login/Signup Form */}
+        <div className="max-w-md w-full p-8 bg-white shadow-lg rounded-lg mt-8">
+          <h2 className="text-2xl font-bold mb-6 text-center [text-shadow:2px_2px_4px_rgba(0,0,0,0.3)]">
+            {isLogin ? "Hold'em Tool Login" : "Sign Up"}
           </h2>
           {error && <p className="text-red-500 mb-4">{error}</p>}
           {message && <p className="text-green-500 mb-4">{message}</p>}
@@ -93,7 +94,32 @@ const AuthForm = () => {
             {isLogin ? "Need an account? Sign Up" : "Already have an account? Login"}
           </button>
         </div>
+
+        {/* Summary and Preview Section */}
+        <div className="flex flex-row max-[700px]:flex-col gap-4 w-full justify-center items-center">
+          {/* Summary Box */}
+          <div className="max-w-sm w-full p-4 bg-white/70 rounded-lg shadow-md">
+            <p className="text-gray-800 text-sm">
+            Holdemtool is an advanced GTO preflop range tool that guides you on the optimal play for your preflop hands in various situations. Right now, our simulations focus on tournament play with a 1bb ante, and we’re planning to add cash game and ICM simulations soon. Stay tuned!
+            </p>
+          </div>
+          {/* Preview Video */}
+          <div className="max-w-sm w-full">
+            <video
+              className="w-full rounded shadow-md"
+              autoPlay
+              muted
+              loop
+              playsInline
+              poster="/preview-poster.png"  // Optional poster image
+            >
+              <source src="/homepage.mp4" type="video/mp4" />
+              Your browser does not support the video tag.
+            </video>
+          </div>
+        </div>
       </div>
+      <footer className="text-center select-none">© Josh Garber 2025</footer>
     </Layout>
   );
 };
