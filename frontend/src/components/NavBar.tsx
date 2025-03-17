@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import FolderSelector from "./FolderSelector";
 import RandomizeButton from "./RandomizeButton";
 import AccountMenu from "./AccountMenu";
+import ButtonStyle from "./ButtonStyle"; // Adjust path as needed
 
 export interface NavBarProps {
   randomFillEnabled: boolean;
@@ -67,22 +68,19 @@ const NavBar: React.FC<NavBarProps> = ({
 
       {/* Dropdown menu: shown when hamburger is clicked */}
       {menuOpen && (
-        <div className="bg-white shadow-md">
-          <div className="px-2 pt-2 pb-3 space-y-2">
-            <RandomizeButton
-              randomFillEnabled={randomFillEnabled}
-              setRandomFillEnabled={toggleRandomization}
-            />
-            <button
-              onClick={toggleViewMode}
-              className="px-4 py-2 rounded bg-blue-500 text-white hover:bg-blue-600 transition duration-150"
-            >
-              {isSpiralView ? "Default View" : "Table View"}
-            </button>
-            <AccountMenu />
-          </div>
-        </div>
-      )}
+  <div className="bg-white shadow-md">
+    <div className="px-2 pt-2 pb-3 space-x-1 space-y-2">
+      <RandomizeButton
+        randomFillEnabled={randomFillEnabled}
+        setRandomFillEnabled={toggleRandomization}
+      />
+      <ButtonStyle onClick={toggleViewMode}>
+        {isSpiralView ? "Index Order" : "Clockwise Order"}
+      </ButtonStyle>
+      <AccountMenu />
+    </div>
+  </div>
+)}
     </nav>
   );
 };

@@ -59,7 +59,7 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ gridData, randomFillEna
   }, [randomFillEnabled, orderedGridData]);
 
   return (
-    <div className="grid grid-cols-13 gap-0 w-full aspect-square">
+    <div className="grid grid-cols-13 gap-0 w-full aspect-square rounded-lg">
       {orderedGridData.map((handData, index) =>
         handData ? (
           <HandCell

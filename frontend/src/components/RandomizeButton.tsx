@@ -1,28 +1,20 @@
-// src/components/RandomizeButton.tsx
+// RandomizeButton.tsx (snippet)
 import React from "react";
+import Button from "./ButtonStyle"; // Adjust path as needed
 
 interface RandomizeButtonProps {
   randomFillEnabled: boolean;
   setRandomFillEnabled: () => void;
-  square?: boolean;
 }
 
 const RandomizeButton: React.FC<RandomizeButtonProps> = ({
   randomFillEnabled,
   setRandomFillEnabled,
-  square = false,
 }) => {
   return (
-    <button
-      onClick={setRandomFillEnabled}
-      className={`rounded transition duration-200 ease-in-out ${
-        square
-          ? "w-10 h-10 text-sm bg-green-500 hover:bg-green-600"
-          : "px-4 py-2 text-sm bg-green-500 hover:bg-green-600"
-      }`}
-    >
-      {square ? "R" : randomFillEnabled ? "Disable Random" : "Randomize"}
-    </button>
+    <Button onClick={setRandomFillEnabled}>
+      {randomFillEnabled ? "Disable Randomize" : "Randomize"}
+    </Button>
   );
 };
 
