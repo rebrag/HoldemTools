@@ -9,7 +9,7 @@ interface PlateProps {
   folder: string;
   file: string;
   onSelectAction: (parentPrefix: string, action: string) => void;
-  onColorKeyClick?: (newColorKey: string) => void;
+  onColorKeyClick?: (newValue: string, file: string) => void;
   randomFillEnabled?: boolean;
 }
 
@@ -29,9 +29,7 @@ const Plate: React.FC<PlateProps> = ({
   useEffect(() => {
     setLoading(true);
     axios
-      .get<FileData>(
-        `${import.meta.env.VITE_API_BASE_URL}/api/Files/${folder}/${file}`
-      )
+      .get<FileData>(`${import.meta.env.VITE_API_BASE_URL}/api/Files/${folder}/${file}`)
       .then((response) => {
         setRawData(response.data);
         setLoading(false);
@@ -50,7 +48,7 @@ const Plate: React.FC<PlateProps> = ({
     setCombinedData(data);
   }, [rawData]);
 
-  // Get parent prefix from file name
+  // Get parent prefix from file name (remove .json extension)
   const parentPrefix = file.replace(".json", "");
 
   return (
@@ -73,11 +71,11 @@ const Plate: React.FC<PlateProps> = ({
             <ColorKey
               data={combinedData}
               onSelectAction={(action) => {
-                // Call the main onSelectAction with the parent prefix and action
+                // Call the existing onSelectAction with parentPrefix and action.
                 onSelectAction(parentPrefix, action);
-                // Additionally, if provided, call onColorKeyClick to update history
+                // Also, if provided, call onColorKeyClick with the new value and file.
                 if (onColorKeyClick) {
-                  onColorKeyClick(action);
+                  onColorKeyClick(action, file);
                 }
               }}
             />

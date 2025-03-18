@@ -11,13 +11,13 @@ interface HandCellProps {
 const getRoundedCornerClass = (hand: string): string => {
   switch (hand) {
     case "AA":
-      return "rounded-tl-md"; // Round top-left for AA
+      return "rounded-tl-sm"; // Round top-left for AA
     case "A2s":
-      return "rounded-tr-md"; // Round top-right for A2s
+      return "rounded-tr-sm"; // Round top-right for A2s
     case "A2o":
-      return "rounded-bl-md"; // Round bottom-left for A2o
+      return "rounded-bl-sm"; // Round bottom-left for A2o
     case "22":
-      return "rounded-br-md"; // Round bottom-right for 22
+      return "rounded-br-sm"; // Round bottom-right for 22
     default:
       return "";
   }
@@ -51,7 +51,7 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFillColor }) => {
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
-          boxShadow: "inset 0 0 0 0.3px rgba(203, 213, 224, 0.5)",
+          boxShadow: "inset 0 0 0 0.2px rgba(203, 213, 224, 0.5)",
         }}
       />
       <div

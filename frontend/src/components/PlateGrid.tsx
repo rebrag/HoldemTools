@@ -9,6 +9,7 @@ type PlateGridProps = {
   isSpiralView: boolean;
   randomFillEnabled: boolean;
   onSelectAction: (parentPrefix: string, action: string) => void;
+  onColorKeyClick: (newValue: string, file: string) => void;
   windowWidth: number;
 };
 
@@ -18,6 +19,7 @@ const PlateGrid = ({
   isSpiralView,
   randomFillEnabled,
   onSelectAction,
+  onColorKeyClick,
   windowWidth,
 }: PlateGridProps) => {
   // Determine grid layout based on viewport width.
@@ -42,7 +44,7 @@ const PlateGrid = ({
 
   return (
     <div
-      className="grid gap-1 select-none"
+      className="grid gap-1 select-none border-2 rounded-[5px]"
       style={
         isNarrow
           ? {
@@ -64,6 +66,7 @@ const PlateGrid = ({
             folder={selectedFolder}
             file={file}
             onSelectAction={onSelectAction}
+            onColorKeyClick={onColorKeyClick}
             randomFillEnabled={randomFillEnabled}
           />
         ) : (
