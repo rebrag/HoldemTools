@@ -1,44 +1,30 @@
-// src/components/MainApp.tsx
+// src/components/Main.tsx
 import { useState, useCallback, useEffect, useMemo } from "react";
 import NavBar from "./NavBar";
 import PlateGrid from "./PlateGrid";
 import Layout from "./Layout";
 import { actionToPrefixMap } from "../constants";
-import useHistoryState from "../hooks/useHistoryState";
 import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import useWindowDimensions from "../hooks/useWindowDimensions";
 import useFolders from "../hooks/useFolders";
 import useFiles from "../hooks/useFiles";
 
-const MainApp = () => {
+// Provide a dummy function for pushHistoryState to satisfy useFolders' signature.
+const dummyPushHistoryState = () => {};
+
+const Main = () => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
   const { windowWidth } = useWindowDimensions();
 
-  const { pushHistoryState } = useHistoryState();
-  const { folders, selectedFolder, setSelectedFolder, error: folderError } = useFolders(API_BASE_URL, pushHistoryState);
+  // Pass the dummy function as second argument.
+  const { folders, selectedFolder, setSelectedFolder, error: folderError } =
+    useFolders(API_BASE_URL, dummyPushHistoryState);
   const { error: filesError } = useFiles(API_BASE_URL, selectedFolder);
 
   const [rootPrefix, setRootPrefix] = useState<string>("root");
   const [clickedRoot, setClickedRoot] = useState<string>("");
   const [randomFillEnabled, setRandomFillEnabled] = useState<boolean>(false);
   const [isSpiralView, setIsSpiralView] = useState<boolean>(true);
-
-  // When the user clicks Back/Forward, restore state from history.
-  useEffect(() => {
-    const onPopState = (event: PopStateEvent) => {
-      if (event.state) {
-        const { rootPrefix, clickedRoot, folder } = event.state;
-        if (typeof rootPrefix === "string") setRootPrefix(rootPrefix);
-        if (typeof clickedRoot === "string") setClickedRoot(clickedRoot);
-        if (typeof folder === "string") setSelectedFolder(folder);
-        // if (matrixFiles) {
-        //   setMatrixFiles(matrixFiles);
-        // }
-      }
-    };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, [setRootPrefix, setClickedRoot, setSelectedFolder]);
 
   // Calculate plateCount based on the folder name.
   const plateCount = useMemo(() => {
@@ -52,12 +38,10 @@ const MainApp = () => {
       if (i === 0) {
         filesArray.push("root.json");
       } else {
-        // For i = 1, "0.json"; for i = 2, "0.0.json"; etc.
         const fileName = Array(i).fill("0").join(".") + ".json";
         filesArray.push(fileName);
       }
     }
-    // Add the extra file for the last plate with a "1" at the end.
     if (plateCount > 1) {
       const zeros = Array(plateCount - 1).fill("0");
       zeros[zeros.length - 1] = "1"; // Replace last "0" with "1"
@@ -67,7 +51,7 @@ const MainApp = () => {
     return filesArray;
   }, [plateCount]);
 
-  // Store matrixFiles in state so they can be updated.
+  // Store matrixFiles in state.
   const [matrixFiles, setMatrixFiles] = useState<string[]>(defaultMatrixFiles);
 
   // When plateCount changes, reset matrixFiles.
@@ -75,13 +59,44 @@ const MainApp = () => {
     setMatrixFiles(defaultMatrixFiles);
   }, [defaultMatrixFiles]);
 
-  // Helper to update matrix files from the clicked file onward.
-  // If the clicked plate isn't the root, then prefix the new value to the clicked file's prefix.
-  const updateMatrixFilesFn = (files: string[], clickedIndex: number, newValue: string): string[] => {
+  // Utility function to update the browser history.
+  const updateBrowserHistory = useCallback(
+    (newState: {
+      rootPrefix: string;
+      clickedRoot: string;
+      folder: string;
+      matrixFiles: string[];
+    }) => {
+      window.history.pushState(newState, "");
+    },
+    []
+  );
+
+  // Restore state when the user navigates with Back/Forward.
+  useEffect(() => {
+    const onPopState = (event: PopStateEvent) => {
+      if (event.state) {
+        const { rootPrefix, clickedRoot, folder, matrixFiles } = event.state;
+        if (typeof rootPrefix === "string") setRootPrefix(rootPrefix);
+        if (typeof clickedRoot === "string") setClickedRoot(clickedRoot);
+        if (typeof folder === "string") setSelectedFolder(folder);
+        if (matrixFiles) {
+          setMatrixFiles(matrixFiles);
+        }
+      }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [setRootPrefix, setClickedRoot, setSelectedFolder]);
+
+  // Helper: update matrix files from the clicked file onward.
+  const updateMatrixFilesFn = (
+    files: string[],
+    clickedIndex: number,
+    newValue: string
+  ): string[] => {
     const clickedPrefix = files[clickedIndex].replace(".json", "");
-    // If clickedIndex is 0 (the root), then use newValue on its own.
     const basePrefix = clickedIndex === 0 ? newValue : `${clickedPrefix}.${newValue}`;
-    
     const newFiles = files.slice(0, clickedIndex + 1);
     for (let i = clickedIndex + 1; i < files.length; i++) {
       const depth = i - clickedIndex - 1;
@@ -91,8 +106,7 @@ const MainApp = () => {
     return newFiles;
   };
 
-  // Callback passed to Plate components when a ColorKey action is clicked.
-  // This updates the matrixFiles and also pushes the updated state (including matrixFiles) into history.
+  // Callback for when a ColorKey action is clicked.
   const handleUpdateMatrixFiles = useCallback(
     (action: string, file: string) => {
       const newValue = actionToPrefixMap[action] || action;
@@ -100,29 +114,43 @@ const MainApp = () => {
       if (clickedIndex === -1) return;
       const updatedFiles = updateMatrixFilesFn(matrixFiles, clickedIndex, newValue);
       setMatrixFiles(updatedFiles);
-      // Also push the new state into history.
       const clickedPrefix = file.replace(".json", "");
-      pushHistoryState(newValue, clickedPrefix, selectedFolder, updatedFiles);
+      updateBrowserHistory({
+        rootPrefix: newValue,
+        clickedRoot: clickedPrefix,
+        folder: selectedFolder,
+        matrixFiles: updatedFiles,
+      });
     },
-    [matrixFiles, selectedFolder, pushHistoryState]
+    [matrixFiles, selectedFolder, updateBrowserHistory]
   );
 
-  // Existing action handler for other parts of the app.
+  // Action handler for other parts of the app.
   const handleSelectAction = useCallback(
     (parentPrefix: string, action: string) => {
       const mapping = actionToPrefixMap[action];
       if (!mapping) {
         setRootPrefix("root");
         setClickedRoot("root");
-        pushHistoryState("root", "root", selectedFolder, matrixFiles);
+        updateBrowserHistory({
+          rootPrefix: "root",
+          clickedRoot: "root",
+          folder: selectedFolder,
+          matrixFiles,
+        });
         return;
       }
       const newRoot = parentPrefix === "root" ? mapping : `${parentPrefix}.${mapping}`;
       setRootPrefix(newRoot);
       setClickedRoot(parentPrefix);
-      pushHistoryState(newRoot, parentPrefix, selectedFolder, matrixFiles);
+      updateBrowserHistory({
+        rootPrefix: newRoot,
+        clickedRoot: parentPrefix,
+        folder: selectedFolder,
+        matrixFiles,
+      });
     },
-    [selectedFolder, pushHistoryState, matrixFiles]
+    [selectedFolder, matrixFiles, updateBrowserHistory]
   );
 
   // Handle folder selection.
@@ -132,19 +160,29 @@ const MainApp = () => {
       setRootPrefix("root");
       setClickedRoot("");
       setMatrixFiles(defaultMatrixFiles);
-      pushHistoryState("root", "", folder, defaultMatrixFiles);
+      updateBrowserHistory({
+        rootPrefix: "root",
+        clickedRoot: "",
+        folder,
+        matrixFiles: defaultMatrixFiles,
+      });
     },
-    [pushHistoryState, setSelectedFolder, defaultMatrixFiles]
+    [defaultMatrixFiles, updateBrowserHistory, setSelectedFolder]
   );
 
-  // Set up keyboard shortcuts.
+  // Keyboard shortcuts.
   useKeyboardShortcuts({
     onBackspace: () => {
       if (rootPrefix !== "root" || clickedRoot) {
         setRootPrefix("root");
         setClickedRoot("");
         setMatrixFiles(defaultMatrixFiles);
-        pushHistoryState("root", "", selectedFolder, defaultMatrixFiles);
+        updateBrowserHistory({
+          rootPrefix: "root",
+          clickedRoot: "",
+          folder: selectedFolder,
+          matrixFiles: defaultMatrixFiles,
+        });
       }
     },
     onToggleRandom: () => setRandomFillEnabled((prev) => !prev),
@@ -165,7 +203,9 @@ const MainApp = () => {
         isSpiralView={isSpiralView}
       />
       <div className="pt-13 p-1 flex-grow">
-        {(folderError || filesError) && <div className="text-red-500">{folderError || filesError}</div>}
+        {(folderError || filesError) && (
+          <div className="text-red-500">{folderError || filesError}</div>
+        )}
         <PlateGrid
           files={matrixFiles}
           selectedFolder={selectedFolder}
@@ -178,7 +218,9 @@ const MainApp = () => {
         {/* Debug section for troubleshooting matrixFiles */}
         <div className="mt-4 p-2 bg-gray-100 border border-gray-300 rounded">
           <h3 className="font-semibold mb-2">Current Matrix Files</h3>
-          <pre className="text-sm whitespace-pre-wrap">{JSON.stringify(matrixFiles, null, 2)}</pre>
+          <pre className="text-sm whitespace-pre-wrap">
+            {JSON.stringify(matrixFiles, null, 2)}
+          </pre>
         </div>
       </div>
       <footer className="text-center select-none">© Josh Garber 2025</footer>
@@ -186,4 +228,4 @@ const MainApp = () => {
   );
 };
 
-export default MainApp;
+export default Main;
