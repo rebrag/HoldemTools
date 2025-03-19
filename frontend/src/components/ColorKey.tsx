@@ -2,6 +2,7 @@
 import React from "react";
 import { HandCellData, getColorForAction } from "../utils/utils";
 
+// This is the group of buttons on at the top of a plate
 interface ColorKeyProps {
   data: HandCellData[];
   onSelectAction: (action: string) => void;
@@ -47,11 +48,10 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
         .slice(1)
     );
   }
-  
 
   return (
     <div className="flex gap-0.5 mb-1 items-center">
-      {uniqueActions.slice().reverse().map((action) => (
+      {uniqueActions.reverse().map((action) => (
         <div
         key={action}
         className="flex cursor-pointer"
