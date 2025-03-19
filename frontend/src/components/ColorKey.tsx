@@ -29,26 +29,6 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
     // add other mappings as needed
   };
 
-  function shadeColor(color: string, percent: number) {
-    // Assume color is in hex format "#RRGGBB"
-    const num = parseInt(color.slice(1), 16);
-    const amt = Math.round(2.55 * percent);
-    const R = (num >> 16) + amt;
-    const G = ((num >> 8) & 0x00FF) + amt;
-    const B = (num & 0x0000FF) + amt;
-    return (
-      "#" +
-      (
-        0x1000000 +
-        (R < 255 ? (R < 1 ? 0 : R) : 255) * 0x10000 +
-        (G < 255 ? (G < 1 ? 0 : G) : 255) * 0x100 +
-        (B < 255 ? (B < 1 ? 0 : B) : 255)
-      )
-        .toString(16)
-        .slice(1)
-    );
-  }
-
   return (
     <div className="flex gap-0.5 mb-1 items-center">
       {uniqueActions.reverse().map((action) => (
@@ -63,7 +43,7 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onSelectAction }) => {
           style={{
             width: "calc(26px + 1.3vw)",
             height: "calc(20px + 0.5vw)",
-            background: `radial-gradient(circle at top left, ${getColorForAction(action)} 0%, ${shadeColor(getColorForAction(action), -15)} 50%, ${shadeColor(getColorForAction(action), -35)} 100%)`
+            background: `radial-gradient(circle at top left, ${getColorForAction(action)} 0%, ${getColorForAction(action)} 50%, ${getColorForAction(action)} 100%)`
           }}
         >
           <span style={{ color: "#fff", fontSize: "calc(0.4rem + 0.2vw)" }} className="whitespace-nowrap">
