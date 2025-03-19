@@ -8,16 +8,14 @@ import DecisionMatrix from "./DecisionMatrix";
 interface PlateProps {
   folder: string;
   file: string;
-  onSelectAction: (parentPrefix: string, action: string) => void;
-  onColorKeyClick?: (newValue: string, file: string) => void;
+  onActionClick: (action: string, file: string) => void;
   randomFillEnabled?: boolean;
 }
 
 const Plate: React.FC<PlateProps> = ({
   folder,
   file,
-  onSelectAction,
-  onColorKeyClick,
+  onActionClick,
   randomFillEnabled,
 }) => {
   const [rawData, setRawData] = useState<FileData | null>(null);
@@ -48,9 +46,6 @@ const Plate: React.FC<PlateProps> = ({
     setCombinedData(data);
   }, [rawData]);
 
-  // Get parent prefix from file name (remove .json extension)
-  const parentPrefix = file.replace(".json", "");
-
   return (
     <div
       className="mb-0 justify-self-center border rounded-[7px] shadow-md p-1 bg-white
@@ -60,32 +55,38 @@ const Plate: React.FC<PlateProps> = ({
       {error && <p className="text-red-500">{error}</p>}
       {!loading && !error && rawData && (
         <>
-          {/* Header: Position, BB Info and ColorKey */}
           <div className="select-none flex w-full items-center justify-between">
             <h2
               className="whitespace-nowrap font-bold text-gray-800"
               style={{ fontSize: "calc(0.6rem + 0.3vw)" }}
             >
-              {rawData.Position || file} {rawData.bb}bb
+              {rawData.Position ? (
+                <span
+                  className={
+                    rawData.Position === "BTN"
+                      ? "border-0 border-white animate-pulse duration-1000 px-0 rounded-md"
+                      : ""
+                  }
+                >
+                  {rawData.Position} {rawData.bb}bb
+                </span>
+              ) : (
+                file
+              )}
             </h2>
             <ColorKey
               data={combinedData}
-              onSelectAction={(action) => {
-                // Call the existing onSelectAction with parentPrefix and action.
-                onSelectAction(parentPrefix, action);
-                // Also, if provided, call onColorKeyClick with the new value and file.
-                if (onColorKeyClick) {
-                  onColorKeyClick(action, file);
-                }
-              }}
+              onActionClick={(action) => onActionClick(action, file)}
             />
           </div>
-          {/* DecisionMatrix (grid of hand cells) */}
           <DecisionMatrix gridData={combinedData} randomFillEnabled={randomFillEnabled} />
         </>
       )}
     </div>
   );
+  
+  
+  
 };
 
 export default Plate;

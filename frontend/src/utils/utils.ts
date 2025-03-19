@@ -39,10 +39,6 @@ const actionColorMapping: Record<string, string> = {
 export const getColorForAction = (action: string): string => {
   return actionColorMapping[action] || "#F03c39";
 };
-//   return actionColorMapping[action] || stringToColor(action);
-// };
-
-// Combines API data into grid data.
 
 export const combineDataByHand = (data: FileData): HandCellData[] => {
   const combined: { [hand: string]: HandCellData } = {};

@@ -4,22 +4,21 @@ import Plate from "./Plate";
 import { generateSpiralOrder } from "../utils/gridUtils";
 
 type PlateGridProps = {
-  files: string[];
-  selectedFolder: string;
-  isSpiralView: boolean;
-  randomFillEnabled: boolean;
-  onSelectAction: (parentPrefix: string, action: string) => void;
-  onColorKeyClick: (newValue: string, file: string) => void;
-  windowWidth: number;
-};
+    files: string[];
+    selectedFolder: string;
+    isSpiralView: boolean;
+    randomFillEnabled: boolean;
+    onActionClick: (action: string, file: string) => void;
+    windowWidth: number;
+  };
+  
 
 const PlateGrid = ({
   files,
   selectedFolder,
   isSpiralView,
   randomFillEnabled,
-  onSelectAction,
-  onColorKeyClick,
+  onActionClick,
   windowWidth,
 }: PlateGridProps) => {
   // Determine grid layout based on viewport width.
@@ -41,6 +40,10 @@ const PlateGrid = ({
     });
     return gridArray;
   }, [files, isSpiralView, gridRows, gridCols]);
+
+//   useEffect(() => {
+//     console.log("Plategrid rendered or orderedFiles changed -> orderedFiles:", orderedFiles);
+//   }, [orderedFiles]);
 
   return (
     <div
@@ -65,8 +68,7 @@ const PlateGrid = ({
             key={file}
             folder={selectedFolder}
             file={file}
-            onSelectAction={onSelectAction}
-            onColorKeyClick={onColorKeyClick}
+            onActionClick={onActionClick}
             randomFillEnabled={randomFillEnabled}
           />
         ) : (

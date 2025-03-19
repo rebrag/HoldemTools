@@ -9,8 +9,6 @@ import useWindowDimensions from "../hooks/useWindowDimensions";
 import useFolders from "../hooks/useFolders";
 import useFiles from "../hooks/useFiles";
 
-// Provide a dummy function for pushHistoryState to satisfy useFolders' signature.
-const dummyPushHistoryState = () => {};
 
 // Define an interface for our matrix file objects.
 export interface MatrixFile {
@@ -25,13 +23,10 @@ const Main = () => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
   const { windowWidth } = useWindowDimensions();
 
-  // Pass the dummy function as second argument.
   const { folders, selectedFolder, setSelectedFolder, error: folderError } =
-    useFolders(API_BASE_URL, dummyPushHistoryState);
+    useFolders(API_BASE_URL);
   const { error: filesError } = useFiles(API_BASE_URL, selectedFolder);
 
-  // No forced default folder now.
-  const [rootPrefix, setRootPrefix] = useState<string>("root");
   const [clickedRoot, setClickedRoot] = useState<string>("");
   const [randomFillEnabled, setRandomFillEnabled] = useState<boolean>(false);
   const [isSpiralView, setIsSpiralView] = useState<boolean>(true);
@@ -78,7 +73,7 @@ const Main = () => {
   // State for the full loaded plates (MatrixFile objects)
   const [loadedPlates, setLoadedPlates] = useState<MatrixFile[]>(defaultMatrixFiles);
   // State for display plates (file names only)
-  const [displayPlates, setDisplayPlates] = useState<string[]>(defaultMatrixFiles.map(mf => mf.name));
+  const [totalPlateList, setDisplayPlates] = useState<string[]>(defaultMatrixFiles.map(mf => mf.name));
 
   // Whenever loadedPlates changes, derive displayPlates (only names).
   useEffect(() => {
@@ -119,8 +114,7 @@ const Main = () => {
   useEffect(() => {
     const onPopState = (event: PopStateEvent) => {
       if (event.state) {
-        const { rootPrefix, clickedRoot, folder, matrixFiles } = event.state;
-        if (typeof rootPrefix === "string") setRootPrefix(rootPrefix);
+        const { clickedRoot, folder, matrixFiles } = event.state;
         if (typeof clickedRoot === "string") setClickedRoot(clickedRoot);
         if (typeof folder === "string") setSelectedFolder(folder);
         if (matrixFiles) {
@@ -130,7 +124,7 @@ const Main = () => {
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [setRootPrefix, setClickedRoot, setSelectedFolder]);
+  }, [ setClickedRoot, setSelectedFolder]);
 
   // --- Generalized updateMatrixFilesFn ---
   const updateMatrixFilesFn = useCallback(
@@ -166,71 +160,31 @@ const Main = () => {
     },
     [positionsOrder]
   );
-  
-  
-  // --- End updateMatrixFilesFn ---
 
-  // Internal handler for color key actions.
-  const internalHandleUpdateMatrixFiles = useCallback(
-    (action: string, file: MatrixFile) => {
+  const handleActionClick = useCallback(
+    (action: string, fileName: string) => {
+      const matrixFile = loadedPlates.find((f) => f.name === fileName);
+      if (!matrixFile) return;
+      // Use the same internal update logic as before.
       const newValue = actionToPrefixMap[action] || action;
-      const clickedIndex = loadedPlates.findIndex((f) => f.name === file.name);
+      const clickedIndex = loadedPlates.findIndex((f) => f.name === matrixFile.name);
       if (clickedIndex === -1) return;
       const updatedFiles = updateMatrixFilesFn(loadedPlates, clickedIndex, newValue);
       setLoadedPlates(updatedFiles);
       updateBrowserHistory({
         rootPrefix: newValue,
-        clickedRoot: file.name.replace(".json", ""),
+        clickedRoot: matrixFile.name.replace(".json", ""),
         folder: selectedFolder,
         matrixFiles: updatedFiles
       });
     },
     [loadedPlates, selectedFolder, updateBrowserHistory, updateMatrixFilesFn]
   );
-
-  // Adapter for onColorKeyClick: PlateGrid expects (action: string, file: string)
-  const handleColorKeyClick = useCallback(
-    (action: string, fileName: string) => {
-      const matrixFile = loadedPlates.find((f) => f.name === fileName);
-      if (!matrixFile) return;
-      internalHandleUpdateMatrixFiles(action, matrixFile);
-    },
-    [loadedPlates, internalHandleUpdateMatrixFiles]
-  );
-
-  // Action handler for other parts of the app.
-  const handleSelectAction = useCallback(
-    (parentPrefix: string, action: string) => {
-      const mapping = actionToPrefixMap[action];
-      if (!mapping) {
-        setRootPrefix("root");
-        setClickedRoot("root");
-        updateBrowserHistory({
-          rootPrefix: "root",
-          clickedRoot: "root",
-          folder: selectedFolder,
-          matrixFiles: loadedPlates
-        });
-        return;
-      }
-      const newRoot = parentPrefix === "root" ? mapping : `${parentPrefix}.${mapping}`;
-      setRootPrefix(newRoot);
-      setClickedRoot(parentPrefix);
-      updateBrowserHistory({
-        rootPrefix: newRoot,
-        clickedRoot: parentPrefix,
-        folder: selectedFolder,
-        matrixFiles: loadedPlates
-      });
-    },
-    [selectedFolder, loadedPlates, updateBrowserHistory]
-  );
-
+  
   // Handle folder selection.
   const handleFolderSelect = useCallback(
     (folder: string) => {
       setSelectedFolder(folder);
-      setRootPrefix("root");
       setClickedRoot("");
       setLoadedPlates(defaultMatrixFiles);
       updateBrowserHistory({
@@ -246,8 +200,7 @@ const Main = () => {
   // Keyboard shortcuts.
   useKeyboardShortcuts({
     onBackspace: () => {
-      if (rootPrefix !== "root" || clickedRoot) {
-        setRootPrefix("root");
+      if (clickedRoot) {
         setClickedRoot("");
         setLoadedPlates(defaultMatrixFiles);
         updateBrowserHistory({
@@ -280,12 +233,11 @@ const Main = () => {
           <div className="text-red-500">{folderError || filesError}</div>
         )}
         <PlateGrid
-          files={displayPlates} // Only file names are passed for display/troubleshooting.
+          files={totalPlateList} // Only file names are passed for display/troubleshooting.
           selectedFolder={selectedFolder}
           isSpiralView={isSpiralView}
           randomFillEnabled={randomFillEnabled}
-          onSelectAction={handleSelectAction}
-          onColorKeyClick={handleColorKeyClick}
+          onActionClick={handleActionClick}
           windowWidth={windowWidth}
         />
         {/* Debug section: two columns side-by-side */}
@@ -297,9 +249,9 @@ const Main = () => {
             </pre>
           </div>
           <div className="md:w-1/2 mt-4 md:mt-0">
-            <h3 className="font-semibold mb-2">Display Plates</h3>
+            <h3 className="font-semibold mb-2">Total Plate List</h3>
             <pre className="text-sm whitespace-pre-wrap">
-              {JSON.stringify(displayPlates, null, 2)}
+              {JSON.stringify(totalPlateList, null, 2)}
             </pre>
           </div>
         </div>
