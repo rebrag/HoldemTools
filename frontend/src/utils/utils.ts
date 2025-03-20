@@ -1,12 +1,12 @@
-export interface ActionData {
+export interface HandData {
   [hand: string]: [number, number];
 }
 
-export interface FileData {
+export interface JsonData {
   Position: string;
   bb: number;
   // All other keys (like "Fold", "Call", etc.) will be action data.
-  [action: string]: string | number | ActionData;
+  [action: string]: string | number | HandData;
 }
 
 export interface HandCellData {
@@ -40,7 +40,7 @@ export const getColorForAction = (action: string): string => {
   return actionColorMapping[action] || "#F03c39";
 };
 
-export const combineDataByHand = (data: FileData): HandCellData[] => {
+export const combineDataByHand = (data: JsonData): HandCellData[] => {
   const combined: { [hand: string]: HandCellData } = {};
 
   for (const key in data) {

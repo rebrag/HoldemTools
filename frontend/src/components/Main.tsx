@@ -14,10 +14,48 @@ import useFiles from "../hooks/useFiles";
 export interface MatrixFile {
   name: string;
   data: {
-    position: string; // e.g. "UTG", "UTG1", "LJ", "HJ", "CO", "BTN", "SB", "BB"
+    position: string; 
     // Additional JSON data fields can be added here.
   };
 }
+
+const generateChildMatrixFiles = (
+  JsonName: string,
+  action: string,
+  parentPosition: string,
+  plateCount: number
+): MatrixFile[] => {
+  // Remove the ".json" extension and split the name into segments.
+  const baseName = JsonName.replace(".json", "");
+  const segments = baseName.split(".");
+  const nonZeroCount = segments.filter((segment) => segment !== "0").length;
+  const iterations = (plateCount - segments.length-1) + nonZeroCount;
+
+  let currentName = `${baseName}.${action}`;
+  const files: MatrixFile[] = [];
+  for (let i = 0; i < iterations; i++) {
+    if (i > 0) {
+      currentName += ".0";
+    }
+    files.push({
+      name: `${currentName}.json`,
+      data: { position: parentPosition }
+    });
+  }
+  console.log(
+    "generateChildMatrixFiles - parentJsonName:",
+    JsonName,
+    "iterations:",
+    iterations,
+    "generated files:",
+    files.map((file) => ({ name: file.name, position: file.data.position }))
+  );
+  return files;
+};
+
+// and plateCount is 7. Then the function call would be:
+const generatedFiles = generateChildMatrixFiles("0.5.json", "40054", "UTG1", 8);
+console.log(generatedFiles);
 
 const Main = () => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -72,25 +110,26 @@ const Main = () => {
 
   // State for the full loaded plates (MatrixFile objects)
   const [loadedPlates, setLoadedPlates] = useState<MatrixFile[]>(defaultMatrixFiles);
-  // State for display plates (file names only)
-  const [totalPlateList, setDisplayPlates] = useState<string[]>(defaultMatrixFiles.map(mf => mf.name));
 
-  // Whenever loadedPlates changes, derive displayPlates (only names).
-  useEffect(() => {
-    // Ensure exactly one name per position.
-    const newDisplay = positionsOrder.map((pos) => {
-      const platesForPos = loadedPlates.filter((mf) => mf.data.position === pos);
-      if (platesForPos.length === 0) return "";
-      // Choose the one with the highest segment count.
-      platesForPos.sort(
-        (a, b) =>
-          a.name.replace(".json", "").split(".").length -
-          b.name.replace(".json", "").split(".").length
-      );
-      return platesForPos[platesForPos.length - 1].name;
-    });
-    setDisplayPlates(newDisplay);
-  }, [loadedPlates, positionsOrder]);
+  const [displayPlates, setDisplayPlates] = useState<string[]>(defaultMatrixFiles.map(mf => mf.name));
+
+useEffect(() => {
+  const newDisplay = positionsOrder.map((pos) => {
+    // Filter for all plates with the given position.
+    const platesForPos = loadedPlates.filter((mf) => mf.data.position === pos);
+    if (platesForPos.length === 0) return "";
+    // Sort by the number of segments (assuming more segments means more updated).
+    platesForPos.sort(
+      (a, b) =>
+        a.name.replace(".json", "").split(".").length -
+        b.name.replace(".json", "").split(".").length
+    );
+    // Choose the one with the highest segment count.
+    return platesForPos[platesForPos.length - 1].name;
+  });
+  setDisplayPlates(newDisplay);
+}, [loadedPlates, positionsOrder]);
+
 
   // When plateCount changes, reset loadedPlates.
   useEffect(() => {
@@ -126,8 +165,8 @@ const Main = () => {
     return () => window.removeEventListener("popstate", onPopState);
   }, [ setClickedRoot, setSelectedFolder]);
 
-  // --- Generalized updateMatrixFilesFn ---
-  const updateMatrixFilesFn = useCallback(
+  // --- Generalized updateMatrixFiles ---
+  const updateMatrixFiles = useCallback(
     (files: MatrixFile[], clickedIndex: number, newValue: string): MatrixFile[] => {
       const clickedFile = files[clickedIndex];
       if (clickedIndex === 0) {
@@ -138,29 +177,34 @@ const Main = () => {
             segments.length > 1 ? "." + Array(segments.length - 1).fill("0").join(".") : "";
           return { ...file, name: `${newValue}${suffix}.json` };
         });
-        return updated.sort(
-          (a, b) =>
-            positionsOrder.indexOf(a.data.position) - positionsOrder.indexOf(b.data.position)
+        console.log(
+          "updateMatrixFiles - clickedIndex:",
+          clickedIndex,
+          "updated files:",
+          updated.map((file) => ({ name: file.name, position: file.data.position }))
         );
+        return updated;
       } else {
         const prefix = clickedFile.name.replace(".json", "");
         const updated = files.map((file, index) => {
           if (index <= clickedIndex) return file;
-          // Subtract one so that the immediate next file gets no extra trailing "0"
           const trailingCount = index - clickedIndex - 1;
           const trailing =
             trailingCount > 0 ? "." + Array(trailingCount).fill("0").join(".") : "";
           return { ...file, name: `${prefix}.${newValue}${trailing}.json` };
         });
-        return updated.sort(
-          (a, b) =>
-            positionsOrder.indexOf(a.data.position) - positionsOrder.indexOf(b.data.position)
+        console.log(
+          "updateMatrixFiles - clickedIndex:",
+          clickedIndex,
+          "updated files:",
+          updated.map((file) => ({ name: file.name, position: file.data.position }))
         );
+        return updated;
       }
     },
-    [positionsOrder]
+    []
   );
-
+  
   const handleActionClick = useCallback(
     (action: string, fileName: string) => {
       const matrixFile = loadedPlates.find((f) => f.name === fileName);
@@ -169,7 +213,7 @@ const Main = () => {
       const newValue = actionToPrefixMap[action] || action;
       const clickedIndex = loadedPlates.findIndex((f) => f.name === matrixFile.name);
       if (clickedIndex === -1) return;
-      const updatedFiles = updateMatrixFilesFn(loadedPlates, clickedIndex, newValue);
+      const updatedFiles = updateMatrixFiles(loadedPlates, clickedIndex, newValue);
       setLoadedPlates(updatedFiles);
       updateBrowserHistory({
         rootPrefix: newValue,
@@ -178,7 +222,7 @@ const Main = () => {
         matrixFiles: updatedFiles
       });
     },
-    [loadedPlates, selectedFolder, updateBrowserHistory, updateMatrixFilesFn]
+    [loadedPlates, selectedFolder, updateBrowserHistory, updateMatrixFiles]
   );
   
   // Handle folder selection.
@@ -233,7 +277,7 @@ const Main = () => {
           <div className="text-red-500">{folderError || filesError}</div>
         )}
         <PlateGrid
-          files={totalPlateList} // Only file names are passed for display/troubleshooting.
+          files={displayPlates} // Only file names are passed for display/troubleshooting.
           selectedFolder={selectedFolder}
           isSpiralView={isSpiralView}
           randomFillEnabled={randomFillEnabled}
@@ -246,12 +290,6 @@ const Main = () => {
             <h3 className="font-semibold mb-2">Loaded Plates (Names Only)</h3>
             <pre className="text-sm whitespace-pre-wrap">
               {JSON.stringify(loadedPlates.map(mf => mf.name), null, 2)}
-            </pre>
-          </div>
-          <div className="md:w-1/2 mt-4 md:mt-0">
-            <h3 className="font-semibold mb-2">Total Plate List</h3>
-            <pre className="text-sm whitespace-pre-wrap">
-              {JSON.stringify(totalPlateList, null, 2)}
             </pre>
           </div>
         </div>

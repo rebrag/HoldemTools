@@ -1,7 +1,7 @@
 // src/components/Plate.tsx
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-import { FileData, combineDataByHand, HandCellData } from "../utils/utils";
+import { JsonData, combineDataByHand, HandCellData } from "../utils/utils";
 import ColorKey from "./ColorKey";
 import DecisionMatrix from "./DecisionMatrix";
 
@@ -18,16 +18,17 @@ const Plate: React.FC<PlateProps> = ({
   onActionClick,
   randomFillEnabled,
 }) => {
-  const [rawData, setRawData] = useState<FileData | null>(null);
+  const [rawData, setRawData] = useState<JsonData | null>(null);
   const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
 
   // Load file data when folder/file changes
   useEffect(() => {
     setLoading(true);
     axios
-      .get<FileData>(`${import.meta.env.VITE_API_BASE_URL}/api/Files/${folder}/${file}`)
+      .get<JsonData>(`${import.meta.env.VITE_API_BASE_URL}/api/Files/${folder}/${file}`)
       .then((response) => {
         setRawData(response.data);
         setLoading(false);
@@ -64,7 +65,7 @@ const Plate: React.FC<PlateProps> = ({
                 <span
                   className={
                     rawData.Position === "BTN"
-                      ? "border-0 border-white animate-pulse duration-1000 px-0 rounded-md"
+                      ? "border-2 border-black p-0.5 animate-none duration-1000 shadow-2xl px-0 rounded-sm"
                       : ""
                   }
                 >

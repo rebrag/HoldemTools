@@ -21,12 +21,10 @@ const PlateGrid = ({
   onActionClick,
   windowWidth,
 }: PlateGridProps) => {
-  // Determine grid layout based on viewport width.
   const isNarrow = windowWidth <= 450;
   const gridRows = isNarrow ? Math.ceil(files.length / 2) : 2;
   const gridCols = isNarrow ? 2 : Math.ceil(files.length / 2);
 
-  // If spiral view is enabled, compute spiral ordering.
   const orderedFiles = useMemo(() => {
     if (!isSpiralView) return files;
     const totalCells = gridRows * gridCols;
@@ -40,10 +38,6 @@ const PlateGrid = ({
     });
     return gridArray;
   }, [files, isSpiralView, gridRows, gridCols]);
-
-//   useEffect(() => {
-//     console.log("Plategrid rendered or orderedFiles changed -> orderedFiles:", orderedFiles);
-//   }, [orderedFiles]);
 
   return (
     <div
