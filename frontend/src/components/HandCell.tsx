@@ -21,7 +21,7 @@ const getRoundedCornerClass = (hand: string): string => {
   }
 };
 
-const FALLBACK_COLOR = "#5ab964"; // your fallback background
+const FALLBACK_COLOR = "#1111"; // your fallback background
 
 const HandCell: React.FC<HandCellProps> = ({ data, randomFillColor }) => {
   // manage container background in state
@@ -29,11 +29,8 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFillColor }) => {
 
   useEffect(() => {
     if (randomFillColor) {
-      // When randomFillColor becomes available, set it immediately.
       setContainerBg(randomFillColor);
     } else {
-      // When randomFillColor is removed, delay updating the container background
-      // so the segments have time to animate back to their widths.
       const timeoutId = setTimeout(() => {
         setContainerBg(FALLBACK_COLOR);
       }, 10000); 
