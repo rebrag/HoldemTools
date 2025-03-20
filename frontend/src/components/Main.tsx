@@ -9,27 +9,22 @@ import useWindowDimensions from "../hooks/useWindowDimensions";
 import useFolders from "../hooks/useFolders";
 import useFiles from "../hooks/useFiles";
 
-
 // Define an interface for our matrix file objects.
 export interface MatrixFile {
   name: string;
-  data: {
-    position: string; 
-    // Additional JSON data fields can be added here.
-  };
+  data: Record<string, string>; // No position field needed.
 }
 
 const generateChildMatrixFiles = (
   JsonName: string,
   action: string,
-  parentPosition: string,
   plateCount: number
 ): MatrixFile[] => {
   // Remove the ".json" extension and split the name into segments.
   const baseName = JsonName.replace(".json", "");
-  const segments = baseName.split(".");
-  const nonZeroCount = segments.filter((segment) => segment !== "0").length;
-  const iterations = (plateCount - segments.length-1) + nonZeroCount;
+  const fileNumbers = baseName.split(".");
+  const nonZeroCount = fileNumbers.filter((segment) => segment !== "0").length;
+  const iterations = (plateCount - fileNumbers.length - 1) + nonZeroCount;
 
   let currentName = `${baseName}.${action}`;
   const files: MatrixFile[] = [];
@@ -39,7 +34,7 @@ const generateChildMatrixFiles = (
     }
     files.push({
       name: `${currentName}.json`,
-      data: { position: parentPosition }
+      data: {}
     });
   }
   console.log(
@@ -48,13 +43,13 @@ const generateChildMatrixFiles = (
     "iterations:",
     iterations,
     "generated files:",
-    files.map((file) => ({ name: file.name, position: file.data.position }))
+    files.map((file) => file.name)
   );
   return files;
 };
 
-// and plateCount is 7. Then the function call would be:
-const generatedFiles = generateChildMatrixFiles("0.5.json", "40054", "UTG1", 8);
+// Example usage: plateCount is 8.
+const generatedFiles = generateChildMatrixFiles("0.5.json", "40054", 8);
 console.log(generatedFiles);
 
 const Main = () => {
@@ -74,35 +69,24 @@ const Main = () => {
     return selectedFolder ? selectedFolder.split("_").length : 1;
   }, [selectedFolder]);
 
-  // Using useMemo so that positionsOrder reference is stable.
-  const positionsOrder = useMemo(
-    () => ["UTG", "UTG1", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
-    []
-  );
-
   // Compute the default matrix files from plateCount.
   const defaultMatrixFiles = useMemo((): MatrixFile[] => {
     const filesArray: MatrixFile[] = [];
-    const defaultPositions = ["UTG", "UTG1", "LJ", "HJ", "CO", "BTN", "SB", "BB"];
-    for (let i = 0; i < plateCount - 1; i++) {
-      let fileName: string;
-      if (i === 0) {
-        fileName = "root.json";
-      } else {
-        fileName = Array(i).fill("0").join(".") + ".json";
-      }
+    for (let i = 0; i < plateCount-1; i++) {
+      const fileName = i === 0 ? "root.json" : Array(i).fill("0").join(".") + ".json";
       filesArray.push({
         name: fileName,
-        data: { position: defaultPositions[i] || `Pos${i}` }
+        data: {}
       });
     }
+    // Optionally add an extra file if needed.
     if (plateCount > 1) {
       const zeros = Array(plateCount - 1).fill("0");
       zeros[zeros.length - 1] = "1"; // Replace last "0" with "1"
       const extraFile = zeros.join(".") + ".json";
       filesArray.push({
         name: extraFile,
-        data: { position: defaultPositions[plateCount - 1] || `Pos${plateCount - 1}` }
+        data: {}
       });
     }
     return filesArray;
@@ -111,25 +95,13 @@ const Main = () => {
   // State for the full loaded plates (MatrixFile objects)
   const [loadedPlates, setLoadedPlates] = useState<MatrixFile[]>(defaultMatrixFiles);
 
+  // For display, we simply list the names from the loadedPlates.
   const [displayPlates, setDisplayPlates] = useState<string[]>(defaultMatrixFiles.map(mf => mf.name));
 
-useEffect(() => {
-  const newDisplay = positionsOrder.map((pos) => {
-    // Filter for all plates with the given position.
-    const platesForPos = loadedPlates.filter((mf) => mf.data.position === pos);
-    if (platesForPos.length === 0) return "";
-    // Sort by the number of segments (assuming more segments means more updated).
-    platesForPos.sort(
-      (a, b) =>
-        a.name.replace(".json", "").split(".").length -
-        b.name.replace(".json", "").split(".").length
-    );
-    // Choose the one with the highest segment count.
-    return platesForPos[platesForPos.length - 1].name;
-  });
-  setDisplayPlates(newDisplay);
-}, [loadedPlates, positionsOrder]);
-
+  // Whenever loadedPlates updates, update displayPlates.
+  useEffect(() => {
+    setDisplayPlates(loadedPlates.map(mf => mf.name));
+  }, [loadedPlates]);
 
   // When plateCount changes, reset loadedPlates.
   useEffect(() => {
@@ -163,7 +135,7 @@ useEffect(() => {
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [ setClickedRoot, setSelectedFolder]);
+  }, [setClickedRoot, setSelectedFolder]);
 
   // --- Generalized updateMatrixFiles ---
   const updateMatrixFiles = useCallback(
@@ -181,7 +153,7 @@ useEffect(() => {
           "updateMatrixFiles - clickedIndex:",
           clickedIndex,
           "updated files:",
-          updated.map((file) => ({ name: file.name, position: file.data.position }))
+          updated.map((file) => file.name)
         );
         return updated;
       } else {
@@ -197,19 +169,18 @@ useEffect(() => {
           "updateMatrixFiles - clickedIndex:",
           clickedIndex,
           "updated files:",
-          updated.map((file) => ({ name: file.name, position: file.data.position }))
+          updated.map((file) => file.name)
         );
         return updated;
       }
     },
     []
   );
-  
+
   const handleActionClick = useCallback(
     (action: string, fileName: string) => {
       const matrixFile = loadedPlates.find((f) => f.name === fileName);
       if (!matrixFile) return;
-      // Use the same internal update logic as before.
       const newValue = actionToPrefixMap[action] || action;
       const clickedIndex = loadedPlates.findIndex((f) => f.name === matrixFile.name);
       if (clickedIndex === -1) return;
@@ -224,7 +195,7 @@ useEffect(() => {
     },
     [loadedPlates, selectedFolder, updateBrowserHistory, updateMatrixFiles]
   );
-  
+
   // Handle folder selection.
   const handleFolderSelect = useCallback(
     (folder: string) => {
@@ -284,15 +255,6 @@ useEffect(() => {
           onActionClick={handleActionClick}
           windowWidth={windowWidth}
         />
-        {/* Debug section: two columns side-by-side */}
-        <div className="mt-4 p-2 bg-gray-100 border border-gray-300 rounded flex flex-col md:flex-row md:justify-between">
-          <div className="md:w-1/2">
-            <h3 className="font-semibold mb-2">Loaded Plates (Names Only)</h3>
-            <pre className="text-sm whitespace-pre-wrap">
-              {JSON.stringify(loadedPlates.map(mf => mf.name), null, 2)}
-            </pre>
-          </div>
-        </div>
       </div>
       <footer className="text-center select-none">© Josh Garber 2025</footer>
     </Layout>
