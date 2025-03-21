@@ -9,12 +9,11 @@ import useWindowDimensions from "../hooks/useWindowDimensions";
 import useFolders from "../hooks/useFolders";
 import useFiles from "../hooks/useFiles";
 import axios from "axios";
-import useHistoryState from "../hooks/useHistoryState";
+import { JsonData } from "../utils/utils";
 
 const Main = () => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
   const { windowWidth } = useWindowDimensions();
-  const { pushHistoryState } = useHistoryState();
 
   const { folders, selectedFolder, setSelectedFolder, error: folderError } =
     useFolders(API_BASE_URL);
@@ -32,11 +31,12 @@ const Main = () => {
     return selectedFolder ? selectedFolder.split("_").length : 1;
   }, [selectedFolder]);
 
-  // Compute the default plate names based solely on plateCount.
+  // Compute the default plate names.
   const defaultPlateNames = useMemo((): string[] => {
     const filesArray: string[] = [];
     for (let i = 0; i < plateCount - 1; i++) {
-      const fileName = i === 0 ? "root.json" : Array(i).fill("0").join(".") + ".json";
+      const fileName =
+        i === 0 ? "root.json" : Array(i).fill("0").join(".") + ".json";
       filesArray.push(fileName);
     }
     if (plateCount > 1) {
@@ -49,10 +49,13 @@ const Main = () => {
   }, [plateCount]);
 
   const [loadedPlates, setLoadedPlates] = useState<string[]>(defaultPlateNames);
-  const fetchedPlatesRef = useRef<Set<string>>(new Set());
+  // Used to map a plate's position (e.g., "BTN") to its file name.
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>({});
+  // Stores the fetched JSON data for each plate.
+  const [plateData, setPlateData] = useState<Record<string, JsonData>>({});
+  const fetchedPlatesRef = useRef<Set<string>>(new Set());
 
-  // Compute a fixed position order if plateCount is 8; otherwise, use the keys of plateMapping.
+  // Compute a fixed order for eight plates; otherwise, derive order from plateMapping.
   const positionOrder = useMemo(() => {
     if (plateCount === 8) {
       return ["UTG", "UTG1", "LJ", "HJ", "CO", "BTN", "SB", "BB"];
@@ -60,39 +63,51 @@ const Main = () => {
     return Object.keys(plateMapping);
   }, [plateCount, plateMapping]);
 
-  // Derive displayPlates from the fixed position order.
+  // Derive displayPlates from the fixed order.
   const [displayPlates, setDisplayPlates] = useState<string[]>([]);
   useEffect(() => {
     setDisplayPlates(positionOrder.map((pos) => plateMapping[pos] || ""));
   }, [plateMapping, positionOrder]);
 
-  // Reset loadedPlates, plateMapping, and fetchedPlates when plateCount changes.
+  // Log state changes for debugging.
+  useEffect(() => {
+    console.log("loadedPlates:", loadedPlates);
+    console.log("displayPlates:", displayPlates);
+  }, [loadedPlates, displayPlates]);
+
+  // Reset states when plateCount changes.
   useEffect(() => {
     setLoadedPlates(defaultPlateNames);
     setPlateMapping({});
+    setPlateData({});
     fetchedPlatesRef.current = new Set();
   }, [defaultPlateNames]);
 
+  // Centralized fetching of plate data.
   useEffect(() => {
-    const onPopState = (event: PopStateEvent) => {
-      if (event.state) {
-        const { clickedRoot, folder, matrixFiles } = event.state;
-        // Restore folder and other states from history
-        setSelectedFolder(folder);
-        setClickedRoot(clickedRoot);
-        setLoadedPlates(matrixFiles || defaultPlateNames);
-        // If needed, you can also update plateMapping or trigger fetching of new data here.
-      }
-    };
-  
-    window.addEventListener("popstate", onPopState);
-    return () => {
-      window.removeEventListener("popstate", onPopState);
-    };
-  }, [defaultPlateNames, setSelectedFolder]);
-  
+    if (selectedFolder && loadedPlates.length > 0) {
+      loadedPlates.forEach((plate) => {
+        if (!fetchedPlatesRef.current.has(plate) && selectedFolder !== "") {
+          axios
+            .get(`${API_BASE_URL}/api/Files/${selectedFolder}/${plate}`)
+            .then((response) => {
+              const data = response.data;
+              // Store the full JSON data.
+              setPlateData((prev) => ({ ...prev, [plate]: data }));
+              // Map the plate's position (e.g., "BTN") to its file name.
+              const pos = data.Position;
+              setPlateMapping((prev) => ({ ...prev, [pos]: plate }));
+              fetchedPlatesRef.current.add(plate);
+            })
+            .catch((err) => {
+              console.error(`Error fetching ${plate} data:`, err);
+            });
+        }
+      });
+    }
+  }, [loadedPlates, selectedFolder, API_BASE_URL]);
 
-  // Append new plate names if they don't already exist.
+  // Append new plate names based on an action.
   const appendPlateNames = useCallback(
     (
       currentFiles: string[],
@@ -104,7 +119,8 @@ const Main = () => {
       if (!clickedFile) return currentFiles;
 
       const prefix = clickedFile.replace(".json", "");
-      const baseName = prefix === "root" ? `${actionNumber}` : `${prefix}.${actionNumber}`;
+      const baseName =
+        prefix === "root" ? `${actionNumber}` : `${prefix}.${actionNumber}`;
       const newFiles: string[] = [];
       const baseFileName = `${baseName}.json`;
       availableFiles.forEach((file) => {
@@ -119,80 +135,36 @@ const Main = () => {
           newFiles.push(file);
         }
       });
-      console.log(newFiles, currentFiles)
       return [...currentFiles, ...newFiles];
     },
     []
   );
 
-  // Fetch position data for each plate in loadedPlates that hasn't been fetched yet.
-  useEffect(() => {
-    if (selectedFolder && loadedPlates.length > 0) {
-      loadedPlates.forEach((plate) => {
-        if (!fetchedPlatesRef.current.has(plate) && selectedFolder !== "") {
-          axios
-            .get(`${API_BASE_URL}/api/Files/${selectedFolder}/${plate}`)
-            .then((response) => {
-              const pos = response.data.Position;
-              console.log(`Fetched Position for ${plate}:`, pos);
-              setPlateMapping((prev) => ({ ...prev, [pos]: plate }));
-              fetchedPlatesRef.current.add(plate);
-            })
-            .catch((err) => {
-              console.error(`Error fetching ${plate} data:`, err);
-            });
-        }
-      });
-    }
-  }, [loadedPlates, selectedFolder, API_BASE_URL]);
-
-  // Handle plate action clicks.
+  // When an action is clicked, update the plates.
   const handleActionClick = useCallback(
     (action: string, fileName: string) => {
       const plateName = loadedPlates.find((name) => name === fileName);
       if (!plateName) return;
       const newValue = actionToPrefixMap[action] || action;
-      const clickedIndex = loadedPlates.findIndex((name) => name === plateName);
+      const clickedIndex = loadedPlates.findIndex(
+        (name) => name === plateName
+      );
       if (clickedIndex === -1) return;
-  
+
       const updatedPlates = appendPlateNames(
         loadedPlates,
         clickedIndex,
         newValue,
         availableJsonFiles
       );
-  
-      const newlyAddedPlates = updatedPlates.slice(loadedPlates.length);
-      newlyAddedPlates.forEach((newPlate) => {
-        if (!fetchedPlatesRef.current.has(newPlate)) {
-          axios
-            .get(`${API_BASE_URL}/api/Files/${selectedFolder}/${newPlate}`)
-            .then((response) => {
-              const pos = response.data.Position;
-              setPlateMapping((prev) => ({ ...prev, [pos]: newPlate }));
-              fetchedPlatesRef.current.add(newPlate);
-            })
-            .catch((err) => {
-              console.error(`Error fetching ${newPlate} data:`, err);
-            });
-        }
-      });
-  
+
       setLoadedPlates(updatedPlates);
       setClickedRoot(plateName.replace(".json", ""));
-      
-      // Push new state including the clicked root and current loaded plates
-      pushHistoryState(
-        plateName.replace(".json", ""),
-        plateName.replace(".json", ""),
-        selectedFolder,
-        updatedPlates
-      );
     },
-    [loadedPlates, appendPlateNames, availableJsonFiles, selectedFolder, API_BASE_URL, pushHistoryState]
+    [loadedPlates, appendPlateNames, availableJsonFiles]
   );
-  
 
+  // Handle folder selection.
   const handleFolderSelect = useCallback(
     (folder: string) => {
       if (folder === selectedFolder) {
@@ -202,31 +174,28 @@ const Main = () => {
           setClickedRoot("");
           setLoadedPlates(defaultPlateNames);
           setPlateMapping({});
+          setPlateData({});
           fetchedPlatesRef.current = new Set();
-          // Push new state with cleared clickedRoot and default plates
-          pushHistoryState("", "", folder, defaultPlateNames);
         }, 0);
       } else {
         setSelectedFolder(folder);
         setClickedRoot("");
         setLoadedPlates(defaultPlateNames);
         setPlateMapping({});
+        setPlateData({});
         fetchedPlatesRef.current = new Set();
-        // Push new state when a new folder is selected
-        pushHistoryState("", "", folder, defaultPlateNames);
       }
     },
-    [selectedFolder, defaultPlateNames, setSelectedFolder, pushHistoryState]
+    [selectedFolder, defaultPlateNames, setSelectedFolder]
   );
-  
 
-  // Keyboard shortcuts.
   useKeyboardShortcuts({
     onBackspace: () => {
       if (clickedRoot) {
         setClickedRoot("");
         setLoadedPlates(defaultPlateNames);
         setPlateMapping({});
+        setPlateData({});
         fetchedPlatesRef.current = new Set();
       }
     },
@@ -258,6 +227,7 @@ const Main = () => {
           randomFillEnabled={randomFillEnabled}
           onActionClick={handleActionClick}
           windowWidth={windowWidth}
+          plateData={plateData}
         />
       </div>
       <footer className="text-center select-none">© Josh Garber 2025</footer>

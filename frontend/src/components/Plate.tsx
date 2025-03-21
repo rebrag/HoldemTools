@@ -1,76 +1,54 @@
 // src/components/Plate.tsx
 import React, { useEffect, useState } from "react";
-import axios from "axios";
-import { JsonData, combineDataByHand, HandCellData } from "../utils/utils";
+import { combineDataByHand, HandCellData, JsonData } from "../utils/utils";
 import ColorKey from "./ColorKey";
 import DecisionMatrix from "./DecisionMatrix";
 
 interface PlateProps {
-  folder: string;
   file: string;
+  data?: JsonData;
   onActionClick: (action: string, file: string) => void;
   randomFillEnabled?: boolean;
 }
 
 const Plate: React.FC<PlateProps> = ({
-  folder,
   file,
+  data,
   onActionClick,
   randomFillEnabled,
 }) => {
-  const [rawData, setRawData] = useState<JsonData | null>(null);
   const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  
 
-  // Load file data when folder/file changes
+  // Process the JSON data into grid data when it changes.
   useEffect(() => {
-    if (!folder) return;
-    setLoading(true);
-    axios
-      .get<JsonData>(`${import.meta.env.VITE_API_BASE_URL}/api/Files/${folder}/${file}`)
-      .then((response) => {
-        setRawData(response.data);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error(err);
-        setError("Error fetching file data");
-        setLoading(false);
-      });
-  }, [folder, file]);
-
-  // Process file data into grid data
-  useEffect(() => {
-    if (!rawData) return;
-    const data = combineDataByHand(rawData);
-    setCombinedData(data);
-  }, [rawData]);
+    if (data) {
+      const processed = combineDataByHand(data);
+      setCombinedData(processed);
+    }
+  }, [data]);
 
   return (
     <div
       className="mb-0 justify-self-center border rounded-[7px] shadow-md p-1 bg-white
                  w-full transition-all duration-200 text-base max-w-[300px]"
     >
-      {loading && <p>Loading data...</p>}
-      {error && <p className="text-red-500">{error}</p>}
-      {!loading && !error && rawData && (
+      {!data && <p>Loading data...</p>}
+      {data && (
         <>
           <div className="select-none flex w-full items-center justify-between">
             <h2
               className="whitespace-nowrap font-bold text-gray-800"
               style={{ fontSize: "calc(0.6rem + 0.3vw)" }}
             >
-              {rawData.Position ? (
+              {data.Position ? (
                 <span
                   className={
-                    rawData.Position === "BTN"
+                    data.Position === "BTN"
                       ? "border-2 border-black p-0.5 animate-none duration-1000 shadow-2xl px-0 rounded-sm"
                       : ""
                   }
                 >
-                  {rawData.Position} {rawData.bb}bb
+                  {data.Position} {data.bb}bb
                 </span>
               ) : (
                 file
@@ -86,9 +64,6 @@ const Plate: React.FC<PlateProps> = ({
       )}
     </div>
   );
-  
-  
-  
 };
 
 export default Plate;

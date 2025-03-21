@@ -2,24 +2,25 @@
 import { useMemo } from "react";
 import Plate from "./Plate";
 import { generateSpiralOrder } from "../utils/gridUtils";
+import { JsonData } from "../utils/utils";
 
 type PlateGridProps = {
-    files: string[];
-    selectedFolder: string;
-    isSpiralView: boolean;
-    randomFillEnabled: boolean;
-    onActionClick: (action: string, file: string) => void;
-    windowWidth: number;
-  };
-  
+  files: string[];
+  selectedFolder: string;
+  isSpiralView: boolean;
+  randomFillEnabled: boolean;
+  onActionClick: (action: string, file: string) => void;
+  windowWidth: number;
+  plateData: Record<string, JsonData>;
+};
 
 const PlateGrid = ({
   files,
-  selectedFolder,
   isSpiralView,
   randomFillEnabled,
   onActionClick,
   windowWidth,
+  plateData,
 }: PlateGridProps) => {
   const isNarrow = windowWidth <= 450;
   const gridRows = isNarrow ? Math.ceil(files.length / 2) : 2;
@@ -60,8 +61,8 @@ const PlateGrid = ({
         file ? (
           <Plate
             key={file}
-            folder={selectedFolder}
             file={file}
+            data={plateData[file]}
             onActionClick={onActionClick}
             randomFillEnabled={randomFillEnabled}
           />
