@@ -29,6 +29,19 @@ function getDisplayFolderName(folder: string): string {
   return folder.replace(/_/g, " ");
 }
 
+// Helper to determine if a folder qualifies as "allSame"
+function isAllSameFolder(folder: string): boolean {
+  const parts = folder.split("_");
+  if (parts.length === 0) return false;
+  const firstMatch = parts[0].match(/^(\d+)/);
+  if (!firstMatch) return false;
+  const firstNum = firstMatch[1];
+  return parts.every((part) => {
+    const match = part.match(/^(\d+)/);
+    return match && match[1] === firstNum;
+  });
+}
+
 // Helper to render folder name with bold matching text
 const highlightMatch = (folder: string, query: string): React.ReactNode => {
   if (!query) return <>{folder}</>;
@@ -75,6 +88,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
 
   useEffect(() => {
     if (inputValue === "") {
+      // Sort folders by length, but later we sort allSame folders on top
       setFilteredFolders([...folders].sort((a, b) => a.length - b.length));
       setHighlightedIndex(-1);
     } else {
@@ -82,7 +96,15 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
         .filter((folder) =>
           folder.replace(/_/g, " ").toLowerCase().includes(inputValue.toLowerCase())
         )
-        .sort((a, b) => a.length - b.length); // Sort by string length
+        .sort((a, b) => {
+          // Prioritize folders that are allSame
+          const aAllSame = isAllSameFolder(a);
+          const bAllSame = isAllSameFolder(b);
+          if (aAllSame && !bAllSame) return -1;
+          if (!aAllSame && bAllSame) return 1;
+          // Otherwise, sort by string length
+          return a.length - b.length;
+        });
 
       setFilteredFolders(filtered);
       setHighlightedIndex(filtered.length > 0 ? 0 : -1); // Default highlight first item
@@ -163,7 +185,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
               return (
                 <li
                   key={index}
-                  onClick={() => handleSelect(folder)}
+                  onMouseDown={() => handleSelect(folder)}
                   className={`px-4 py-2 cursor-pointer hover:bg-gray-100 border-b last:border-0 ${
                     highlightedIndex === index ? "bg-blue-200" : ""
                   } ${isSmallViewport ? "text-xs" : ""}`}

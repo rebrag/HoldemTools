@@ -1,7 +1,6 @@
-// DecisionMatrix.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import HandCell from "./HandCell";
-import { HandCellData, getColorForAction } from "../utils/utils";
+import { HandCellData } from "../utils/utils";
 
 interface DecisionMatrixProps {
   gridData: HandCellData[];
@@ -24,39 +23,14 @@ const HAND_ORDER = [
   "A2o", "K2o", "Q2o", "J2o", "T2o", "92o", "82o", "72o", "62o", "52o", "42o", "32o", "22"
 ];
 
-const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ gridData, randomFillEnabled }) => {
+const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ gridData, randomFillEnabled: randomFill }) => {
+  
+  // const globalRandom = useMemo(() => (randomFill ? Math.random() : null), [randomFill]);
   const orderedGridData = useMemo(() => {
     return HAND_ORDER.map(
       (hand) => gridData.find((item) => item.hand === hand) || null
     );
   }, [gridData]);
-
-  const [randomColors, setRandomColors] = useState<(string | null)[]>([]);
-
-  const selectRandomAction = (actions: { [action: string]: number }): string => {
-    const rand = Math.random();
-    let cumulative = 0;
-    for (const [action, probability] of Object.entries(actions)) {
-      cumulative += probability;
-      if (rand < cumulative) {
-        return action;
-      }
-    }
-    return String(Object.keys(actions)[0]); // fallback
-  };
-
-  useEffect(() => {
-    if (randomFillEnabled) {
-      const newColors = orderedGridData.map((cellData) => {
-        if (!cellData) return null;
-        const chosenAction = selectRandomAction(cellData.actions);
-        return getColorForAction(chosenAction);
-      });
-      setRandomColors(newColors);
-    } else {
-      setRandomColors([]);
-    }
-  }, [randomFillEnabled, orderedGridData]);
 
   return (
     <div className="grid grid-cols-13 gap-0 w-full aspect-square rounded-lg">
@@ -65,7 +39,8 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ gridData, randomFillEna
           <HandCell
             key={index}
             data={handData}
-            randomFillColor={randomColors[index] || undefined}
+            randomFill={randomFill}
+            //globalRandom={globalRandom}
           />
         ) : (
           <div key={index} className="empty-cell" />

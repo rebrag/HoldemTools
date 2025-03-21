@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { HandCellData, getColorForAction } from "../utils/utils";
 
 interface HandCellProps {
   data: HandCellData;
-  randomFillColor?: string;
+  randomFill?: boolean;
 }
 
 const getRoundedCornerClass = (hand: string): string => {
@@ -21,50 +21,67 @@ const getRoundedCornerClass = (hand: string): string => {
   }
 };
 
-const FALLBACK_COLOR = "#1111"; // your fallback background
+const HandCell: React.FC<HandCellProps> = ({ data, randomFill }) => {
+  const [selectedAction, setSelectedAction] = useState<string | null>(null);
 
-const HandCell: React.FC<HandCellProps> = ({ data, randomFillColor }) => {
-  // manage container background in state
-  const [containerBg, setContainerBg] = useState<string>(FALLBACK_COLOR);
+  // Convert actions to an array without reversing the order.
+  const actionsArray = useMemo(() => Object.entries(data.actions), [data.actions]);
 
   useEffect(() => {
-    if (randomFillColor) {
-      setContainerBg(randomFillColor);
+    if (randomFill) {
+      let cumulative = 0;
+      const rand = Math.random(); // generate individual random number for this cell
+      let chosen: string | null = null;
+      for (const [action, weight] of Object.entries(data.actions)) {
+        cumulative += weight;
+        if (rand <= cumulative) {
+          chosen = action;
+          break;
+        }
+      }
+      if (!chosen && actionsArray.length > 0) {
+        chosen = actionsArray[0][0];
+      }
+      setSelectedAction(chosen);
     } else {
-      const timeoutId = setTimeout(() => {
-        setContainerBg(FALLBACK_COLOR);
-      }, 10000); 
-
-      return () => clearTimeout(timeoutId);
+      setSelectedAction(null);
     }
-  }, [randomFillColor]);
+  }, [randomFill, data.actions, actionsArray]);
+
+  // Compute the style for each action segment.
+  // In randomFill mode, the selected action's segment gets 100% width and the others 0%.
+  const segments = useMemo(
+    () =>
+      actionsArray.map(([action, weight]) => {
+        const targetWidth =
+          randomFill && selectedAction !== null
+            ? action === selectedAction
+              ? 100
+              : 0
+            : (weight as number) * 100;
+        return {
+          action,
+          style: {
+            width: `${targetWidth}%`,
+            transition: "width 300ms ease-out",
+            backgroundColor: getColorForAction(action),
+          },
+        };
+      }),
+    [actionsArray, randomFill, selectedAction]
+  );
 
   return (
     <div
       tabIndex={-1}
-      className={`w-full h-full aspect-square relative select-none overflow-hidden ${getRoundedCornerClass(data.hand)}`}
-      style={{
-        backgroundColor: containerBg,
-      }}
+      className={`w-full h-full aspect-square relative select-none overflow-hidden ${getRoundedCornerClass(
+        data.hand
+      )}`}
     >
       <div className="flex h-full w-full">
-        {Object.entries(data.actions)
-          .reverse()
-          .map(([action, strategy]) => {
-            // When randomFillColor is active, the segments shrink to 0%
-            // Otherwise, they display at their full width.
-            const width = randomFillColor ? 0 : strategy * 100;
-            return (
-              <div
-                key={action}
-                style={{
-                  width: `${width}%`,
-                  backgroundColor: getColorForAction(action),
-                  transition: "width 0.5s ease-in-out",
-                }}
-              />
-            );
-          })}
+        {segments.map(({ action, style }) => (
+          <div key={action} style={style} />
+        ))}
       </div>
 
       {/* Shadow overlay */}
@@ -89,4 +106,4 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFillColor }) => {
   );
 };
 
-export default HandCell;
+export default React.memo(HandCell);
