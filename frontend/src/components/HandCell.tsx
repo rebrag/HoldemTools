@@ -63,7 +63,7 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFill }) => {
           action,
           style: {
             width: `${targetWidth}%`,
-            transition: "width 300ms ease-out",
+            transition: "width 500ms ease-out",
             backgroundColor: getColorForAction(action),
           },
         };

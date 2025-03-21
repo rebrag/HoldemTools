@@ -61,12 +61,12 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
         <div
           className="flex items-center justify-center rounded-md hover:border-3 hover:border-black"
           style={{
-            width: "calc(26px + 1.3vw)",
+            width: "calc(28px + 1.35vw)",
             height: "calc(20px + 0.5vw)",
             background: `radial-gradient(circle at top left, ${getColorForAction(action)} 0%, ${shadeColor(getColorForAction(action), -15)} 50%, ${shadeColor(getColorForAction(action), -35)} 100%)`
           }}
         >
-          <span style={{ color: "#fff", fontSize: "calc(0.4rem + 0.2vw)" }} className="whitespace-nowrap">
+          <span style={{ color: "#fff", fontSize: "calc(0.45rem + 0.2vw)" }} className="whitespace-nowrap">
             {action}
           </span>
         </div>
