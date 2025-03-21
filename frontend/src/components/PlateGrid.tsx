@@ -42,7 +42,7 @@ const PlateGrid = ({
 
   return (
     <div
-      className="grid gap-1 select-none border-2 rounded-[5px]"
+      className="grid gap-1 select-none border-0 rounded-[5px]"
       style={
         isNarrow
           ? {

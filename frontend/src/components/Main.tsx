@@ -51,7 +51,9 @@ const Main = () => {
     setDisplayPlates(positionOrder.map(pos => plateMapping[pos] || ""));
   }, [plateMapping, positionOrder]);
 
-  // Reset all plate-related states
+  
+
+  // Centralized reset function for plate state.
   const resetPlateState = useCallback(() => {
     setLoadedPlates(defaultPlateNames);
     setPlateMapping({});
@@ -59,32 +61,55 @@ const Main = () => {
     fetchedPlatesRef.current = new Set();
   }, [defaultPlateNames]);
 
-  // Log state changes (for debugging)
+  // Debug logs.
   useEffect(() => {
     console.log("loadedPlates:", loadedPlates);
     console.log("displayPlates:", displayPlates);
   }, [loadedPlates, displayPlates]);
 
+  // Reset states when defaultPlateNames changes.
   useEffect(() => {
     resetPlateState();
   }, [defaultPlateNames, resetPlateState]);
 
+  // Fetch plate data.
   useEffect(() => {
     if (selectedFolder && loadedPlates.length) {
-      loadedPlates.forEach(plate => {
-        if (!fetchedPlatesRef.current.has(plate)) {
-          axios.get(`${API_BASE_URL}/api/Files/${selectedFolder}/${plate}`)
-            .then(response => {
-              const data = response.data;
-              setPlateData(prev => ({ ...prev, [plate]: data }));
-              setPlateMapping(prev => ({ ...prev, [data.Position]: plate }));
-              fetchedPlatesRef.current.add(plate);
+      // Filter plates that haven't been fetched yet.
+      const platesToFetch = loadedPlates.filter(
+        (plate) => !fetchedPlatesRef.current.has(plate)
+      );
+  
+      // Create an array of promises for each plate fetch.
+      Promise.all(
+        platesToFetch.map((plate) =>
+          axios
+            .get(`${API_BASE_URL}/api/Files/${selectedFolder}/${plate}`)
+            .then((response) => ({ plate, data: response.data }))
+            .catch((error) => {
+              console.error(`Error fetching ${plate}:`, error);
+              return null;
             })
-            .catch(err => console.error(`Error fetching ${plate}:`, err));
-        }
+        )
+      ).then((results) => {
+        // Filter out any failed requests.
+        const validResults = results.filter((result) => result !== null);
+        const newPlateData: Record<string, JsonData> = {};
+        const newPlateMapping: Record<string, string> = {};
+  
+        validResults.forEach(({ plate, data }) => {
+          newPlateData[plate] = data;
+          newPlateMapping[data.Position] = plate;
+          fetchedPlatesRef.current.add(plate);
+        });
+  
+        // Update the state in one go.
+        setPlateData((prev) => ({ ...prev, ...newPlateData }));
+        setPlateMapping((prev) => ({ ...prev, ...newPlateMapping }));
       });
     }
   }, [loadedPlates, selectedFolder, API_BASE_URL]);
+  
 
   const appendPlateNames = useCallback((currentFiles: string[], clickedIndex: number, actionNumber: string, availableFiles: string[]): string[] => {
     const clickedFile = currentFiles[clickedIndex];
@@ -112,8 +137,12 @@ const Main = () => {
     const clickedIndex = loadedPlates.findIndex(name => name === plateName);
     if (clickedIndex === -1) return;
 
+    // Update plates and simulate navigation.
     setLoadedPlates(appendPlateNames(loadedPlates, clickedIndex, newValue, availableJsonFiles));
     setClickedRoot(plateName.replace(".json", ""));
+    
+    // Push a new state so the browser back button becomes active.
+    window.history.pushState(null, "", window.location.href);
   }, [loadedPlates, appendPlateNames, availableJsonFiles]);
 
   const handleFolderSelect = useCallback((folder: string) => {
@@ -131,6 +160,7 @@ const Main = () => {
     }
   }, [selectedFolder, setSelectedFolder, resetPlateState]);
 
+  // Keyboard shortcuts.
   useKeyboardShortcuts({
     onBackspace: () => {
       if (clickedRoot) {
@@ -140,6 +170,26 @@ const Main = () => {
     },
     onToggleRandom: () => setRandomFillEnabled(prev => !prev)
   });
+
+  // Listen for browser back button (popstate event) and trigger backspace functionality.
+  useEffect(() => {
+    const handlePopState = () => {
+      if (clickedRoot) {
+        setClickedRoot("");
+        resetPlateState();
+      }
+      // Optionally, push state again if you don't want to leave the page:
+      window.history.pushState(null, "", window.location.href);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    // Push an initial state so the back button is available.
+    window.history.pushState(null, "", window.location.href);
+
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [clickedRoot, resetPlateState]);
 
   const toggleViewMode = useCallback(() => setIsSpiralView(prev => !prev), []);
 
