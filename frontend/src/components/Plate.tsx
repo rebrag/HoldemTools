@@ -26,6 +26,7 @@ const Plate: React.FC<PlateProps> = ({
 
   // Load file data when folder/file changes
   useEffect(() => {
+    if (!folder) return;
     setLoading(true);
     axios
       .get<JsonData>(`${import.meta.env.VITE_API_BASE_URL}/api/Files/${folder}/${file}`)
