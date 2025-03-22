@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import NavBar from "./NavBar";
 import PlateGrid from "./PlateGrid";
 import Layout from "./Layout";
@@ -10,20 +11,25 @@ import useFiles from "../hooks/useFiles";
 import axios from "axios";
 import { JsonData } from "../utils/utils";
 
+
 const Main = () => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
   const { windowWidth } = useWindowDimensions();
-  const { folders, selectedFolder, setSelectedFolder, error: folderError } = useFolders(API_BASE_URL);
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedFolder = searchParams.get("folder") || "";
+
+  const { folders, error: folderError } = useFolders(API_BASE_URL);
   const { files: availableJsonFiles, error: filesError } = useFiles(API_BASE_URL, selectedFolder);
 
-  const [clickedRoot, setClickedRoot] = useState("");
   const [randomFillEnabled, setRandomFillEnabled] = useState(false);
   const [isSpiralView, setIsSpiralView] = useState(true);
 
-  // Determine the number of players based on the selected folder.
-  const playerCount = useMemo(() => (selectedFolder ? selectedFolder.split("_").length : 1), [selectedFolder]);
+  const playerCount = useMemo(
+    () => (selectedFolder ? selectedFolder.split("_").length : 1),
+    [selectedFolder]
+  );
 
-  // Generate default plate names.
   const defaultPlateNames = useMemo(() => {
     const filesArray: string[] = [];
     for (let i = 0; i < playerCount - 1; i++) {
@@ -37,129 +43,30 @@ const Main = () => {
     return filesArray;
   }, [playerCount]);
 
-  // Plate view state.
   const [loadedPlates, setLoadedPlates] = useState<string[]>(defaultPlateNames);
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>({});
   const [plateData, setPlateData] = useState<Record<string, JsonData>>({});
   const fetchedPlatesRef = useRef<Set<string>>(new Set());
 
-  // Cache for the base (initial) plate data.
-  const [plateCache, setPlateCache] = useState<{
-    plateMapping: Record<string, string>;
-    plateData: Record<string, JsonData>;
-  }>({ plateMapping: {}, plateData: {} });
-
-  // Define position order based on player count.
   const positionOrder = useMemo(() => {
     if (playerCount === 8) return ["UTG", "UTG1", "LJ", "HJ", "CO", "BTN", "SB", "BB"];
     if (playerCount === 6) return ["LJ", "HJ", "CO", "BTN", "SB", "BB"];
     return Object.keys(plateMapping);
   }, [playerCount, plateMapping]);
 
-  const [displayPlates, setDisplayPlates] = useState<string[]>([]);
-  useEffect(() => {
-    setDisplayPlates(positionOrder.map((pos) => plateMapping[pos] || ""));
-  }, [plateMapping, positionOrder]);
+  const displayPlates = useMemo(
+    () => positionOrder.map((pos) => plateMapping[pos] || ""),
+    [plateMapping, positionOrder]
+  );
 
-  // Reset all plate-related states and clear the cache.
   const resetPlateState = useCallback(() => {
     setLoadedPlates(defaultPlateNames);
     setPlateMapping({});
     setPlateData({});
-    fetchedPlatesRef.current = new Set();
-    setPlateCache({ plateMapping: {}, plateData: {} });
+    fetchedPlatesRef.current.clear();
   }, [defaultPlateNames]);
 
-  // Reset only the view state, restoring from the cache if available.
-  const resetViewState = useCallback(() => {
-    setLoadedPlates(defaultPlateNames);
-    setClickedRoot("");
-    if (Object.keys(plateCache.plateMapping).length > 0) {
-      setPlateMapping(plateCache.plateMapping);
-      setPlateData(plateCache.plateData);
-    }
-  }, [defaultPlateNames, plateCache]);
-
-  // Reset plate state when the selected folder (and thus playerCount) changes.
-  useEffect(() => {
-    resetPlateState();
-  }, [selectedFolder, resetPlateState]);
-
-  // Debug logs.
-  useEffect(() => {
-    console.log("loadedPlates:", loadedPlates);
-    console.log("displayPlates:", displayPlates);
-  }, [loadedPlates, displayPlates]);
-
-  // Fetch plate data and update the cache only once for the base view.
-  // Fetch plate data and update the cache only once for the base view.
-useEffect(() => {
-  // Create a cancel token for this effect.
-  const source = axios.CancelToken.source();
-
-  if (selectedFolder && loadedPlates.length) {
-    const platesToFetch = loadedPlates.filter(
-      (plate) => !fetchedPlatesRef.current.has(plate)
-    );
-
-    Promise.all(
-      platesToFetch.map((plate) =>
-        axios
-          .get(`${API_BASE_URL}/api/Files/${selectedFolder}/${plate}`, {
-            cancelToken: source.token,
-          })
-          .then((response) => ({ plate, data: response.data }))
-          .catch((error) => {
-            if (axios.isCancel(error)) {
-              // Request was cancelled, simply return null.
-              return null;
-            }
-            console.error(`Error fetching ${plate}:`, error);
-            return null;
-          })
-      )
-    ).then((results) => {
-      // If all requests were cancelled or there are no valid results, do nothing.
-      const validResults = results.filter((result) => result !== null) as {
-        plate: string;
-        data: JsonData;
-      }[];
-
-      if (validResults.length === 0) return;
-
-      const newPlateData: Record<string, JsonData> = {};
-      const newPlateMapping: Record<string, string> = {};
-
-      validResults.forEach(({ plate, data }) => {
-        newPlateData[plate] = data;
-        newPlateMapping[data.Position] = plate;
-        fetchedPlatesRef.current.add(plate);
-      });
-
-      setPlateData((prev) => ({ ...prev, ...newPlateData }));
-      setPlateMapping((prev) => ({ ...prev, ...newPlateMapping }));
-
-      // Only update the cache if we're in the base view.
-      if (
-        loadedPlates.length === defaultPlateNames.length &&
-        Object.keys(plateCache.plateMapping).length === 0
-      ) {
-        setPlateCache({
-          plateData: newPlateData,
-          plateMapping: newPlateMapping,
-        });
-      }
-    });
-  }
-
-  // Cleanup: cancel any in-flight requests if the folder changes.
-  return () => {
-    source.cancel("Operation canceled due to folder change.");
-  };
-}, [loadedPlates, selectedFolder, API_BASE_URL, defaultPlateNames, plateCache.plateMapping]);
-
-
-  // Append new plate names based on an action.
+  // Helper function for appending plate names.
   const appendPlateNames = useCallback(
     (
       currentFiles: string[],
@@ -191,71 +98,76 @@ useEffect(() => {
     []
   );
 
-  // Handle an action click (drilling into a plate).
+  useEffect(() => {
+    resetPlateState();
+  }, [selectedFolder, resetPlateState]);
+
+  useEffect(() => {
+    const source = axios.CancelToken.source();
+
+    const platesToFetch = loadedPlates.filter((plate) => !fetchedPlatesRef.current.has(plate));
+
+    Promise.all(
+      platesToFetch.map((plate) =>
+        axios
+          .get(`${API_BASE_URL}/api/Files/${selectedFolder}/${plate}`, { cancelToken: source.token })
+          .then((res) => ({ plate, data: res.data }))
+          .catch(() => null)
+      )
+    ).then((results) => {
+      const validResults = results.filter((r): r is { plate: string; data: JsonData } => r !== null);
+      if (!validResults.length) return;
+
+      const newPlateData: Record<string, JsonData> = {};
+      const newPlateMapping: Record<string, string> = {};
+
+      validResults.forEach(({ plate, data }) => {
+        newPlateData[plate] = data;
+        newPlateMapping[data.Position] = plate;
+        fetchedPlatesRef.current.add(plate);
+      });
+
+      setPlateData((prev) => ({ ...prev, ...newPlateData }));
+      setPlateMapping((prev) => ({ ...prev, ...newPlateMapping }));
+    });
+
+    return () => source.cancel();
+  }, [loadedPlates, selectedFolder, API_BASE_URL]);
+
+  const handleFolderSelect = useCallback(
+    (folder: string) => {
+      setSearchParams(folder ? { folder } : {});
+    },
+    [setSearchParams]
+  );
+
   const handleActionClick = useCallback(
     (action: string, fileName: string) => {
       const plateName = loadedPlates.find((name) => name === fileName);
       if (!plateName) return;
       const newValue = actionToPrefixMap[action] || action;
       const clickedIndex = loadedPlates.findIndex((name) => name === plateName);
-      if (clickedIndex === -1) return;
 
-      setLoadedPlates(appendPlateNames(loadedPlates, clickedIndex, newValue, availableJsonFiles));
-      setClickedRoot(plateName.replace(".json", ""));
-
-      // Push a new history state so that the browser back button is activated.
-      window.history.pushState(null, "", window.location.href);
+      setLoadedPlates((prev) => appendPlateNames(prev, clickedIndex, newValue, availableJsonFiles));
+      setSearchParams({ folder: selectedFolder, root: plateName.replace(".json", "") });
     },
-    [loadedPlates, appendPlateNames, availableJsonFiles]
+    [loadedPlates, setSearchParams, selectedFolder, appendPlateNames, availableJsonFiles]
   );
 
-  // Handle folder selection.
-  const handleFolderSelect = useCallback(
-    (folder: string) => {
-      if (folder === selectedFolder) {
-        setSelectedFolder("");
-        setTimeout(() => {
-          setSelectedFolder(folder);
-          setClickedRoot("");
-          resetPlateState();
-        }, 0);
-      } else {
-        setSelectedFolder(folder);
-        setClickedRoot("");
-        resetPlateState();
-      }
-    },
-    [selectedFolder, setSelectedFolder, resetPlateState]
-  );
-
-  // Keyboard shortcuts.
   useKeyboardShortcuts({
     onBackspace: () => {
-      if (clickedRoot) {
-        resetViewState();
-      }
+      setSearchParams({ folder: selectedFolder });
     },
-    onToggleRandom: () => setRandomFillEnabled((prev) => !prev)
+    onToggleRandom: () => setRandomFillEnabled((prev) => !prev),
   });
 
-  // Listen for browser back button (popstate event) to trigger the back action.
+  // Console logging for plate states
   useEffect(() => {
-    const handlePopState = () => {
-      if (clickedRoot) {
-        resetViewState();
-      }
-      window.history.pushState(null, "", window.location.href);
-    };
-
-    window.addEventListener("popstate", handlePopState);
-    window.history.pushState(null, "", window.location.href);
-
-    return () => {
-      window.removeEventListener("popstate", handlePopState);
-    };
-  }, [clickedRoot, resetViewState]);
-
-  const toggleViewMode = useCallback(() => setIsSpiralView((prev) => !prev), []);
+    console.log("Plate States Updated:", {
+      loadedPlates,
+      plateMapping,
+    });
+  }, [loadedPlates, plateMapping, plateData]);
 
   return (
     <Layout>
@@ -264,13 +176,11 @@ useEffect(() => {
         toggleRandomization={() => setRandomFillEnabled((prev) => !prev)}
         folders={folders}
         onFolderSelect={handleFolderSelect}
-        toggleViewMode={toggleViewMode}
+        toggleViewMode={() => setIsSpiralView((prev) => !prev)}
         isSpiralView={isSpiralView}
       />
       <div className="pt-13 p-1 flex-grow">
-        {(folderError || filesError) && (
-          <div className="text-red-500">{folderError || filesError}</div>
-        )}
+        {(folderError || filesError) && <div className="text-red-500">{folderError || filesError}</div>}
         <PlateGrid
           files={displayPlates}
           selectedFolder={selectedFolder}
