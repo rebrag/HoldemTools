@@ -3,6 +3,7 @@ import React, { useState, useEffect } from "react";
 
 interface FolderSelectorProps {
   folders: string[];
+  currentFolder: string; // New prop for current folder
   onFolderSelect: (folder: string) => void;
 }
 
@@ -67,13 +68,14 @@ const highlightMatch = (folder: string, query: string): React.ReactNode => {
 
 const FolderSelector: React.FC<FolderSelectorProps> = ({
   folders,
+  currentFolder,
   onFolderSelect,
 }) => {
   const [inputValue, setInputValue] = useState("");
   const [filteredFolders, setFilteredFolders] = useState<string[]>(folders);
   const [showDropdown, setShowDropdown] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState<number>(-1);
-  
+
   // State to track if the viewport width is less than 440
   const [isSmallViewport, setIsSmallViewport] = useState(window.innerWidth < 440);
 
@@ -112,8 +114,11 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   }, [inputValue, folders]);
 
   const handleSelect = (folder: string) => {
-    setInputValue("");
-    onFolderSelect(folder);
+    // Only update if the new folder is different from the current folder
+    if (folder !== currentFolder) {
+      setInputValue("");
+      onFolderSelect(folder);
+    }
     setShowDropdown(false);
     setHighlightedIndex(-1);
   };

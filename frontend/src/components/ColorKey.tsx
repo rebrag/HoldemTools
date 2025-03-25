@@ -28,7 +28,7 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
     // add other mappings as needed
   };
 
-  //makes the color of the buttons prettier, like sunset shading
+  // makes the color of the buttons prettier, like sunset shading
   function shadeColor(color: string, percent: number) {
     const num = parseInt(color.slice(1), 16);
     const amt = Math.round(2.55 * percent);
@@ -48,32 +48,36 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
     );
   }
 
-  
-  
-
   return (
     <div className="flex gap-0.5 mb-1 items-center">
       {uniqueActions.slice().reverse().map((action) => (
         <div
-        key={action}
-        className="flex cursor-pointer"
-        onClick={() => onActionClick(actionMapping[action] || action)}
-        title={`Click to see reactions to ${action}`}
-      >
-        <div
-          className="flex items-center justify-center rounded-md hover:border-3 hover:border-black"
-          style={{
-            width: "calc(28px + 1.35vw)",
-            height: "calc(20px + 0.5vw)",
-            background: `radial-gradient(circle at top left, ${getColorForAction(action)} 0%, ${shadeColor(getColorForAction(action), -15)} 50%, ${shadeColor(getColorForAction(action), -35)} 100%)`
-          }}
+          key={action}
+          className="flex cursor-pointer"
+          onClick={() => onActionClick(actionMapping[action] || action)}
+          title={`Click to see reactions to ${action}`}
         >
-          <span style={{ color: "#fff", fontSize: "calc(0.45rem + 0.2vw)" }} className="whitespace-nowrap">
-            {action}
-          </span>
+          <div
+            className="flex items-center justify-center rounded-md transition-all duration-200 ease-in-out transform hover:scale-115 hover:shadow-lg"
+            style={{
+              width: "calc(28px + 1.35vw)",
+              height: "calc(20px + 0.5vw)",
+              background: `radial-gradient(circle at top left, ${getColorForAction(
+                action
+              )} 0%, ${shadeColor(getColorForAction(action), -15)} 50%, ${shadeColor(
+                getColorForAction(action),
+                -35
+              )} 100%)`
+            }}
+          >
+            <span
+              style={{ color: "#fff", fontSize: "calc(0.45rem + 0.2vw)" }}
+              className="whitespace-nowrap"
+            >
+              {action}
+            </span>
+          </div>
         </div>
-      </div>
-      
       ))}
     </div>
   );

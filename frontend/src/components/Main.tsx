@@ -32,7 +32,7 @@ const Main = () => {
   const [plateData, setPlateData] = useState<Record<string, JsonData>>(initialState.plateData);
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>(initialState.plateMapping || {});
   const initialLoadedPlates = initialState.loadedPlates;
-
+  
   // Compute player count from folder.
   const playerCount = useMemo(() => (folder ? folder.split("_").length : 1), [folder]);
 
@@ -86,7 +86,7 @@ const Main = () => {
 
   // --- Hydrate internal state from location.state on every location change ---
   useEffect(() => {
-    console.log("location.state:", location.state);
+    console.log(Object.keys(plateData).length, "location.state:", location.state);
     if (location.state) {
       const {
         folder: newFolder,
@@ -99,6 +99,7 @@ const Main = () => {
       if (newLoadedPlates !== undefined) setLoadedPlates(newLoadedPlates);
       if (newPlateMapping !== undefined) setPlateMapping(newPlateMapping);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
   // Filter plateMapping to only keep keys corresponding to loadedPlates.
@@ -114,12 +115,16 @@ const Main = () => {
     });
   }, [loadedPlates]);
 
-  // --- Fetch plate data from the API ---
+  // --- Fetch plate data from the API only for plates not already loaded ---
   useEffect(() => {
+    // Determine which plates are missing from our plateData.
+    const platesToFetch = loadedPlates.filter((plate) => !(plate in plateData));
+    if (platesToFetch.length === 0) return; // Nothing to fetch.
+    
     const source = axios.CancelToken.source();
-    console.log("axios loaded plates:", loadedPlates);
+    console.log("axios loaded plates (fetching):", platesToFetch);
     Promise.all(
-      loadedPlates.map((plate) =>
+      platesToFetch.map((plate) =>
         axios
           .get(`${API_BASE_URL}/api/Files/${folderRef.current}/${plate}`, { cancelToken: source.token })
           .then((res) => ({ plate, data: res.data }))
@@ -142,13 +147,13 @@ const Main = () => {
     });
 
     return () => source.cancel();
-  }, [loadedPlates, API_BASE_URL]);
+  }, [loadedPlates, API_BASE_URL, plateData]);
 
   // --- Guarded navigation to update location.state ---
   // We store the last navigated state to avoid triggering an infinite loop.
   const lastNavigatedState = useRef<LocationState | null>(null);
   useEffect(() => {
-    const newState: LocationState = { folder, plateData, plateMapping };
+    const newState: LocationState = { folder, plateData, loadedPlates, plateMapping };
     // Only navigate if plateData exists and if the new state differs from the last state.
     if (
       Object.keys(plateData).length > 0 &&
@@ -157,13 +162,17 @@ const Main = () => {
       lastNavigatedState.current = newState;
       navigate(".", { state: newState, replace: true });
     }
-  }, [plateData, plateMapping, folder, navigate]);
+  }, [plateData, plateMapping, loadedPlates, folder, navigate]);
 
   // --- State History for Back Navigation ---
   // This ref stores location states where plateData wasn't empty.
   const validStateHistory = useRef<LocationState[]>([]);
   useEffect(() => {
-    if (location.state && (location.state as LocationState).plateData && Object.keys((location.state as LocationState).plateData).length > 0) {
+    if (
+      location.state &&
+      (location.state as LocationState).plateData &&
+      Object.keys((location.state as LocationState).plateData).length > 0
+    ) {
       validStateHistory.current.push(location.state as LocationState);
     }
   }, [location.state]);
@@ -264,6 +273,7 @@ const Main = () => {
         randomFillEnabled={randomFillEnabled}
         toggleRandomization={() => setRandomFillEnabled((prev) => !prev)}
         folders={folders}
+        currentFolder={folder}
         onFolderSelect={handleFolderSelect}
         toggleViewMode={() => setIsSpiralView((prev) => !prev)}
         isSpiralView={isSpiralView}

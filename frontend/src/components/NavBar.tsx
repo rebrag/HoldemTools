@@ -9,6 +9,7 @@ export interface NavBarProps {
   randomFillEnabled: boolean;
   toggleRandomization: () => void;
   folders: string[];
+  currentFolder: string; // New prop for the currently selected folder
   onFolderSelect: (folder: string) => void;
   // New props for view mode toggle:
   toggleViewMode: () => void;
@@ -19,6 +20,7 @@ const NavBar: React.FC<NavBarProps> = ({
   randomFillEnabled,
   toggleRandomization,
   folders,
+  currentFolder,
   onFolderSelect,
   toggleViewMode,
   isSpiralView,
@@ -58,7 +60,11 @@ const NavBar: React.FC<NavBarProps> = ({
         {/* Center: FolderSelector */}
         <div className="flex-grow mx-4">
           <div className="w-full max-w-lg mx-auto">
-            <FolderSelector folders={folders} onFolderSelect={onFolderSelect} />
+            <FolderSelector
+              folders={folders}
+              currentFolder={currentFolder}
+              onFolderSelect={onFolderSelect}
+            />
           </div>
         </div>
 
@@ -68,19 +74,19 @@ const NavBar: React.FC<NavBarProps> = ({
 
       {/* Dropdown menu: shown when hamburger is clicked */}
       {menuOpen && (
-  <div className="bg-white shadow-md">
-    <div className="px-2 pt-2 pb-3 space-x-1 space-y-2">
-      <RandomizeButton
-        randomFillEnabled={randomFillEnabled}
-        setRandomFillEnabled={toggleRandomization}
-      />
-      <ButtonStyle onClick={toggleViewMode}>
-        {isSpiralView ? "Index Order" : "Clockwise Order"}
-      </ButtonStyle>
-      <AccountMenu />
-    </div>
-  </div>
-)}
+        <div className="bg-white shadow-md">
+          <div className="px-2 pt-2 pb-3 space-x-1 space-y-2">
+            <RandomizeButton
+              randomFillEnabled={randomFillEnabled}
+              setRandomFillEnabled={toggleRandomization}
+            />
+            <ButtonStyle onClick={toggleViewMode}>
+              {isSpiralView ? "Index Order" : "Clockwise Order"}
+            </ButtonStyle>
+            <AccountMenu />
+          </div>
+        </div>
+      )}
     </nav>
   );
 };
