@@ -43,12 +43,15 @@ const PlateGrid = ({
   }, [files, isSpiralView, gridRows, gridCols]);
 
   return (
-    <div className="relative">
-      {loading && (
-        <div className="absolute inset-0 flex items-center justify-center z-10">
-          <LoadingIndicator />
-        </div>
-      )}
+    <div className="relative min-h-[300px]">
+      {/* Loading overlay always rendered, with transition */}
+      <div
+        className={`absolute inset-0 flex items-center justify-center z-10 transition-opacity duration-300 ${
+          loading ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+        }`}
+      >
+        <LoadingIndicator />
+      </div>
       <div
         className="grid gap-1 select-none border-0 rounded-[20px]"
         style={

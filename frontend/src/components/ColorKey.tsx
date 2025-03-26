@@ -17,6 +17,10 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
     }, new Set<string>())
   );
 
+  // If there are more than 3 actions, filter out "Fold"
+  const displayedActions =
+    uniqueActions.length > 3 ? uniqueActions.filter((action) => action !== "Fold") : uniqueActions;
+
   const actionMapping: Record<string, string> = {
     "Raise 2bb": "15",
     "Raise 1.5bb": "14",
@@ -49,7 +53,7 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
 
   return (
     <div className="flex gap-0.5 mb-1 items-center">
-      {uniqueActions.slice().reverse().map((action) => {
+      {displayedActions.slice().reverse().map((action) => {
         const isFold = action === "Fold";
         return (
           <div
@@ -63,7 +67,7 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
                 isFold ? "" : "hover:scale-110 hover:shadow-xl"
               }`}
               style={{
-                width: "calc(28px + 1.35vw)",
+                width: "calc(33px + 1.35vw)",
                 height: "calc(20px + 0.5vw)",
                 background: `radial-gradient(circle at top left, ${getColorForAction(
                   action

@@ -5,6 +5,7 @@ import { auth } from "./firebase";
 import AuthForm from "./components/Login-Signup";
 import MainApp from "./components/Main";
 import VerifyEmailPrompt from "./components/VerifyEmailPrompt";
+import LoadingIndicator from "./components/LoadingIndicator";
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -18,7 +19,14 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  if (loading) return <div>Loading...</div>;
+  if (loading) return (
+      <div
+        className={`absolute inset-0 flex items-center justify-center z-10 transition-opacity duration-300 ${
+          loading ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+        }`}
+      >
+        <LoadingIndicator />
+      </div>);
 
   let content;
   if (!user) {

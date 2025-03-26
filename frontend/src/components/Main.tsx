@@ -10,6 +10,7 @@ import useFolders from "../hooks/useFolders";
 import useFiles from "../hooks/useFiles";
 import axios from "axios";
 import { JsonData } from "../utils/utils";
+import InstructionBox from "./InstructionBox";
 
 interface LocationState {
   folder: string;
@@ -109,11 +110,21 @@ const Main = () => {
 
   useEffect(() => {
     const platesToFetch = loadedPlates.filter((plate) => !(plate in plateData));
-    if (platesToFetch.length === 0) return;
+    if (platesToFetch.length === 0) {
+      setLoading(false);
+      return;
+    }
     
-    setLoading(true);
+    let didTimeout = false;
+    // Start a timer for 400ms. If the fetch takes longer than 400ms, we set loading to true.
+    const timer = setTimeout(() => {
+      didTimeout = true;
+      setLoading(true);
+    }, 300);
+  
     const source = axios.CancelToken.source();
-    console.log("axios loaded plates (fetching):", platesToFetch);
+    console.log("axios plates (fetching):", platesToFetch);
+    
     Promise.all(
       platesToFetch.map((plate) =>
         axios
@@ -121,25 +132,36 @@ const Main = () => {
           .then((res) => ({ plate, data: res.data }))
           .catch(() => null)
       )
-    ).then((results) => {
-      const validResults = results.filter((r): r is { plate: string; data: JsonData } => r !== null);
-      if (!validResults.length) return;
-
-      const newPlateData: Record<string, JsonData> = {};
-      const newPlateMapping: Record<string, string> = {};
-      validResults.forEach(({ plate, data }) => {
-        newPlateData[plate] = data;
-        newPlateMapping[data.Position] = plate;
+    )
+      .then((results) => {
+        const validResults = results.filter(
+          (r): r is { plate: string; data: JsonData } => r !== null
+        );
+        if (validResults.length > 0) {
+          const newPlateData: Record<string, JsonData> = {};
+          const newPlateMapping: Record<string, string> = {};
+          validResults.forEach(({ plate, data }) => {
+            newPlateData[plate] = data;
+            newPlateMapping[data.Position] = plate;
+          });
+          setPlateData((prev) => ({ ...prev, ...newPlateData }));
+          setPlateMapping((prev) => ({ ...prev, ...newPlateMapping }));
+        }
+      })
+      .finally(() => {
+        clearTimeout(timer);
+        // Only clear the loading state if it was turned on.
+        if (didTimeout) {
+          console.log("fetching finished");
+          setLoading(false);
+        }
       });
-
-      setPlateData((prev) => ({ ...prev, ...newPlateData }));
-      setPlateMapping((prev) => ({ ...prev, ...newPlateMapping }));
-    }).finally(() => {
-      setLoading(false);
-    });
-
+    
     return () => source.cancel();
-  }, [loadedPlates, API_BASE_URL, plateData]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadedPlates, folder]);
+  
+  
 
   const lastNavigatedState = useRef<LocationState | null>(null);
   useEffect(() => {
@@ -282,10 +304,21 @@ const Main = () => {
           plateData={(location.state as LocationState)?.plateData}
           loading={loading} // Pass the loading prop here
         />
+        {/* Only show the InstructionBox if there is at least one non-empty plate */}
+        {displayPlates.some((plate) => plate !== "") && (
+          <InstructionBox>
+            <h2 className="text-lg font-bold mb-2">Instructions</h2>
+            <p>
+              Click on an action (other than fold) to view the reactions to an action.
+              Use the navigation bar above to choose a preflop Sim.
+            </p>
+          </InstructionBox>
+        )}
       </div>
-      <footer className="text-center select-none">© Josh Garber 2025</footer>
+      <footer className="text-center select-none pt-5">© Josh Garber 2025</footer>
     </Layout>
   );
+  
 };
 
 export default Main;
