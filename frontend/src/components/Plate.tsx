@@ -44,7 +44,7 @@ const Plate: React.FC<PlateProps> = ({
                 <span
                   className={
                     data.Position === "BTN"
-                      ? "border-2 border-black p-0.5 animate-none duration-1000 shadow-2xl px-0 rounded-sm"
+                      ? "border-2 border-black p-0.5 animate-none duration-1000 shadow-2xl px-0 rounded-lg"
                       : ""
                   }
                 >

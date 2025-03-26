@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState, useRef, useEffect } from "react";
 import HandCell from "./HandCell";
 import { HandCellData } from "../utils/utils";
 
@@ -24,23 +24,35 @@ const HAND_ORDER = [
 ];
 
 const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ gridData, randomFillEnabled: randomFill }) => {
-  
-  // const globalRandom = useMemo(() => (randomFill ? Math.random() : null), [randomFill]);
   const orderedGridData = useMemo(() => {
     return HAND_ORDER.map(
       (hand) => gridData.find((item) => item.hand === hand) || null
     );
   }, [gridData]);
 
+  // Create a ref to the container
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [matrixWidth, setMatrixWidth] = useState<number>(0);
+
+  useEffect(() => {
+    if (containerRef.current) {
+      setMatrixWidth(containerRef.current.offsetWidth);
+    }
+    // Optionally, you could also attach a window resize listener here.
+  }, [containerRef, gridData]);
+
   return (
-    <div className="grid grid-cols-13 gap-0 w-full aspect-square rounded-lg">
+    <div
+      ref={containerRef}
+      className="grid grid-cols-13 gap-0 w-full aspect-square rounded-lg"
+    >
       {orderedGridData.map((handData, index) =>
         handData ? (
           <HandCell
             key={index}
             data={handData}
             randomFill={randomFill}
-            //globalRandom={globalRandom}
+            matrixWidth={matrixWidth}
           />
         ) : (
           <div key={index} className="empty-cell" />

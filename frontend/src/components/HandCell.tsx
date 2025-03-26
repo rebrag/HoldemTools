@@ -4,6 +4,7 @@ import { HandCellData, getColorForAction } from "../utils/utils";
 interface HandCellProps {
   data: HandCellData;
   randomFill?: boolean;
+  matrixWidth?: number; // DecisionMatrix width (in pixels)
 }
 
 const getRoundedCornerClass = (hand: string): string => {
@@ -21,7 +22,7 @@ const getRoundedCornerClass = (hand: string): string => {
   }
 };
 
-const HandCell: React.FC<HandCellProps> = ({ data, randomFill }) => {
+const HandCell: React.FC<HandCellProps> = ({ data, randomFill, matrixWidth }) => {
   const [selectedAction, setSelectedAction] = useState<string | null>(null);
 
   // Convert actions to an array without reversing the order.
@@ -29,25 +30,29 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFill }) => {
 
   useEffect(() => {
     if (randomFill) {
+      const actionsEntries = Object.entries(data.actions);
+      const totalWeight = actionsEntries.reduce((sum, [, weight]) => sum + weight, 0);
+      const rand = Math.random() * totalWeight;
       let cumulative = 0;
-      const rand = Math.random(); // generate individual random number for this cell
       let chosen: string | null = null;
-      for (const [action, weight] of Object.entries(data.actions)) {
+  
+      for (const [action, weight] of actionsEntries) {
         cumulative += weight;
         if (rand <= cumulative) {
           chosen = action;
           break;
         }
       }
-      if (!chosen && actionsArray.length > 0) {
-        chosen = actionsArray[0][0];
+  
+      if (!chosen && actionsEntries.length > 0) {
+        chosen = actionsEntries[0][0];
       }
       setSelectedAction(chosen);
     } else {
       setSelectedAction(null);
     }
-  }, [randomFill, data.actions, actionsArray]);
-
+  }, [randomFill, data.actions]);
+  
   // Compute the style for each action segment.
   // In randomFill mode, the selected action's segment gets 100% width and the others 0%.
   const segments = useMemo(
@@ -71,10 +76,14 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFill }) => {
     [actionsArray, randomFill, selectedAction]
   );
 
+  // Instead of using viewport width (vw), calculate font size based on matrixWidth.
+  // For example, using a base of 4px plus 2% of the matrixWidth.
+  const computedFontSize = matrixWidth ? `${2 + matrixWidth * 0.02}px` : "calc(4px + .28vw)";
+
   return (
     <div
       tabIndex={-1}
-      className={`w-full h-full aspect-square relative select-none overflow-hidden ${getRoundedCornerClass(
+      className={`w-full h-full aspect-square relative select-none overflow-auto ${getRoundedCornerClass(
         data.hand
       )}`}
     >
@@ -92,11 +101,11 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFill }) => {
         }}
       />
 
-      {/* Hand label */}
+      {/* Hand label using matrixWidth for font scaling */}
       <div
         className="absolute inset-0 flex items-center justify-center text-white font-semibold"
         style={{
-          fontSize: "calc(4px + .28vw)",
+          fontSize: computedFontSize,
           textShadow: "2px 2px 3px rgba(0, 0, 0, .7)",
         }}
       >

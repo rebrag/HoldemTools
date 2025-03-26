@@ -9,6 +9,7 @@ import Layout from "./Layout";
 const AuthForm = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLogin, setIsLogin] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
@@ -18,6 +19,12 @@ const AuthForm = () => {
     e.preventDefault();
     setError(null);
     setMessage(null);
+
+    // If signing up, check if passwords match
+    if (!isLogin && password !== confirmPassword) {
+      setError("Passwords do not match. Please try again.");
+      return;
+    }
 
     try {
       if (isLogin) {
@@ -53,6 +60,8 @@ const AuthForm = () => {
     }
   };
 
+  const passwordsMatch = password === confirmPassword && confirmPassword.length > 0;
+
   return (
     <Layout>
       <div className="flex flex-col items-center justify-start p-4 flex-grow space-y-6">
@@ -80,6 +89,34 @@ const AuthForm = () => {
               required
               className="px-4 py-2 border border-gray-300 rounded focus:outline-none focus:border-blue-500 transition duration-200 ease-in-out hover:border-blue-400"
             />
+            {/* Confirm Password Field for Sign Up */}
+            {!isLogin && (
+              <div className="relative">
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Confirm Password"
+                  required
+                  className="w-full px-4 py-2 border border-gray-300 rounded focus:outline-none focus:border-blue-500 transition duration-200 ease-in-out hover:border-blue-400"
+                />
+                {confirmPassword && (
+                  <span className="absolute inset-y-0 right-0 flex items-center pr-3">
+                    {passwordsMatch ? (
+                      // Check icon for matching passwords
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    ) : (
+                      // X icon for non-matching passwords
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    )}
+                  </span>
+                )}
+              </div>
+            )}
             <button
               type="submit"
               className="cursor-pointer px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition duration-200 ease-in-out"
@@ -88,7 +125,11 @@ const AuthForm = () => {
             </button>
           </form>
           <button
-            onClick={() => setIsLogin((prev) => !prev)}
+            onClick={() => {
+              setIsLogin((prev) => !prev);
+              setError(null);
+              setMessage(null);
+            }}
             className="mt-6 text-blue-500 hover:underline cursor-pointer"
           >
             {isLogin ? "Need an account? Sign Up" : "Already have an account? Login"}
@@ -100,7 +141,7 @@ const AuthForm = () => {
           {/* Summary Box */}
           <div className="max-w-sm w-full p-4 bg-white/70 rounded-lg shadow-md">
             <p className="text-gray-800 text-sm">
-            Holdemtool is an advanced GTO preflop range tool that guides you on the optimal play for your preflop hands in various situations. Right now, our simulations focus on tournament play with a 1bb ante, and we’re planning to add cash game and ICM simulations soon. Stay tuned!
+              Holdemtool is an advanced GTO preflop range tool that guides you on the optimal play for your preflop hands in various situations. Right now, our simulations focus on tournament play with a 1bb ante, and we’re planning to add cash game and ICM simulations soon. Stay tuned!
             </p>
           </div>
           {/* Preview Video */}
@@ -111,7 +152,7 @@ const AuthForm = () => {
               muted
               loop
               playsInline
-              poster="/preview-poster.png"  // Optional poster image
+              poster="/preview-poster.png"
             >
               <source src="/homepage.mp4" type="video/mp4" />
               Your browser does not support the video tag.

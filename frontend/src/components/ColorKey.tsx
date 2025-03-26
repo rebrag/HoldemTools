@@ -1,4 +1,3 @@
-// src/components/ColorKey.tsx
 import React from "react";
 import { HandCellData, getColorForAction } from "../utils/utils";
 
@@ -50,35 +49,40 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
 
   return (
     <div className="flex gap-0.5 mb-1 items-center">
-      {uniqueActions.slice().reverse().map((action) => (
-        <div
-          key={action}
-          className="flex cursor-pointer"
-          onClick={() => onActionClick(actionMapping[action] || action)}
-          title={`Click to see reactions to ${action}`}
-        >
+      {uniqueActions.slice().reverse().map((action) => {
+        const isFold = action === "Fold";
+        return (
           <div
-            className="flex items-center justify-center rounded-md transition-all duration-200 ease-in-out transform hover:scale-115 hover:shadow-lg"
-            style={{
-              width: "calc(28px + 1.35vw)",
-              height: "calc(20px + 0.5vw)",
-              background: `radial-gradient(circle at top left, ${getColorForAction(
-                action
-              )} 0%, ${shadeColor(getColorForAction(action), -15)} 50%, ${shadeColor(
-                getColorForAction(action),
-                -35
-              )} 100%)`
-            }}
+            key={action}
+            className={`flex ${isFold ? "cursor-default" : "cursor-pointer"}`}
+            onClick={isFold ? undefined : () => onActionClick(actionMapping[action] || action)}
+            title={isFold ? undefined : `Click to see reactions to ${action}`}
           >
-            <span
-              style={{ color: "#fff", fontSize: "calc(0.45rem + 0.2vw)" }}
-              className="whitespace-nowrap"
+            <div
+              className={`flex items-center justify-center rounded-md transition-all duration-300 ease-in-out transform ${
+                isFold ? "" : "hover:scale-110 hover:shadow-xl"
+              }`}
+              style={{
+                width: "calc(28px + 1.35vw)",
+                height: "calc(20px + 0.5vw)",
+                background: `radial-gradient(circle at top left, ${getColorForAction(
+                  action
+                )} 0%, ${shadeColor(getColorForAction(action), -15)} 50%, ${shadeColor(
+                  getColorForAction(action),
+                  -35
+                )} 100%)`
+              }}
             >
-              {action}
-            </span>
+              <span
+                style={{ color: "#fff", fontSize: "calc(0.45rem + 0.2vw)" }}
+                className="whitespace-nowrap"
+              >
+                {action}
+              </span>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 };

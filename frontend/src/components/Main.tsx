@@ -11,7 +11,6 @@ import useFiles from "../hooks/useFiles";
 import axios from "axios";
 import { JsonData } from "../utils/utils";
 
-// Define a type for your location state.
 interface LocationState {
   folder: string;
   plateData: Record<string, JsonData>;
@@ -26,17 +25,17 @@ const Main = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // --- Internal State, with initial values coming from location.state if available ---
   const initialState = (location.state as LocationState) || { folder: "", plateData: {} };
   const [folder, setFolder] = useState<string>(initialState.folder);
   const [plateData, setPlateData] = useState<Record<string, JsonData>>(initialState.plateData);
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>(initialState.plateMapping || {});
   const initialLoadedPlates = initialState.loadedPlates;
-  
-  // Compute player count from folder.
+
+  // Loading state for axios fetches
+  const [loading, setLoading] = useState<boolean>(false);
+
   const playerCount = useMemo(() => (folder ? folder.split("_").length : 1), [folder]);
 
-  // Compute default plate names based on playerCount.
   const defaultPlateNames = useMemo(() => {
     const filesArray: string[] = [];
     for (let i = 0; i < playerCount - 1; i++) {
@@ -50,11 +49,9 @@ const Main = () => {
     return filesArray;
   }, [playerCount]);
 
-  // Use loadedPlates from location.state if available; otherwise use defaultPlateNames.
   const [loadedPlates, setLoadedPlates] = useState<string[]>(initialLoadedPlates || defaultPlateNames);
   const fetchedPlatesRef = useRef<Set<string>>(new Set());
 
-  // A ref to track the current folder for GET requests.
   const folderRef = useRef(folder);
   useEffect(() => {
     folderRef.current = folder;
@@ -63,20 +60,17 @@ const Main = () => {
   const { folders, error: folderError } = useFolders(API_BASE_URL);
   const { files: availableJsonFiles, error: filesError } = useFiles(API_BASE_URL, folder);
 
-  // Determine position order based on playerCount.
   const positionOrder = useMemo(() => {
     if (playerCount === 8) return ["UTG", "UTG1", "LJ", "HJ", "CO", "BTN", "SB", "BB"];
     if (playerCount === 6) return ["LJ", "HJ", "CO", "BTN", "SB", "BB"];
     return Object.keys(plateMapping);
   }, [playerCount, plateMapping]);
 
-  // Determine which plate filenames to display based on the mapping.
   const displayPlates = useMemo(
     () => positionOrder.map((pos) => plateMapping[pos] || ""),
     [plateMapping, positionOrder]
   );
 
-  // When folder or defaultPlateNames change, reset loadedPlates, plateMapping, and clear plateData.
   useLayoutEffect(() => {
     setLoadedPlates(defaultPlateNames);
     setPlateMapping({});
@@ -84,7 +78,6 @@ const Main = () => {
     fetchedPlatesRef.current.clear();
   }, [folder, defaultPlateNames]);
 
-  // --- Hydrate internal state from location.state on every location change ---
   useEffect(() => {
     console.log(Object.keys(plateData).length, "location.state:", location.state);
     if (location.state) {
@@ -102,7 +95,6 @@ const Main = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
-  // Filter plateMapping to only keep keys corresponding to loadedPlates.
   useEffect(() => {
     setPlateMapping((prev) => {
       const filtered: Record<string, string> = {};
@@ -115,12 +107,11 @@ const Main = () => {
     });
   }, [loadedPlates]);
 
-  // --- Fetch plate data from the API only for plates not already loaded ---
   useEffect(() => {
-    // Determine which plates are missing from our plateData.
     const platesToFetch = loadedPlates.filter((plate) => !(plate in plateData));
-    if (platesToFetch.length === 0) return; // Nothing to fetch.
+    if (platesToFetch.length === 0) return;
     
+    setLoading(true);
     const source = axios.CancelToken.source();
     console.log("axios loaded plates (fetching):", platesToFetch);
     Promise.all(
@@ -141,20 +132,18 @@ const Main = () => {
         newPlateMapping[data.Position] = plate;
       });
 
-      // Merge the new data into state.
       setPlateData((prev) => ({ ...prev, ...newPlateData }));
       setPlateMapping((prev) => ({ ...prev, ...newPlateMapping }));
+    }).finally(() => {
+      setLoading(false);
     });
 
     return () => source.cancel();
   }, [loadedPlates, API_BASE_URL, plateData]);
 
-  // --- Guarded navigation to update location.state ---
-  // We store the last navigated state to avoid triggering an infinite loop.
   const lastNavigatedState = useRef<LocationState | null>(null);
   useEffect(() => {
     const newState: LocationState = { folder, plateData, loadedPlates, plateMapping };
-    // Only navigate if plateData exists and if the new state differs from the last state.
     if (
       Object.keys(plateData).length > 0 &&
       JSON.stringify(lastNavigatedState.current) !== JSON.stringify(newState)
@@ -164,8 +153,6 @@ const Main = () => {
     }
   }, [plateData, plateMapping, loadedPlates, folder, navigate]);
 
-  // --- State History for Back Navigation ---
-  // This ref stores location states where plateData wasn't empty.
   const validStateHistory = useRef<LocationState[]>([]);
   useEffect(() => {
     if (
@@ -177,7 +164,6 @@ const Main = () => {
     }
   }, [location.state]);
 
-  // --- Event Handlers: They update location.state via navigate ---
   const handleFolderSelect = useCallback(
     (selectedFolder: string) => {
       const newLoadedPlates = defaultPlateNames;
@@ -190,7 +176,7 @@ const Main = () => {
           plateData: {},
           loadedPlates: newLoadedPlates,
           plateMapping: {},
-          refresh: Date.now(), // Unique value to force rehydration.
+          refresh: Date.now(),
         },
       });
     },
@@ -204,15 +190,21 @@ const Main = () => {
       const newValue = actionToPrefixMap[action] || action;
       const clickedIndex = loadedPlates.findIndex((name) => name === plateName);
       const newLoadedPlates = appendPlateNames(loadedPlates, clickedIndex, newValue, availableJsonFiles);
+
+      if (
+        newLoadedPlates.length === loadedPlates.length &&
+        newLoadedPlates.every((val, idx) => val === loadedPlates[idx])
+      ) {
+        return;
+      }
+
       setLoadedPlates(newLoadedPlates);
-      // Keep plateData as-is; new data will be fetched for any new plates.
       navigate(".", { state: { folder, plateData, loadedPlates: newLoadedPlates, plateMapping } });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [loadedPlates, availableJsonFiles, folder, plateData, plateMapping, navigate]
   );
 
-  // Helper function for appending new plate filenames.
   const appendPlateNames = useCallback(
     (currentFiles: string[], clickedIndex: number, actionNumber: string, availableFiles: string[]): string[] => {
       const clickedFile = currentFiles[clickedIndex];
@@ -237,7 +229,6 @@ const Main = () => {
     []
   );
 
-  // Custom back handler that navigates to the last state with non-empty plateData.
   const handleBack = useCallback(() => {
     let previousState: LocationState | null = null;
     while (validStateHistory.current.length) {
@@ -254,7 +245,6 @@ const Main = () => {
     }
   }, [navigate]);
 
-  // Keyboard shortcuts.
   useKeyboardShortcuts({
     onBackspace: handleBack,
     onToggleRandom: () => setRandomFillEnabled((prev) => !prev),
@@ -289,7 +279,8 @@ const Main = () => {
           randomFillEnabled={randomFillEnabled}
           onActionClick={handleActionClick}
           windowWidth={windowWidth}
-          plateData={(location.state as LocationState)?.plateData} // For testing, reading directly from location.state.
+          plateData={(location.state as LocationState)?.plateData}
+          loading={loading} // Pass the loading prop here
         />
       </div>
       <footer className="text-center select-none">© Josh Garber 2025</footer>
