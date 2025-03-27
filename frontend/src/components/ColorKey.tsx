@@ -67,7 +67,7 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
                 isFold ? "" : "hover:scale-110 hover:shadow-xl"
               }`}
               style={{
-                width: "calc(33px + 1.35vw)",
+                width: "calc(34px + 1.35vw)",
                 height: "calc(20px + 0.5vw)",
                 background: `radial-gradient(circle at top left, ${getColorForAction(
                   action

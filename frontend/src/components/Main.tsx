@@ -22,11 +22,11 @@ interface LocationState {
 
 const Main = () => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-  const { windowWidth } = useWindowDimensions();
+  const { windowWidth, windowHeight } = useWindowDimensions();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const initialState = (location.state as LocationState) || { folder: "", plateData: {} };
+  const initialState = (location.state as LocationState);
   const [folder, setFolder] = useState<string>(initialState.folder);
   const [plateData, setPlateData] = useState<Record<string, JsonData>>(initialState.plateData);
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>(initialState.plateMapping || {});
@@ -116,7 +116,7 @@ const Main = () => {
     }
     
     let didTimeout = false;
-    // Start a timer for 400ms. If the fetch takes longer than 400ms, we set loading to true.
+    // Start a timer for 300ms. If the fetch takes longer than 300ms, we set loading to true.
     const timer = setTimeout(() => {
       didTimeout = true;
       setLoading(true);
@@ -161,8 +161,6 @@ const Main = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadedPlates, folder]);
   
-  
-
   const lastNavigatedState = useRef<LocationState | null>(null);
   useEffect(() => {
     const newState: LocationState = { folder, plateData, loadedPlates, plateMapping };
@@ -209,7 +207,7 @@ const Main = () => {
     (action: string, fileName: string) => {
       const plateName = loadedPlates.find((name) => name === fileName);
       if (!plateName) return;
-      const newValue = actionToPrefixMap[action] || action;
+      const newValue = actionToPrefixMap[action]; // || action
       const clickedIndex = loadedPlates.findIndex((name) => name === plateName);
       const newLoadedPlates = appendPlateNames(loadedPlates, clickedIndex, newValue, availableJsonFiles);
 
@@ -301,6 +299,7 @@ const Main = () => {
           randomFillEnabled={randomFillEnabled}
           onActionClick={handleActionClick}
           windowWidth={windowWidth}
+          windowHeight={windowHeight} // Passing the windowHeight prop
           plateData={(location.state as LocationState)?.plateData}
           loading={loading} // Pass the loading prop here
         />
@@ -318,7 +317,6 @@ const Main = () => {
       <footer className="text-center select-none pt-5">© Josh Garber 2025</footer>
     </Layout>
   );
-  
 };
 
 export default Main;

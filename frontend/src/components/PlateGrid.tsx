@@ -11,6 +11,7 @@ type PlateGridProps = {
   randomFillEnabled: boolean;
   onActionClick: (action: string, file: string) => void;
   windowWidth: number;
+  windowHeight: number; // New prop for viewport height
   plateData: Record<string, JsonData>;
   loading?: boolean;
 };
@@ -21,10 +22,12 @@ const PlateGrid = ({
   randomFillEnabled,
   onActionClick,
   windowWidth,
+  windowHeight,
   plateData,
   loading = false,
 }: PlateGridProps) => {
-  const isNarrow = windowWidth <= 450;
+  // Narrow when viewport width is less than viewport height
+  const isNarrow = windowWidth*1.2 < windowHeight;
   const gridRows = isNarrow ? Math.ceil(files.length / 2) : 2;
   const gridCols = isNarrow ? 2 : Math.ceil(files.length / 2);
 

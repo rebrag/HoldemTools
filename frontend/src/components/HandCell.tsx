@@ -57,13 +57,13 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFill, matrixWidth }) =>
   // In randomFill mode, the selected action's segment gets 100% width and the others 0%.
   const segments = useMemo(
     () =>
-      [...actionsArray].reverse().map(([action, weight]) => {
+      [...actionsArray].reverse().map(([action, width]) => {
         const targetWidth =
           randomFill && selectedAction !== null
             ? action === selectedAction
               ? 100
               : 0
-            : (weight as number) * 100;
+            : (width as number) * 100;
         return {
           action,
           style: {
