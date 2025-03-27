@@ -26,7 +26,7 @@ const Main = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const initialState = (location.state as LocationState);
+  const initialState = (location.state as LocationState) || { folder: "", plateData: {} };
   const [folder, setFolder] = useState<string>(initialState.folder);
   const [plateData, setPlateData] = useState<Record<string, JsonData>>(initialState.plateData);
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>(initialState.plateMapping || {});
