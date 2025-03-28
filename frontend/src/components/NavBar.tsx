@@ -28,7 +28,6 @@ const NavBar: React.FC<NavBarProps> = ({
   const [menuOpen, setMenuOpen] = useState(false);
 
   const toggleMenu = () => {
-    console.log("Hamburger clicked!"); // Debug log
     setMenuOpen((prev) => !prev);
   };
 

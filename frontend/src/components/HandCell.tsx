@@ -76,14 +76,12 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFill, matrixWidth }) =>
     [actionsArray, randomFill, selectedAction]
   );
 
-  // Instead of using viewport width (vw), calculate font size based on matrixWidth.
-  // For example, using a base of 4px plus 2% of the matrixWidth.
   const computedFontSize = matrixWidth ? `${2 + matrixWidth * 0.02}px` : "calc(4px + .28vw)";
 
   return (
     <div
       tabIndex={-1}
-      className={`w-full h-full aspect-square relative select-none overflow-x-hidden ${getRoundedCornerClass(
+      className={`w-full h-full aspect-square relative select-none overflow-x-hidden transform: translateZ(0) ${getRoundedCornerClass(
         data.hand
       )}`}
     >

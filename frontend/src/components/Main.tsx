@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import NavBar from "./NavBar";
 import PlateGrid from "./PlateGrid";
 import Layout from "./Layout";
-import { actionToPrefixMap } from "../constants";
+import { actionToPrefixMap, actionToPrefixMap2 } from "../constants";
 import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import useWindowDimensions from "../hooks/useWindowDimensions";
 import useFolders from "../hooks/useFolders";
@@ -25,11 +25,11 @@ const Main = () => {
   const { windowWidth, windowHeight } = useWindowDimensions();
   const navigate = useNavigate();
   const location = useLocation();
-
   const initialState = (location.state as LocationState) || { folder: "", plateData: {} };
   const [folder, setFolder] = useState<string>(initialState.folder);
   const [plateData, setPlateData] = useState<Record<string, JsonData>>(initialState.plateData);
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>(initialState.plateMapping || {});
+  const [lastRange, setLastRange] = useState<string>("");
   const initialLoadedPlates = initialState.loadedPlates;
 
   // Loading state for axios fetches
@@ -51,7 +51,6 @@ const Main = () => {
   }, [playerCount]);
 
   const [loadedPlates, setLoadedPlates] = useState<string[]>(initialLoadedPlates || defaultPlateNames);
-  const fetchedPlatesRef = useRef<Set<string>>(new Set());
 
   const folderRef = useRef(folder);
   useEffect(() => {
@@ -76,7 +75,6 @@ const Main = () => {
     setLoadedPlates(defaultPlateNames);
     setPlateMapping({});
     setPlateData({});
-    fetchedPlatesRef.current.clear();
   }, [folder, defaultPlateNames]);
 
   useEffect(() => {
@@ -116,14 +114,13 @@ const Main = () => {
     }
     
     let didTimeout = false;
-    // Start a timer for 300ms. If the fetch takes longer than 300ms, we set loading to true.
+    // Start a timer for 300ms. If the fetch takes longer than 400ms, we set loading to true.
     const timer = setTimeout(() => {
       didTimeout = true;
       setLoading(true);
-    }, 300);
+    }, 400);
   
     const source = axios.CancelToken.source();
-    console.log("axios plates (fetching):", platesToFetch);
     
     Promise.all(
       platesToFetch.map((plate) =>
@@ -152,7 +149,7 @@ const Main = () => {
         clearTimeout(timer);
         // Only clear the loading state if it was turned on.
         if (didTimeout) {
-          console.log("fetching finished");
+          //console.log("fetching finished");
           setLoading(false);
         }
       });
@@ -203,27 +200,106 @@ const Main = () => {
     [defaultPlateNames, navigate]
   );
 
+  // const prefixToActionMap = Object.fromEntries(
+  //   Object.entries(actionToPrefixMap).map(([action, prefix]) => [prefix, action])
+  // );
+  
+  const convertRangeText = (data: JsonData | undefined, action: string): string => {
+    if (!data) return "";
+    // Look up the proper key in your JSON data using the inverse mapping.
+    // If the mapping isn't available for the provided action, default to the action itself.
+    const dataKey = actionToPrefixMap2[action] || action;
+    //console.log("dataKey:", dataKey)
+    if (!data[dataKey]) return "";
+  
+    return Object.entries(data[dataKey])
+      .map(([hand, values]) => `${hand}:${values[0]}`)
+      .join(",");
+  };
+  
+
   const handleActionClick = useCallback(
     (action: string, fileName: string) => {
+      //console.log("fileName:", fileName,"action:", action)
+      if (action === "Call") {
+        // Suppose your plateData for BB has the width and hand information
+        const callData = plateData[fileName];
+        const range0 = convertRangeText(callData, action);
+        const range1 = lastRange || ""
+  
+        const fullText = `#Type#NoLimit
+        #Range0#${range0}
+        #Range1#${range1}
+        #ICM.ICMFormat#Pio ICM structure
+        #ICM.Payouts#16800\\n9200\\n4900\\n2800\\n1450\\n1226\\n1022\\n920\\n817\\n613\\n613\\n613\\n613\\n587\\n562\\n562\\n562\\n562
+        #ICM.Stacks#1800\\n1800\\n6000\\n4000\\n3000\\n2600\\n2500\\n2500\\n2300\\n2300\\n2200\\n1800\\n1600\\n1400\\n1200\\n1000\\n800\\n500
+        #Pot#550
+        #EffectiveStacks#1800
+        #AllinThreshold#60
+        #AddAllinOnlyIfLessThanThisTimesThePot#250
+        #MergeSimilarBets#True
+        #MergeSimilarBetsThreshold#12
+        #CapEnabled#True
+        #CapPerStreet#3\\n3\\n3
+        #CapMode#NoLimit
+        #FlopConfig.RaiseSize#33
+        #FlopConfig.AddAllin#True
+        #TurnConfig.BetSize#50
+        #TurnConfig.RaiseSize#a
+        #TurnConfig.AddAllin#True
+        #RiverConfig.BetSize#30 66
+        #RiverConfig.RaiseSize#a
+        #RiverConfig.AddAllin#True
+        #RiverConfig.DonkBetSize#30
+        #FlopConfigIP.BetSize#25
+        #FlopConfigIP.RaiseSize#a
+        #FlopConfigIP.AddAllin#True
+        #TurnConfigIP.BetSize#50
+        #TurnConfigIP.RaiseSize#a
+        #TurnConfigIP.AddAllin#True
+        #RiverConfigIP.BetSize#30 66
+        #RiverConfigIP.RaiseSize#a
+        #RiverConfigIP.AddAllin#True`;
+  
+        navigator.clipboard.writeText(fullText)
+          .then(() => {
+            console.log("Text copied to clipboard!");
+          })
+          .catch((err) => {
+            console.error("Failed to copy text: ", err);
+          });
+      }
+
+      // For actions other than "Call" or "ALLIN", update the lastRange.
+      if (action !== "Call" && action !== "ALLIN") {
+        const raiseData = plateData[fileName];
+        const currentRange = convertRangeText(raiseData, action);
+        if (currentRange) {
+          setLastRange(currentRange);
+        }
+      }
+  
+      // Existing logic for other actions...
       const plateName = loadedPlates.find((name) => name === fileName);
       if (!plateName) return;
-      const newValue = actionToPrefixMap[action]; // || action
+      const newValue = actionToPrefixMap[action] || action;
       const clickedIndex = loadedPlates.findIndex((name) => name === plateName);
       const newLoadedPlates = appendPlateNames(loadedPlates, clickedIndex, newValue, availableJsonFiles);
-
+  
       if (
         newLoadedPlates.length === loadedPlates.length &&
         newLoadedPlates.every((val, idx) => val === loadedPlates[idx])
       ) {
         return;
       }
-
+  
       setLoadedPlates(newLoadedPlates);
       navigate(".", { state: { folder, plateData, loadedPlates: newLoadedPlates, plateMapping } });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [loadedPlates, availableJsonFiles, folder, plateData, plateMapping, navigate]
   );
+  
 
   const appendPlateNames = useCallback(
     (currentFiles: string[], clickedIndex: number, actionNumber: string, availableFiles: string[]): string[] => {
@@ -271,7 +347,7 @@ const Main = () => {
   });
 
   useEffect(() => {
-    console.log("Plate States Updated:", { loadedPlates, plateMapping, plateData });
+    //console.log("Plate States Updated:", { loadedPlates, plateMapping, plateData });
   }, [loadedPlates, plateMapping, plateData]);
 
   const [randomFillEnabled, setRandomFillEnabled] = useState(false);
