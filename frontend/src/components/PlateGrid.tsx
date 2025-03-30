@@ -49,7 +49,7 @@ const PlateGrid = ({
     <div className="relative min-h-[300px]">
       {/* Loading overlay always rendered, with transition */}
       <div
-        className={`absolute inset-0 flex items-center justify-center z-10 transition-opacity duration-300 ${
+        className={`absolute inset-0 flex items-center justify-center z-10 transition-opacity duration-100 ${
           loading ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
       >
@@ -66,7 +66,7 @@ const PlateGrid = ({
               }
             : {
                 gridTemplateRows: "repeat(2, 0.9fr)",
-                gridTemplateColumns: `repeat(${gridCols}, minmax(210px, 300px))`,
+                gridTemplateColumns: `repeat(${gridCols}, minmax(210px, 400px))`,
                 justifyContent: "center",
               }
         }

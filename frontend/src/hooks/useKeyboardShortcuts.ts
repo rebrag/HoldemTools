@@ -1,21 +1,12 @@
-// src/hooks/useKeyboardShortcuts.ts
 import { useEffect } from "react";
 
 type Options = {
-  onBackspace: () => void;
   onToggleRandom: () => void;
 };
 
-const useKeyboardShortcuts = ({ onBackspace, onToggleRandom }: Options) => {
+const useKeyboardShortcuts = ({ onToggleRandom }: Options) => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.key === "Backspace" &&
-        document.activeElement &&
-        !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)
-      ) {
-        onBackspace();
-      }
       if (
         e.key.toLowerCase() === "r" &&
         document.activeElement &&
@@ -26,7 +17,7 @@ const useKeyboardShortcuts = ({ onBackspace, onToggleRandom }: Options) => {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onBackspace, onToggleRandom]);
+  }, [onToggleRandom]);
 };
 
 export default useKeyboardShortcuts;

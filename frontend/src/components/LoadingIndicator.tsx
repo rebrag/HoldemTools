@@ -7,7 +7,7 @@ const LoadingIndicator: React.FC = () => {
       style={{
       }}
     >
-      <FadeLoader radius={1} color="#000000" />
+      <FadeLoader radius={0.5} color="#000000" />
     </div>
   );
 };

@@ -61,8 +61,8 @@ const Main = () => {
   const { files: availableJsonFiles, error: filesError } = useFiles(API_BASE_URL, folder);
 
   const positionOrder = useMemo(() => {
-    if (playerCount === 8) return ["UTG", "UTG1", "LJ", "HJ", "CO", "BTN", "SB", "BB"];
-    if (playerCount === 6) return ["LJ", "HJ", "CO", "BTN", "SB", "BB"];
+    if (playerCount === 8) return [ "SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"];
+    if (playerCount === 6) return ["SB", "BB", "LJ", "HJ", "CO", "BTN"];
     return Object.keys(plateMapping);
   }, [playerCount, plateMapping]);
 
@@ -118,7 +118,7 @@ const Main = () => {
     const timer = setTimeout(() => {
       didTimeout = true;
       setLoading(true);
-    }, 400);
+    }, 200);
   
     const source = axios.CancelToken.source();
     
@@ -325,24 +325,9 @@ const Main = () => {
     []
   );
 
-  const handleBack = useCallback(() => {
-    let previousState: LocationState | null = null;
-    while (validStateHistory.current.length) {
-      const candidate = validStateHistory.current.pop();
-      if (candidate && candidate.plateData && Object.keys(candidate.plateData).length > 0) {
-        previousState = candidate;
-        break;
-      }
-    }
-    if (previousState) {
-      navigate(".", { state: previousState });
-    } else {
-      navigate(-1);
-    }
-  }, [navigate]);
+
 
   useKeyboardShortcuts({
-    onBackspace: handleBack,
     onToggleRandom: () => setRandomFillEnabled((prev) => !prev),
   });
 

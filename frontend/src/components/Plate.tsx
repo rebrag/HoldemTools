@@ -30,7 +30,7 @@ const Plate: React.FC<PlateProps> = ({
   return (
     <div
       className="mb-0 justify-self-center border rounded-[7px] shadow-md p-1 bg-white
-                 w-full transition-all duration-200 text-base max-w-[300px]"
+                 w-full transition-all duration-200 text-base max-w-[400px]"
     >
       {!data && <p>Loading data...</p>}
       {data && (
