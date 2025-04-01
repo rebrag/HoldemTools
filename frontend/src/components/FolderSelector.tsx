@@ -12,6 +12,17 @@ function getDisplayFolderName(folder: string): string {
   const parts = folder.split("_");
   if (parts.length === 0) return folder;
 
+  // If there are exactly two parts, check for a leading number in the first part.
+  if (parts.length === 2) {
+    const firstMatch = parts[0].match(/^(\d+)/);
+    if (firstMatch) {
+      const firstNum = firstMatch[1];
+      return `${firstNum}bb HU`;
+    }
+    return folder.replace(/_/g, " ");
+  }
+
+  // Existing logic for more than two parts
   const firstMatch = parts[0].match(/^(\d+)/);
   if (!firstMatch) {
     return folder.replace(/_/g, " ");
@@ -29,6 +40,7 @@ function getDisplayFolderName(folder: string): string {
 
   return folder.replace(/_/g, " ");
 }
+
 
 // Helper to determine if a folder qualifies as "allSame"
 function isAllSameFolder(folder: string): boolean {
@@ -88,30 +100,47 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  useEffect(() => {
-    if (inputValue === "") {
-      // Sort folders by length, but later we sort allSame folders on top
-      setFilteredFolders([...folders].sort((a, b) => a.length - b.length));
-      setHighlightedIndex(-1);
-    } else {
-      const filtered = folders
-        .filter((folder) =>
-          folder.replace(/_/g, " ").toLowerCase().includes(inputValue.toLowerCase())
-        )
-        .sort((a, b) => {
-          // Prioritize folders that are allSame
-          const aAllSame = isAllSameFolder(a);
-          const bAllSame = isAllSameFolder(b);
-          if (aAllSame && !bAllSame) return -1;
-          if (!aAllSame && bAllSame) return 1;
-          // Otherwise, sort by string length
-          return a.length - b.length;
-        });
+  // Helper to determine if a folder is a HU sim folder (exactly two parts, first part starts with digits)
+function isHUSimFolder(folder: string): boolean {
+  const parts = folder.split("_");
+  if (parts.length !== 2) return false;
+  return /^\d+/.test(parts[0]);
+}
 
-      setFilteredFolders(filtered);
-      setHighlightedIndex(filtered.length > 0 ? 0 : -1); // Default highlight first item
-    }
-  }, [inputValue, folders]);
+// Assume isAllSameFolder is defined with the signature: (folder: string) => boolean
+
+useEffect(() => {
+  if (inputValue === "") {
+    // Sort folders by length, but later we sort allSame folders on top
+    setFilteredFolders([...folders].sort((a: string, b: string) => a.length - b.length));
+    setHighlightedIndex(-1);
+  } else {
+    const filtered = folders
+      .filter((folder: string) =>
+        folder.replace(/_/g, " ").toLowerCase().includes(inputValue.toLowerCase())
+      )
+      .sort((a: string, b: string) => {
+        // Push HU sims to the bottom
+        const aHU = isHUSimFolder(a);
+        const bHU = isHUSimFolder(b);
+        if (aHU && !bHU) return 1;
+        if (!aHU && bHU) return -1;
+
+        // Prioritize folders that are allSame
+        const aAllSame = isAllSameFolder(a);
+        const bAllSame = isAllSameFolder(b);
+        if (aAllSame && !bAllSame) return -1;
+        if (!aAllSame && bAllSame) return 1;
+
+        // Otherwise, sort by string length
+        return a.length - b.length;
+      });
+
+    setFilteredFolders(filtered);
+    setHighlightedIndex(filtered.length > 0 ? 0 : -1); // Default highlight first item
+  }
+}, [inputValue, folders]);
+
 
   const handleSelect = (folder: string) => {
     // Only update if the new folder is different from the current folder

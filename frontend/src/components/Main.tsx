@@ -30,10 +30,8 @@ const Main = () => {
   const [plateData, setPlateData] = useState<Record<string, JsonData>>(initialState.plateData);
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>(initialState.plateMapping || {});
   const [lastRange, setLastRange] = useState<string>("");
-  const initialLoadedPlates = initialState.loadedPlates;
-
-  // Loading state for axios fetches
   const [loading, setLoading] = useState<boolean>(false);
+  const initialLoadedPlates = initialState.loadedPlates;
 
   const playerCount = useMemo(() => (folder ? folder.split("_").length : 1), [folder]);
 
@@ -63,6 +61,7 @@ const Main = () => {
   const positionOrder = useMemo(() => {
     if (playerCount === 8) return [ "SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"];
     if (playerCount === 6) return ["SB", "BB", "LJ", "HJ", "CO", "BTN"];
+    if (playerCount === 2) return ["BB","BTN"];
     return Object.keys(plateMapping);
   }, [playerCount, plateMapping]);
 
@@ -118,10 +117,10 @@ const Main = () => {
     const timer = setTimeout(() => {
       didTimeout = true;
       setLoading(true);
-    }, 200);
+    }, 400);
   
     const source = axios.CancelToken.source();
-    
+
     Promise.all(
       platesToFetch.map((plate) =>
         axios
@@ -155,7 +154,7 @@ const Main = () => {
       });
     
     return () => source.cancel();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadedPlates, folder]);
   
   const lastNavigatedState = useRef<LocationState | null>(null);
@@ -314,6 +313,7 @@ const Main = () => {
           newFiles.push(file);
         }
       });
+      //console.log(prefix, actionNumber)
       const regex = new RegExp(`^${baseName}(?:\\.0)+\\.json$`);
       availableFiles.forEach((file) => {
         if (regex.test(file) && !currentFiles.includes(file)) {

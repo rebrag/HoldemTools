@@ -3,15 +3,14 @@ import React, { useState } from "react";
 import FolderSelector from "./FolderSelector";
 import RandomizeButton from "./RandomizeButton";
 import AccountMenu from "./AccountMenu";
-import ButtonStyle from "./ButtonStyle"; // Adjust path as needed
 
 export interface NavBarProps {
   randomFillEnabled: boolean;
   toggleRandomization: () => void;
   folders: string[];
-  currentFolder: string; // New prop for the currently selected folder
+  currentFolder: string; // Currently selected folder
   onFolderSelect: (folder: string) => void;
-  // New props for view mode toggle:
+  // Optional view mode toggle props (if needed in future)
   toggleViewMode: () => void;
   isSpiralView: boolean;
 }
@@ -22,8 +21,8 @@ const NavBar: React.FC<NavBarProps> = ({
   folders,
   currentFolder,
   onFolderSelect,
-  toggleViewMode,
-  isSpiralView,
+  // toggleViewMode,
+  // isSpiralView,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -56,8 +55,8 @@ const NavBar: React.FC<NavBarProps> = ({
           </button>
         </div>
 
-        {/* Center: FolderSelector */}
-        <div className="flex-grow mx-4">
+        {/* Center: FolderSelector remains centered and RandomizeButton pushed to the far right */}
+        <div className="flex-grow mx-4 flex items-center">
           <div className="w-full max-w-lg mx-auto">
             <FolderSelector
               folders={folders}
@@ -65,24 +64,29 @@ const NavBar: React.FC<NavBarProps> = ({
               onFolderSelect={onFolderSelect}
             />
           </div>
+          <div className="ml-auto">
+            <RandomizeButton
+              randomFillEnabled={randomFillEnabled}
+              setRandomFillEnabled={toggleRandomization}
+            />
+          </div>
         </div>
 
-        {/* Right: Reserved space for additional content on larger screens */}
+        {/* Right: Reserved space for future elements */}
         <div className="flex items-center"></div>
       </div>
 
       {/* Dropdown menu: shown when hamburger is clicked */}
       {menuOpen && (
         <div className="bg-white shadow-md">
-          <div className="px-2 pt-2 pb-3 space-x-1 space-y-2">
-            <RandomizeButton
-              randomFillEnabled={randomFillEnabled}
-              setRandomFillEnabled={toggleRandomization}
-            />
-            <ButtonStyle onClick={toggleViewMode}>
-              {isSpiralView ? "Index Order" : "Clockwise Order"}
-            </ButtonStyle>
+          <div className="px-2 pt-2 pb-3 space-y-2">
+            {/* AccountMenu (including Logout) remains inside the dropdown */}
             <AccountMenu />
+            {/* Additional mobile view items can be added here */}
+            {/* For example, a view mode toggle button */}
+            {/* <ButtonStyle onClick={toggleViewMode}>
+              {isSpiralView ? "Index Order" : "Clockwise Order"}
+            </ButtonStyle> */}
           </div>
         </div>
       )}

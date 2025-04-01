@@ -27,7 +27,11 @@ const PlateGrid = ({
   loading = false,
 }: PlateGridProps) => {
   // Narrow when viewport width is less than viewport height
-  const isNarrow = windowWidth*1.2 < windowHeight;
+  const isNarrow =
+  files.length === 2
+    ? !(windowWidth * 1.2 < windowHeight)
+    : windowWidth * 1.2 < windowHeight;
+
   const gridRows = isNarrow ? Math.ceil(files.length / 2) : 2;
   const gridCols = isNarrow ? 2 : Math.ceil(files.length / 2);
 
@@ -60,7 +64,7 @@ const PlateGrid = ({
         style={
           isNarrow
             ? {
-                gridTemplateColumns: "repeat(2, minmax(170px, 280px))",
+                gridTemplateColumns: "repeat(2, minmax(170px, 400px))",
                 gridTemplateRows: `repeat(${gridRows}, 1fr)`,
                 justifyContent: "center",
               }

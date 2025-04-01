@@ -81,7 +81,7 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFill, matrixWidth }) =>
   return (
     <div
       tabIndex={-1}
-      className={`w-full h-full aspect-square relative select-none overflow-x-hidden transform: translateZ(0) ${getRoundedCornerClass(
+      className={`w-full h-full bg-slate-50 aspect-square relative select-none overflow-hidden transform: translateZ(0) ${getRoundedCornerClass(
         data.hand
       )}`}
     >

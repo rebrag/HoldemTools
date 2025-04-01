@@ -11,6 +11,8 @@ export const actionToPrefixMap: Record<string, string> = {
     "40050": "40050",
     "40078": "40078",
     "21": "21",
+    "Raise 4bb": "19",
+    "Raise 5bb": "21",
   };
 
   export const actionToPrefixMap2: Record<string, string> = {
@@ -23,6 +25,7 @@ export const actionToPrefixMap: Record<string, string> = {
     "40050": "Raise 50%",
     "40078": "Raise 78%",
     "21": "21",
+    "19": "Raise 4bb",
 };
 
   
