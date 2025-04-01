@@ -64,7 +64,7 @@ const NavBar: React.FC<NavBarProps> = ({
               onFolderSelect={onFolderSelect}
             />
           </div>
-          <div className="ml-auto">
+          <div className="ml-4">
             <RandomizeButton
               randomFillEnabled={randomFillEnabled}
               setRandomFillEnabled={toggleRandomization}

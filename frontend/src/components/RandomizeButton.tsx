@@ -1,6 +1,6 @@
 // src/components/RandomizeButton.tsx
 import React, { useState, useEffect } from "react";
-import { FaDice } from "react-icons/fa";
+import { motion } from "framer-motion";
 
 export interface RandomizeButtonProps {
   randomFillEnabled: boolean;
@@ -10,44 +10,61 @@ export interface RandomizeButtonProps {
 }
 
 const RandomizeButton: React.FC<RandomizeButtonProps> = ({
-  randomFillEnabled,
+  //randomFillEnabled,
   setRandomFillEnabled,
-  animationSpeed = 0.4,
+  animationSpeed = 0.5,
 }) => {
-  const [animating, setAnimating] = useState(false);
+  const [animate, setAnimate] = useState(false);
 
   const triggerAnimation = () => {
-    setAnimating(true);
+    setAnimate(true);
     setRandomFillEnabled();
-    // Remove animation after the specified duration (in ms)
-    setTimeout(() => setAnimating(false), animationSpeed * 1000);
+    // End animation after the specified duration
+    setTimeout(() => setAnimate(false), animationSpeed * 1000);
   };
 
   const handleClick = () => {
     triggerAnimation();
   };
 
-  // Listen for "r" key presses to trigger the animation
+  // Listen for "r" key to trigger the animation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() === "r") {
         triggerAnimation();
       }
     };
-
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [animationSpeed]);
 
+  // Framer Motion variants for spin (or you can swap to "shake" if desired)
+  const variants = {
+    idle: { rotate: 0 },
+    spin: {
+      rotate: [0, 540],
+      transition: { duration: animationSpeed, ease: "easeInOut" },
+    },
+    // Example shake variant (uncomment to use)
+    // shake: {
+    //   x: [0, -10, 10, -10, 10, 0],
+    //   transition: { duration: animationSpeed, ease: "easeInOut" },
+    // },
+  };
+
   return (
-    <button onClick={handleClick} className="focus:outline-none">
-      <FaDice
-        className={`w-8 h-8 ${animating ? "animate-spin" : ""}`}
-        style={animating ? { animationDuration: `${animationSpeed}s` } : {}}
-        color={randomFillEnabled ? "#4CAF50" : "#000000"}
+    <motion.button onClick={handleClick} className="focus:outline-none">
+      <motion.img
+        src="/dice.svg"
+        alt="Dice"
+        style={{ width: "40px", height: "40px" }}
+        animate={animate ? "spin" : "idle"}
+        variants={variants}
+        whileHover={{scale: 1.2}}
       />
-    </button>
+
+
+    </motion.button>
   );
 };
 

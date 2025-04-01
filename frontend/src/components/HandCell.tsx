@@ -32,6 +32,13 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFill, matrixWidth }) =>
     if (randomFill) {
       const actionsEntries = Object.entries(data.actions);
       const totalWeight = actionsEntries.reduce((sum, [, weight]) => sum + weight, 0);
+      
+      // If totalWeight is 0, do not select an action.
+      if (totalWeight === 0) {
+        setSelectedAction(null);
+        return;
+      }
+  
       const rand = Math.random() * totalWeight;
       let cumulative = 0;
       let chosen: string | null = null;
@@ -52,6 +59,7 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFill, matrixWidth }) =>
       setSelectedAction(null);
     }
   }, [randomFill, data.actions]);
+  
   
   // Compute the style for each action segment.
   // In randomFill mode, the selected action's segment gets 100% width and the others 0%.
