@@ -78,6 +78,7 @@ const Main = () => {
 
   useEffect(() => {
     console.log(Object.keys(plateData).length, "location.state:", location.state);
+    setRandomFillEnabled(false)
     if (location.state) {
       const {
         folder: newFolder,
@@ -195,6 +196,7 @@ const Main = () => {
           refresh: Date.now(),
         },
       });
+      setRandomFillEnabled(false);
     },
     [defaultPlateNames, navigate]
   );
@@ -293,6 +295,7 @@ const Main = () => {
       }
   
       setLoadedPlates(newLoadedPlates);
+      setRandomFillEnabled(false)
       navigate(".", { state: { folder, plateData, loadedPlates: newLoadedPlates, plateMapping } });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps

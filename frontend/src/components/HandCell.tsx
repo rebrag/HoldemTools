@@ -7,21 +7,6 @@ interface HandCellProps {
   matrixWidth?: number; // DecisionMatrix width (in pixels)
 }
 
-const getRoundedCornerClass = (hand: string): string => {
-  switch (hand) {
-    case "AA":
-      return "rounded-tl-sm";
-    case "A2s":
-      return "rounded-tr-sm";
-    case "A2o":
-      return "rounded-bl-sm";
-    case "22":
-      return "rounded-br-sm";
-    default:
-      return "";
-  }
-};
-
 const HandCell: React.FC<HandCellProps> = ({ data, randomFill, matrixWidth }) => {
   const [selectedAction, setSelectedAction] = useState<string | null>(null);
 
@@ -89,8 +74,7 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFill, matrixWidth }) =>
   return (
     <div
       tabIndex={-1}
-      className={`w-full h-full bg-slate-50 aspect-square relative select-none overflow-hidden transform: translateZ(0) ${getRoundedCornerClass(
-        data.hand
+      className={`w-full h-full bg-slate-50 aspect-square relative select-none transform: translateZ(0)
       )}`}
     >
       <div className="flex h-full w-full">
@@ -101,7 +85,7 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFill, matrixWidth }) =>
 
       {/* Shadow overlay */}
       <div
-        className="absolute inset-0 pointer-events-none"
+        className="absolute inset-0 pointer-events-none select-none"
         style={{
           boxShadow: "inset 0 0 0 0.2px rgba(203, 213, 224, 0.5)",
         }}

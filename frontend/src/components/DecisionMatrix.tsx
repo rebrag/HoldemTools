@@ -44,7 +44,7 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ gridData, randomFillEna
   return (
     <div
       ref={containerRef}
-      className="grid grid-cols-13 gap-0 w-full aspect-square rounded-lg"
+      className="grid grid-cols-13 gap-0 w-full aspect-square rounded-md border-0 overflow-hidden"
     >
       {orderedGridData.map((handData, index) =>
         handData ? (

@@ -10,7 +10,6 @@ export interface RandomizeButtonProps {
 }
 
 const RandomizeButton: React.FC<RandomizeButtonProps> = ({
-  //randomFillEnabled,
   setRandomFillEnabled,
   animationSpeed = 0.5,
 }) => {
@@ -19,7 +18,7 @@ const RandomizeButton: React.FC<RandomizeButtonProps> = ({
   const triggerAnimation = () => {
     setAnimate(true);
     setRandomFillEnabled();
-    // End animation after the specified duration
+    // End the animation after the specified duration
     setTimeout(() => setAnimate(false), animationSpeed * 1000);
   };
 
@@ -36,20 +35,17 @@ const RandomizeButton: React.FC<RandomizeButtonProps> = ({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [animationSpeed]);
 
-  // Framer Motion variants for spin (or you can swap to "shake" if desired)
+  // Combined spin and shake variant
   const variants = {
-    idle: { rotate: 0 },
-    spin: {
-      rotate: [0, 540],
+    idle: { rotate: 0, x: 0 },
+    spinShake: {
+      rotate: [0, 360],
+      x: [0, -10, 10, -10, 10, 0],
       transition: { duration: animationSpeed, ease: "easeInOut" },
     },
-    // Example shake variant (uncomment to use)
-    // shake: {
-    //   x: [0, -10, 10, -10, 10, 0],
-    //   transition: { duration: animationSpeed, ease: "easeInOut" },
-    // },
   };
 
   return (
@@ -58,12 +54,10 @@ const RandomizeButton: React.FC<RandomizeButtonProps> = ({
         src="/dice.svg"
         alt="Dice"
         style={{ width: "40px", height: "40px" }}
-        animate={animate ? "spin" : "idle"}
+        animate={animate ? "spinShake" : "idle"}
         variants={variants}
-        whileHover={{scale: 1.2}}
+        whileHover={{ scale: 1.2 }}
       />
-
-
     </motion.button>
   );
 };

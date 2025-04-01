@@ -35,6 +35,8 @@ const PlateGrid = ({
   const gridRows = isNarrow ? Math.ceil(files.length / 2) : 2;
   const gridCols = isNarrow ? 2 : Math.ceil(files.length / 2);
 
+  
+
   const orderedFiles = useMemo(() => {
     if (!isSpiralView) return files;
     const totalCells = gridRows * gridCols;
@@ -60,7 +62,7 @@ const PlateGrid = ({
         <LoadingIndicator />
       </div>
       <div
-        className="grid gap-1 select-none border-0 rounded-[20px]"
+        className="grid gap-1 select-none border-0 rounded-md"
         style={
           isNarrow
             ? {
