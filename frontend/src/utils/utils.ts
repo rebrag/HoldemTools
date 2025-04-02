@@ -37,7 +37,7 @@ const actionColorMapping: Record<string, string> = {
 };
 
 export const getColorForAction = (action: string): string => {
-  return actionColorMapping[action] || "#F03c39";
+  return actionColorMapping[action] || "#C14c39";
 };
 
 export const combineDataByHand = (data: JsonData): HandCellData[] => {

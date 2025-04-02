@@ -19,6 +19,13 @@ const Plate: React.FC<PlateProps> = ({
 }) => {
   const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
 
+  useEffect(() => {
+    console.log("Plate mounted");
+    return () => {
+      console.log("Plate unmounted");
+    };
+  }, []);
+
   // Process the JSON data into grid data when it changes.
   useEffect(() => {
     if (data) {
@@ -29,7 +36,7 @@ const Plate: React.FC<PlateProps> = ({
 
   return (
     <div
-      className="mb-0 justify-self-center border rounded-[7px] shadow-md p-1 bg-white
+      className="mb-0 justify-self-center border rounded-[7px] shadow-md p-0.5 bg-white
                  w-full transition-all duration-200 text-base max-w-[400px] bg-"
     >
       {!data && <p>Loading data...</p>}

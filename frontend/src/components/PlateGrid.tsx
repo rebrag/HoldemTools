@@ -1,23 +1,27 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import Plate from "./Plate";
 import { generateSpiralOrder } from "../utils/gridUtils";
 import { JsonData } from "../utils/utils";
 import LoadingIndicator from "./LoadingIndicator";
 
 type PlateGridProps = {
+  // Array of file names, in the same order as the positions array.
   files: string[];
+  // Fixed positions array that stays constant.
+  positions: string[];
   selectedFolder: string;
   isSpiralView: boolean;
   randomFillEnabled: boolean;
   onActionClick: (action: string, file: string) => void;
   windowWidth: number;
-  windowHeight: number; // New prop for viewport height
+  windowHeight: number;
   plateData: Record<string, JsonData>;
   loading?: boolean;
 };
 
 const PlateGrid = ({
   files,
+  positions,
   isSpiralView,
   randomFillEnabled,
   onActionClick,
@@ -26,17 +30,23 @@ const PlateGrid = ({
   plateData,
   loading = false,
 }: PlateGridProps) => {
-  // Narrow when viewport width is less than viewport height
+  useEffect(() => {
+    console.log("PlateGrid mounted");
+    return () => {
+      console.log("PlateGrid unmounted");
+    };
+  }, []);
+
+  // Narrow when viewport width is less than viewport height.
   const isNarrow =
-  files.length === 2
-    ? !(windowWidth * 1.2 < windowHeight)
-    : windowWidth * 1.2 < windowHeight;
+    files.length === 2
+      ? !(windowWidth * 1.2 < windowHeight)
+      : windowWidth * 1.2 < windowHeight;
 
   const gridRows = isNarrow ? Math.ceil(files.length / 2) : 2;
   const gridCols = isNarrow ? 2 : Math.ceil(files.length / 2);
 
-  
-
+  // If using spiral order, arrange the files accordingly.
   const orderedFiles = useMemo(() => {
     if (!isSpiralView) return files;
     const totalCells = gridRows * gridCols;
@@ -53,7 +63,6 @@ const PlateGrid = ({
 
   return (
     <div className="relative min-h-[300px]">
-      {/* Loading overlay always rendered, with transition */}
       <div
         className={`absolute inset-0 flex items-center justify-center z-10 transition-opacity duration-100 ${
           loading ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
@@ -72,24 +81,26 @@ const PlateGrid = ({
               }
             : {
                 gridTemplateRows: "repeat(2, 0.9fr)",
-                gridTemplateColumns: `repeat(${gridCols}, minmax(210px, 400px))`,
+                gridTemplateColumns: `repeat(${gridCols}, minmax(100px, 320px))`,
                 justifyContent: "center",
               }
         }
       >
-        {orderedFiles.map((file, index) =>
-          file ? (
+        {orderedFiles.map((file, index) => {
+          // Use the fixed position as the key.
+          const posKey = positions[index] ?? `blank-${index}`;
+          return file ? (
             <Plate
-              key={file}
+              key={posKey}
               file={file}
               data={plateData[file]}
               onActionClick={onActionClick}
               randomFillEnabled={randomFillEnabled}
             />
           ) : (
-            <div key={`blank-${index}`} />
-          )
-        )}
+            <div key={posKey} />
+          );
+        })}
       </div>
     </div>
   );

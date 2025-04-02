@@ -1,3 +1,6 @@
+// utils/constants.ts
+//import { getColorForAction } from "./utils";
+
 // Consider moving this to a shared helper file or ColorKey.tsx if desired.
 export const actionToPrefixMap: Record<string, string> = {
     Fold: "0",
@@ -28,4 +31,25 @@ export const actionToPrefixMap: Record<string, string> = {
     "19": "Raise 4bb",
 };
 
-  
+
+// src/utils/constants.ts
+export type Action = "ALLIN" | "Min" | "Call" | "Fold" | "UNKNOWN";
+
+export const ALL_ACTIONS: Action[] = ["ALLIN", "UNKNOWN", "Min", "Call", "Fold"];
+
+export const actionColorMapping: Record<string, string> = {
+  ALLIN: "#7d1f1e",
+  Min: "#F03c3c",
+  Call: "#5ab964",
+  Fold: "#3d7cb8",
+  // Unknown actions default to:
+};
+
+export const ALL_COLORS: string[] = [
+  "#7d1f1e", // ALLIN
+  "#C14c39", // UNKNOWN
+  "#F03c3c", // Min
+  "#5ab964", // Call
+  "#3d7cb8"  // Fold
+];
+

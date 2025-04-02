@@ -1,9 +1,9 @@
 import { useState, useCallback, useLayoutEffect, useEffect, useMemo, useRef } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import NavBar from "./NavBar";
 import PlateGrid from "./PlateGrid";
 import Layout from "./Layout";
-import { actionToPrefixMap, actionToPrefixMap2 } from "../constants";
+import { actionToPrefixMap, actionToPrefixMap2 } from "../utils/constants";
 import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import useWindowDimensions from "../hooks/useWindowDimensions";
 import useFolders from "../hooks/useFolders";
@@ -23,9 +23,10 @@ interface LocationState {
 const Main = () => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
   const { windowWidth, windowHeight } = useWindowDimensions();
-  const navigate = useNavigate();
   const location = useLocation();
   const initialState = (location.state as LocationState) || { folder: "", plateData: {} };
+
+  // Local state is lifted and maintained here so that children are preserved
   const [folder, setFolder] = useState<string>(initialState.folder);
   const [plateData, setPlateData] = useState<Record<string, JsonData>>(initialState.plateData);
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>(initialState.plateMapping || {});
@@ -59,9 +60,9 @@ const Main = () => {
   const { files: availableJsonFiles, error: filesError } = useFiles(API_BASE_URL, folder);
 
   const positionOrder = useMemo(() => {
-    if (playerCount === 8) return [ "SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"];
+    if (playerCount === 8) return ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"];
     if (playerCount === 6) return ["SB", "BB", "LJ", "HJ", "CO", "BTN"];
-    if (playerCount === 2) return ["BB","BTN"];
+    if (playerCount === 2) return ["BB", "BTN"];
     return Object.keys(plateMapping);
   }, [playerCount, plateMapping]);
 
@@ -70,15 +71,16 @@ const Main = () => {
     [plateMapping, positionOrder]
   );
 
+  // When folder changes, reset plate-related state.
   useLayoutEffect(() => {
     setLoadedPlates(defaultPlateNames);
     setPlateMapping({});
     setPlateData({});
   }, [folder, defaultPlateNames]);
 
+  // On mount, if there's location state then restore it.
   useEffect(() => {
-    console.log(Object.keys(plateData).length, "location.state:", location.state);
-    setRandomFillEnabled(false)
+    setRandomFillEnabled(false);
     if (location.state) {
       const {
         folder: newFolder,
@@ -91,9 +93,9 @@ const Main = () => {
       if (newLoadedPlates !== undefined) setLoadedPlates(newLoadedPlates);
       if (newPlateMapping !== undefined) setPlateMapping(newPlateMapping);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
+  // Keep plateMapping consistent with loadedPlates.
   useEffect(() => {
     setPlateMapping((prev) => {
       const filtered: Record<string, string> = {};
@@ -106,6 +108,7 @@ const Main = () => {
     });
   }, [loadedPlates]);
 
+  // Fetch plate data for any missing plates.
   useEffect(() => {
     const platesToFetch = loadedPlates.filter((plate) => !(plate in plateData));
     if (platesToFetch.length === 0) {
@@ -114,7 +117,6 @@ const Main = () => {
     }
     
     let didTimeout = false;
-    // Start a timer for 300ms. If the fetch takes longer than 400ms, we set loading to true.
     const timer = setTimeout(() => {
       didTimeout = true;
       setLoading(true);
@@ -147,9 +149,7 @@ const Main = () => {
       })
       .finally(() => {
         clearTimeout(timer);
-        // Only clear the loading state if it was turned on.
         if (didTimeout) {
-          //console.log("fetching finished");
           setLoading(false);
         }
       });
@@ -157,110 +157,95 @@ const Main = () => {
     return () => source.cancel();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadedPlates, folder]);
+
+  // Popstate listener: when the user clicks 'back', update state.
+  useEffect(() => {
+    const onPopState = (e: PopStateEvent) => {
+      const newState = e.state as LocationState;
+      // Only update if the new state is different.
+      if (
+        newState &&
+        (newState.folder !== folder ||
+         JSON.stringify(newState.loadedPlates) !== JSON.stringify(loadedPlates) ||
+         JSON.stringify(newState.plateData) !== JSON.stringify(plateData))
+      ) {
+        setFolder(newState.folder);
+        setPlateData(newState.plateData);
+        setLoadedPlates(newState.loadedPlates || defaultPlateNames);
+        setPlateMapping(newState.plateMapping || {});
+      }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [folder, loadedPlates, plateData, defaultPlateNames]);
   
-  const lastNavigatedState = useRef<LocationState | null>(null);
-  useEffect(() => {
-    const newState: LocationState = { folder, plateData, loadedPlates, plateMapping };
-    if (
-      Object.keys(plateData).length > 0 &&
-      JSON.stringify(lastNavigatedState.current) !== JSON.stringify(newState)
-    ) {
-      lastNavigatedState.current = newState;
-      navigate(".", { state: newState, replace: true });
-    }
-  }, [plateData, plateMapping, loadedPlates, folder, navigate]);
 
-  const validStateHistory = useRef<LocationState[]>([]);
-  useEffect(() => {
-    if (
-      location.state &&
-      (location.state as LocationState).plateData &&
-      Object.keys((location.state as LocationState).plateData).length > 0
-    ) {
-      validStateHistory.current.push(location.state as LocationState);
-    }
-  }, [location.state]);
-
+  // Folder selection handler: update state and push a new history entry.
   const handleFolderSelect = useCallback(
     (selectedFolder: string) => {
       const newLoadedPlates = defaultPlateNames;
       setLoadedPlates(newLoadedPlates);
+      setFolder(selectedFolder);
+      // Clear plate data/mapping when switching folder.
       setPlateData({});
       setPlateMapping({});
-      navigate(".", {
-        state: {
-          folder: selectedFolder,
-          plateData: {},
-          loadedPlates: newLoadedPlates,
-          plateMapping: {},
-          refresh: Date.now(),
-        },
-      });
       setRandomFillEnabled(false);
+      const newState: LocationState = { folder: selectedFolder, plateData: {}, loadedPlates: newLoadedPlates, plateMapping: {} };
+      window.history.pushState(newState, "");
     },
-    [defaultPlateNames, navigate]
+    [defaultPlateNames]
   );
 
-  // const prefixToActionMap = Object.fromEntries(
-  //   Object.entries(actionToPrefixMap).map(([action, prefix]) => [prefix, action])
-  // );
-  
   const convertRangeText = (data: JsonData | undefined, action: string): string => {
     if (!data) return "";
-    // Look up the proper key in your JSON data using the inverse mapping.
-    // If the mapping isn't available for the provided action, default to the action itself.
     const dataKey = actionToPrefixMap2[action] || action;
-    //console.log("dataKey:", dataKey)
     if (!data[dataKey]) return "";
-  
     return Object.entries(data[dataKey])
       .map(([hand, values]) => `${hand}:${values[0]}`)
       .join(",");
   };
-  
 
+  // Handle an action click by updating state and pushing a new history entry.
   const handleActionClick = useCallback(
     (action: string, fileName: string) => {
-      //console.log("fileName:", fileName,"action:", action)
       if (action === "Call") {
-        // Suppose your plateData for BB has the width and hand information
         const callData = plateData[fileName];
         const range0 = convertRangeText(callData, action);
-        const range1 = lastRange || ""
+        const range1 = lastRange || "";
   
         const fullText = `#Type#NoLimit
-        #Range0#${range0}
-        #Range1#${range1}
-        #ICM.ICMFormat#Pio ICM structure
-        #ICM.Payouts#16800\\n9200\\n4900\\n2800\\n1450\\n1226\\n1022\\n920\\n817\\n613\\n613\\n613\\n613\\n587\\n562\\n562\\n562\\n562
-        #ICM.Stacks#1800\\n1800\\n6000\\n4000\\n3000\\n2600\\n2500\\n2500\\n2300\\n2300\\n2200\\n1800\\n1600\\n1400\\n1200\\n1000\\n800\\n500
-        #Pot#550
-        #EffectiveStacks#1800
-        #AllinThreshold#60
-        #AddAllinOnlyIfLessThanThisTimesThePot#250
-        #MergeSimilarBets#True
-        #MergeSimilarBetsThreshold#12
-        #CapEnabled#True
-        #CapPerStreet#3\\n3\\n3
-        #CapMode#NoLimit
-        #FlopConfig.RaiseSize#33
-        #FlopConfig.AddAllin#True
-        #TurnConfig.BetSize#50
-        #TurnConfig.RaiseSize#a
-        #TurnConfig.AddAllin#True
-        #RiverConfig.BetSize#30 66
-        #RiverConfig.RaiseSize#a
-        #RiverConfig.AddAllin#True
-        #RiverConfig.DonkBetSize#30
-        #FlopConfigIP.BetSize#25
-        #FlopConfigIP.RaiseSize#a
-        #FlopConfigIP.AddAllin#True
-        #TurnConfigIP.BetSize#50
-        #TurnConfigIP.RaiseSize#a
-        #TurnConfigIP.AddAllin#True
-        #RiverConfigIP.BetSize#30 66
-        #RiverConfigIP.RaiseSize#a
-        #RiverConfigIP.AddAllin#True`;
+#Range0#${range0}
+#Range1#${range1}
+#ICM.ICMFormat#Pio ICM structure
+#ICM.Payouts#16800\\n9200\\n4900\\n2800\\n1450\\n1226\\n1022\\n920\\n817\\n613\\n613\\n613\\n613\\n587\\n562\\n562\\n562\\n562
+#ICM.Stacks#1800\\n1800\\n6000\\n4000\\n3000\\n2600\\n2500\\n2500\\n2300\\n2300\\n2200\\n1800\\n1600\\n1400\\n1200\\n1000\\n800\\n500
+#Pot#550
+#EffectiveStacks#1800
+#AllinThreshold#60
+#AddAllinOnlyIfLessThanThisTimesThePot#250
+#MergeSimilarBets#True
+#MergeSimilarBetsThreshold#12
+#CapEnabled#True
+#CapPerStreet#3\\n3\\n3
+#CapMode#NoLimit
+#FlopConfig.RaiseSize#33
+#FlopConfig.AddAllin#True
+#TurnConfig.BetSize#50
+#TurnConfig.RaiseSize#a
+#TurnConfig.AddAllin#True
+#RiverConfig.BetSize#30 66
+#RiverConfig.RaiseSize#a
+#RiverConfig.AddAllin#True
+#RiverConfig.DonkBetSize#30
+#FlopConfigIP.BetSize#25
+#FlopConfigIP.RaiseSize#a
+#FlopConfigIP.AddAllin#True
+#TurnConfigIP.BetSize#50
+#TurnConfigIP.RaiseSize#a
+#TurnConfigIP.AddAllin#True
+#RiverConfigIP.BetSize#30 66
+#RiverConfigIP.RaiseSize#a
+#RiverConfigIP.AddAllin#True`;
   
         navigator.clipboard.writeText(fullText)
           .then(() => {
@@ -270,8 +255,7 @@ const Main = () => {
             console.error("Failed to copy text: ", err);
           });
       }
-
-      // For actions other than "Call" or "ALLIN", update the lastRange.
+  
       if (action !== "Call" && action !== "ALLIN") {
         const raiseData = plateData[fileName];
         const currentRange = convertRangeText(raiseData, action);
@@ -280,13 +264,13 @@ const Main = () => {
         }
       }
   
-      // Existing logic for other actions...
       const plateName = loadedPlates.find((name) => name === fileName);
       if (!plateName) return;
       const newValue = actionToPrefixMap[action] || action;
       const clickedIndex = loadedPlates.findIndex((name) => name === plateName);
       const newLoadedPlates = appendPlateNames(loadedPlates, clickedIndex, newValue, availableJsonFiles);
   
+      // Only update state if there is a change.
       if (
         newLoadedPlates.length === loadedPlates.length &&
         newLoadedPlates.every((val, idx) => val === loadedPlates[idx])
@@ -295,14 +279,15 @@ const Main = () => {
       }
   
       setLoadedPlates(newLoadedPlates);
-      setRandomFillEnabled(false)
-      navigate(".", { state: { folder, plateData, loadedPlates: newLoadedPlates, plateMapping } });
+      setRandomFillEnabled(false);
+  
+      const newState: LocationState = { folder, plateData, loadedPlates: newLoadedPlates, plateMapping };
+      window.history.replaceState(newState, "");
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [loadedPlates, availableJsonFiles, folder, plateData, plateMapping, navigate]
+    [loadedPlates, availableJsonFiles, folder, plateData, plateMapping, lastRange]
   );
   
-
   const appendPlateNames = useCallback(
     (currentFiles: string[], clickedIndex: number, actionNumber: string, availableFiles: string[]): string[] => {
       const clickedFile = currentFiles[clickedIndex];
@@ -316,7 +301,6 @@ const Main = () => {
           newFiles.push(file);
         }
       });
-      //console.log(prefix, actionNumber)
       const regex = new RegExp(`^${baseName}(?:\\.0)+\\.json$`);
       availableFiles.forEach((file) => {
         if (regex.test(file) && !currentFiles.includes(file)) {
@@ -327,20 +311,19 @@ const Main = () => {
     },
     []
   );
-
-
-
+  
   useKeyboardShortcuts({
     onToggleRandom: () => setRandomFillEnabled((prev) => !prev),
   });
-
+  
   useEffect(() => {
-    //console.log("Plate States Updated:", { loadedPlates, plateMapping, plateData });
+    // Debug: log state changes if needed.
+    // console.log("Plate States Updated:", { loadedPlates, plateMapping, plateData });
   }, [loadedPlates, plateMapping, plateData]);
-
+  
   const [randomFillEnabled, setRandomFillEnabled] = useState(false);
   const [isSpiralView, setIsSpiralView] = useState(true);
-
+  
   return (
     <Layout>
       <NavBar
@@ -358,16 +341,16 @@ const Main = () => {
         )}
         <PlateGrid
           files={displayPlates}
+          positions={positionOrder} 
           selectedFolder={folder}
           isSpiralView={isSpiralView}
           randomFillEnabled={randomFillEnabled}
           onActionClick={handleActionClick}
           windowWidth={windowWidth}
-          windowHeight={windowHeight} // Passing the windowHeight prop
-          plateData={(location.state as LocationState)?.plateData}
-          loading={loading} // Pass the loading prop here
+          windowHeight={windowHeight}
+          plateData={plateData}
+          loading={loading}
         />
-        {/* Only show the InstructionBox if there is at least one non-empty plate */}
         {displayPlates.some((plate) => plate !== "") && (
           <InstructionBox>
             <h2 className="text-lg font-bold mb-2">Instructions</h2>

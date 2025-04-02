@@ -24,6 +24,13 @@ const HAND_ORDER = [
 ];
 
 const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ gridData, randomFillEnabled: randomFill }) => {
+  useEffect(() => {
+    // console.log("DecisionMatrix mounted");
+    return () => {
+      // console.log("DecisionMatrix unmounted");
+    };
+  }, []);
+  
   const orderedGridData = useMemo(() => {
     return HAND_ORDER.map(
       (hand) => gridData.find((item) => item.hand === hand) || null
@@ -49,7 +56,7 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ gridData, randomFillEna
       {orderedGridData.map((handData, index) =>
         handData ? (
           <HandCell
-            key={index}
+            key={handData.hand}
             data={handData}
             randomFill={randomFill}
             matrixWidth={matrixWidth}
