@@ -1,4 +1,3 @@
-// src/components/Plate.tsx
 import React, { useEffect, useState } from "react";
 import { combineDataByHand, HandCellData, JsonData } from "../utils/utils";
 import ColorKey from "./ColorKey";
@@ -9,6 +8,7 @@ interface PlateProps {
   data: JsonData;
   onActionClick: (action: string, file: string) => void;
   randomFillEnabled?: boolean;
+  alive: boolean; // New prop to track alive status
 }
 
 const Plate: React.FC<PlateProps> = ({
@@ -16,16 +16,9 @@ const Plate: React.FC<PlateProps> = ({
   data,
   onActionClick,
   randomFillEnabled,
+  alive,
 }) => {
   const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
-
-  // useEffect(() => {
-  //   //console.log("Mounted file:", file);
-  //   return () => {
-  //   //console.log("Unmounted file:", file);
-  //   };
-  // // eslint-disable-next-line react-hooks/exhaustive-deps
-  // }, []);
 
   // Process the JSON data into grid data when it changes.
   useEffect(() => {
@@ -35,10 +28,15 @@ const Plate: React.FC<PlateProps> = ({
     }
   }, [data]);
 
+  useEffect(() => {
+    console.log("file is alive: ", file, alive)
+  }, [alive, file]);
+
   return (
     <div
       className="mb-0 justify-self-center border rounded-[7px] shadow-md p-0.5 bg-white
-                 w-full transition-all duration-200 text-base max-w-[400px] bg-"
+                  w-full text-base max-w-[400px]" // transition-all duration-200
+      style={{ opacity: alive ? 1 : 0.5 }} // Adjust opacity based on alive status
     >
       {!data && <p>Loading data...</p>}
       {data && (

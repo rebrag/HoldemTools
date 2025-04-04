@@ -1,9 +1,8 @@
 import { useState, useCallback, useLayoutEffect, useEffect, useMemo, useRef } from "react";
-//import { useLocation } from "react-router-dom";
 import NavBar from "./NavBar";
 import PlateGrid from "./PlateGrid";
 import Layout from "./Layout";
-import { actionToNumberMap, actionToPrefixMap2, numberToActionMap } from "../utils/constants";
+import { actionToNumberMap, actionToPrefixMap2, numberToActionMap} from "../utils/constants"; // 
 import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import useWindowDimensions from "../hooks/useWindowDimensions";
 import useFolders from "../hooks/useFolders";
@@ -12,6 +11,7 @@ import axios from "axios";
 import { JsonData } from "../utils/utils";
 import InstructionBox from "./InstructionBox";
 import Line from "./Line";
+import { generateSpiralOrder } from "../utils/gridUtils";
 
 const Main = () => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -23,6 +23,7 @@ const Main = () => {
   const [loading, setLoading] = useState<boolean>(false);
   const [preflopLine, setPreflopLine] = useState<string[]>(["Root"]);
   const playerCount = useMemo(() => (folder ? folder.split("_").length : 1), [folder]);
+  const [alivePlayers, setAlivePlayers] = useState<Record<string, boolean>>({});
 
   const defaultPlateNames = useMemo(() => {
     const filesArray: string[] = [];
@@ -35,6 +36,62 @@ const Main = () => {
       filesArray.push(zeros.join(".") + ".json");
     }
     return filesArray;
+  }, [playerCount]);
+
+  const positionOrder = useMemo(() => {
+    if (playerCount === 8) return ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"];
+    if (playerCount === 6) return ["SB", "BB", "LJ", "HJ", "CO", "BTN"];
+    if (playerCount === 2) return ["BB", "BTN"];
+    return Object.keys(plateMapping);
+  }, [playerCount, plateMapping]);
+
+  // const positionOrder = useMemo(() => {
+  //   if (playerCount === 8) return ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"];
+  //   if (playerCount === 6) return ["SB", "BB", "LJ", "HJ", "CO", "BTN"];
+  //   if (playerCount === 2) return ["BB", "BTN"];
+  //   return []; // fallback
+  // }, [playerCount]);
+  
+  // Now, based on your layout conditions in PlateGrid,
+  // determine grid dimensions similarly here.
+  const isNarrow =
+    positionOrder.length === 2
+      ? !(windowWidth * 1.2 < windowHeight)
+      : windowWidth * 1.2 < windowHeight;
+  const gridRows = isNarrow ? Math.ceil(positionOrder.length / 2) : 2;
+  const gridCols = isNarrow ? 2 : Math.ceil(positionOrder.length / 2);
+  
+  // Create a grid array (row-major order) using your canonical order.
+  const gridArray = Array(gridRows * gridCols).fill(null);
+  positionOrder.forEach((pos, i) => {
+    gridArray[i] = pos;
+  });
+  
+  // Get the spiral order indices.
+  const spiralIndices = generateSpiralOrder(gridRows, gridCols);
+  
+  // Map the spiral order to positions.
+  const spiralPositionOrder = spiralIndices
+    .map(([r, c]) => {
+      const idx = r * gridCols + c;
+      return gridArray[idx];
+    })
+    .filter((pos): pos is string => pos !== null);
+
+  useEffect(() => {
+    const initialAlive: Record<string, boolean> = {};
+    const positions = playerCount === 8 
+      ? ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"]
+      : playerCount === 6 
+        ? ["SB", "BB", "LJ", "HJ", "CO", "BTN"]
+        : playerCount === 2 
+          ? ["BB", "BTN"]
+          : Object.keys(plateMapping);
+    positions.forEach((pos) => {
+      initialAlive[pos] = true;
+    });
+    setAlivePlayers(initialAlive);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playerCount]);
 
   const [loadedPlates, setLoadedPlates] = useState<string[]>(defaultPlateNames);
@@ -59,17 +116,13 @@ const Main = () => {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folder]);
+
   
 
   const { folders, error: folderError } = useFolders(API_BASE_URL);
   const { files: availableJsonFiles, error: filesError } = useFiles(API_BASE_URL, folder);
 
-  const positionOrder = useMemo(() => {
-    if (playerCount === 8) return ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"];
-    if (playerCount === 6) return ["SB", "BB", "LJ", "HJ", "CO", "BTN"];
-    if (playerCount === 2) return ["BB", "BTN"];
-    return Object.keys(plateMapping);
-  }, [playerCount, plateMapping]);
+  
 
   const displayPlates = useMemo(
     () => positionOrder.map((pos) => plateMapping[pos] || ""),
@@ -151,6 +204,12 @@ const Main = () => {
       setPlateMapping({});
       setRandomFillEnabled(false);
       setPreflopLine(["Root"])
+      const initialAlive: Record<string, boolean> = {};
+      // Use canonical ordering (or spiralPositionOrder if that's what you prefer).
+      positionOrder.forEach((pos) => {
+        initialAlive[pos] = true;
+      });
+      setAlivePlayers(initialAlive);
     },
     [defaultPlateNames]
   );
@@ -166,8 +225,7 @@ const Main = () => {
 
   const handleActionClick = useCallback(
     (action: string, fileName: string) => {
-      // console.log(fileName, "handleActionClick: ", action, "numToAction:",numberToActionMap[action], 
-      //   "actionToNum:",actionToNumberMap[action])
+      // For actions such as "Min" or "Allin", process range data as needed.
       if (action === "Call") {
         const callData = plateData[fileName];
         const range0 = convertRangeText(callData, action);
@@ -205,61 +263,101 @@ const Main = () => {
         #RiverConfigIP.BetSize#30 66
         #RiverConfigIP.RaiseSize#a
         #RiverConfigIP.AddAllin#True`;
-        navigator.clipboard.writeText(fullText)
-          .then(() => {
-            // console.log("Text copied to clipboard!");
-          });
-      }
-      else if (action !== "Call" && action !== "ALLIN") {
+        navigator.clipboard.writeText(fullText).then(() => {
+          // Text copied to clipboard.
+        });
+      } else if (action !== "Call" && action !== "ALLIN") {
         const raiseData = plateData[fileName];
         const currentRange = convertRangeText(raiseData, action);
         if (currentRange) {
           setLastRange(currentRange);
         }
       }
+  
       const plateName = loadedPlates.find((name) => name === fileName);
       if (!plateName) return;
-      const actionNumber = actionToNumberMap[action]; //|| action
+      const actionNumber = actionToNumberMap[action];
       const clickedIndex = loadedPlates.findIndex((name) => name === plateName);
-      const newLoadedPlates = appendPlateNames(loadedPlates, clickedIndex, actionNumber, availableJsonFiles);
-      
-      setPreflopLine(() => {
-        const parts = fileName.replace(".json", "").split(".");
-        const newLine = ["Root"];
-        for (let i = 0; i < parts.length; i++) {
-          if (parts[i] !== 'root') {
-            newLine.push(numberToActionMap[parts[i]]);
+      const newLoadedPlates = appendPlateNames(
+        loadedPlates,
+        clickedIndex,
+        actionNumber,
+        availableJsonFiles
+      );
+
+      const parts = fileName.replace(".json", "").split(".");
+      // Start with the spiral order list.
+      const originalPositions = [...spiralPositionOrder];
+      const aliveList = [...originalPositions];
+      let activeIndex = 2; // starting with the first player in spiral order
+
+      for (const part of parts) {
+        if (part === "root") continue;
+        const actionValue = parseInt(part, 10);
+        if (actionValue === 0) {
+          aliveList.splice(activeIndex, 1);
+          if (aliveList.length > 0 && activeIndex >= aliveList.length) {
+            activeIndex = 0;
+          }
+        } else {
+          if (aliveList.length > 0) {
+            activeIndex = (activeIndex + 1) % aliveList.length;
           }
         }
-        newLine.push(action);
-        //console.log(newLine);
-        return newLine;
-      });
-      
+      }
 
-      // Only update state if there is a change.
+      // Build the alive mapping based on the canonical positions.
+      const updatedAlive: Record<string, boolean> = {};
+      spiralPositionOrder.forEach((pos) => {
+        updatedAlive[pos] = aliveList.includes(pos);
+      });
+      setAlivePlayers(updatedAlive);
+
+      // Update the preflop line as before (using your numberToActionMap).
+      const newLine = ["Root"];
+      for (const part of parts) {
+        if (part !== "root") {
+          newLine.push(numberToActionMap[part]);
+        }
+      }
+      newLine.push(action);
+      setPreflopLine(newLine);
       if (
         newLoadedPlates.length === loadedPlates.length &&
         newLoadedPlates.every((val, idx) => val === loadedPlates[idx])
-      ) {return;}
+      ) {
+        return;
+      }
       setLoadedPlates(newLoadedPlates);
       setRandomFillEnabled(false);
       setPlateMapping((prev) => {
         const filtered: Record<string, string> = {};
         Object.keys(prev).forEach((pos) => {
-          //if (loadedPlates.includes(prev[pos])) {
-            filtered[pos] = prev[pos];
-          //}
+          filtered[pos] = prev[pos];
         });
         return filtered;
-      })
+      });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [loadedPlates, availableJsonFiles, folder, plateData, plateMapping, lastRange]
+    [loadedPlates, availableJsonFiles, folder, plateData, plateMapping, lastRange, alivePlayers, positionOrder]
   );
+  
 
   const handleLineClick = useCallback(() => {
     //console.log("handleLineClick action:")
+    const initialAlive: Record<string, boolean> = {};
+    // Use the same position order as before.
+    const positions = playerCount === 8 
+      ? ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"]
+      : playerCount === 6 
+        ? ["SB", "BB", "LJ", "HJ", "CO", "BTN"]
+        : playerCount === 2 
+          ? ["BB", "BTN"]
+          : Object.keys(plateMapping);
+    positions.forEach((pos) => {
+      initialAlive[pos] = true;
+    });
+
     if (playerCount === 8){
     setPlateMapping({"UTG": "root.json", "UTG1": "0.json", "LJ": "0.0.json", "HJ": "0.0.0.json", "CO": "0.0.0.0.json", "BTN": "0.0.0.0.0.json"
       ,"SB": "0.0.0.0.0.0.json", "BB": "0.0.0.0.0.0.1.json"
@@ -271,7 +369,8 @@ const Main = () => {
     
     setPreflopLine(["Root"]);
     setRandomFillEnabled(false);
-  }, [playerCount]);
+    setAlivePlayers(initialAlive);
+  }, [plateMapping, playerCount]);
   
   const appendPlateNames = useCallback(
     (
@@ -366,6 +465,7 @@ const Main = () => {
           windowHeight={windowHeight}
           plateData={plateData}
           loading={loading}
+          alivePlayers={alivePlayers}
         />
         {displayPlates.some((plate) => plate !== "") && (
           <InstructionBox>

@@ -6,6 +6,7 @@ import AuthForm from "./components/Login-Signup";
 import MainApp from "./components/Main";
 import VerifyEmailPrompt from "./components/VerifyEmailPrompt";
 import LoadingIndicator from "./components/LoadingIndicator";
+import { AppProvider } from "./components/AppContext";
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -34,7 +35,11 @@ function App() {
   } else if (!user.emailVerified) {
     content = <VerifyEmailPrompt />;
   } else {
-    content = <MainApp />;
+    content = 
+    <AppProvider>
+      <MainApp />
+    </AppProvider>
+    ;
   }
 
   return (
