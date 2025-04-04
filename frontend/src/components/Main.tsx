@@ -1,5 +1,5 @@
 import { useState, useCallback, useLayoutEffect, useEffect, useMemo, useRef } from "react";
-import { useLocation } from "react-router-dom";
+//import { useLocation } from "react-router-dom";
 import NavBar from "./NavBar";
 import PlateGrid from "./PlateGrid";
 import Layout from "./Layout";
@@ -13,18 +13,9 @@ import { JsonData } from "../utils/utils";
 import InstructionBox from "./InstructionBox";
 import Line from "./Line";
 
-interface LocationState {
-  folder: string;
-  plateData: Record<string, JsonData>;
-  loadedPlates?: string[];
-  plateMapping?: Record<string, string>;
-  refresh?: number;
-}
-
 const Main = () => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
   const { windowWidth, windowHeight } = useWindowDimensions();
-  const location = useLocation();
   const [folder, setFolder] = useState<string>("20BTN_20BB");
   const [plateData, setPlateData] = useState<Record<string, JsonData>>({});
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>({});
@@ -90,23 +81,6 @@ const Main = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folder]);
 
-  // On mount, if there's location state then restore it.
-  useEffect(() => {
-    setRandomFillEnabled(false);
-    if (location.state) {
-      const {
-        folder: newFolder,
-        plateData: newPlateData,
-        loadedPlates: newLoadedPlates,
-        plateMapping: newPlateMapping,
-      } = location.state as LocationState;
-      if (newFolder) setFolder(newFolder);
-      if (newPlateData !== undefined) setPlateData(newPlateData);
-      if (newLoadedPlates !== undefined) setLoadedPlates(newLoadedPlates);
-      if (newPlateMapping !== undefined) setPlateMapping(newPlateMapping);
-    }
-  }, [location.state]);
-
   // Keep plateMapping consistent with loadedPlates.
   useEffect(() => {
     setPlateMapping((prev) => {
@@ -168,26 +142,6 @@ const Main = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadedPlates, folder]);
 
-  useEffect(() => {
-    const onPopState = (e: PopStateEvent) => {
-      const newState = e.state as LocationState;
-      if (
-        newState &&
-        (newState.folder !== folder ||
-         JSON.stringify(newState.loadedPlates) !== JSON.stringify(loadedPlates) ||
-         JSON.stringify(newState.plateData) !== JSON.stringify(plateData))
-      ) {
-        setFolder(newState.folder);
-        setPlateData(newState.plateData);
-        setLoadedPlates(newState.loadedPlates || defaultPlateNames);
-        setPlateMapping(newState.plateMapping || {});
-      }
-    };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, [folder, loadedPlates, plateData, defaultPlateNames]);
-  
-
   const handleFolderSelect = useCallback(
     (selectedFolder: string) => {
       const newLoadedPlates = defaultPlateNames;
@@ -197,8 +151,6 @@ const Main = () => {
       setPlateMapping({});
       setRandomFillEnabled(false);
       setPreflopLine(["Root"])
-      const newState: LocationState = { folder: selectedFolder, plateData: {}, loadedPlates: newLoadedPlates, plateMapping: {} };
-      window.history.pushState(newState, "");
     },
     [defaultPlateNames]
   );
@@ -289,9 +241,7 @@ const Main = () => {
       if (
         newLoadedPlates.length === loadedPlates.length &&
         newLoadedPlates.every((val, idx) => val === loadedPlates[idx])
-      ) {
-        return;
-      }
+      ) {return;}
       setLoadedPlates(newLoadedPlates);
       setRandomFillEnabled(false);
       setPlateMapping((prev) => {
@@ -303,8 +253,6 @@ const Main = () => {
         });
         return filtered;
       })
-      const newState: LocationState = { folder, plateData, loadedPlates: newLoadedPlates, plateMapping };
-      window.history.replaceState(newState, "");
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [loadedPlates, availableJsonFiles, folder, plateData, plateMapping, lastRange]
@@ -321,17 +269,9 @@ const Main = () => {
       })}else if (playerCount === 2) {
         setPlateMapping({"BTN": "root.json", "BB": "1.json"})}
     
-    //setLoadedPlates(defaultPlateNames);
     setPreflopLine(["Root"]);
     setRandomFillEnabled(false);
-    const newState: LocationState = {
-      folder,
-      plateData,
-      loadedPlates: defaultPlateNames,
-      plateMapping,
-    };
-    window.history.replaceState(newState, "");
-  }, [playerCount, defaultPlateNames, folder, plateData, plateMapping]);
+  }, [playerCount]);
   
   const appendPlateNames = useCallback(
     (
@@ -369,7 +309,6 @@ const Main = () => {
           newFilesWider.push(file);
         }
       });
-
 
       // doing things with the new files from the regex after the clicked file
       newFilesWider.forEach((file) => {
@@ -438,8 +377,6 @@ const Main = () => {
           </InstructionBox>
         )}
       </div>
-      
-
       <div className="text-center select-none pt-5">© Josh Garber 2025</div>
     </Layout>
   );
