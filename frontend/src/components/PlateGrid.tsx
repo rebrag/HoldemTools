@@ -17,6 +17,7 @@ type PlateGridProps = {
   windowHeight: number;
   plateData: Record<string, JsonData>;
   loading?: boolean;
+  alivePlayers: Record<string, boolean>;
 };
 
 const PlateGrid = ({
@@ -29,15 +30,8 @@ const PlateGrid = ({
   windowHeight,
   plateData,
   loading = false,
+  alivePlayers,
 }: PlateGridProps) => {
-
-//   useEffect(() => {
-//     console.log("PlateGrid mounted");
-//     return () => {
-//       console.log("PlateGrid unmounted");
-//     };
-//   }, []);
-
   // Narrow when viewport width is less than viewport height.
   const isNarrow =
     files.length === 2
@@ -90,14 +84,15 @@ const PlateGrid = ({
         {orderedFiles.map((file, index) => {
           // Use the fixed position as the key.
           const posKey = positions[index] ?? `blank-${index}`;
-          //console.log("posKey: ",posKey, "file: ", file);
           return file ? (
             <Plate
               key={posKey}
               file={file}
+              //position={plateData[file].Position}  // Passing the position from the data
               data={plateData[file]}
               onActionClick={onActionClick}
               randomFillEnabled={randomFillEnabled}
+              alive={alivePlayers[posKey] ?? true}
             />
           ) : (
             <div key={posKey} />
