@@ -19,12 +19,13 @@ const Plate: React.FC<PlateProps> = ({
 }) => {
   const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
 
-  useEffect(() => {
-    console.log("Plate mounted");
-    return () => {
-      console.log("Plate unmounted");
-    };
-  }, []);
+  // useEffect(() => {
+  //   //console.log("Mounted file:", file);
+  //   return () => {
+  //   //console.log("Unmounted file:", file);
+  //   };
+  // // eslint-disable-next-line react-hooks/exhaustive-deps
+  // }, []);
 
   // Process the JSON data into grid data when it changes.
   useEffect(() => {

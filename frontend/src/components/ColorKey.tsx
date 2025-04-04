@@ -21,15 +21,15 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
   const displayedActions =
     uniqueActions.length > 3 ? uniqueActions.filter((action) => action !== "Fold") : uniqueActions;
 
-  const actionMapping: Record<string, string> = {
-    "Raise 2bb": "15",
-    "Raise 1.5bb": "14",
-    "Raise 54%": "40054",
-    "Raise 75%": "40075",
-    "Raise 50%": "40050",
-    "Raise 78%": "40078",
-    // add other mappings as needed
-  };
+  // const actionMapping: Record<string, string> = {
+  //   "Raise 2bb": "15",
+  //   "Raise 1.5bb": "14",
+  //   "Raise 54%": "40054",
+  //   "Raise 75%": "40075",
+  //   "Raise 50%": "40050",
+  //   "Raise 78%": "40078",
+  //   // add other mappings as needed
+  // };
 
   // makes the color of the buttons prettier, like sunset shading
   function shadeColor(color: string, percent: number) {
@@ -58,8 +58,8 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
         return (
           <div
             key={action}
-            className={`flex ${isFold ? "cursor-default" : "cursor-pointer"}`}
-            onClick={isFold ? undefined : () => onActionClick(actionMapping[action] || action)}
+            className={`flex ${isFold ? "cursor-default" : "cursor-pointer"}`} 
+            onClick={isFold ? undefined : () => onActionClick(action)} //actionMapping[action] || action
             title={isFold ? undefined : `Click to see reactions to ${action}`}
           >
             <div

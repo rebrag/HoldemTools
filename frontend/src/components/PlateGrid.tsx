@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react"; //useEffect
 import Plate from "./Plate";
 import { generateSpiralOrder } from "../utils/gridUtils";
 import { JsonData } from "../utils/utils";
@@ -30,12 +30,13 @@ const PlateGrid = ({
   plateData,
   loading = false,
 }: PlateGridProps) => {
-  useEffect(() => {
-    console.log("PlateGrid mounted");
-    return () => {
-      console.log("PlateGrid unmounted");
-    };
-  }, []);
+
+//   useEffect(() => {
+//     console.log("PlateGrid mounted");
+//     return () => {
+//       console.log("PlateGrid unmounted");
+//     };
+//   }, []);
 
   // Narrow when viewport width is less than viewport height.
   const isNarrow =
@@ -89,6 +90,7 @@ const PlateGrid = ({
         {orderedFiles.map((file, index) => {
           // Use the fixed position as the key.
           const posKey = positions[index] ?? `blank-${index}`;
+          //console.log("posKey: ",posKey, "file: ", file);
           return file ? (
             <Plate
               key={posKey}

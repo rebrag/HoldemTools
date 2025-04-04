@@ -49,7 +49,7 @@ const RandomizeButton: React.FC<RandomizeButtonProps> = ({
   };
 
   return (
-    <motion.button onClick={handleClick} className="focus:outline-none">
+    <motion.button onClick={handleClick} className="focus:outline-none select-none">
       <motion.img
         src="/dice.svg"
         alt="Dice"

@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
-
+.segment {
+  transition: width 500ms ease-in-out;
+}
 
 .decision-grid {
   grid-template-columns: repeat(13, 90px);

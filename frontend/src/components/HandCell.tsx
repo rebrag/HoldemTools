@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { HandCellData } from "../utils/utils";
 import { ALL_ACTIONS, ALL_COLORS } from "../utils/constants";
+import './App.css';
 
 // Optionally, if you defined a type for actions in your constants:
 export type Action = "ALLIN" | "UNKNOWN" | "Min" | "Call" | "Fold";
@@ -11,19 +12,19 @@ interface HandCellProps {
   matrixWidth?: number;
 }
 
-const HandCell: React.FC<HandCellProps> = ({ data, randomFill, matrixWidth }) => {
-  const [selectedAction, setSelectedAction] = useState<string | null>(null);
+const HandCell: React.FC<HandCellProps> = ({ data, randomFill: isRandomFill, matrixWidth }) => {
+  const [randomizedAction, setRandomizedAction] = useState<string | null>(null);
 
   // Random fill: choose an action based on weights.
   useEffect(() => {
-    if (!randomFill) {
-      setSelectedAction(null);
+    if (!isRandomFill) {
+      setRandomizedAction(null);
       return;
     }
     const entries = Object.entries(data.actions);
     const totalWeight = entries.reduce((sum, [, w]) => sum + w, 0);
     if (totalWeight === 0) {
-      setSelectedAction(null);
+      setRandomizedAction(null);
       return;
     }
     const rand = Math.random() * totalWeight;
@@ -31,29 +32,26 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFill, matrixWidth }) =>
     for (const [action, weight] of entries) {
       cumulative += weight;
       if (rand <= cumulative) {
-        setSelectedAction(action);
+        setRandomizedAction(action);
         return;
       }
     }
-    setSelectedAction(entries[0][0]);
-  }, [randomFill, data.actions]);
+    setRandomizedAction(entries[0][0]);
+  }, [isRandomFill, data.actions]);
 
   const segments = useMemo(() => {
-    // Sum up unknown weight: actions not in ALL_ACTIONS.
     let unknownWeight = 0;
     Object.keys(data.actions).forEach((key) => {
       if (!ALL_ACTIONS.includes(key as Action)) {
         unknownWeight += data.actions[key] || 0;
       }
     });
-    // Map over the fixed ALL_ACTIONS order.
     return ALL_ACTIONS.map((action: Action) => {
-      // For "UNKNOWN", use aggregated unknown weight; for known actions, use their value.
       const weight = action === "UNKNOWN" ? unknownWeight : (data.actions[action as string] || 0);
       const targetWidth =
-        randomFill && selectedAction
-          ? (selectedAction === action ||
-             (!ALL_ACTIONS.includes(selectedAction as Action) && action === "UNKNOWN")
+        isRandomFill && randomizedAction
+          ? (randomizedAction === action ||
+             (!ALL_ACTIONS.includes(randomizedAction as Action) && action === "UNKNOWN")
               ? 100
               : 0)
           : weight * 100;
@@ -62,44 +60,45 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFill, matrixWidth }) =>
         action,
         style: {
           width: `${targetWidth}%`,
-          transition: "width 600ms ease-out",
+          //transition: "width 400ms ease-out",
           backgroundColor: color,
         },
       };
     });
-  }, [data.actions, randomFill, selectedAction]);
+  }, [data.actions, isRandomFill, randomizedAction]);
 
   const computedFontSize = matrixWidth
     ? `${2 + matrixWidth * 0.02}px`
     : "calc(4px + .28vw)";
 
-  return (
-    <div
-      tabIndex={-1}
-      className="w-full h-full bg-slate-50 aspect-square relative select-none"
-    >
-      <div className="flex h-full w-full">
-        {segments.map(({ action, style }) => (
-          <div key={action} style={style} />
-        ))}
-      </div>
+    return (
       <div
-        className="absolute inset-0 pointer-events-none select-none"
-        style={{
-          boxShadow: "inset 0 0 0 1px rgba(203, 213, 224, 0.1)",
-        }}
-      />
-      <div
-        className="absolute inset-0 flex items-center justify-center text-white font-semibold"
-        style={{
-          fontSize: computedFontSize,
-          textShadow: "2px 2px 3px rgba(0, 0, 0, .7)",
-        }}
+        tabIndex={-1}
+        className="w-full h-full bg-slate-50 aspect-square relative select-none"
       >
-        {data.hand}
+        <div className="flex h-full w-full">
+          {segments.map(({ action, style }) => (
+            <div key={action} className="segment" style={style} />
+          ))}
+        </div>
+        <div
+          className="absolute inset-0 pointer-events-none select-none"
+          style={{
+            boxShadow: "inset 0 0 0 1px rgba(203, 213, 224, 0.1)",
+          }}
+        />
+        <div
+          className="absolute inset-0 flex items-center justify-center text-white font-semibold"
+          style={{
+            fontSize: computedFontSize,
+            textShadow: "2px 2px 3px rgba(0, 0, 0, .7)",
+          }}
+        >
+          {data.hand}
+        </div>
       </div>
-    </div>
-  );
+    );
+    
 };
 
 function areEqual(prev: HandCellProps, next: HandCellProps) {
