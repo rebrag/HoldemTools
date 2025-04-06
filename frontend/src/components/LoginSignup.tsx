@@ -1,12 +1,17 @@
 // src/components/AuthForm.tsx
 import { useState } from "react";
-import { auth, createUserWithEmailAndPassword, signInWithEmailAndPassword } from "../firebase";
-import { useNavigate } from "react-router-dom";
+import {
+  auth,
+  signInWithGoogle,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  FirebaseError,
+} from "../firebase";
 import { sendEmailVerification } from "firebase/auth";
-import { FirebaseError } from "firebase/app";
+import { useNavigate } from "react-router-dom";
 import Layout from "./Layout";
 
-const AuthForm = () => {
+const LoginSignup = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -20,7 +25,6 @@ const AuthForm = () => {
     setError(null);
     setMessage(null);
 
-    // If signing up, check if passwords match
     if (!isLogin && password !== confirmPassword) {
       setError("Passwords do not match. Please try again.");
       return;
@@ -60,12 +64,32 @@ const AuthForm = () => {
     }
   };
 
+  const handleGoogleLogin = async () => {
+    setError(null);
+    setMessage(null);
+    try {
+      const user = await signInWithGoogle();
+      if (!user.emailVerified) {
+        setMessage("Please verify your email address before logging in.");
+        return;
+      }
+      navigate("/");
+    } catch (err: unknown) {
+      if (err instanceof FirebaseError) {
+        setError(err.message);
+      } else if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError(String(err));
+      }
+    }
+  };
+
   const passwordsMatch = password === confirmPassword && confirmPassword.length > 0;
 
   return (
     <Layout>
       <div className="flex flex-col items-center justify-start p-4 flex-grow space-y-6">
-        {/* Login/Signup Form */}
         <div className="max-w-md w-full p-8 bg-white shadow-lg rounded-lg mt-8">
           <h2 className="text-2xl font-bold mb-6 text-center [text-shadow:2px_2px_4px_rgba(0,0,0,0.3)]">
             {isLogin ? "Hold'em Tool Login" : "Sign Up"}
@@ -89,7 +113,6 @@ const AuthForm = () => {
               required
               className="px-4 py-2 border border-gray-300 rounded focus:outline-none focus:border-blue-500 transition duration-200 ease-in-out hover:border-blue-400"
             />
-            {/* Confirm Password Field for Sign Up */}
             {!isLogin && (
               <div className="relative">
                 <input
@@ -103,12 +126,10 @@ const AuthForm = () => {
                 {confirmPassword && (
                   <span className="absolute inset-y-0 right-0 flex items-center pr-3">
                     {passwordsMatch ? (
-                      // Check icon for matching passwords
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
                     ) : (
-                      // X icon for non-matching passwords
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                       </svg>
@@ -124,6 +145,19 @@ const AuthForm = () => {
               {isLogin ? "Login" : "Sign Up"}
             </button>
           </form>
+
+          {/* Google Login */}
+          <div className="flex flex-col items-center mt-1">
+          <button
+            onClick={handleGoogleLogin}
+            className="cursor-pointer px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition duration-200 ease-in-out flex items-center justify-center gap-2 w-full mt-2"
+          >
+            <img src="/google-icon.svg" alt="Google" className="w-5 h-5" />
+            <span>Sign in with Google</span>
+          </button>
+
+          </div>
+
           <button
             onClick={() => {
               setIsLogin((prev) => !prev);
@@ -136,15 +170,13 @@ const AuthForm = () => {
           </button>
         </div>
 
-        {/* Summary and Preview Section */}
+        {/* Summary and Video */}
         <div className="flex flex-row max-[700px]:flex-col gap-4 w-full justify-center items-center">
-          {/* Summary Box */}
           <div className="max-w-sm w-full p-4 bg-white/70 rounded-lg shadow-md">
             <p className="text-gray-800 text-sm">
               Holdemtool is an advanced GTO preflop range tool that guides you on the optimal play for your preflop hands in various situations. Right now, our simulations focus on tournament play with a 1bb ante, and we’re planning to add cash game and ICM simulations soon. Stay tuned!
             </p>
           </div>
-          {/* Preview Video */}
           <div className="max-w-sm w-full">
             <video
               className="w-full rounded shadow-md"
@@ -160,9 +192,9 @@ const AuthForm = () => {
           </div>
         </div>
       </div>
-      <footer className="text-center select-none">© Josh Garber 2025</footer>
+      <div className="text-center select-none">© Josh Garber 2025</div>
     </Layout>
   );
 };
 
-export default AuthForm;
+export default LoginSignup;

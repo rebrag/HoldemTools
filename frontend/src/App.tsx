@@ -2,8 +2,8 @@
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { auth } from "./firebase";
-import AuthForm from "./components/Login-Signup";
-import MainApp from "./components/Main";
+import LoginSignup from "./components/LoginSignup";
+import Main from "./components/Solver";
 import VerifyEmailPrompt from "./components/VerifyEmailPrompt";
 import LoadingIndicator from "./components/LoadingIndicator";
 import { AppProvider } from "./components/AppContext";
@@ -31,13 +31,13 @@ function App() {
 
   let content;
   if (!user) {
-    content = <AuthForm />;
+    content = <LoginSignup />;
   } else if (!user.emailVerified) {
     content = <VerifyEmailPrompt />;
   } else {
     content = 
     <AppProvider>
-      <MainApp />
+      <Main />
     </AppProvider>
     ;
   }

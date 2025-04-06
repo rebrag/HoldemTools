@@ -84,7 +84,7 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFill: isRandomFill, mat
         <div
           className="absolute inset-0 pointer-events-none select-none"
           style={{
-            boxShadow: "inset 0 0 0 1px rgba(203, 213, 224, 0.1)",
+            boxShadow: "inset 0 0 0 0.3px rgba(203, 213, 224, 0.1)",
           }}
         />
         <div

@@ -45,15 +45,6 @@ const Main = () => {
     return Object.keys(plateMapping);
   }, [playerCount, plateMapping]);
 
-  // const positionOrder = useMemo(() => {
-  //   if (playerCount === 8) return ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"];
-  //   if (playerCount === 6) return ["SB", "BB", "LJ", "HJ", "CO", "BTN"];
-  //   if (playerCount === 2) return ["BB", "BTN"];
-  //   return []; // fallback
-  // }, [playerCount]);
-  
-  // Now, based on your layout conditions in PlateGrid,
-  // determine grid dimensions similarly here.
   const isNarrow =
     positionOrder.length === 2
       ? !(windowWidth * 1.2 < windowHeight)
@@ -343,34 +334,74 @@ const Main = () => {
   );
   
 
-  const handleLineClick = useCallback(() => {
-    //console.log("handleLineClick action:")
+  const handleLineClick = useCallback((clickedIndex: number) => {
+    // Update the preflop line up to the clicked index.
+    const trimmedLine = preflopLine.slice(0, clickedIndex + 1);
+    setPreflopLine(trimmedLine);
+    console.log(trimmedLine);
+  
     const initialAlive: Record<string, boolean> = {};
-    // Use the same position order as before.
-    const positions = playerCount === 8 
+    const positions = playerCount === 8
       ? ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"]
-      : playerCount === 6 
+      : playerCount === 6
         ? ["SB", "BB", "LJ", "HJ", "CO", "BTN"]
-        : playerCount === 2 
+        : playerCount === 2
           ? ["BB", "BTN"]
           : Object.keys(plateMapping);
     positions.forEach((pos) => {
       initialAlive[pos] = true;
     });
-
-    if (playerCount === 8){
-    setPlateMapping({"UTG": "root.json", "UTG1": "0.json", "LJ": "0.0.json", "HJ": "0.0.0.json", "CO": "0.0.0.0.json", "BTN": "0.0.0.0.0.json"
-      ,"SB": "0.0.0.0.0.0.json", "BB": "0.0.0.0.0.0.1.json"
-    })} else if (playerCount === 6) {
-      setPlateMapping({"LJ": "root.json", "HJ": "0.json", "CO": "0.0.json", "BTN": "0.0.0.json"
-        ,"SB": "0.0.0.0.json", "BB": "0.0.0.0.1.json"
-      })}else if (playerCount === 2) {
-        setPlateMapping({"BTN": "root.json", "BB": "1.json"})}
-    
-    setPreflopLine(["Root"]);
+  
+    // Check if the click is on "Root" or on a "Fold" action.
+    if (clickedIndex === 0 || trimmedLine[clickedIndex] === "Fold") {
+      // Reset alive players and plate mapping just like "Root".
+      setAlivePlayers(initialAlive);
+      if (playerCount === 8) {
+        setPlateMapping({
+          "UTG": "root.json", 
+          "UTG1": "0.json", 
+          "LJ": "0.0.json", 
+          "HJ": "0.0.0.json",
+          "CO": "0.0.0.0.json", 
+          "BTN": "0.0.0.0.0.json", 
+          "SB": "0.0.0.0.0.0.json", 
+          "BB": "0.0.0.0.0.0.1.json"
+        });
+      } else if (playerCount === 6) {
+        setPlateMapping({
+          "LJ": "root.json", 
+          "HJ": "0.json", 
+          "CO": "0.0.json", 
+          "BTN": "0.0.0.json",
+          "SB": "0.0.0.0.json", 
+          "BB": "0.0.0.0.1.json"
+        });
+      } else if (playerCount === 2) {
+        setPlateMapping({
+          "BTN": "root.json", 
+          "BB": "1.json"
+        });
+      }
+    } else {
+      const fileNamePart = trimmedLine.slice(1, clickedIndex)
+        .map((action) => actionToNumberMap[action])
+        .join('.');
+      const computedFileName = fileNamePart + '.json';
+  
+      handleActionClick(trimmedLine[clickedIndex], computedFileName);
+      
+      setPlateMapping((prev) => ({
+        ...prev,
+        [plateData[computedFileName].Position]: computedFileName,
+      }));
+    }
+  
     setRandomFillEnabled(false);
-    setAlivePlayers(initialAlive);
-  }, [plateMapping, playerCount]);
+  }, [preflopLine, playerCount, plateMapping, handleActionClick, plateData]);
+  
+
+  
+  
   
   const appendPlateNames = useCallback(
     (
@@ -453,7 +484,8 @@ const Main = () => {
         {(folderError || filesError) && (
           <div className="text-red-500">{folderError || filesError}</div>
         )}
-        <Line line={preflopLine} onLineClick={handleLineClick} />
+        <Line line={preflopLine} onLineClick={(index) => handleLineClick(index)} />
+
         <PlateGrid
           files={displayPlates}
           positions={positionOrder} 

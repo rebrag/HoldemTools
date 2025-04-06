@@ -7,7 +7,6 @@ interface ColorKeyProps {
 }
 
 const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
-  // Get a unique set of actions from the grid data (ignoring "Position")
   const uniqueActions = Array.from(
     data.reduce((set, cell) => {
       Object.keys(cell.actions)
@@ -20,16 +19,6 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
   // If there are more than 3 actions, filter out "Fold"
   const displayedActions =
     uniqueActions.length > 3 ? uniqueActions.filter((action) => action !== "Fold") : uniqueActions;
-
-  // const actionMapping: Record<string, string> = {
-  //   "Raise 2bb": "15",
-  //   "Raise 1.5bb": "14",
-  //   "Raise 54%": "40054",
-  //   "Raise 75%": "40075",
-  //   "Raise 50%": "40050",
-  //   "Raise 78%": "40078",
-  //   // add other mappings as needed
-  // };
 
   // makes the color of the buttons prettier, like sunset shading
   function shadeColor(color: string, percent: number) {
@@ -53,13 +42,21 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
 
   return (
     <div className="flex gap-0.5 mb-1 items-center">
-      {displayedActions.slice().reverse().map((action) => {
+      {displayedActions
+        .slice()
+        .reverse()
+        .sort((a, b) => {
+          if (a === "ALLIN" && b === "Min") return -1;
+          if (a === "Min" && b === "ALLIN") return 1;
+          return 0;
+        })
+        .map((action) => {
         const isFold = action === "Fold";
         return (
           <div
             key={action}
             className={`flex ${isFold ? "cursor-default" : "cursor-pointer"}`} 
-            onClick={isFold ? undefined : () => onActionClick(action)} //actionMapping[action] || action
+            onClick={isFold ? undefined : () => onActionClick(action)}
             title={isFold ? undefined : `Click to see reactions to ${action}`}
           >
             <div

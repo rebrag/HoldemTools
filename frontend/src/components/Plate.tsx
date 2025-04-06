@@ -29,7 +29,7 @@ const Plate: React.FC<PlateProps> = ({
   }, [data]);
 
   useEffect(() => {
-    console.log("file is alive: ", file, alive)
+    //console.log("file is alive: ", file, alive)
   }, [alive, file]);
 
   return (
