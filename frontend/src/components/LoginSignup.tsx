@@ -1,4 +1,4 @@
-// src/components/AuthForm.tsx
+// src/components/LoginSignup.tsx
 import { useState } from "react";
 import {
   auth,
@@ -184,7 +184,7 @@ const LoginSignup = () => {
               muted
               loop
               playsInline
-              poster="/preview-poster.png"
+              //poster="/preview-poster.png"
             >
               <source src="/homepage.mp4" type="video/mp4" />
               Your browser does not support the video tag.

@@ -335,11 +335,9 @@ const Main = () => {
   
 
   const handleLineClick = useCallback((clickedIndex: number) => {
-    // Update the preflop line up to the clicked index.
     const trimmedLine = preflopLine.slice(0, clickedIndex + 1);
     setPreflopLine(trimmedLine);
     console.log(trimmedLine);
-  
     const initialAlive: Record<string, boolean> = {};
     const positions = playerCount === 8
       ? ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"]
@@ -352,9 +350,7 @@ const Main = () => {
       initialAlive[pos] = true;
     });
   
-    // Check if the click is on "Root" or on a "Fold" action.
-    if (clickedIndex === 0 || trimmedLine[clickedIndex] === "Fold") {
-      // Reset alive players and plate mapping just like "Root".
+    if (clickedIndex === 0 || clickedIndex === 1 || trimmedLine[clickedIndex] === "Fold") {
       setAlivePlayers(initialAlive);
       if (playerCount === 8) {
         setPlateMapping({

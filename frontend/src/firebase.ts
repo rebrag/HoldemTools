@@ -8,7 +8,7 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
 } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, serverTimestamp  } from "firebase/firestore";
 import { FirebaseError } from "firebase/app";
 
 // Firebase config from environment variables
@@ -29,14 +29,8 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const provider = new GoogleAuthProvider();
+export const timestamp = serverTimestamp;
 
-// Optional: Configure the provider if needed (e.g., restrict to certain domains)
-// provider.setCustomParameters({ hd: "example.com" });
-
-/**
- * Handles Google Sign-In and returns the user object.
- * Throws error if sign-in fails.
- */
 const signInWithGoogle = async () => {
   try {
     const result = await signInWithPopup(auth, provider);
