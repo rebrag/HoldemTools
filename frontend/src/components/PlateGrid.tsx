@@ -35,8 +35,8 @@ const PlateGrid = ({
   // Narrow when viewport width is less than viewport height.
   const isNarrow =
     files.length === 2
-      ? !(windowWidth * 1.2 < windowHeight)
-      : windowWidth * 1.2 < windowHeight;
+      ? !(windowWidth * 1.3 < windowHeight)
+      : windowWidth * 1.3 < windowHeight;
 
   const gridRows = isNarrow ? Math.ceil(files.length / 2) : 2;
   const gridCols = isNarrow ? 2 : Math.ceil(files.length / 2);

@@ -1,5 +1,5 @@
 import React from "react";
-import FadeLoader from "react-spinners/FadeLoader";
+import PuffLoader from "react-spinners/PuffLoader";
 
 const LoadingIndicator: React.FC = () => {
   return (
@@ -7,7 +7,7 @@ const LoadingIndicator: React.FC = () => {
       style={{
       }}
     >
-      <FadeLoader radius={0.5} color="#000000" />
+      <PuffLoader size={100} color="#000000" />
     </div>
   );
 };

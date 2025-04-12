@@ -16,7 +16,7 @@ import { generateSpiralOrder } from "../utils/gridUtils";
 const Main = () => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
   const { windowWidth, windowHeight } = useWindowDimensions();
-  const [folder, setFolder] = useState<string>("20BTN_20BB");
+  const [folder, setFolder] = useState<string>("22UTG_22UTG1_22LJ_22HJ_22CO_22BTN_22SB_22BB");
   const [plateData, setPlateData] = useState<Record<string, JsonData>>({});
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>({});
   const [lastRange, setLastRange] = useState<string>("");
@@ -150,7 +150,7 @@ const Main = () => {
     const timer = setTimeout(() => {
       didTimeout = true;
       setLoading(true);
-    }, 500);
+    }, 700);
   
     const source = axios.CancelToken.source();
 
@@ -469,19 +469,24 @@ const Main = () => {
     <Layout>
       <NavBar
         randomFillEnabled={randomFillEnabled}
-        toggleRandomization={() => setRandomFillEnabled((prev) => !prev)}
+        toggleRandomization={() => setRandomFillEnabled(prev => !prev)}
         folders={folders}
         currentFolder={folder}
         onFolderSelect={handleFolderSelect}
-        toggleViewMode={() => setIsSpiralView((prev) => !prev)}
+        toggleViewMode={() => setIsSpiralView(prev => !prev)}
         isSpiralView={isSpiralView}
       />
       <div className="pt-13 p-1 flex-grow">
         {(folderError || filesError) && (
           <div className="text-red-500">{folderError || filesError}</div>
         )}
-        <Line line={preflopLine} onLineClick={(index) => handleLineClick(index)} />
-
+        {displayPlates.some((plate) => plate !== "") && (
+          <Line 
+            line={preflopLine} 
+            onLineClick={(index) => handleLineClick(index)} 
+          />
+        )}
+  
         <PlateGrid
           files={displayPlates}
           positions={positionOrder} 
@@ -495,19 +500,23 @@ const Main = () => {
           loading={loading}
           alivePlayers={alivePlayers}
         />
-        {displayPlates.some((plate) => plate !== "") && (
+      </div>
+      {/* Render InstructionBox outside the PlateGrid container */}
+      {displayPlates.some((plate) => plate !== "") && (
+        <div style={{ position: "fixed"}}>
           <InstructionBox>
             <h2 className="text-lg font-bold mb-2">Instructions</h2>
-            <p>
-              Click on an action (other than fold) to view the reactions to an action.
-              Use the navigation bar above to choose a preflop Sim.
+            <p className="text-sm lg:text-md">
+              Use the navigation bar above to choose a preflop Sim.<br />
+              Click on an action (other than fold) to view the reactions to an action.<br />
+              Click on the 'Line' buttons at the top of the page to either reset the tree or go back to a certain action.
             </p>
           </InstructionBox>
-        )}
-      </div>
+        </div>
+      )}
       <div className="text-center select-none pt-5">© Josh Garber 2025</div>
     </Layout>
-  );
+  );  
 };
 
 export default Main;
