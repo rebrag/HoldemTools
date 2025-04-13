@@ -8,13 +8,13 @@ interface LineProps {
 
 const Line: React.FC<LineProps> = ({ line, onLineClick }) => {
   return (
-    <div className="flex flex-wrap gap-2 p-1">
+    <div className="flex flex-wrap gap-1 p-1">
       Line:
       {line.map((action, index) => (
         <button
           key={index}
           onClick={() => onLineClick(index)}
-          className="px-2 py-0.5 bg-gray-200 hover:bg-gray-300 text-black rounded-lg transition-colors"
+          className="px-1.5 py-0.5 bg-gray-200 hover:bg-gray-300 text-black rounded-md transition-colors"
         >
           {action === 'Root' ? 'Reset' : action}
         </button>

@@ -8,7 +8,7 @@ interface PlateProps {
   data: JsonData;
   onActionClick: (action: string, file: string) => void;
   randomFillEnabled?: boolean;
-  alive: boolean; // New prop to track alive status
+  alive: boolean; 
 }
 
 const Plate: React.FC<PlateProps> = ({
