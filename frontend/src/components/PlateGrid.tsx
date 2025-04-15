@@ -66,7 +66,7 @@ const PlateGrid = ({
         <LoadingIndicator />
       </div>
       <div
-        className="grid gap-1 select-none border-0 rounded-md"
+        className="grid gap-2 select-none border-0 rounded-md"
         style={
           isNarrow
             ? {

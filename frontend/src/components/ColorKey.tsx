@@ -1,5 +1,6 @@
 import React from "react";
 import { HandCellData, getColorForAction } from "../utils/utils";
+import { motion } from "framer-motion";
 
 interface ColorKeyProps {
   data: HandCellData[];
@@ -41,7 +42,7 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
   }
 
   return (
-    <div className="flex gap-0.5 mb-1 items-center">
+    <div className="flex gap-0.5 mb-0.5 w-full">
       {displayedActions
         .slice()
         .reverse()
@@ -55,23 +56,24 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
         return (
           <div
             key={action}
-            className={`flex ${isFold ? "cursor-default" : "cursor-pointer"}`} 
+            className={`flex-1 min-w-0 ${isFold ? "cursor-default" : "cursor-pointer"}`}
             onClick={isFold ? undefined : () => onActionClick(action)}
             title={isFold ? undefined : `Click to see reactions to ${action}`}
           >
-            <div
-              className={`flex items-center justify-center rounded-md transition-all duration-300 ease-in-out transform ${
-                isFold ? "" : "hover:scale-110 hover:shadow-xl"
-              }`}
+            <motion.div
+              whileTap={{ scale: 0.92 }}
+              whileHover={{ scale: isFold ? 1 : 1.00 }}
+              transition={{ type: "spring", stiffness: 900, damping: 50 }}
+              className={`flex items-center justify-center rounded-sm shadow-sm ${isFold ? "" : "active:ring-2 ring-white"}`}
               style={{
-                width: "calc(32px + 1.4vw)",
+                width: "100%",
                 height: "calc(20px + 0.5vw)",
                 background: `radial-gradient(circle at top left, ${getColorForAction(
                   action
                 )} 0%, ${shadeColor(getColorForAction(action), -15)} 50%, ${shadeColor(
                   getColorForAction(action),
                   -35
-                )} 100%)`
+                )} 100%)`,
               }}
             >
               <span
@@ -80,7 +82,7 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
               >
                 {action}
               </span>
-            </div>
+            </motion.div>
           </div>
         );
       })}

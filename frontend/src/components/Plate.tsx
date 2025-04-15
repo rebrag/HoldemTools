@@ -2,13 +2,14 @@ import React, { useEffect, useState } from "react";
 import { combineDataByHand, HandCellData, JsonData } from "../utils/utils";
 import ColorKey from "./ColorKey";
 import DecisionMatrix from "./DecisionMatrix";
+import DealerButton from "./DealerButton";
 
 interface PlateProps {
   file: string;
   data: JsonData;
   onActionClick: (action: string, file: string) => void;
   randomFillEnabled?: boolean;
-  alive: boolean; 
+  alive: boolean;
 }
 
 const Plate: React.FC<PlateProps> = ({
@@ -20,7 +21,6 @@ const Plate: React.FC<PlateProps> = ({
 }) => {
   const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
 
-  // Process the JSON data into grid data when it changes.
   useEffect(() => {
     if (data) {
       const processed = combineDataByHand(data);
@@ -28,46 +28,67 @@ const Plate: React.FC<PlateProps> = ({
     }
   }, [data]);
 
-  useEffect(() => {
-    //console.log("file is alive: ", file, alive)
-  }, [alive, file]);
-
   return (
-    <div
-      className="mb-0 justify-self-center border rounded-[7px] shadow-md p-0.5 bg-white
-                  transition-all duration-500 ease-in-out w-full text-base max-w-[400px]" // 
-      style={{ opacity: alive ? 1 : 0.4 }} // Adjust opacity based on alive status
-    >
-      {!data && <p>Loading data...</p>}
-      {data && (
-        <>
-          <div className="select-none flex w-full items-center justify-between">
-            <h2
-              className="whitespace-nowrap font-bold text-gray-800"
-              style={{ fontSize: "calc(0.6rem + 0.3vw)" }}
-            >
-              {data.Position ? (
-                <span
-                  className={
-                    data.Position === "BTN"
-                      ? "border-2 border-black p-0.5 animate-none duration-1000 shadow-2xl px-0 rounded-lg"
-                      : ""
-                  }
-                >
-                  {data.Position} {data.bb}bb
-                </span>
-              ) : (
-                file
-              )}
-            </h2>
-            <ColorKey
-              data={combinedData}
-              onActionClick={(action) => onActionClick(action, file)}
-            />
-          </div>
-          <DecisionMatrix gridData={combinedData} randomFillEnabled={randomFillEnabled} />
-        </>
+    <div className="relative mb-4 justify-self-center max-w-[400px] w-full text-base">
+      {/* DealerButton floats over the top right, full opacity */}
+      {data?.Position === "BTN" && (
+        <div
+          className="absolute z-30"
+          style={{
+            top: "-16%",         // move it upward relative to Plate height
+            right: "-8%",       // move it outward beyond right edge
+            width: "33%",       // scales relative to Plate width
+            aspectRatio: "1",   // keep it a circle
+          }}
+        >
+          <DealerButton />
+        </div>
       )}
+
+
+      {/* Fadable container */}
+      <div
+        className="border rounded-[7px] shadow-md p-0.5 bg-white transition-all duration-500 ease-in-out"
+        style={{ opacity: alive ? 1 : 0.4 }}
+      >
+        {!data && <p>Loading data...</p>}
+        {data && (
+          <>
+            {/* ColorKey aligned top-right */}
+            <div className="select-none flex w-full items-center justify-end">
+              <ColorKey
+                data={combinedData}
+                onActionClick={(action) => onActionClick(action, file)}
+              />
+            </div>
+
+            <div className="relative">
+              <DecisionMatrix
+                gridData={combinedData}
+                randomFillEnabled={randomFillEnabled}
+              />
+
+              {/* Position + BB display near bottom center */}
+              <div className="absolute left-1/2 bottom-0 transform -translate-x-1/2 translate-y-3/4 z-10">
+                <div className="bg-white/80 rounded-md p-1 border-2">
+                  <h2
+                    className="text-center font-bold text-gray-800"
+                    style={{ fontSize: "calc(0.6rem + 0.3vw)" }}
+                  >
+                    {data.Position ? (
+                      <span className="p-0.5 px-0 rounded-lg">
+                        {data.Position} {data.bb}bb
+                      </span>
+                    ) : (
+                      file
+                    )}
+                  </h2>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 };
