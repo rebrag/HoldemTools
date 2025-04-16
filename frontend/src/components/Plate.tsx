@@ -54,13 +54,7 @@ const Plate: React.FC<PlateProps> = ({
         {!data && <p>Loading data...</p>}
         {data && (
           <>
-            {/* ColorKey aligned top-right */}
-            <div className="select-none flex w-full items-center justify-end">
-              <ColorKey
-                data={combinedData}
-                onActionClick={(action) => onActionClick(action, file)}
-              />
-            </div>
+            
 
             <div className="relative">
               <DecisionMatrix
@@ -85,6 +79,13 @@ const Plate: React.FC<PlateProps> = ({
                   </h2>
                 </div>
               </div>
+            </div>
+            {/* ColorKey aligned top-right */}
+            <div className="select-none flex w-full items-center justify-end">
+              <ColorKey
+                data={combinedData}
+                onActionClick={(action) => onActionClick(action, file)}
+              />
             </div>
           </>
         )}
