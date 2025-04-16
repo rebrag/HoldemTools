@@ -70,7 +70,7 @@ const Plate: React.FC<PlateProps> = ({
                     style={{ fontSize: "calc(0.6rem + 0.3vw)" }}
                   >
                     {data.Position ? (
-                      <span className="p-0.5 px-0 rounded-lg">
+                      <span className="p-0.5 px-0 rounded-lg z-50">
                         {data.Position} {data.bb}bb
                       </span>
                     ) : (

@@ -24,6 +24,13 @@ const Main = () => {
   const [preflopLine, setPreflopLine] = useState<string[]>(["Root"]);
   const playerCount = useMemo(() => (folder ? folder.split("_").length : 1), [folder]);
   const [alivePlayers, setAlivePlayers] = useState<Record<string, boolean>>({});
+  const [metadata, setMetadata] = useState<{ name: string; ante: number; icm: number[] }>({
+    name: "",
+    ante: 0,
+    icm: [],
+  });
+  
+  
 
   const defaultPlateNames = useMemo(() => {
     const filesArray: string[] = [];
@@ -204,6 +211,19 @@ const Main = () => {
     },
     [defaultPlateNames, positionOrder]
   );
+
+  useEffect(() => {
+    if (!folder) return;
+  
+    axios
+      .get(`${API_BASE_URL}/api/Files/${folder}/metadata.json`)
+      .then((res) => setMetadata(res.data))
+      .catch(() => {
+        // fallback if metadata.json is missing
+        setMetadata({ name: "", ante: 0, icm: [] });
+      });
+  }, [folder, API_BASE_URL]);
+  
 
   const convertRangeText = (data: JsonData | undefined, action: string): string => {
     if (!data) return "";
@@ -500,6 +520,18 @@ const Main = () => {
           loading={loading}
           alivePlayers={alivePlayers}
         />
+        {metadata && (
+          <div className="text-sm mb-2 text-center text-gray-600">
+            {metadata.name && <div><strong>Sim:</strong> {metadata.name}</div>}
+            <div><strong>Ante:</strong> {metadata.ante}</div>
+            {/* {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
+              <div><strong>ICM Structure:</strong> {metadata.icm.join(", ")}</div>
+            ) : (
+              <div><strong>ICM:</strong> None</div>
+            )} */}
+          </div>
+        )}
+
       </div>
       {/* Render InstructionBox outside the PlateGrid container */}
       {displayPlates.some((plate) => plate !== "") && (
