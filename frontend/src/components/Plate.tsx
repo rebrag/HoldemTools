@@ -33,7 +33,7 @@ const Plate: React.FC<PlateProps> = ({
       {/* DealerButton floats over the top right, full opacity */}
       {data?.Position === "BTN" && (
         <div
-          className="absolute z-30"
+          className="absolute z-0"
           style={{
             top: "-16%",         // move it upward relative to Plate height
             right: "-8%",       // move it outward beyond right edge
@@ -63,7 +63,7 @@ const Plate: React.FC<PlateProps> = ({
               />
 
               {/* Position + BB display near bottom center */}
-              <div className="absolute left-1/2 bottom-0 transform -translate-x-1/2 translate-y-3/4 z-10">
+              <div className="absolute left-1/2 bottom-0 transform -translate-x-1/2 translate-y-7/4 z-10">
                 <div className="bg-white/80 rounded-md p-1 border-2">
                   <h2
                     className="text-center font-bold text-gray-800"
@@ -81,7 +81,7 @@ const Plate: React.FC<PlateProps> = ({
               </div>
             </div>
             {/* ColorKey aligned top-right */}
-            <div className="select-none flex w-full items-center justify-end">
+            <div className="select-none flex w-full items-center justify-end mt-0.5">
               <ColorKey
                 data={combinedData}
                 onActionClick={(action) => onActionClick(action, file)}
