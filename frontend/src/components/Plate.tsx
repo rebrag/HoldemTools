@@ -29,7 +29,7 @@ const Plate: React.FC<PlateProps> = ({
   }, [data]);
 
   return (
-    <div className="relative mb-4 justify-self-center max-w-[400px] w-full text-base">
+    <div className="relative mb-6 justify-self-center max-w-[400px] w-full text-base">
       {/* DealerButton floats over the top right, full opacity */}
       {data?.Position === "BTN" && (
         <div
@@ -48,7 +48,7 @@ const Plate: React.FC<PlateProps> = ({
 
       {/* Fadable container */}
       <div
-        className="border rounded-[7px] shadow-md p-0.5 bg-white transition-all duration-500 ease-in-out"
+        className="border rounded-[7px] shadow-md p-0.5 bg-white transition-all duration-500 ease-in-out relative z-0"
         style={{ opacity: alive ? 1 : 0.4 }}
       >
         {!data && <p>Loading data...</p>}
@@ -63,8 +63,8 @@ const Plate: React.FC<PlateProps> = ({
               />
 
               {/* Position + BB display near bottom center */}
-              <div className="absolute left-1/2 bottom-0 transform -translate-x-1/2 translate-y-7/4 z-10">
-                <div className="bg-white/80 rounded-md p-1 border-2">
+              <div className="absolute left-1/2 bottom-0 transform -translate-x-1/2 translate-y-8/4 z-10">
+                <div className="bg-white/90 rounded-md p-1 border-2">
                   <h2
                     className="text-center font-bold text-gray-800"
                     style={{ fontSize: "calc(0.6rem + 0.3vw)" }}
