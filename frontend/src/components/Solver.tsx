@@ -29,8 +29,8 @@ const Main = () => {
     ante: 0,
     icm: [],
   });
-  
-  
+  const [potSize, setPotSize] = useState<number>(0);
+  const [playerBets, setPlayerBets] = useState<Record<string, number>>({});
 
   const defaultPlateNames = useMemo(() => {
     const filesArray: string[] = [];
@@ -214,15 +214,28 @@ const Main = () => {
 
   useEffect(() => {
     if (!folder) return;
-  
     axios
       .get(`${API_BASE_URL}/api/Files/${folder}/metadata.json`)
-      .then((res) => setMetadata(res.data))
+      .then((res) => {
+        setMetadata(res.data);
+        const ante = res.data.ante || 0;
+        const initialBets: Record<string, number> = {};
+        initialBets["SB"] = 0.5;
+        initialBets["BB"] = 1;
+        setPlayerBets(initialBets);
+        const blindPot = Object.values(initialBets).reduce((sum, b) => sum + b, 0);
+        const totalPot = blindPot + ante; // ✅ use total ante directly
+        setPotSize(totalPot);
+      })
       .catch(() => {
-        // fallback if metadata.json is missing
         setMetadata({ name: "", ante: 0, icm: [] });
+        setPlayerBets({ SB: 0.5, BB: 1 });
+        setPotSize(1.5); // default with no ante
       });
-  }, [folder, API_BASE_URL]);
+  }, [folder, API_BASE_URL, playerCount]);
+  
+  
+  
   
 
   const convertRangeText = (data: JsonData | undefined, action: string): string => {
@@ -507,23 +520,26 @@ const Main = () => {
           />
         )}
   
-        <PlateGrid
-          files={displayPlates}
-          positions={positionOrder} 
-          selectedFolder={folder}
-          isSpiralView={isSpiralView}
-          randomFillEnabled={randomFillEnabled}
-          onActionClick={handleActionClick}
-          windowWidth={windowWidth}
-          windowHeight={windowHeight}
-          plateData={plateData}
-          loading={loading}
-          alivePlayers={alivePlayers}
-        />
+      <PlateGrid
+        files={displayPlates}
+        positions={positionOrder}
+        selectedFolder={folder}
+        isSpiralView={isSpiralView}
+        randomFillEnabled={randomFillEnabled}
+        onActionClick={handleActionClick}
+        windowWidth={windowWidth}
+        windowHeight={windowHeight}
+        plateData={plateData}
+        loading={loading}
+        alivePlayers={alivePlayers}
+        playerBets={playerBets} // ✅ Pass this down
+      />
+
         {metadata && (
-          <div className="text-sm mb-2 text-center text-gray-600">
+          <div className="text-sm mt-1 mb-2 text-center text-gray-600">
             {metadata.name && <div><strong>Sim:</strong> {metadata.name}</div>}
             <div><strong>Ante:</strong> {metadata.ante}</div>
+            <div><strong>Pot:</strong> {potSize.toFixed(2)} bb</div>
             {/* {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
               <div><strong>ICM Structure:</strong> {metadata.icm.join(", ")}</div>
             ) : (

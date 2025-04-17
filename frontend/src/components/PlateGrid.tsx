@@ -18,6 +18,7 @@ type PlateGridProps = {
   plateData: Record<string, JsonData>;
   loading?: boolean;
   alivePlayers: Record<string, boolean>;
+  playerBets: Record<string, number>;
 };
 
 const PlateGrid = ({
@@ -31,6 +32,7 @@ const PlateGrid = ({
   plateData,
   loading = false,
   alivePlayers,
+  playerBets,
 }: PlateGridProps) => {
   // Narrow when viewport width is less than viewport height.
   const isNarrow =
@@ -93,6 +95,7 @@ const PlateGrid = ({
               onActionClick={onActionClick}
               randomFillEnabled={randomFillEnabled}
               alive={alivePlayers[posKey] ?? true}
+              playerBet={playerBets[posKey] ?? 0}
             />
           ) : (
             <div key={posKey} />

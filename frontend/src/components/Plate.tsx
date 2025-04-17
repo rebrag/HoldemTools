@@ -10,6 +10,7 @@ interface PlateProps {
   onActionClick: (action: string, file: string) => void;
   randomFillEnabled?: boolean;
   alive: boolean;
+  playerBet?: number;
 }
 
 const Plate: React.FC<PlateProps> = ({
@@ -18,6 +19,7 @@ const Plate: React.FC<PlateProps> = ({
   onActionClick,
   randomFillEnabled,
   alive,
+  playerBet = 0, 
 }) => {
   const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
 
@@ -79,6 +81,12 @@ const Plate: React.FC<PlateProps> = ({
                   </h2>
                 </div>
               </div>
+              <div className="text-center text-xs">
+                <strong>{data.Position}</strong><br />
+                Stack: {(data.bb - (playerBet || 0)).toFixed(1)} bb<br />
+                Bet: {(playerBet || 0).toFixed(1)} bb
+              </div>
+
             </div>
             {/* ColorKey aligned top-right */}
             <div className="select-none flex w-full items-center justify-end mt-0.5">
