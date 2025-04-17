@@ -1,5 +1,7 @@
+// src/utils/utils.ts
+
 export interface HandData {
-  [hand: string]: [number, number];
+  [hand: string]: [number, number]; // [strategyWeight, EV]
 }
 
 export interface JsonData {
@@ -9,9 +11,11 @@ export interface JsonData {
   [action: string]: string | number | HandData;
 }
 
+// Extend HandCellData to carry both strategy and EVs
 export interface HandCellData {
   hand: string;
   actions: Record<string, number>;
+  evs: Record<string, number>;
 }
 
 // Generate a consistent color from a string using a hash function.
@@ -40,26 +44,26 @@ export const getColorForAction = (action: string): string => {
   return actionColorMapping[action] || "#C14c39";
 };
 
+// Combine JsonData into an array of HandCellData objects,
+// extracting both strategy weights and EV values per action.
 export const combineDataByHand = (data: JsonData): HandCellData[] => {
-  const combined: { [hand: string]: HandCellData } = {};
+  const combined: Record<string, HandCellData> = {};
 
   for (const key in data) {
     if (key === "Position" || key === "bb") continue;
 
-    const actionData = data[key];
+    const actionData = data[key] as HandData;
     if (typeof actionData === "object" && actionData !== null) {
       for (const hand in actionData) {
-        const value = actionData[hand];
-        if (Array.isArray(value)) {
-          const [strategy] = value;
-          if (!combined[hand]) {
-            combined[hand] = { hand, actions: {} };
-          }
-          combined[hand].actions[key] = strategy;
+        const [strategyWeight, evValue] = actionData[hand];
+        if (!combined[hand]) {
+          combined[hand] = { hand, actions: {}, evs: {} };
         }
+        combined[hand].actions[key] = strategyWeight;
+        combined[hand].evs[key] = evValue;
       }
     }
   }
+
   return Object.values(combined);
 };
-
