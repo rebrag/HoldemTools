@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { auth } from "./firebase";
 import LoginSignup from "./components/LoginSignup";
-import Main from "./components/Solver";
+import Solver from "./components/Solver";
 import VerifyEmailPrompt from "./components/VerifyEmailPrompt";
 import LoadingIndicator from "./components/LoadingIndicator";
 import { AppProvider } from "./components/AppContext";
@@ -37,7 +37,7 @@ function App() {
   } else {
     content = 
     <AppProvider>
-      <Main />
+      <Solver />
     </AppProvider>
     ;
   }

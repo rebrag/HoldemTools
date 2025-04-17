@@ -13,7 +13,7 @@ import InstructionBox from "./InstructionBox";
 import Line from "./Line";
 import { generateSpiralOrder } from "../utils/gridUtils";
 
-const Main = () => {
+const Solver = () => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
   const { windowWidth, windowHeight } = useWindowDimensions();
   const [folder, setFolder] = useState<string>("22UTG_22UTG1_22LJ_22HJ_22CO_22BTN_22SB_22BB");
@@ -297,6 +297,7 @@ const Main = () => {
           setLastRange(currentRange);
         }
       }
+
   
       const plateName = loadedPlates.find((name) => name === fileName);
       if (!plateName) return;
@@ -310,7 +311,6 @@ const Main = () => {
       );
 
       const parts = fileName.replace(".json", "").split(".");
-      // Start with the spiral order list.
       const originalPositions = [...spiralPositionOrder];
       const aliveList = [...originalPositions];
       let activeIndex = 2; // starting with the first player in spiral order
@@ -334,8 +334,46 @@ const Main = () => {
       const updatedAlive: Record<string, boolean> = {};
       spiralPositionOrder.forEach((pos) => {
         updatedAlive[pos] = aliveList.includes(pos);
+        console.log(spiralPositionOrder)
       });
       setAlivePlayers(updatedAlive);
+
+      
+      //NEW CODE STARTING HERE -----------------------
+      const actingPosition = aliveList[activeIndex];
+      if (!actingPosition) return;
+
+      const currentBet = playerBets[actingPosition] || 0;
+      const stackSize = plateData[fileName]?.bb || 0;
+      let newBetAmount = currentBet;
+
+      // Your betting logic
+      if (action === "Min") {
+        newBetAmount = 2;
+      } else if (action === "ALLIN") {
+        newBetAmount = stackSize;
+      } else if (action.startsWith("Raise ")) {
+        const value = action.split(" ")[1];
+        if (value.endsWith("bb")) {
+          const raiseAmount = parseFloat(value.replace("bb", ""));
+          newBetAmount = currentBet + raiseAmount;
+        } else if (value.endsWith("%")) {
+          const percent = parseFloat(value.replace("%", ""));
+          newBetAmount = potSize * (percent / 100 + 1);
+        }
+      } else if (action === "Call") {
+        newBetAmount = Math.max(...Object.values(playerBets)); // match max
+      }
+
+      const betDelta = Math.max(0, newBetAmount - currentBet);
+
+      setPlayerBets(prev => ({
+        ...prev,
+        [actingPosition]: newBetAmount
+      }));
+
+      setPotSize(prev => prev + betDelta);
+      // new code ending here----------------------------------------------
 
       // Update the preflop line as before (using your numberToActionMap).
       const newLine = ["Root"];
@@ -385,6 +423,16 @@ const Main = () => {
   
     if (clickedIndex === 0 || clickedIndex === 1 || trimmedLine[clickedIndex] === "Fold") {
       setAlivePlayers(initialAlive);
+      const resetBets: Record<string, number> = {};
+      resetBets["SB"] = 0.5;
+      resetBets["BB"] = 1;
+
+      // Add ante once (not per player)
+      const ante = metadata.ante || 0;
+      const pot = Object.values(resetBets).reduce((sum, b) => sum + b, 0) + ante;
+
+      setPlayerBets(resetBets);
+      setPotSize(pot);
       if (playerCount === 8) {
         setPlateMapping({
           "UTG": "root.json", 
@@ -426,7 +474,7 @@ const Main = () => {
     }
   
     setRandomFillEnabled(false);
-  }, [preflopLine, playerCount, plateMapping, handleActionClick, plateData]);
+  }, [preflopLine, playerCount, plateMapping, metadata.ante, handleActionClick, plateData]);
   
 
   
@@ -567,4 +615,4 @@ const Main = () => {
   );  
 };
 
-export default Main;
+export default Solver;
