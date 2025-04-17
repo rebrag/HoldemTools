@@ -30,6 +30,10 @@ const Plate: React.FC<PlateProps> = ({
     }
   }, [data]);
 
+  const formatBB = (value: number) => {
+    return Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1);
+  };
+
   return (
     <div className="relative mb-6 justify-self-center max-w-[400px] w-full text-base">
       {/* DealerButton floats over the top right, full opacity */}
@@ -63,7 +67,7 @@ const Plate: React.FC<PlateProps> = ({
                 gridData={combinedData}
                 randomFillEnabled={randomFillEnabled}
               />
-
+{/* {playerBet}bb */}
               {/* Position + BB display near bottom center */}
               <div className="absolute left-1/2 bottom-0 transform -translate-x-1/2 translate-y-8/4 z-10">
                 <div className="bg-white/90 rounded-md p-1 border-2">
@@ -73,18 +77,18 @@ const Plate: React.FC<PlateProps> = ({
                   >
                     {data.Position ? (
                       <span className="p-0.5 px-0 rounded-lg z-50">
-                        {data.Position} {data.bb}bb
+                        {data.Position} {formatBB(data.bb - playerBet)}bb
                       </span>
-                    ) : (
-                      file
+                    ) : ( 
+                      file 
                     )}
                   </h2>
                 </div>
               </div>
               <div className="text-center text-xs">
-                <strong>{data.Position}</strong><br />
-                Stack: {(data.bb - (playerBet || 0)).toFixed(1)} bb<br />
-                Bet: {(playerBet || 0).toFixed(1)} bb
+                {/* <strong>{data.Position}</strong><br /> */}
+                {/* Stack: {(data.bb - (playerBet || 0)).toFixed(1)} bb<br />
+                Bet: {(playerBet || 0).toFixed(1)} bb */}
               </div>
 
             </div>

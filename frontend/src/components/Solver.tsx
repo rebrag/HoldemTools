@@ -309,6 +309,8 @@ const Solver = () => {
         actionNumber,
         availableJsonFiles
       );
+      setLoadedPlates((prev) => [...new Set([...prev, ...newLoadedPlates])]);
+
 
       const parts = fileName.replace(".json", "").split(".");
       const originalPositions = [...spiralPositionOrder];
@@ -334,7 +336,7 @@ const Solver = () => {
       const updatedAlive: Record<string, boolean> = {};
       spiralPositionOrder.forEach((pos) => {
         updatedAlive[pos] = aliveList.includes(pos);
-        console.log(spiralPositionOrder)
+        //console.log(spiralPositionOrder)
       });
       setAlivePlayers(updatedAlive);
 
@@ -408,7 +410,7 @@ const Solver = () => {
   const handleLineClick = useCallback((clickedIndex: number) => {
     const trimmedLine = preflopLine.slice(0, clickedIndex + 1);
     setPreflopLine(trimmedLine);
-    console.log(trimmedLine);
+    //console.log(trimmedLine);
     const initialAlive: Record<string, boolean> = {};
     const positions = playerCount === 8
       ? ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"]
@@ -517,19 +519,24 @@ const Solver = () => {
         }
       });
 
-      // doing things with the new files from the regex after the clicked file
+      //doing things with the new files from the regex after the clicked file
       newFilesWider.forEach((file) => {
         //const position = plateData[file]?.Position;
         //console.log(`File: ${file}, Position: ${position}`);
+        //plateMapping[plateData[file]?.Position] = file
         
-        plateMapping[plateData[file]?.Position] = file
         setPlateMapping((prev) => ({ ...prev, [plateData[file]?.Position]: file }));
+        // const pos = plateData[file]?.Position;
+        // if (pos) {
+        //   setPlateMapping((prev) => ({ ...prev, [pos]: file }));
+        // }
+
       });
       
-      //console.log("newFiles:", newFiles, "newFilesWider:", newFilesWider, "plateMapping", plateMapping); //, "plateMapping", plateMapping
+      //console.log("newFiles:", newFiles, "newFilesWider:", newFilesWider, "plateMapping", plateMapping, 'plateData:',plateData); //, "plateMapping", plateMapping
       return [...currentFiles, ...newFiles];
     },
-    [plateData, plateMapping]
+    [plateData]
   );
   
   
