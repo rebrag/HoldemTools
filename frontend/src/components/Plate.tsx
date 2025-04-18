@@ -51,7 +51,6 @@ const Plate: React.FC<PlateProps> = ({
         </div>
       )}
 
-
       {/* Fadable container */}
       <div
         className="border rounded-[7px] shadow-md p-0.5 bg-white transition-all duration-500 ease-in-out relative z-0"
@@ -60,36 +59,43 @@ const Plate: React.FC<PlateProps> = ({
         {!data && <p>Loading data...</p>}
         {data && (
           <>
-            
-
             <div className="relative">
               <DecisionMatrix
                 gridData={combinedData}
                 randomFillEnabled={randomFillEnabled}
               />
-{/* {playerBet}bb */}
               {/* Position + BB display near bottom center */}
-              <div className="absolute left-1/2 bottom-0 transform -translate-x-1/2 translate-y-8/4 z-10">
-                <div className="bg-white/90 rounded-md p-1 border-2">
-                  <h2
-                    className="text-center font-bold text-gray-800"
-                    style={{ fontSize: "calc(0.6rem + 0.3vw)" }}
-                  >
-                    {data.Position ? (
-                      <span className="p-0.5 px-0 rounded-lg z-50">
-                        {data.Position} {formatBB(data.bb - playerBet)}bb
-                      </span>
-                    ) : ( 
-                      file 
-                    )}
-                  </h2>
+              <>
+                <div className="absolute left-1/2 -bottom-14 transform -translate-x-1/2 z-10">
+                  <div className="bg-white/90 rounded-md p-1 border-2">
+                    <h2
+                      className="text-center font-bold text-gray-800"
+                      style={{ fontSize: "calc(0.6rem + 0.3vw)" }}
+                    >
+                      {data.Position ? (
+                        <span className="p-0.5 px-0 rounded-lg z-50">
+                          {data.Position} {formatBB(data.bb - playerBet)}bb
+                        </span>
+                      ) : (
+                        file
+                      )}
+                    </h2>
+                  </div>
                 </div>
-              </div>
-              <div className="text-center text-xs">
-                {/* <strong>{data.Position}</strong><br /> */}
-                {/* Stack: {(data.bb - (playerBet || 0)).toFixed(1)} bb<br />
-                Bet: {(playerBet || 0).toFixed(1)} bb */}
-              </div>
+                {/* Player Bet floating slightly to the right of the first box */}
+                {playerBet !== 0 && (
+                  <div className="absolute left-5/6 -bottom-14 transform -translate-x-1/2 z-10">
+                    <div className="bg-white/90 rounded-md p-0.5 border-2 ">
+                      <span // 
+                        className="text-center font-medium text-gray-800"
+                        style={{ fontSize: "calc(0.6rem + 0.3vw)" }}
+                      >
+                        <span className="p-0.5 px-1 py-0 rounded-lg z-50">{formatBB(playerBet)}bb</span>
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </>
 
             </div>
             {/* ColorKey aligned top-right */}

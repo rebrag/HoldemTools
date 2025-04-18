@@ -48,14 +48,14 @@ const Solver = () => {
   const positionOrder = useMemo(() => {
     if (playerCount === 8) return ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"];
     if (playerCount === 6) return ["SB", "BB", "LJ", "HJ", "CO", "BTN"];
-    if (playerCount === 2) return ["BB", "BTN"];
+    if (playerCount === 2) return ["BTN", "BB"];
     return Object.keys(plateMapping);
   }, [playerCount, plateMapping]);
 
   const isNarrow =
     positionOrder.length === 2
-      ? !(windowWidth * 1.2 < windowHeight)
-      : windowWidth * 1.2 < windowHeight;
+      ? !(windowWidth * 1.3 < windowHeight)
+      : windowWidth * 1.3 < windowHeight;
   const gridRows = isNarrow ? Math.ceil(positionOrder.length / 2) : 2;
   const gridCols = isNarrow ? 2 : Math.ceil(positionOrder.length / 2);
   
@@ -115,12 +115,8 @@ const Solver = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folder]);
 
-  
-
   const { folders, error: folderError } = useFolders(API_BASE_URL);
   const { files: availableJsonFiles, error: filesError } = useFiles(API_BASE_URL, folder);
-
-  
 
   const displayPlates = useMemo(
     () => positionOrder.map((pos) => plateMapping[pos] || ""),
@@ -218,12 +214,17 @@ const Solver = () => {
       .get(`${API_BASE_URL}/api/Files/${folder}/metadata.json`)
       .then((res) => {
         setMetadata(res.data);
-        const ante = res.data.ante || 0;
+        const ante = res.data.ante;
         const initialBets: Record<string, number> = {};
-        initialBets["SB"] = 0.5;
-        initialBets["BB"] = 1;
+        if (playerCount === 2) {
+          initialBets["BTN"] = 0.5;
+          initialBets["BB"] = 1;
+        } else {
+          initialBets["SB"] = 0.5;
+          initialBets["BB"] = 1;
+        }
         setPlayerBets(initialBets);
-        const blindPot = Object.values(initialBets).reduce((sum, b) => sum + b, 0);
+        const blindPot = Object.values(initialBets).reduce((sum, b) => sum + b);
         const totalPot = blindPot + ante; // ✅ use total ante directly
         setPotSize(totalPot);
       })
@@ -247,60 +248,104 @@ const Solver = () => {
       .join(",");
   };
 
+  const appendPlateNames = useCallback(
+    (
+      currentFiles: string[],
+      clickedIndex: number,
+      actionNumber: string,
+      availableFiles: string[]
+    ): string[] => {
+      const clickedFile = currentFiles[clickedIndex];
+      if (!clickedFile) return currentFiles;
+      const prefix = clickedFile.replace(".json", "");
+      const baseName = prefix === "root" ? actionNumber : `${prefix}.${actionNumber}`;
+      const newFiles: string[] = [];
+      const newFilesWider: string[] = [];
+      const baseFileName = `${baseName}.json`;
+      availableFiles.forEach((file) => {
+        if (file === baseFileName && !currentFiles.includes(file)) {
+          newFiles.push(file);
+        }
+      });
+      const regex = new RegExp(`^${baseName}(?:\\.0)+\\.json$`);
+      availableFiles.forEach((file) => {
+        if (regex.test(file) && !currentFiles.includes(file)) {
+          newFiles.push(file);
+        }
+      });
+      availableFiles.forEach((file) => {
+        if (file === baseFileName) {
+          newFilesWider.push(file);
+        }
+      });
+      availableFiles.forEach((file) => {
+        if (regex.test(file)) {
+          newFilesWider.push(file);
+        }
+      });
+      //doing things with the new files from the regex after the clicked file
+      newFilesWider.forEach((file) => {
+        setPlateMapping((prev) => ({ ...prev, [plateData[file]?.Position]: file }));
+      });
+      //console.log("newFiles:", newFiles, "newFilesWider:", newFilesWider, "plateMapping", plateMapping, 'plateData:',plateData); //, "plateMapping", plateMapping
+      return [...currentFiles, ...newFiles];
+    },
+    [plateData]
+  );
+
   const handleActionClick = useCallback(
     (action: string, fileName: string) => {
-      // For actions such as "Min" or "Allin", process range data as needed.
+      let fullText = ""; // ✅ Declare fullText at the top
+  
+      // Prepare clipboard content if action is "Call"
       if (action === "Call") {
         const callData = plateData[fileName];
         const range0 = convertRangeText(callData, action);
         const range1 = lastRange || "";
-        const fullText = `#Type#NoLimit
-        #Range0#${range0}
-        #Range1#${range1}
-        #ICM.ICMFormat#Pio ICM structure
-        #ICM.Payouts#16800\\n9200\\n4900\\n2800\\n1450\\n1226\\n1022\\n920\\n817\\n613\\n613\\n613\\n613\\n587\\n562\\n562\\n562\\n562
-        #ICM.Stacks#1800\\n1800\\n6000\\n4000\\n3000\\n2600\\n2500\\n2500\\n2300\\n2300\\n2200\\n1800\\n1600\\n1400\\n1200\\n1000\\n800\\n500
-        #Pot#550
-        #EffectiveStacks#1800
-        #AllinThreshold#60
-        #AddAllinOnlyIfLessThanThisTimesThePot#250
-        #MergeSimilarBets#True
-        #MergeSimilarBetsThreshold#12
-        #CapEnabled#True
-        #CapPerStreet#3\\n3\\n3
-        #CapMode#NoLimit
-        #FlopConfig.RaiseSize#33
-        #FlopConfig.AddAllin#True
-        #TurnConfig.BetSize#50
-        #TurnConfig.RaiseSize#a
-        #TurnConfig.AddAllin#True
-        #RiverConfig.BetSize#30 66
-        #RiverConfig.RaiseSize#a
-        #RiverConfig.AddAllin#True
-        #RiverConfig.DonkBetSize#30
-        #FlopConfigIP.BetSize#25
-        #FlopConfigIP.RaiseSize#a
-        #FlopConfigIP.AddAllin#True
-        #TurnConfigIP.BetSize#50
-        #TurnConfigIP.RaiseSize#a
-        #TurnConfigIP.AddAllin#True
-        #RiverConfigIP.BetSize#30 66
-        #RiverConfigIP.RaiseSize#a
-        #RiverConfigIP.AddAllin#True`;
-        navigator.clipboard.writeText(fullText).then(() => {
-          // Text copied to clipboard.
-        });
-      } else if (action !== "Call" && action !== "ALLIN") {
+        fullText = `#Type#NoLimit
+  #Range0#${range0}
+  #Range1#${range1}
+  #ICM.ICMFormat#Pio ICM structure
+  #ICM.Payouts#16800\\n9200\\n4900\\n2800\\n1450\\n1226\\n1022\\n920\\n817\\n613\\n613\\n613\\n613\\n587\\n562\\n562\\n562\\n562
+  #ICM.Stacks#1800\\n1800\\n6000\\n4000\\n3000\\n2600\\n2500\\n2500\\n2300\\n2300\\n2200\\n1800\\n1600\\n1400\\n1200\\n1000\\n800\\n500
+  #Pot#${(potSize * 100).toFixed(0)}
+  #EffectiveStacks#1800
+  #AllinThreshold#60
+  #AddAllinOnlyIfLessThanThisTimesThePot#250
+  #MergeSimilarBets#True
+  #MergeSimilarBetsThreshold#12
+  #CapEnabled#True
+  #CapPerStreet#3\\n3\\n3
+  #CapMode#NoLimit
+  #FlopConfig.RaiseSize#33
+  #FlopConfig.AddAllin#True
+  #TurnConfig.BetSize#50
+  #TurnConfig.RaiseSize#a
+  #TurnConfig.AddAllin#True
+  #RiverConfig.BetSize#30 66
+  #RiverConfig.RaiseSize#a
+  #RiverConfig.AddAllin#True
+  #RiverConfig.DonkBetSize#30
+  #FlopConfigIP.BetSize#25
+  #FlopConfigIP.RaiseSize#a
+  #FlopConfigIP.AddAllin#True
+  #TurnConfigIP.BetSize#50
+  #TurnConfigIP.RaiseSize#a
+  #TurnConfigIP.AddAllin#True
+  #RiverConfigIP.BetSize#30 66
+  #RiverConfigIP.RaiseSize#a
+  #RiverConfigIP.AddAllin#True`;
+      } else if (action !== "ALLIN") {
         const raiseData = plateData[fileName];
         const currentRange = convertRangeText(raiseData, action);
         if (currentRange) {
           setLastRange(currentRange);
         }
       }
-
   
       const plateName = loadedPlates.find((name) => name === fileName);
       if (!plateName) return;
+  
       const actionNumber = actionToNumberMap[action];
       const clickedIndex = loadedPlates.findIndex((name) => name === plateName);
       const newLoadedPlates = appendPlateNames(
@@ -310,13 +355,12 @@ const Solver = () => {
         availableJsonFiles
       );
       setLoadedPlates((prev) => [...new Set([...prev, ...newLoadedPlates])]);
-
-
+  
       const parts = fileName.replace(".json", "").split(".");
       const originalPositions = [...spiralPositionOrder];
       const aliveList = [...originalPositions];
-      let activeIndex = 2; // starting with the first player in spiral order
-
+      let activeIndex = playerCount === 2 ? 0 : 2;
+  
       for (const part of parts) {
         if (part === "root") continue;
         const actionValue = parseInt(part, 10);
@@ -331,25 +375,20 @@ const Solver = () => {
           }
         }
       }
-
-      // Build the alive mapping based on the canonical positions.
+  
       const updatedAlive: Record<string, boolean> = {};
       spiralPositionOrder.forEach((pos) => {
         updatedAlive[pos] = aliveList.includes(pos);
-        //console.log(spiralPositionOrder)
       });
       setAlivePlayers(updatedAlive);
-
-      
-      //NEW CODE STARTING HERE -----------------------
+  
       const actingPosition = aliveList[activeIndex];
       if (!actingPosition) return;
-
+  
       const currentBet = playerBets[actingPosition] || 0;
       const stackSize = plateData[fileName]?.bb || 0;
       let newBetAmount = currentBet;
-
-      // Your betting logic
+  
       if (action === "Min") {
         newBetAmount = 2;
       } else if (action === "ALLIN") {
@@ -361,23 +400,30 @@ const Solver = () => {
           newBetAmount = currentBet + raiseAmount;
         } else if (value.endsWith("%")) {
           const percent = parseFloat(value.replace("%", ""));
-          newBetAmount = potSize * (percent / 100 + 1);
+          newBetAmount =
+            Math.max(...Object.values(playerBets)) +
+            (percent / 100) * (potSize + Math.max(...Object.values(playerBets)));
         }
       } else if (action === "Call") {
-        newBetAmount = Math.max(...Object.values(playerBets)); // match max
+        newBetAmount = Math.max(...Object.values(playerBets));
       }
-
+  
       const betDelta = Math.max(0, newBetAmount - currentBet);
-
-      setPlayerBets(prev => ({
+      const newPotSize = potSize + betDelta;
+  
+      setPlayerBets((prev) => ({
         ...prev,
-        [actingPosition]: newBetAmount
+        [actingPosition]: newBetAmount,
       }));
-
-      setPotSize(prev => prev + betDelta);
-      // new code ending here----------------------------------------------
-
-      // Update the preflop line as before (using your numberToActionMap).
+  
+      setPotSize(newPotSize);
+  
+      // ✅ Clipboard copy happens here with updated pot
+      if (action === "Call" && fullText) {
+        const adjustedText = fullText.replace(/#Pot#\d+/, `#Pot#${(newPotSize * 100).toFixed(0)}`);
+        navigator.clipboard.writeText(adjustedText);
+      }
+  
       const newLine = ["Root"];
       for (const part of parts) {
         if (part !== "root") {
@@ -386,12 +432,14 @@ const Solver = () => {
       }
       newLine.push(action);
       setPreflopLine(newLine);
+  
       if (
         newLoadedPlates.length === loadedPlates.length &&
         newLoadedPlates.every((val, idx) => val === loadedPlates[idx])
       ) {
         return;
       }
+  
       setLoadedPlates(newLoadedPlates);
       setRandomFillEnabled(false);
       setPlateMapping((prev) => {
@@ -402,9 +450,9 @@ const Solver = () => {
         return filtered;
       });
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [loadedPlates, availableJsonFiles, folder, plateData, plateMapping, lastRange, alivePlayers, positionOrder]
+    [loadedPlates, appendPlateNames, availableJsonFiles, spiralPositionOrder, playerCount, playerBets, plateData, potSize, lastRange]
   );
+  
   
 
   const handleLineClick = useCallback((clickedIndex: number) => {
@@ -426,8 +474,13 @@ const Solver = () => {
     if (clickedIndex === 0 || clickedIndex === 1 || trimmedLine[clickedIndex] === "Fold") {
       setAlivePlayers(initialAlive);
       const resetBets: Record<string, number> = {};
-      resetBets["SB"] = 0.5;
-      resetBets["BB"] = 1;
+      if (playerCount === 2) {
+        resetBets["BTN"] = 0.5;
+        resetBets["BB"] = 1;
+      } else {
+        resetBets["SB"] = 0.5;
+        resetBets["BB"] = 1;
+      }
 
       // Add ante once (not per player)
       const ante = metadata.ante || 0;
@@ -482,62 +535,7 @@ const Solver = () => {
   
   
   
-  const appendPlateNames = useCallback(
-    (
-      currentFiles: string[],
-      clickedIndex: number,
-      actionNumber: string,
-      availableFiles: string[]
-    ): string[] => {
-      const clickedFile = currentFiles[clickedIndex];
-      if (!clickedFile) return currentFiles;
-      const prefix = clickedFile.replace(".json", "");
-      const baseName = prefix === "root" ? actionNumber : `${prefix}.${actionNumber}`;
-      const newFiles: string[] = [];
-      const newFilesWider: string[] = [];
-      const baseFileName = `${baseName}.json`;
-      availableFiles.forEach((file) => {
-        if (file === baseFileName && !currentFiles.includes(file)) {
-          newFiles.push(file);
-        }
-      });
-      const regex = new RegExp(`^${baseName}(?:\\.0)+\\.json$`);
-      availableFiles.forEach((file) => {
-        if (regex.test(file) && !currentFiles.includes(file)) {
-          newFiles.push(file);
-        }
-      });
-
-      availableFiles.forEach((file) => {
-        if (file === baseFileName) { // && !currentFiles.includes(file)
-          newFilesWider.push(file);
-        }
-      });
-      availableFiles.forEach((file) => {
-        if (regex.test(file)) { // && !currentFiles.includes(file)
-          newFilesWider.push(file);
-        }
-      });
-
-      //doing things with the new files from the regex after the clicked file
-      newFilesWider.forEach((file) => {
-        //const position = plateData[file]?.Position;
-        //console.log(`File: ${file}, Position: ${position}`);
-        //plateMapping[plateData[file]?.Position] = file
-        
-        setPlateMapping((prev) => ({ ...prev, [plateData[file]?.Position]: file }));
-        // const pos = plateData[file]?.Position;
-        // if (pos) {
-        //   setPlateMapping((prev) => ({ ...prev, [pos]: file }));
-        // }
-
-      });
-      
-      //console.log("newFiles:", newFiles, "newFilesWider:", newFilesWider, "plateMapping", plateMapping, 'plateData:',plateData); //, "plateMapping", plateMapping
-      return [...currentFiles, ...newFiles];
-    },
-    [plateData]
-  );
+  
   
   
   useKeyboardShortcuts({
