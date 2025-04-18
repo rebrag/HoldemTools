@@ -53,7 +53,7 @@ const Plate: React.FC<PlateProps> = ({
 
       {/* Fadable container */}
       <div
-        className="border rounded-[7px] shadow-md p-0.5 bg-white transition-all duration-500 ease-in-out relative z-0"
+        className="border rounded-[7px] shadow-md p-0.5 bg-white transition-all duration-500 ease-in-out relative z-10"
         style={{ opacity: alive ? 1 : 0.4 }}
       >
         {!data && <p>Loading data...</p>}

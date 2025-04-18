@@ -103,34 +103,30 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
 
   // Update the filtered folders as the search input changes
   useEffect(() => {
-    if (inputValue === "") {
-      // Sort folders by length; if there are "allSame" folders, they will be sorted together later
-      setFilteredFolders([...folders].sort((a, b) => a.length - b.length));
-      setHighlightedIndex(-1);
-    } else {
-      const filtered = folders
-        .filter((folder) =>
-          folder.replace(/_/g, " ").toLowerCase().includes(inputValue.toLowerCase())
-        )
-        .sort((a, b) => {
-          // Send HU simulations to the bottom
-          const aHU = isHUSimFolder(a);
-          const bHU = isHUSimFolder(b);
-          if (aHU && !bHU) return 1;
-          if (!aHU && bHU) return -1;
-          
-          // Prioritize folders that are "allSame"
-          const aAllSame = isAllSameFolder(a);
-          const bAllSame = isAllSameFolder(b);
-          if (aAllSame && !bAllSame) return -1;
-          if (!aAllSame && bAllSame) return 1;
-          
-          // Otherwise, sort by string length
-          return a.length - b.length;
-        });
-      setFilteredFolders(filtered);
-      setHighlightedIndex(filtered.length > 0 ? 0 : -1);
-    }
+    const sortedFolders = [...folders]
+  .filter((folder) =>
+    folder.replace(/_/g, " ").toLowerCase().includes(inputValue.toLowerCase())
+  )
+  .sort((a, b) => {
+    // Send HU simulations to the bottom
+    const aHU = isHUSimFolder(a);
+    const bHU = isHUSimFolder(b);
+    if (aHU && !bHU) return 1;
+    if (!aHU && bHU) return -1;
+
+    // Prioritize folders that are "allSame"
+    const aAllSame = isAllSameFolder(a);
+    const bAllSame = isAllSameFolder(b);
+    if (aAllSame && !bAllSame) return -1;
+    if (!aAllSame && bAllSame) return 1;
+
+    // Otherwise, sort by string length
+    return a.length - b.length;
+  });
+
+setFilteredFolders(sortedFolders);
+setHighlightedIndex(sortedFolders.length > 0 ? 0 : -1);
+
   }, [inputValue, folders]);
 
   // Handle folder selection; also log the user action if a folder is selected
@@ -211,14 +207,14 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
           </button>
         </div>
         {showDropdown && (
-          <ul className="absolute z-10 w-full bg-white border rounded-2xl border-gray-300 mt-1 max-h-90 overflow-auto scrollbar-none">
+          <ul className="absolute z-10 w-full bg-white border rounded-2xl border-gray-300 mt-1 max-h-150 overflow-auto scrollbar-none">
             {filteredFolders.map((folder, index) => {
               const displayName = getDisplayFolderName(folder);
               return (
                 <li
                   key={index}
                   onMouseDown={() => handleSelect(folder)}
-                  className={`px-4 py-2 cursor-pointer hover:bg-gray-100 border-b last:border-0 ${
+                  className={`px-4 py-1 cursor-pointer hover:bg-gray-100 border-b last:border-0 ${
                     highlightedIndex === index ? "bg-blue-200" : ""
                   } ${isSmallViewport ? "text-xs" : ""}`}
                 >
