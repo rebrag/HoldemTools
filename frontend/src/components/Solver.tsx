@@ -29,6 +29,7 @@ const Solver = () => {
     ante: 0,
     icm: [],
   });
+  const isICMSim = Array.isArray(metadata.icm) && metadata.icm.length > 0;
   const [potSize, setPotSize] = useState<number>(0);
   const [playerBets, setPlayerBets] = useState<Record<string, number>>({});
 
@@ -112,6 +113,7 @@ const Solver = () => {
       plateData: { ...plateData },
       plateMapping: { ...plateMapping },
     };
+    console.log(metadata.icm)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folder]);
 
@@ -483,7 +485,7 @@ const Solver = () => {
       }
 
       // Add ante once (not per player)
-      const ante = metadata.ante || 0;
+      const ante = metadata.ante;
       const pot = Object.values(resetBets).reduce((sum, b) => sum + b, 0) + ante;
 
       setPlayerBets(resetBets);
@@ -586,6 +588,7 @@ const Solver = () => {
         loading={loading}
         alivePlayers={alivePlayers}
         playerBets={playerBets} // ✅ Pass this down
+        isICMSim={isICMSim}
       />
 
         {metadata && (
@@ -593,18 +596,18 @@ const Solver = () => {
             {metadata.name && <div><strong>Sim:</strong> {metadata.name}</div>}
             <div><strong>Ante:</strong> {metadata.ante}</div>
             <div><strong>Pot:</strong> {potSize.toFixed(2)} bb</div>
-            {/* {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
+            {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
               <div><strong>ICM Structure:</strong> {metadata.icm.join(", ")}</div>
             ) : (
               <div><strong>ICM:</strong> None</div>
-            )} */}
+            )}
           </div>
         )}
 
       </div>
       {/* Render InstructionBox outside the PlateGrid container */}
       {displayPlates.some((plate) => plate !== "") && (
-        <div style={{ position: "fixed"}}>
+        <div style={{ position: "fixed", zIndex: 1000}}>
           <InstructionBox>
             <h2 className="text-lg font-bold mb-2">Instructions</h2>
             <p className="text-sm lg:text-md">

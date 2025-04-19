@@ -5,6 +5,7 @@ import { HandCellData } from "../utils/utils";
 interface DecisionMatrixProps {
   gridData: HandCellData[];
   randomFillEnabled?: boolean;
+  isICMSim?: boolean;
 }
 
 const HAND_ORDER = [
@@ -23,7 +24,7 @@ const HAND_ORDER = [
   "A2o", "K2o", "Q2o", "J2o", "T2o", "92o", "82o", "72o", "62o", "52o", "42o", "32o", "22"
 ];
 
-const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ gridData, randomFillEnabled: randomFill }) => {
+const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ gridData, randomFillEnabled: randomFill, isICMSim }) => {
   useEffect(() => {
     // console.log("DecisionMatrix mounted");
     return () => {
@@ -40,6 +41,9 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ gridData, randomFillEna
   // Create a ref to the container
   const containerRef = useRef<HTMLDivElement>(null);
   const [matrixWidth, setMatrixWidth] = useState<number>(0);
+  const [hoveredEVs, setHoveredEVs] = useState<Record<string, number> | null>(null);
+  const [hoveredHand, setHoveredHand] = useState<string | null>(null);
+
 
   useEffect(() => {
     if (containerRef.current) {
@@ -60,12 +64,39 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ gridData, randomFillEna
             data={handData}
             randomFill={randomFill}
             matrixWidth={matrixWidth}
+            onHover={(evs) => {
+              setHoveredEVs(evs);
+              setHoveredHand(handData.hand);
+            }}
+            onLeave={() => {
+              setHoveredEVs(null);
+              setHoveredHand(null);
+            }}
           />
+
         ) : (
           <div key={index} className="empty-cell" />
         )
       )}
+      {/* EV Tooltips */}
+      {!isICMSim && hoveredEVs && hoveredHand && (
+        <div className="absolute bottom-0 left-1/2 -translate-x-1/2 mb-1 z-50 bg-gray-800 text-white text-xs rounded px-2 py-1 
+        pointer-events-none shadow-lg w-max whitespace-nowrap">
+          <div className="text-xs font-bold mb-1 text-center">{hoveredHand}</div>
+          {Object.entries(hoveredEVs)
+            .sort(([, a], [, b]) => (b ?? -Infinity) - (a ?? -Infinity))
+            .map(([action, ev]) => (
+              <div key={action}>
+                <span className="font-semibold">{action}</span>:{" "}
+                {ev != null && !isNaN(ev) ? `${ev.toFixed(2)} bb` : "N/A"}
+              </div>
+            ))}
+        </div>
+      )}
+
+
     </div>
+    
   );
 };
 

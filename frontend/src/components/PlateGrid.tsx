@@ -19,6 +19,7 @@ type PlateGridProps = {
   loading?: boolean;
   alivePlayers: Record<string, boolean>;
   playerBets: Record<string, number>;
+  isICMSim?: boolean;
 };
 
 const PlateGrid = ({
@@ -33,6 +34,7 @@ const PlateGrid = ({
   loading = false,
   alivePlayers,
   playerBets,
+  isICMSim,
 }: PlateGridProps) => {
   // Narrow when viewport width is less than viewport height.
   const isNarrow =
@@ -96,6 +98,7 @@ const PlateGrid = ({
               randomFillEnabled={randomFillEnabled}
               alive={alivePlayers[posKey] ?? true}
               playerBet={playerBets[posKey] ?? 0}
+              isICMSim={isICMSim}
             />
           ) : (
             <div key={posKey} />

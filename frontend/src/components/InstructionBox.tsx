@@ -10,7 +10,7 @@ const InstructionBox: React.FC<InstructionBoxProps> = ({ children }) => {
   const [fadeClass, setFadeClass] = useState("opacity-0"); // Start faded out
   const storageKey = "instructionBoxClosedAt";
   // For testing; change back to 5 hours in a real scenario.
-  const fiveHours = 500*60*60*10; //
+  const fiveHours = 50*60*60*100; //
 
   // Check if the instructions were recently closed.
   useEffect(() => {

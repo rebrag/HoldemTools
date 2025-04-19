@@ -11,6 +11,7 @@ interface PlateProps {
   randomFillEnabled?: boolean;
   alive: boolean;
   playerBet?: number;
+  isICMSim?: boolean;
 }
 
 const Plate: React.FC<PlateProps> = ({
@@ -20,6 +21,7 @@ const Plate: React.FC<PlateProps> = ({
   randomFillEnabled,
   alive,
   playerBet = 0, 
+  isICMSim // ✅ Add this here too
 }) => {
   const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
 
@@ -63,6 +65,7 @@ const Plate: React.FC<PlateProps> = ({
               <DecisionMatrix
                 gridData={combinedData}
                 randomFillEnabled={randomFillEnabled}
+                isICMSim={isICMSim}
               />
               {/* Position + BB display near bottom center */}
               <>
