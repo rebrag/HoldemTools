@@ -63,7 +63,7 @@ const PlateGrid = ({
   return (
     <div className="relative min-h-[300px]">
       <div
-        className={`absolute inset-0 flex items-center justify-center z-10 transition-opacity duration-100 ${
+        className={`absolute inset-0 flex items-center justify-center z-50 transition-opacity duration-100 ${
           loading ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
       >

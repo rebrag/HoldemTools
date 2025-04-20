@@ -399,7 +399,7 @@ const Solver = () => {
         const value = action.split(" ")[1];
         if (value.endsWith("bb")) {
           const raiseAmount = parseFloat(value.replace("bb", ""));
-          newBetAmount = currentBet + raiseAmount;
+          newBetAmount = Math.max(...Object.values(playerBets)) + raiseAmount;
         } else if (value.endsWith("%")) {
           const percent = parseFloat(value.replace("%", ""));
           newBetAmount =
@@ -413,16 +413,39 @@ const Solver = () => {
       const betDelta = Math.max(0, newBetAmount - currentBet);
       const newPotSize = potSize + betDelta;
   
-      setPlayerBets((prev) => ({
-        ...prev,
-        [actingPosition]: newBetAmount,
-      }));
+      setPlayerBets(prev => {
+        const highestBet = Math.max(...Object.values(prev));
+        const updated: Record<string,number> = {};
+        Object.entries(prev).forEach(([pos, bet]) => {
+          if (alivePlayers[pos]) {
+            updated[pos] = Math.max(bet, highestBet);
+          } else {
+            updated[pos] = bet;
+          }
+        });
+      
+        // 2) Then overwrite the raiser with their final bet
+        updated[actingPosition] = newBetAmount;
+      
+        return updated;
+      });
   
       setPotSize(newPotSize);
   
       // ✅ Clipboard copy happens here with updated pot
       if (action === "Call" && fullText) {
-        const adjustedText = fullText.replace(/#Pot#\d+/, `#Pot#${(newPotSize * 100).toFixed(0)}`);
+        const effectiveStack = Math.min(
+          ...spiralPositionOrder
+            .filter(pos => alivePlayers[pos])
+            .map(pos => {
+              const stack = plateData[fileName]?.bb ?? 0;
+              const bet = playerBets[pos] ?? 0;
+              return stack - bet;
+            })
+        );
+        const adjustedText = fullText
+          .replace(/#Pot#\d+/, `#Pot#${(newPotSize * 100).toFixed(0)}`)
+          .replace(/#EffectiveStacks#\d+/, `#EffectiveStacks#${Math.round(effectiveStack * 100)}`);
         navigator.clipboard.writeText(adjustedText);
       }
   
@@ -452,7 +475,7 @@ const Solver = () => {
         return filtered;
       });
     },
-    [loadedPlates, appendPlateNames, availableJsonFiles, spiralPositionOrder, playerCount, playerBets, plateData, potSize, lastRange]
+    [loadedPlates, appendPlateNames, availableJsonFiles, spiralPositionOrder, playerCount, playerBets, plateData, potSize, lastRange, alivePlayers]
   );
   
   
