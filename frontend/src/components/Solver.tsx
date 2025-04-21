@@ -20,6 +20,7 @@ const Solver = () => {
   const [plateData, setPlateData] = useState<Record<string, JsonData>>({});
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>({});
   const [lastRange, setLastRange] = useState<string>("");
+  const [lastRangePos, setLastRangePos] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [preflopLine, setPreflopLine] = useState<string[]>(["Root"]);
   const playerCount = useMemo(() => (folder ? folder.split("_").length : 1), [folder]);
@@ -66,10 +67,7 @@ const Solver = () => {
     gridArray[i] = pos;
   });
   
-  // Get the spiral order indices.
   const spiralIndices = generateSpiralOrder(gridRows, gridCols);
-  
-  // Map the spiral order to positions.
   const spiralPositionOrder = spiralIndices
     .map(([r, c]) => {
       const idx = r * gridCols + c;
@@ -94,7 +92,6 @@ const Solver = () => {
   }, [playerCount]);
 
   const [loadedPlates, setLoadedPlates] = useState<string[]>(defaultPlateNames);
-
   const folderRef = useRef(folder);
   useEffect(() => {
     folderRef.current = folder;
@@ -236,10 +233,6 @@ const Solver = () => {
         setPotSize(1.5); // default with no ante
       });
   }, [folder, API_BASE_URL, playerCount]);
-  
-  
-  
-  
 
   const convertRangeText = (data: JsonData | undefined, action: string): string => {
     if (!data) return "";
@@ -295,6 +288,8 @@ const Solver = () => {
     [plateData]
   );
 
+  
+
   const handleActionClick = useCallback(
     (action: string, fileName: string) => {
       let fullText = ""; // ✅ Declare fullText at the top
@@ -302,46 +297,54 @@ const Solver = () => {
       // Prepare clipboard content if action is "Call"
       if (action === "Call") {
         const callData = plateData[fileName];
-        const range0 = convertRangeText(callData, action);
-        const range1 = lastRange || "";
+        const callingPos = callData?.Position;
+        const callingIndex = positionOrder.indexOf(callingPos ?? "");
+        const lastRaiserIndex = positionOrder.indexOf(lastRangePos);  
+        let range0 = lastRange;
+        let range1 = convertRangeText(callData, action);
+        if (callingIndex !== -1 && lastRaiserIndex !== -1 && callingIndex < lastRaiserIndex) {
+          [range0, range1] = [range1, range0];
+        }
+
         fullText = `#Type#NoLimit
-  #Range0#${range0}
-  #Range1#${range1}
-  #ICM.ICMFormat#Pio ICM structure
-  #ICM.Payouts#16800\\n9200\\n4900\\n2800\\n1450\\n1226\\n1022\\n920\\n817\\n613\\n613\\n613\\n613\\n587\\n562\\n562\\n562\\n562
-  #ICM.Stacks#1800\\n1800\\n6000\\n4000\\n3000\\n2600\\n2500\\n2500\\n2300\\n2300\\n2200\\n1800\\n1600\\n1400\\n1200\\n1000\\n800\\n500
-  #Pot#${(potSize * 100).toFixed(0)}
-  #EffectiveStacks#1800
-  #AllinThreshold#60
-  #AddAllinOnlyIfLessThanThisTimesThePot#250
-  #MergeSimilarBets#True
-  #MergeSimilarBetsThreshold#12
-  #CapEnabled#True
-  #CapPerStreet#3\\n3\\n3
-  #CapMode#NoLimit
-  #FlopConfig.RaiseSize#33
-  #FlopConfig.AddAllin#True
-  #TurnConfig.BetSize#50
-  #TurnConfig.RaiseSize#a
-  #TurnConfig.AddAllin#True
-  #RiverConfig.BetSize#30 66
-  #RiverConfig.RaiseSize#a
-  #RiverConfig.AddAllin#True
-  #RiverConfig.DonkBetSize#30
-  #FlopConfigIP.BetSize#25
-  #FlopConfigIP.RaiseSize#a
-  #FlopConfigIP.AddAllin#True
-  #TurnConfigIP.BetSize#50
-  #TurnConfigIP.RaiseSize#a
-  #TurnConfigIP.AddAllin#True
-  #RiverConfigIP.BetSize#30 66
-  #RiverConfigIP.RaiseSize#a
-  #RiverConfigIP.AddAllin#True`;
+        #Range0#${range0}
+        #Range1#${range1}
+        #ICM.ICMFormat#Pio ICM structure
+        #ICM.Payouts#16800\\n9200\\n4900\\n2800\\n1450\\n1226\\n1022\\n920\\n817\\n613\\n613\\n613\\n613\\n587\\n562\\n562\\n562\\n562
+        #ICM.Stacks#1800\\n1800\\n6000\\n4000\\n3000\\n2600\\n2500\\n2500\\n2300\\n2300\\n2200\\n1800\\n1600\\n1400\\n1200\\n1000\\n800\\n500
+        #Pot#${(potSize * 100).toFixed(0)}
+        #EffectiveStacks#1800
+        #AllinThreshold#60
+        #AddAllinOnlyIfLessThanThisTimesThePot#250
+        #MergeSimilarBets#True
+        #MergeSimilarBetsThreshold#12
+        #CapEnabled#True
+        #CapPerStreet#3\\n3\\n3
+        #CapMode#NoLimit
+        #FlopConfig.RaiseSize#33
+        #FlopConfig.AddAllin#True
+        #TurnConfig.BetSize#50
+        #TurnConfig.RaiseSize#a
+        #TurnConfig.AddAllin#True
+        #RiverConfig.BetSize#30 66
+        #RiverConfig.RaiseSize#a
+        #RiverConfig.AddAllin#True
+        #RiverConfig.DonkBetSize#30
+        #FlopConfigIP.BetSize#25
+        #FlopConfigIP.RaiseSize#a
+        #FlopConfigIP.AddAllin#True
+        #TurnConfigIP.BetSize#50
+        #TurnConfigIP.RaiseSize#a
+        #TurnConfigIP.AddAllin#True
+        #RiverConfigIP.BetSize#30 66
+        #RiverConfigIP.RaiseSize#a
+        #RiverConfigIP.AddAllin#True`;
       } else if (action !== "ALLIN") {
         const raiseData = plateData[fileName];
         const currentRange = convertRangeText(raiseData, action);
         if (currentRange) {
           setLastRange(currentRange);
+          setLastRangePos(raiseData.Position);
         }
       }
   
@@ -475,10 +478,8 @@ const Solver = () => {
         return filtered;
       });
     },
-    [loadedPlates, appendPlateNames, availableJsonFiles, spiralPositionOrder, playerCount, playerBets, plateData, potSize, lastRange, alivePlayers]
+    [loadedPlates, appendPlateNames, availableJsonFiles, spiralPositionOrder, playerCount, playerBets, plateData, potSize, positionOrder, lastRangePos, lastRange, alivePlayers]
   );
-  
-  
 
   const handleLineClick = useCallback((clickedIndex: number) => {
     const trimmedLine = preflopLine.slice(0, clickedIndex + 1);
@@ -555,12 +556,6 @@ const Solver = () => {
   
     setRandomFillEnabled(false);
   }, [preflopLine, playerCount, plateMapping, metadata.ante, handleActionClick, plateData]);
-  
-
-  
-  
-  
-  
   
   
   useKeyboardShortcuts({

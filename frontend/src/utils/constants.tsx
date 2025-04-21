@@ -25,6 +25,8 @@ export const actionToNumberMap: Record<string, string> = {
     3: "ALLIN",
     21: "Raise 5bb",
     19: "Raise 4bb",
+    18: "Raise 3.5bb",
+    17: "Raise 3bb",
     15: "Raise 2bb",
     14: "Raise 1.5bb",
     0: "Fold",

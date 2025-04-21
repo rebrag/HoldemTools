@@ -45,11 +45,16 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
     <div className="flex gap-0.5 mb-0.5 w-full">
       {displayedActions
         .slice()
-        .reverse()
         .sort((a, b) => {
-          if (a === "ALLIN" && b === "Min") return -1;
-          if (a === "Min" && b === "ALLIN") return 1;
-          return 0;
+          const getPriority = (action: string) => {
+            if (action === "ALLIN") return 0;
+            if (action.startsWith("Raise ")) return 1;
+            if (action === "Min") return 2;
+            if (action === "Call") return 3;
+            if (action === "Fold") return 4;
+            return 5;
+          };
+          return getPriority(a) - getPriority(b);
         })
         .map((action) => {
         const isFold = action === "Fold";
@@ -70,7 +75,7 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
                 height: "calc(20px + 0.5vw)",
                 background: `radial-gradient(circle at top left, ${getColorForAction(
                   action
-                )} 0%, ${shadeColor(getColorForAction(action), -15)} 50%, ${shadeColor(
+                )} 0%, ${shadeColor(getColorForAction(action), -15)} 50%, ${shadeColor( //)} 0%, ${shadeColor(getColorForAction(action), -15)} 50%, ${shadeColor( 
                   getColorForAction(action),
                   -35
                 )} 100%)`,
