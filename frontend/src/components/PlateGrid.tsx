@@ -46,19 +46,27 @@ const PlateGrid = ({
   const gridCols = isNarrow ? 2 : Math.ceil(files.length / 2);
 
   // If using spiral order, arrange the files accordingly.
-  const orderedFiles = useMemo(() => {
-    if (!isSpiralView) return files;
+  const orderedEntries = useMemo(() => {
+    const entries = positions.map((pos, i) => [pos, files[i]] as const);
+  
+    if (!isSpiralView) return entries;
+  
     const totalCells = gridRows * gridCols;
-    const gridArray: (string | null)[] = new Array(totalCells).fill(null);
+    const padded = [...entries];
+    while (padded.length < totalCells) padded.push(["", ""]); // fill with empty pairs
+  
     const spiralPositions = generateSpiralOrder(gridRows, gridCols);
-    files.forEach((file, idx) => {
-      if (idx < spiralPositions.length) {
-        const [r, c] = spiralPositions[idx];
-        gridArray[r * gridCols + c] = file;
+    const grid: (readonly [string, string])[] = new Array(totalCells).fill(["", ""]);
+  
+    spiralPositions.forEach(([r, c], i) => {
+      if (i < padded.length) {
+        grid[r * gridCols + c] = padded[i];
       }
     });
-    return gridArray;
-  }, [files, isSpiralView, gridRows, gridCols]);
+  
+    return grid;
+  }, [positions, files, isSpiralView, gridRows, gridCols]);
+  
 
   return (
     <div className="relative min-h-[300px]">
@@ -85,14 +93,11 @@ const PlateGrid = ({
               }
         }
       >
-        {orderedFiles.map((file, index) => {
-          // Use the fixed position as the key.
-          const posKey = positions[index] ?? `blank-${index}`;
+        {orderedEntries.map(([posKey, file], index) => {
           return file ? (
             <Plate
               key={posKey}
               file={file}
-              //position={plateData[file].Position}  // Passing the position from the data
               data={plateData[file]}
               onActionClick={onActionClick}
               randomFillEnabled={randomFillEnabled}
@@ -101,9 +106,10 @@ const PlateGrid = ({
               isICMSim={isICMSim}
             />
           ) : (
-            <div key={posKey} />
+            <div key={`empty-${index}`} />
           );
         })}
+
       </div>
     </div>
   );

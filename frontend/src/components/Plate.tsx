@@ -32,6 +32,16 @@ const Plate: React.FC<PlateProps> = ({
     }
   }, [data]);
 
+  // useEffect(() => {
+  //   console.log("Plate render:", {
+  //     position: data.Position,
+  //     file,
+  //     playerBet,
+  //     alive,
+  //   });
+  // }, [file, data, playerBet, alive]);
+  
+
   const formatBB = (value: number) => {
     return Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1);
   };

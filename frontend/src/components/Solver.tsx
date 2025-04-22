@@ -50,6 +50,7 @@ const Solver = () => {
   const positionOrder = useMemo(() => {
     if (playerCount === 8) return ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"];
     if (playerCount === 6) return ["SB", "BB", "LJ", "HJ", "CO", "BTN"];
+    if (playerCount === 5) return ["SB", "BB","HJ", "CO", "BTN"];
     if (playerCount === 2) return ["BTN", "BB"];
     return Object.keys(plateMapping);
   }, [playerCount, plateMapping]);
@@ -67,13 +68,27 @@ const Solver = () => {
     gridArray[i] = pos;
   });
   
-  const spiralIndices = generateSpiralOrder(gridRows, gridCols);
-  const spiralPositionOrder = spiralIndices
-    .map(([r, c]) => {
-      const idx = r * gridCols + c;
-      return gridArray[idx];
-    })
-    .filter((pos): pos is string => pos !== null);
+  //const spiralIndices = generateSpiralOrder(gridRows, gridCols);
+  const spiralPositionOrder = useMemo(() => {
+    const total = positionOrder.length;
+    const gridRows = isNarrow ? Math.ceil(total / 2) : 2;
+    const gridCols = isNarrow ? 2 : Math.ceil(total / 2);
+  
+    const paddedPositions = [...positionOrder];
+    while (paddedPositions.length < gridRows * gridCols) {
+      paddedPositions.push("");
+    }
+  
+    const gridArray = Array.from({ length: gridRows }, (_, r) =>
+      paddedPositions.slice(r * gridCols, r * gridCols + gridCols)
+    );
+  
+    const spiralIndices = generateSpiralOrder(gridRows, gridCols);
+    return spiralIndices
+      .map(([r, c]) => gridArray[r]?.[c])
+      .filter((pos): pos is string => pos !== null);
+  }, [positionOrder, isNarrow]);
+  
 
   useEffect(() => {
     const initialAlive: Record<string, boolean> = {};
@@ -81,6 +96,8 @@ const Solver = () => {
       ? ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"]
       : playerCount === 6 
         ? ["SB", "BB", "LJ", "HJ", "CO", "BTN"]
+        : playerCount === 5
+          ? ["SB", "BB", "HJ", "CO", "BTN"]
         : playerCount === 2 
           ? ["BB", "BTN"]
           : Object.keys(plateMapping);
@@ -138,6 +155,7 @@ const Solver = () => {
       });
       return filtered;
     });
+    console.log("playerBets",playerBets, "alivePlayers", alivePlayers)
   }, [loadedPlates]);
 
   // Fetch plate data for any missing plates.
@@ -305,7 +323,6 @@ const Solver = () => {
         if (callingIndex !== -1 && lastRaiserIndex !== -1 && callingIndex < lastRaiserIndex) {
           [range0, range1] = [range1, range0];
         }
-
         fullText = `#Type#NoLimit
         #Range0#${range0}
         #Range1#${range1}
@@ -361,11 +378,11 @@ const Solver = () => {
       );
       setLoadedPlates((prev) => [...new Set([...prev, ...newLoadedPlates])]);
   
-      const parts = fileName.replace(".json", "").split(".");
-      const originalPositions = [...spiralPositionOrder];
+      const originalPositions = [...positionOrder]; // canonical order
       const aliveList = [...originalPositions];
       let activeIndex = playerCount === 2 ? 0 : 2;
-  
+
+      const parts = fileName.replace(".json", "").split(".");
       for (const part of parts) {
         if (part === "root") continue;
         const actionValue = parseInt(part, 10);
@@ -380,15 +397,20 @@ const Solver = () => {
           }
         }
       }
-  
-      const updatedAlive: Record<string, boolean> = {};
-      spiralPositionOrder.forEach((pos) => {
-        updatedAlive[pos] = aliveList.includes(pos);
+
+      // Build alive player map from known list
+      const newAliveMap: Record<string, boolean> = {};
+      positionOrder.forEach((pos) => {
+        newAliveMap[pos] = aliveList.includes(pos);
       });
-      setAlivePlayers(updatedAlive);
+      setAlivePlayers(newAliveMap);
+
   
-      const actingPosition = aliveList[activeIndex];
-      if (!actingPosition) return;
+      const actingPosition = plateData[fileName]?.Position;
+      if (!actingPosition) {
+        console.warn("Could not resolve acting position for file:", fileName);
+        return;
+      }
   
       const currentBet = playerBets[actingPosition] || 0;
       const stackSize = plateData[fileName]?.bb || 0;
@@ -416,23 +438,13 @@ const Solver = () => {
       const betDelta = Math.max(0, newBetAmount - currentBet);
       const newPotSize = potSize + betDelta;
   
-      setPlayerBets(prev => {
-        const highestBet = Math.max(...Object.values(prev));
-        const updated: Record<string,number> = {};
-        Object.entries(prev).forEach(([pos, bet]) => {
-          if (alivePlayers[pos]) {
-            updated[pos] = Math.max(bet, highestBet);
-          } else {
-            updated[pos] = bet;
-          }
-        });
+      setPlayerBets(prev => ({
+        ...prev,
+        [actingPosition]: newBetAmount
+      }))
+      // console.log("Clicked file:", fileName, "resolved actingPosition:", actingPosition, "aliveList:", aliveList);
+
       
-        // 2) Then overwrite the raiser with their final bet
-        updated[actingPosition] = newBetAmount;
-      
-        return updated;
-      });
-  
       setPotSize(newPotSize);
   
       // ✅ Clipboard copy happens here with updated pot
@@ -477,6 +489,7 @@ const Solver = () => {
         });
         return filtered;
       });
+      
     },
     [loadedPlates, appendPlateNames, availableJsonFiles, spiralPositionOrder, playerCount, playerBets, plateData, potSize, positionOrder, lastRangePos, lastRange, alivePlayers]
   );
@@ -484,12 +497,14 @@ const Solver = () => {
   const handleLineClick = useCallback((clickedIndex: number) => {
     const trimmedLine = preflopLine.slice(0, clickedIndex + 1);
     setPreflopLine(trimmedLine);
-    //console.log(trimmedLine);
+    console.log(trimmedLine);
     const initialAlive: Record<string, boolean> = {};
     const positions = playerCount === 8
       ? ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"]
       : playerCount === 6
         ? ["SB", "BB", "LJ", "HJ", "CO", "BTN"]
+        : playerCount === 5
+          ? ["SB", "BB", "HJ", "CO", "BTN"]
         : playerCount === 2
           ? ["BB", "BTN"]
           : Object.keys(plateMapping);
@@ -533,6 +548,14 @@ const Solver = () => {
           "BTN": "0.0.0.json",
           "SB": "0.0.0.0.json", 
           "BB": "0.0.0.0.1.json"
+        });
+      } else if (playerCount === 5) {
+        setPlateMapping({
+          "HJ": "root.json", 
+          "CO": "0.json", 
+          "BTN": "0.0.json", 
+          "SB": "0.0.0.json",
+          "BB": "0.0.0.1.json", 
         });
       } else if (playerCount === 2) {
         setPlateMapping({
