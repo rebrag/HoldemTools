@@ -87,8 +87,8 @@ const Plate: React.FC<PlateProps> = ({
                     >
                       {data.Position ? (
                         <span className="p-0.5 px-0 rounded-lg z-50">
-                          {data.Position} {formatBB(data.bb - playerBet)}bb
-                        </span>
+                          {data.Position} {formatBB(data.bb - playerBet)}bb 
+                        </span> //
                       ) : (
                         file
                       )}

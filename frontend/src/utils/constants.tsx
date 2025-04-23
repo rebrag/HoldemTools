@@ -14,6 +14,7 @@ export const actionToNumberMap: Record<string, string> = {
     "Raise 1.5bb": "14",
     "Raise 2bb": "15",
     "Raise 4bb": "19",
+    "Raise 3.5bb": "18",
     "Raise 5bb": "21",
   };
 

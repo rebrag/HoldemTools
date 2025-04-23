@@ -79,7 +79,7 @@ const DecisionMatrix: React.FC<DecisionMatrixProps> = ({ gridData, randomFillEna
         )
       )}
       {/* EV Tooltips */}
-      {!isICMSim && hoveredEVs && hoveredHand && (
+      {!isICMSim && hoveredEVs && hoveredHand && ( //
         <div className="absolute bottom-0 left-1/2 -translate-x-1/2 mb-1 z-50 bg-gray-800 text-white text-xs rounded px-2 py-1 
         pointer-events-none shadow-lg w-max whitespace-nowrap">
           <div className="text-xs font-bold mb-1 text-center">{hoveredHand}</div>

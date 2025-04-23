@@ -11,7 +11,7 @@ import axios from "axios";
 import { JsonData } from "../utils/utils";
 import InstructionBox from "./InstructionBox";
 import Line from "./Line";
-import { generateSpiralOrder } from "../utils/gridUtils";
+// import { generateSpiralOrder } from "../utils/gridUtils";
 
 const Solver = () => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -69,25 +69,25 @@ const Solver = () => {
   });
   
   //const spiralIndices = generateSpiralOrder(gridRows, gridCols);
-  const spiralPositionOrder = useMemo(() => {
-    const total = positionOrder.length;
-    const gridRows = isNarrow ? Math.ceil(total / 2) : 2;
-    const gridCols = isNarrow ? 2 : Math.ceil(total / 2);
+  // const spiralPositionOrder = useMemo(() => {
+  //   const total = positionOrder.length;
+  //   const gridRows = isNarrow ? Math.ceil(total / 2) : 2;
+  //   const gridCols = isNarrow ? 2 : Math.ceil(total / 2);
   
-    const paddedPositions = [...positionOrder];
-    while (paddedPositions.length < gridRows * gridCols) {
-      paddedPositions.push("");
-    }
+  //   const paddedPositions = [...positionOrder];
+  //   while (paddedPositions.length < gridRows * gridCols) {
+  //     paddedPositions.push("");
+  //   }
   
-    const gridArray = Array.from({ length: gridRows }, (_, r) =>
-      paddedPositions.slice(r * gridCols, r * gridCols + gridCols)
-    );
+  //   const gridArray = Array.from({ length: gridRows }, (_, r) =>
+  //     paddedPositions.slice(r * gridCols, r * gridCols + gridCols)
+  //   );
   
-    const spiralIndices = generateSpiralOrder(gridRows, gridCols);
-    return spiralIndices
-      .map(([r, c]) => gridArray[r]?.[c])
-      .filter((pos): pos is string => pos !== null);
-  }, [positionOrder, isNarrow]);
+  //   const spiralIndices = generateSpiralOrder(gridRows, gridCols);
+  //   return spiralIndices
+  //     .map(([r, c]) => gridArray[r]?.[c])
+  //     .filter((pos): pos is string => pos !== null);
+  // }, [positionOrder, isNarrow]);
   
 
   useEffect(() => {
@@ -127,7 +127,9 @@ const Solver = () => {
       plateData: { ...plateData },
       plateMapping: { ...plateMapping },
     };
-    console.log(metadata.icm)
+    //console.log(metadata.icm)
+    
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folder]);
 
@@ -155,7 +157,6 @@ const Solver = () => {
       });
       return filtered;
     });
-    console.log("playerBets",playerBets, "alivePlayers", alivePlayers)
   }, [loadedPlates]);
 
   // Fetch plate data for any missing plates.
@@ -300,7 +301,7 @@ const Solver = () => {
       newFilesWider.forEach((file) => {
         setPlateMapping((prev) => ({ ...prev, [plateData[file]?.Position]: file }));
       });
-      //console.log("newFiles:", newFiles, "newFilesWider:", newFilesWider, "plateMapping", plateMapping, 'plateData:',plateData); //, "plateMapping", plateMapping
+      // console.log("newFiles:", newFiles, "newFilesWider:", newFilesWider, "plateMapping", plateMapping, 'plateData:',plateData); //, "plateMapping", plateMapping
       return [...currentFiles, ...newFiles];
     },
     [plateData]
@@ -310,26 +311,83 @@ const Solver = () => {
 
   const handleActionClick = useCallback(
     (action: string, fileName: string) => {
-      let fullText = ""; // ✅ Declare fullText at the top
+      const plateName = loadedPlates.find(name => name === fileName);
+      if (!plateName) return;
   
-      // Prepare clipboard content if action is "Call"
+      const actionNumber = actionToNumberMap[action];
+      const clickedIndex = loadedPlates.findIndex(name => name === plateName);
+      const newLoadedPlates = appendPlateNames(loadedPlates, clickedIndex, actionNumber, availableJsonFiles);
+      setLoadedPlates(prev => [...new Set([...prev, ...newLoadedPlates])]);
+  
+      const parts = fileName.replace(".json", "").split(".");
+      const aliveList = [...positionOrder];
+      let activeIndex = playerCount === 2 ? 0 : 2;
+  
+      for (const part of parts) {
+        if (part === "root") continue;
+        const n = parseInt(part, 10);
+        if (n === 0) {
+          aliveList.splice(activeIndex, 1);
+          if (aliveList.length > 0 && activeIndex >= aliveList.length) {
+            activeIndex = 0;
+          }
+        } else {
+          activeIndex = (activeIndex + 1) % aliveList.length;
+        }
+        
+      }
+  
+      const newAliveMap = Object.fromEntries(positionOrder.map(pos => [pos, aliveList.includes(pos)]));
+      setAlivePlayers(newAliveMap);
+  
+      const actingPosition = plateData[fileName]?.Position;
+      const currentBet = playerBets[actingPosition] || 0;
+      const stackSize = plateData[fileName]?.bb || 0;
+  
+      let newBetAmount = currentBet;
+      if (action === "Min") newBetAmount = 2;
+      else if (action === "ALLIN") newBetAmount = stackSize;
+      else if (action.startsWith("Raise ")) {
+        const val = action.split(" ")[1];
+        const maxBet = Math.max(...Object.values(playerBets));
+        newBetAmount = val.endsWith("bb")
+          ? maxBet + parseFloat(val)
+          : maxBet + (parseFloat(val) / 100) * (potSize + maxBet);
+      } else if (action === "Call") {
+        newBetAmount = Math.max(...Object.values(playerBets));
+      }
+  
+      const newPotSize = potSize + Math.max(0, newBetAmount - currentBet);
+      setPotSize(newPotSize);
+      setPlayerBets(prev => ({ ...prev, [actingPosition]: newBetAmount }));
+  
+      let fullText = "";
       if (action === "Call") {
         const callData = plateData[fileName];
         const callingPos = callData?.Position;
-        const callingIndex = positionOrder.indexOf(callingPos ?? "");
-        const lastRaiserIndex = positionOrder.indexOf(lastRangePos);  
-        let range0 = lastRange;
-        let range1 = convertRangeText(callData, action);
-        if (callingIndex !== -1 && lastRaiserIndex !== -1 && callingIndex < lastRaiserIndex) {
-          [range0, range1] = [range1, range0];
-        }
+        const [range0, range1] = (positionOrder.indexOf(callingPos ?? "") < positionOrder.indexOf(lastRangePos))
+          ? [convertRangeText(callData, action), lastRange]
+          : [lastRange, convertRangeText(callData, action)];
+  
+        const stackMap = Object.fromEntries(positionOrder.map(pos => {
+          const plate = plateMapping[pos];
+          const bb = plateData[plate]?.bb ?? 0;
+          const bet = pos === actingPosition ? newBetAmount : playerBets[pos] ?? 0;
+          return [pos, Math.round((bb - bet) * 100)];
+        }));
+  
+        const alive = positionOrder.filter(pos => newAliveMap[pos]);
+        const [earlier, later] = [...alive].sort((a, b) => positionOrder.indexOf(a) - positionOrder.indexOf(b));
+        const stacksStr = [stackMap[later], stackMap[earlier], ...positionOrder.filter(p => !alive.includes(p)).map(p => stackMap[p])].join("\\n");
+        const payoutsStr = metadata.icm.map(v => Math.round(v * 10)).join("\\n");
+  
         fullText = `#Type#NoLimit
         #Range0#${range0}
         #Range1#${range1}
         #ICM.ICMFormat#Pio ICM structure
-        #ICM.Payouts#16800\\n9200\\n4900\\n2800\\n1450\\n1226\\n1022\\n920\\n817\\n613\\n613\\n613\\n613\\n587\\n562\\n562\\n562\\n562
-        #ICM.Stacks#1800\\n1800\\n6000\\n4000\\n3000\\n2600\\n2500\\n2500\\n2300\\n2300\\n2200\\n1800\\n1600\\n1400\\n1200\\n1000\\n800\\n500
-        #Pot#${(potSize * 100).toFixed(0)}
+        #ICM.Payouts#${payoutsStr}
+        #ICM.Stacks#${stacksStr}
+        #Pot#${(newPotSize * 100).toFixed(0)}
         #EffectiveStacks#1800
         #AllinThreshold#60
         #AddAllinOnlyIfLessThanThisTimesThePot#250
@@ -356,148 +414,47 @@ const Solver = () => {
         #RiverConfigIP.BetSize#30 66
         #RiverConfigIP.RaiseSize#a
         #RiverConfigIP.AddAllin#True`;
-      } else if (action !== "ALLIN") {
-        const raiseData = plateData[fileName];
-        const currentRange = convertRangeText(raiseData, action);
-        if (currentRange) {
-          setLastRange(currentRange);
-          setLastRangePos(raiseData.Position);
-        }
-      }
   
-      const plateName = loadedPlates.find((name) => name === fileName);
-      if (!plateName) return;
-  
-      const actionNumber = actionToNumberMap[action];
-      const clickedIndex = loadedPlates.findIndex((name) => name === plateName);
-      const newLoadedPlates = appendPlateNames(
-        loadedPlates,
-        clickedIndex,
-        actionNumber,
-        availableJsonFiles
-      );
-      setLoadedPlates((prev) => [...new Set([...prev, ...newLoadedPlates])]);
-  
-      const originalPositions = [...positionOrder]; // canonical order
-      const aliveList = [...originalPositions];
-      let activeIndex = playerCount === 2 ? 0 : 2;
-
-      const parts = fileName.replace(".json", "").split(".");
-      for (const part of parts) {
-        if (part === "root") continue;
-        const actionValue = parseInt(part, 10);
-        if (actionValue === 0) {
-          aliveList.splice(activeIndex, 1);
-          if (aliveList.length > 0 && activeIndex >= aliveList.length) {
-            activeIndex = 0;
-          }
-        } else {
-          if (aliveList.length > 0) {
-            activeIndex = (activeIndex + 1) % aliveList.length;
-          }
-        }
-      }
-
-      // Build alive player map from known list
-      const newAliveMap: Record<string, boolean> = {};
-      positionOrder.forEach((pos) => {
-        newAliveMap[pos] = aliveList.includes(pos);
-      });
-      setAlivePlayers(newAliveMap);
-
-  
-      const actingPosition = plateData[fileName]?.Position;
-      if (!actingPosition) {
-        console.warn("Could not resolve acting position for file:", fileName);
-        return;
-      }
-  
-      const currentBet = playerBets[actingPosition] || 0;
-      const stackSize = plateData[fileName]?.bb || 0;
-      let newBetAmount = currentBet;
-  
-      if (action === "Min") {
-        newBetAmount = 2;
-      } else if (action === "ALLIN") {
-        newBetAmount = stackSize;
-      } else if (action.startsWith("Raise ")) {
-        const value = action.split(" ")[1];
-        if (value.endsWith("bb")) {
-          const raiseAmount = parseFloat(value.replace("bb", ""));
-          newBetAmount = Math.max(...Object.values(playerBets)) + raiseAmount;
-        } else if (value.endsWith("%")) {
-          const percent = parseFloat(value.replace("%", ""));
-          newBetAmount =
-            Math.max(...Object.values(playerBets)) +
-            (percent / 100) * (potSize + Math.max(...Object.values(playerBets)));
-        }
-      } else if (action === "Call") {
-        newBetAmount = Math.max(...Object.values(playerBets));
-      }
-  
-      const betDelta = Math.max(0, newBetAmount - currentBet);
-      const newPotSize = potSize + betDelta;
-  
-      setPlayerBets(prev => ({
-        ...prev,
-        [actingPosition]: newBetAmount
-      }))
-      // console.log("Clicked file:", fileName, "resolved actingPosition:", actingPosition, "aliveList:", aliveList);
-
-      
-      setPotSize(newPotSize);
-  
-      // ✅ Clipboard copy happens here with updated pot
-      if (action === "Call" && fullText) {
-        const effectiveStack = Math.min(
-          ...spiralPositionOrder
-            .filter(pos => alivePlayers[pos])
+        const effStack = Math.min(
+          ...positionOrder
+            .filter(pos => newAliveMap[pos])
             .map(pos => {
-              const stack = plateData[fileName]?.bb ?? 0;
-              const bet = playerBets[pos] ?? 0;
+              const stack = plateData[plateMapping[pos]]?.bb ?? 0;
+              const bet = pos === actingPosition ? newBetAmount : playerBets[pos] ?? 0;
               return stack - bet;
             })
         );
+        
+  
         const adjustedText = fullText
           .replace(/#Pot#\d+/, `#Pot#${(newPotSize * 100).toFixed(0)}`)
-          .replace(/#EffectiveStacks#\d+/, `#EffectiveStacks#${Math.round(effectiveStack * 100)}`);
+          .replace(/#EffectiveStacks#\d+/, `#EffectiveStacks#${Math.round(effStack * 100)}`);
         navigator.clipboard.writeText(adjustedText);
-      }
-  
-      const newLine = ["Root"];
-      for (const part of parts) {
-        if (part !== "root") {
-          newLine.push(numberToActionMap[part]);
+      } else if (action !== "ALLIN") {
+        const data = plateData[fileName];
+        const currentRange = convertRangeText(data, action);
+        if (currentRange) {
+          setLastRange(currentRange);
+          setLastRangePos(data.Position);
         }
       }
-      newLine.push(action);
-      setPreflopLine(newLine);
   
-      if (
-        newLoadedPlates.length === loadedPlates.length &&
-        newLoadedPlates.every((val, idx) => val === loadedPlates[idx])
-      ) {
-        return;
+      setPreflopLine(["Root", ...parts.filter(p => p !== "root").map(p => numberToActionMap[p]), action]);
+  
+      if (newLoadedPlates.length !== loadedPlates.length || !newLoadedPlates.every((v, i) => v === loadedPlates[i])) {
+        setLoadedPlates(newLoadedPlates);
       }
   
-      setLoadedPlates(newLoadedPlates);
       setRandomFillEnabled(false);
-      setPlateMapping((prev) => {
-        const filtered: Record<string, string> = {};
-        Object.keys(prev).forEach((pos) => {
-          filtered[pos] = prev[pos];
-        });
-        return filtered;
-      });
-      
+      setPlateMapping(prev => ({ ...prev }));
     },
-    [loadedPlates, appendPlateNames, availableJsonFiles, spiralPositionOrder, playerCount, playerBets, plateData, potSize, positionOrder, lastRangePos, lastRange, alivePlayers]
+    [loadedPlates, appendPlateNames, availableJsonFiles, playerCount, playerBets, plateData, potSize, positionOrder, lastRangePos, lastRange, metadata, plateMapping]
   );
+  
 
   const handleLineClick = useCallback((clickedIndex: number) => {
     const trimmedLine = preflopLine.slice(0, clickedIndex + 1);
     setPreflopLine(trimmedLine);
-    console.log(trimmedLine);
     const initialAlive: Record<string, boolean> = {};
     const positions = playerCount === 8
       ? ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"]
@@ -638,7 +595,25 @@ const Solver = () => {
             <div><strong>Ante:</strong> {metadata.ante}</div>
             <div><strong>Pot:</strong> {potSize.toFixed(2)} bb</div>
             {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
-              <div><strong>ICM Structure:</strong> {metadata.icm.join(", ")}</div>
+              <div>
+              <strong>ICM Structure:</strong><br />
+              {metadata.icm.map((value, idx) => {
+                const rank = idx + 1;
+                const suffix =
+                  rank === 1 ? "st" :
+                  rank === 2 ? "nd" :
+                  rank === 3 ? "rd" : "th";
+            
+                return (
+                  <div key={idx}>
+                    {rank}
+                    <sup>{suffix}</sup>: ${value.toLocaleString()}
+                  </div>
+                );
+              })}
+            </div>
+            
+            
             ) : (
               <div><strong>ICM:</strong> None</div>
             )}
