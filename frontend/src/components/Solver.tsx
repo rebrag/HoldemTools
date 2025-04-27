@@ -375,10 +375,25 @@ const Solver = () => {
           const bet = pos === actingPosition ? newBetAmount : playerBets[pos] ?? 0;
           return [pos, Math.round((bb - bet) * 100)];
         }));
+        console.log(stackMap)
   
-        const alive = positionOrder.filter(pos => newAliveMap[pos]);
-        const [earlier, later] = [...alive].sort((a, b) => positionOrder.indexOf(a) - positionOrder.indexOf(b));
-        const stacksStr = [stackMap[later], stackMap[earlier], ...positionOrder.filter(p => !alive.includes(p)).map(p => stackMap[p])].join("\\n");
+        const allAlive = positionOrder.filter(pos => newAliveMap[pos]);
+
+      // Ensure we always get 2 alive players before the rest
+      const [earlier, later] = [...allAlive].sort(
+        (a, b) => positionOrder.indexOf(a) - positionOrder.indexOf(b)
+      );
+
+      const stackEntries = new Set([later, earlier]);
+
+      // Add the rest (in any order)
+      const otherStacks = positionOrder
+        .filter(pos => !stackEntries.has(pos))
+        .map(pos => stackMap[pos] ?? 0);
+
+      // Final result with exactly 8 entries
+      const stacksStr = [stackMap[later], stackMap[earlier], ...otherStacks].join("\\n");
+
         const payoutsStr = metadata.icm.map(v => Math.round(v * 10)).join("\\n");
   
         fullText = `#Type#NoLimit
