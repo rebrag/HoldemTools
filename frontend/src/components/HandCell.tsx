@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { HandCellData } from "../utils/utils";
 import { ALL_ACTIONS, ALL_COLORS } from "../utils/constants";
-import './App.css';
+import "./App.css";
 
 export type Action = "ALLIN" | "UNKNOWN" | "Min" | "Call" | "Fold";
 
@@ -13,7 +13,14 @@ interface HandCellProps {
   onLeave?: () => void;
 }
 
-const HandCell: React.FC<HandCellProps> = ({ data, randomFill: isRandomFill, matrixWidth, onHover, onLeave }) => {
+const HandCell: React.FC<HandCellProps> = ({
+  data,
+  randomFill: isRandomFill,
+  matrixWidth,
+  onHover,
+  onLeave,
+}) => {
+  /* ───────── state: randomised action ───────── */
   const [randomizedAction, setRandomizedAction] = useState<string | null>(null);
 
   useEffect(() => {
@@ -39,25 +46,43 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFill: isRandomFill, mat
     setRandomizedAction(entries[0][0]);
   }, [isRandomFill, data.actions]);
 
+  /* ───────── segments for bar colouring ───────── */
   const segments = useMemo(() => {
     let unknownWeight = 0;
     Object.keys(data.actions).forEach((key) => {
-      if (!ALL_ACTIONS.includes(key as Action)) unknownWeight += data.actions[key] || 0;
+      if (!ALL_ACTIONS.includes(key as Action))
+        unknownWeight += data.actions[key] || 0;
     });
     return ALL_ACTIONS.map((action) => {
-      const weight = action === "UNKNOWN" ? unknownWeight : (data.actions[action] || 0);
-      const targetWidth = isRandomFill && randomizedAction
-        ? (randomizedAction === action || (!ALL_ACTIONS.includes(randomizedAction as Action) && action === "UNKNOWN"))
-          ? 100
-          : 0
-        : weight * 100;
+      const weight =
+        action === "UNKNOWN"
+          ? unknownWeight
+          : data.actions[action] || 0;
+      const targetWidth =
+        isRandomFill && randomizedAction
+          ? randomizedAction === action ||
+            (!ALL_ACTIONS.includes(randomizedAction as Action) &&
+              action === "UNKNOWN")
+            ? 100
+            : 0
+          : weight * 100;
       const color = ALL_COLORS[ALL_ACTIONS.indexOf(action)];
       return { action, style: { width: `${targetWidth}%`, backgroundColor: color } };
     });
   }, [data.actions, isRandomFill, randomizedAction]);
 
-  const computedFontSize = matrixWidth ? `${2 + matrixWidth * 0.02}px` : "calc(4px + .28vw)";
+  /* ───────── pocket-pair border style ───────── */
+  const isPair = data.hand.length === 2 && data.hand[0] === data.hand[1];
+  const borderStyle = isPair
+    ? "inset 0 0 0 0.7px rgba(203, 213, 224, 0.5)" // darker + thicker
+    : "inset 0 0 0 0.3px rgba(203, 213, 224, 0.8)";
 
+  /* ───────── label font size ───────── */
+  const computedFontSize = matrixWidth
+    ? `${2 + matrixWidth * 0.02}px`
+    : "calc(4px + .28vw)";
+
+  /* ───────── render ───────── */
   return (
     <div
       tabIndex={-1}
@@ -65,45 +90,34 @@ const HandCell: React.FC<HandCellProps> = ({ data, randomFill: isRandomFill, mat
       onMouseEnter={() => onHover?.(data.evs)}
       onMouseLeave={() => onLeave?.()}
     >
+      {/* coloured action segments */}
       <div className="flex h-full w-full">
         {segments.map(({ action, style }) => (
           <div key={action} className="segment" style={style} />
         ))}
       </div>
 
+      {/* inset border */}
       <div
         className="absolute inset-0 pointer-events-none select-none"
-        style={{ boxShadow: "inset 0 0 0 0.3px rgba(203, 213, 224, 0.1)" }}
+        style={{ boxShadow: borderStyle }}
       />
 
+      {/* hand label */}
       <div
         className="absolute inset-0 flex items-center justify-center text-white font-semibold"
-        style={{ fontSize: computedFontSize, textShadow: "2px 2px 3px rgba(0, 0, 0, .7)" }}
+        style={{
+          fontSize: computedFontSize,
+          textShadow: "2px 2px 3px rgba(0, 0, 0, .7)",
+        }}
       >
         {data.hand}
       </div>
-
-      {/* Tooltip panel - only show actions with defined EV */}
-      {/* <div
-        className={
-          `invisible group-hover:visible opacity-0 group-hover:opacity-100 ` +
-          `transition-opacity absolute z-10 bottom-full left-1/2 -translate-x-1/2 mb-1 ` +
-          `w-max bg-gray-800 text-white text-xs whitespace-pre rounded px-2 py-1`
-        }
-      >
-        {Object.entries(data.evs)
-          .sort(([, evA], [, evB]) => (evB ?? -Infinity) - (evA ?? -Infinity))
-          .map(([action, ev]) => (
-            <div key={action}>
-              <span className="font-semibold">{action}</span>:{" "}
-              {ev != null && !isNaN(ev) ? `${ev.toFixed(2)} bb` : "N/A"}
-            </div>
-          ))}
-      </div> */}
     </div>
   );
 };
 
+/* ───────── memo: shallow compare relevant props ───────── */
 function areEqual(prev: HandCellProps, next: HandCellProps) {
   return (
     prev.data.hand === next.data.hand &&

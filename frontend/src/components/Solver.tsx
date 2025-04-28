@@ -602,13 +602,13 @@ const Solver = () => {
         alivePlayers={alivePlayers}
         playerBets={playerBets} // ✅ Pass this down
         isICMSim={isICMSim}
+        ante={metadata.ante}
+        pot={potSize}
       />
 
         {metadata && (
           <div className="text-sm mt-1 mb-2 text-center text-gray-600">
             {metadata.name && <div><strong>Sim:</strong> {metadata.name}</div>}
-            <div><strong>Ante:</strong> {metadata.ante}</div>
-            <div><strong>Pot:</strong> {potSize.toFixed(2)} bb</div>
             {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
               <div>
               <strong>ICM Structure:</strong><br />
