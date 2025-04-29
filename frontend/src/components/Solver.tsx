@@ -375,7 +375,7 @@ const Solver = () => {
           const bet = pos === actingPosition ? newBetAmount : playerBets[pos] ?? 0;
           return [pos, Math.round((bb - bet) * 100)];
         }));
-        console.log(stackMap)
+        //console.log(stackMap)
   
         const allAlive = positionOrder.filter(pos => newAliveMap[pos]);
 
@@ -394,7 +394,9 @@ const Solver = () => {
       // Final result with exactly 8 entries
       const stacksStr = [stackMap[later], stackMap[earlier], ...otherStacks].join("\\n");
 
-        const payoutsStr = metadata.icm.map(v => Math.round(v * 10)).join("\\n");
+      const payoutsStr = Array.isArray(metadata.icm)
+      ? metadata.icm.map(v => Math.round(v * 10)).join("\\n")
+      : "0\\n0\\n0\\n0";
   
         fullText = `#Type#NoLimit
         #Range0#${range0}

@@ -74,8 +74,8 @@ const HandCell: React.FC<HandCellProps> = ({
   /* ───────── pocket-pair border style ───────── */
   const isPair = data.hand.length === 2 && data.hand[0] === data.hand[1];
   const borderStyle = isPair
-    ? "inset 0 0 0 0.7px rgba(203, 213, 224, 0.5)" // darker + thicker
-    : "inset 0 0 0 0.3px rgba(203, 213, 224, 0.8)";
+    ? "inset 0 0 0 0.7px rgba(203, 213, 224, 0.3)" // darker + thicker
+    : "inset 0 0 0 0.3px rgba(203, 213, 224, 0.6)";
 
   /* ───────── label font size ───────── */
   const computedFontSize = matrixWidth

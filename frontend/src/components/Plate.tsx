@@ -20,19 +20,16 @@ const Plate: React.FC<PlateProps> = ({
   onActionClick,
   randomFillEnabled,
   alive,
-  playerBet = 0, 
-  isICMSim // ✅ Add this here too
+  playerBet = 0,
+  isICMSim,
 }) => {
   const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
 
   useEffect(() => {
-    if (data) {
-      const processed = combineDataByHand(data);
-      setCombinedData(processed);
-    }
+    if (data) setCombinedData(combineDataByHand(data));
   }, [data]);
-
-  // useEffect(() => {
+  
+// useEffect(() => {
   //   console.log("Plate render:", {
   //     position: data.Position,
   //     file,
@@ -40,35 +37,27 @@ const Plate: React.FC<PlateProps> = ({
   //     alive,
   //   });
   // }, [file, data, playerBet, alive]);
-  
 
-  const formatBB = (value: number) => {
-    return Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1);
-  };
+  const formatBB = (v: number) =>
+    Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1);
 
   return (
     <div className="relative mb-6 justify-self-center max-w-[400px] w-full text-base">
-      {/* DealerButton floats over the top right, full opacity */}
+      {/* Dealer button */}
       {data?.Position === "BTN" && (
         <div
           className="absolute z-0"
-          style={{
-            top: "-16%",         // move it upward relative to Plate height
-            right: "-8%",       // move it outward beyond right edge
-            width: "33%",       // scales relative to Plate width
-            aspectRatio: "1",   // keep it a circle
-          }}
+          style={{ top: "-16%", right: "-8%", width: "33%", aspectRatio: "1" }}
         >
           <DealerButton />
         </div>
       )}
 
-      {/* Fadable container */}
+      {/* Plate background (z-10) */}
       <div
-        className="border rounded-[7px] shadow-md p-0.5 bg-white transition-all duration-500 ease-in-out relative z-10"
+        className="border rounded-[7px] shadow-md p-0.5 bg-white transition-opacity duration-500 ease-in-out relative z-10"
         style={{ opacity: alive ? 1 : 0.4 }}
       >
-        {!data && <p>Loading data...</p>}
         {data && (
           <>
             <div className="relative">
@@ -77,41 +66,39 @@ const Plate: React.FC<PlateProps> = ({
                 randomFillEnabled={randomFillEnabled}
                 isICMSim={isICMSim}
               />
-              {/* Position + BB display near bottom center */}
-              <>
-                <div className="absolute left-1/2 -bottom-14 transform -translate-x-1/2 z-10">
-                  <div className="bg-white/90 rounded-md p-1 border-2">
-                    <h2
-                      className="text-center font-bold text-gray-800"
+
+              {/* Position + BB box             */} 
+              <div className="absolute left-1/2 -bottom-14 -translate-x-1/2 z-20">
+                <div className="bg-white/90 rounded-md p-1 text-center">
+                  <h2
+                    className="font-bold text-gray-800"
+                    style={{ fontSize: "calc(0.6rem + 0.3vw)" }}
+                  >
+                    {data.Position
+                      ? `${data.Position} ${formatBB(data.bb - playerBet)}bb`
+                      : file}
+                  </h2>
+                </div>
+              </div>
+
+              {/* Player-bet chip */}
+              {playerBet !== 0 && (
+                <div className="absolute left-5/6 -bottom-14 -translate-x-1/2 z-20">
+                  <div className="bg-white/95 rounded-md p-0.5 border-2">
+                    <span
+                      className="text-gray-800 font-medium"
                       style={{ fontSize: "calc(0.6rem + 0.3vw)" }}
                     >
-                      {data.Position ? (
-                        <span className="p-0.5 px-0 rounded-lg z-50">
-                          {data.Position} {formatBB(data.bb - playerBet)}bb 
-                        </span> //
-                      ) : (
-                        file
-                      )}
-                    </h2>
+                      {formatBB(playerBet)}bb
+                    </span>
                   </div>
                 </div>
-                {/* Player Bet floating slightly to the right of the first box */}
-                {playerBet !== 0 && (
-                  <div className="absolute left-5/6 -bottom-14 transform -translate-x-1/2 z-10">
-                    <div className="bg-white/90 rounded-md p-0.5 border-2 ">
-                      <span // 
-                        className="text-center font-medium text-gray-800"
-                        style={{ fontSize: "calc(0.6rem + 0.3vw)" }}
-                      >
-                        <span className="p-0.5 px-1 py-0 rounded-lg z-50">{formatBB(playerBet)}bb</span>
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </>
+              )}
 
+              
             </div>
-            {/* ColorKey aligned top-right */}
+            
+            {/* Color key */}
             <div className="select-none flex w-full items-center justify-end mt-0.5">
               <ColorKey
                 data={combinedData}
@@ -120,7 +107,23 @@ const Plate: React.FC<PlateProps> = ({
             </div>
           </>
         )}
+        
       </div>
+      {/* ─── Playing-cards SVGs (alive only, z-0) ─── */}
+      {alive && (
+        <div className="absolute left-1/2 -bottom-9 -translate-x-1/2 -z-0 flex">
+          <img
+            src="/playing-cards.svg"
+            alt="cards"
+            className="w-18 h-18"
+          />
+          <img
+            src="/playing-cards.svg"
+            alt="cards"
+            className="w-18 h-18 -ml-8"
+          />
+        </div>
+        )}
     </div>
   );
 };

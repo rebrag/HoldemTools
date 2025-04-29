@@ -121,7 +121,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
             col.length ? (
               <div
                 key={`col-${idx}`}
-                className="flex flex-1 flex-col gap-2 justify-center items-center"
+                className="flex flex-1 flex-col gap-5 justify-center items-center"
                 style={{
                   minWidth: 170,             /* ► keep ≥ 170 px … */
                   maxWidth: 400,             /* ► … cap at 400 px   */
@@ -145,7 +145,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
         </div>
       ) : (
         /* ================== LANDSCAPE / WIDE ================== */
-        <div className="flex flex-col gap-2 select-none border-0 rounded-md">
+        <div className="flex flex-col gap-6 select-none border-0 rounded-md">
           {rows.map((row, rowIdx) => {
             const plates = row.filter(([, f]) => f) as (readonly [
               string,
