@@ -8,6 +8,7 @@ interface ColorKeyProps {
 }
 
 const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
+  /* Gather every distinct action in the matrix */
   const uniqueActions = Array.from(
     data.reduce((set, cell) => {
       Object.keys(cell.actions)
@@ -17,17 +18,16 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
     }, new Set<string>())
   );
 
-  // If there are more than 3 actions, filter out "Fold"
-  const displayedActions =
-    uniqueActions.length > 3 ? uniqueActions.filter((action) => action !== "Fold") : uniqueActions;
+  /* Show them all (no more “hide Fold” rule) */
+  const displayedActions = [...uniqueActions];
 
-  // makes the color of the buttons prettier, like sunset shading
+  /* Helper: darker-or-lighter shade */
   function shadeColor(color: string, percent: number) {
     const num = parseInt(color.slice(1), 16);
     const amt = Math.round(2.55 * percent);
     const R = (num >> 16) + amt;
-    const G = ((num >> 8) & 0x00FF) + amt;
-    const B = (num & 0x0000FF) + amt;
+    const G = ((num >> 8) & 0x00ff) + amt;
+    const B = (num & 0x0000ff) + amt;
     return (
       "#" +
       (
@@ -56,26 +56,24 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
           };
           return getPriority(a) - getPriority(b);
         })
-        .map((action) => {
-        const isFold = action === "Fold";
-        return (
+        .map((action) => (
           <div
             key={action}
-            className={`flex-1 min-w-0 ${isFold ? "cursor-default" : "cursor-pointer"}`}
-            onClick={isFold ? undefined : () => onActionClick(action)}
-            title={isFold ? undefined : `Click to see reactions to ${action}`}
+            className="flex-1 min-w-0 cursor-pointer"
+            onClick={() => onActionClick(action)}
+            title={`Click to see reactions to ${action}`}
           >
             <motion.div
               whileTap={{ scale: 0.92 }}
-              whileHover={{ scale: isFold ? 1 : 1.00 }}
+              whileHover={{ scale: 1.0 }}
               transition={{ type: "spring", stiffness: 900, damping: 50 }}
-              className={`flex items-center justify-center rounded-sm shadow-sm ${isFold ? "" : "active:ring-2 ring-white"}`}
+              className="flex items-center justify-center rounded-sm shadow-sm active:ring-2 ring-white"
               style={{
                 width: "100%",
                 height: "calc(20px + 0.5vw)",
                 background: `radial-gradient(circle at top left, ${getColorForAction(
                   action
-                )} 0%, ${shadeColor(getColorForAction(action), -15)} 50%, ${shadeColor( //)} 0%, ${shadeColor(getColorForAction(action), -15)} 50%, ${shadeColor( 
+                )} 0%, ${shadeColor(getColorForAction(action), -15)} 50%, ${shadeColor(
                   getColorForAction(action),
                   -35
                 )} 100%)`,
@@ -89,8 +87,7 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
               </span>
             </motion.div>
           </div>
-        );
-      })}
+        ))}
     </div>
   );
 };

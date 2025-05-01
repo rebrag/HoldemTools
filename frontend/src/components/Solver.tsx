@@ -33,6 +33,7 @@ const Solver = () => {
   const isICMSim = Array.isArray(metadata.icm) && metadata.icm.length > 0;
   const [potSize, setPotSize] = useState<number>(0);
   const [playerBets, setPlayerBets] = useState<Record<string, number>>({});
+  const [showInstructions, setShowInstructions] = useState(true);
 
   const defaultPlateNames = useMemo(() => {
     const filesArray: string[] = [];
@@ -343,6 +344,13 @@ const Solver = () => {
       const actingPosition = plateData[fileName]?.Position;
       const currentBet = playerBets[actingPosition] || 0;
       const stackSize = plateData[fileName]?.bb || 0;
+
+      if (action === "Fold") {
+        setAlivePlayers(prev => ({ ...prev, [actingPosition]: false }));
+        // you may also want to zero that player’s bet:
+        // setPlayerBets(prev => ({ ...prev, [actingPosition]: 0 }));
+        //return;                                          // nothing else to do
+      }
   
       let newBetAmount = currentBet;
       if (action === "Min") newBetAmount = 2;
@@ -369,30 +377,43 @@ const Solver = () => {
           ? [convertRangeText(callData, action), lastRange]
           : [lastRange, convertRangeText(callData, action)];
   
-        const stackMap = Object.fromEntries(positionOrder.map(pos => {
-          const plate = plateMapping[pos];
-          const bb = plateData[plate]?.bb ?? 0;
-          const bet = pos === actingPosition ? newBetAmount : playerBets[pos] ?? 0;
-          return [pos, Math.round((bb - bet) * 100)];
-        }));
-        //console.log(stackMap)
-  
-        const allAlive = positionOrder.filter(pos => newAliveMap[pos]);
-
-      // Ensure we always get 2 alive players before the rest
-      const [earlier, later] = [...allAlive].sort(
-        (a, b) => positionOrder.indexOf(a) - positionOrder.indexOf(b)
-      );
-
-      const stackEntries = new Set([later, earlier]);
-
-      // Add the rest (in any order)
-      const otherStacks = positionOrder
-        .filter(pos => !stackEntries.has(pos))
-        .map(pos => stackMap[pos] ?? 0);
-
-      // Final result with exactly 8 entries
-      const stacksStr = [stackMap[later], stackMap[earlier], ...otherStacks].join("\\n");
+          const stackMap = Object.fromEntries(
+            positionOrder.map((pos) => {
+              const plate = plateMapping[pos];
+              const bb = plateData[plate]?.bb ?? 0;
+              const bet =
+                pos === actingPosition ? newBetAmount : playerBets[pos] ?? 0;
+              return [pos, Math.round((bb - bet) * 100)];
+            })
+          );
+          
+          let firstPos = lastRangePos;   // raiser / Min
+          let secondPos = actingPosition; // caller
+          // Fallback in weird edge-cases (e.g., first click is Call)
+          if (!firstPos) firstPos = secondPos;
+          
+          /* put them in table order */
+          if (
+            firstPos &&
+            secondPos &&
+            positionOrder.indexOf(firstPos) < positionOrder.indexOf(secondPos)
+          ) {
+            [firstPos, secondPos] = [secondPos, firstPos];
+          }
+          
+          /* -------- build #ICM.Stacks# -------- */
+          const stackEntries = new Set([firstPos, secondPos]);
+          
+          const otherStacks = positionOrder
+            .filter((pos) => !stackEntries.has(pos))
+            .map((pos) => stackMap[pos] ?? 0);
+          
+          const stacksStr = [
+            stackMap[firstPos],
+            stackMap[secondPos],
+            ...otherStacks,
+          ].join("\\n");
+          console.log(stackMap, stacksStr)
 
       const payoutsStr = Array.isArray(metadata.icm)
       ? metadata.icm.map(v => Math.round(v * 10)).join("\\n")
@@ -441,8 +462,6 @@ const Solver = () => {
               return stack - bet;
             })
         );
-        
-  
         const adjustedText = fullText
           .replace(/#Pot#\d+/, `#Pot#${(newPotSize * 100).toFixed(0)}`)
           .replace(/#EffectiveStacks#\d+/, `#EffectiveStacks#${Math.round(effStack * 100)}`);
@@ -455,13 +474,10 @@ const Solver = () => {
           setLastRangePos(data.Position);
         }
       }
-  
       setPreflopLine(["Root", ...parts.filter(p => p !== "root").map(p => numberToActionMap[p]), action]);
-  
       if (newLoadedPlates.length !== loadedPlates.length || !newLoadedPlates.every((v, i) => v === loadedPlates[i])) {
         setLoadedPlates(newLoadedPlates);
       }
-  
       setRandomFillEnabled(false);
       setPlateMapping(prev => ({ ...prev }));
     },
@@ -583,12 +599,34 @@ const Solver = () => {
         {(folderError || filesError) && (
           <div className="text-red-500">{folderError || filesError}</div>
         )}
-        {displayPlates.some((plate) => plate !== "") && (
-          <Line 
-            line={preflopLine} 
-            onLineClick={(index) => handleLineClick(index)} 
-          />
-        )}
+       {displayPlates.some((p) => p !== "") && (
+        <div className="flex items-center">
+          <Line line={preflopLine} onLineClick={(i) => handleLineClick(i)} />
+
+          {/* info button */}
+          <button
+            onClick={() => setShowInstructions(true)}
+            className="absolute right-0 mr-2 flex items-center justify-center w-4 h-4 rounded-full bg-blue-800 text-white text-sm font-bold shadow"
+            title="Show instructions"
+          >
+            i
+          </button>
+        </div>
+      )}
+
+      {/* render the draggable instructions only when needed */}
+      {showInstructions && (
+         <div className="fixed inset-0 z-50">
+        <InstructionBox onClose={() => setShowInstructions(false)}>
+          <h2 className="text-lg font-bold mb-2">Instructions</h2>
+          <p className="text-sm lg:text-md">
+            Use the navigation bar above to choose a pre-flop sim.<br />
+            Click on an action (other than fold) to view the reactions to that action.<br />
+            Use the&nbsp;<strong>Line</strong>&nbsp;buttons to reset the tree or jump back to any action.
+          </p>
+        </InstructionBox>
+        </div>
+      )}
   
       <PlateGrid
         files={displayPlates}
@@ -630,27 +668,12 @@ const Solver = () => {
               })}
             </div>
             
-            
             ) : (
               <div><strong>ICM:</strong> None</div>
             )}
           </div>
         )}
-
       </div>
-      {/* Render InstructionBox outside the PlateGrid container */}
-      {displayPlates.some((plate) => plate !== "") && (
-        <div style={{ position: "fixed", zIndex: 1000}}>
-          <InstructionBox>
-            <h2 className="text-lg font-bold mb-2">Instructions</h2>
-            <p className="text-sm lg:text-md">
-              Use the navigation bar above to choose a preflop Sim.<br />
-              Click on an action (other than fold) to view the reactions to an action.<br />
-              Click on the 'Line' buttons at the top of the page to either reset the tree or go back to a certain action.
-            </p>
-          </InstructionBox>
-        </div>
-      )}
       <div className="text-center select-none pt-5">© Josh Garber 2025</div>
     </Layout>
   );  
