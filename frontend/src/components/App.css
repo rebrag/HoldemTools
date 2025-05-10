@@ -29,3 +29,8 @@ html, body, footer {
   scrollbar-width: none; /* Hide scrollbar in Firefox */
 }
 
+/* iOS 18 Safari – force tooltips to render */
+.introjs-tooltipReferenceLayer {
+  visibility: visible !important;
+}
+
