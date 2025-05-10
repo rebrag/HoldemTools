@@ -9,11 +9,9 @@ import useFolders from "../hooks/useFolders";
 import useFiles from "../hooks/useFiles";
 import axios from "axios";
 import { JsonData } from "../utils/utils";
-// import InstructionBox from "./InstructionBox";
 import Line from "./Line";
 import { Steps } from 'intro.js-react';
 import 'intro.js/introjs.css';
-// import { generateSpiralOrder } from "../utils/gridUtils";
 
 const tourSteps = [
   { element: '[data-intro-target="folder-selector"]', intro: 'Choose a pre‑flop sim here.' },
@@ -40,8 +38,9 @@ const Solver = () => {
   const isICMSim = Array.isArray(metadata.icm) && metadata.icm.length > 0;
   const [potSize, setPotSize] = useState<number>(0);
   const [playerBets, setPlayerBets] = useState<Record<string, number>>({});
-  // const [showInstructions, setShowInstructions] = useState(true);
-  const [run, setRun] = useState(false);
+  const [tourRun, setTourRun] = useState(false);
+  const [tourReady, setTourReady] = useState(false);
+  const tourBooted = useRef(localStorage.getItem('tourSeen') === '1');
 
   const defaultPlateNames = useMemo(() => {
     const filesArray: string[] = [];
@@ -115,7 +114,6 @@ const Solver = () => {
       plateMapping: { ...plateMapping },
     };
     //console.log(metadata.icm)
-
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folder]);
 
@@ -126,6 +124,20 @@ const Solver = () => {
     () => positionOrder.map((pos) => plateMapping[pos] || ""),
     [plateMapping, positionOrder]
   );
+
+  useEffect(() => {
+    const folderNode = document.querySelector('[data-intro-target="folder-selector"]');
+    const btnKey     = document.querySelector('[data-intro-target="color-key-btn"]');
+    setTourReady(Boolean(folderNode && btnKey));
+  }, [displayPlates]);
+
+  useEffect(() => {
+    if (tourReady && !tourBooted.current) {
+      setTourRun(true);
+      tourBooted.current = true;
+      localStorage.setItem('tourSeen', '1');   // never auto‑show again
+    }
+  }, [tourReady]);
 
   useLayoutEffect(() => {
     setLoadedPlates(defaultPlateNames);
@@ -567,10 +579,10 @@ const Solver = () => {
   
   return (
     <>
-    <Steps enabled={run}
+    <Steps enabled={tourRun}
              steps={tourSteps}
              initialStep={0}
-             onExit={() => setRun(false)} />
+             onExit={() => setTourRun(false)} />
 
     <Layout>
       <NavBar
@@ -593,7 +605,7 @@ const Solver = () => {
           {/* info button */}
           <button
             // onClick={() => setShowInstructions(true)}
-            onClick={() => setRun(true)}
+            onClick={() => setTourRun(true)}
             className="absolute right-0 mr-2 flex items-center justify-center w-4 h-4 rounded-full bg-blue-800 text-white text-sm font-bold shadow"
             title="Show instructions"
           >
