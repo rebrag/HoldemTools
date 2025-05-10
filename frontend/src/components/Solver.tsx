@@ -14,8 +14,8 @@ import { Steps } from 'intro.js-react';
 import 'intro.js/introjs.css';
 
 const tourSteps = [
-  { element: '[data-intro-target="folder-selector"]', intro: 'Choose a pre‑flop sim here.' },
-  { element: '[data-intro-target="color-key-btn"]', intro: 'Click on an action to see how other players should react.' },
+  { element: '[data-intro-target="folder-selector"]', intro: 'Choose a pre‑flop sim here.', position: 'bottom' },
+  { element: '[data-intro-target="color-key-btn"]', intro: 'Click on an action to see how other players should react.', position: 'bottom'}, 
 ];
 
 const Solver = () => {
