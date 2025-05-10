@@ -9,9 +9,16 @@ import useFolders from "../hooks/useFolders";
 import useFiles from "../hooks/useFiles";
 import axios from "axios";
 import { JsonData } from "../utils/utils";
-import InstructionBox from "./InstructionBox";
+// import InstructionBox from "./InstructionBox";
 import Line from "./Line";
+import { Steps } from 'intro.js-react';
+import 'intro.js/introjs.css';
 // import { generateSpiralOrder } from "../utils/gridUtils";
+
+const tourSteps = [
+  { element: '[data-intro-target="folder-selector"]', intro: 'Choose a pre‑flop sim here.' },
+  { element: '[data-intro-target="color-key-btn"]', intro: 'Click on an action to see how other players should react.' },
+];
 
 const Solver = () => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -33,7 +40,8 @@ const Solver = () => {
   const isICMSim = Array.isArray(metadata.icm) && metadata.icm.length > 0;
   const [potSize, setPotSize] = useState<number>(0);
   const [playerBets, setPlayerBets] = useState<Record<string, number>>({});
-  const [showInstructions, setShowInstructions] = useState(true);
+  // const [showInstructions, setShowInstructions] = useState(true);
+  const [run, setRun] = useState(false);
 
   const defaultPlateNames = useMemo(() => {
     const filesArray: string[] = [];
@@ -68,28 +76,6 @@ const Solver = () => {
   positionOrder.forEach((pos, i) => {
     gridArray[i] = pos;
   });
-  
-  //const spiralIndices = generateSpiralOrder(gridRows, gridCols);
-  // const spiralPositionOrder = useMemo(() => {
-  //   const total = positionOrder.length;
-  //   const gridRows = isNarrow ? Math.ceil(total / 2) : 2;
-  //   const gridCols = isNarrow ? 2 : Math.ceil(total / 2);
-  
-  //   const paddedPositions = [...positionOrder];
-  //   while (paddedPositions.length < gridRows * gridCols) {
-  //     paddedPositions.push("");
-  //   }
-  
-  //   const gridArray = Array.from({ length: gridRows }, (_, r) =>
-  //     paddedPositions.slice(r * gridCols, r * gridCols + gridCols)
-  //   );
-  
-  //   const spiralIndices = generateSpiralOrder(gridRows, gridCols);
-  //   return spiralIndices
-  //     .map(([r, c]) => gridArray[r]?.[c])
-  //     .filter((pos): pos is string => pos !== null);
-  // }, [positionOrder, isNarrow]);
-  
 
   useEffect(() => {
     const initialAlive: Record<string, boolean> = {};
@@ -129,7 +115,6 @@ const Solver = () => {
       plateMapping: { ...plateMapping },
     };
     //console.log(metadata.icm)
-    
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folder]);
@@ -167,15 +152,12 @@ const Solver = () => {
       setLoading(false);
       return;
     }
-    
     let didTimeout = false;
     const timer = setTimeout(() => {
       didTimeout = true;
       setLoading(true);
     }, 700);
-  
     const source = axios.CancelToken.source();
-
     Promise.all(
       platesToFetch.map((plate) =>
         axios
@@ -203,7 +185,6 @@ const Solver = () => {
         if (didTimeout) {
           setLoading(false);
         }});
-    
     return () => source.cancel();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadedPlates, folder]);
@@ -585,6 +566,12 @@ const Solver = () => {
   const [isSpiralView, setIsSpiralView] = useState(true);
   
   return (
+    <>
+    <Steps enabled={run}
+             steps={tourSteps}
+             initialStep={0}
+             onExit={() => setRun(false)} />
+
     <Layout>
       <NavBar
         randomFillEnabled={randomFillEnabled}
@@ -605,7 +592,8 @@ const Solver = () => {
 
           {/* info button */}
           <button
-            onClick={() => setShowInstructions(true)}
+            // onClick={() => setShowInstructions(true)}
+            onClick={() => setRun(true)}
             className="absolute right-0 mr-2 flex items-center justify-center w-4 h-4 rounded-full bg-blue-800 text-white text-sm font-bold shadow"
             title="Show instructions"
           >
@@ -615,7 +603,7 @@ const Solver = () => {
       )}
 
       {/* render the draggable instructions only when needed */}
-      {showInstructions && (
+      {/* {showInstructions && (
          <div className="fixed inset-0 z-50">
         <InstructionBox onClose={() => setShowInstructions(false)}>
           <h2 className="text-lg font-bold mb-2">Instructions</h2>
@@ -626,7 +614,7 @@ const Solver = () => {
           </p>
         </InstructionBox>
         </div>
-      )}
+      )} */}
   
       <PlateGrid
         files={displayPlates}
@@ -676,6 +664,7 @@ const Solver = () => {
       </div>
       <div className="text-center select-none pt-5">© Josh Garber 2025</div>
     </Layout>
+    </>
   );  
 };
 

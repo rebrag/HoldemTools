@@ -85,15 +85,11 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   currentFolder,
   onFolderSelect,
 }) => {
-  // Get the current authenticated user from Firebase
   const [user] = useAuthState(auth);
-  
   const [inputValue, setInputValue] = useState("");
   const [filteredFolders, setFilteredFolders] = useState<string[]>(folders);
   const [showDropdown, setShowDropdown] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState<number>(-1);
-  
-  // Track if the viewport is small
   const [isSmallViewport, setIsSmallViewport] = useState(window.innerWidth < 440);
   useEffect(() => {
     const handleResize = () => setIsSmallViewport(window.innerWidth < 440);
@@ -101,7 +97,6 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // Update the filtered folders as the search input changes
   useEffect(() => {
     const sortedFolders = [...folders]
   .filter((folder) =>
@@ -174,7 +169,11 @@ setHighlightedIndex(sortedFolders.length > 0 ? 0 : -1);
   };
 
   return (
-    <div className="flex justify-center h-10vh">
+    
+    <div
+      data-intro-target="folder-selector"   // ⭐️ Intro.js can now find it
+      className="flex justify-center h-10vh"
+    >
       <div className="select-none relative w-full max-w-lg">
         <div className="relative">
           <input

@@ -28,7 +28,7 @@ const Plate: React.FC<PlateProps> = ({
   useEffect(() => {
     if (data) setCombinedData(combineDataByHand(data));
   }, [data]);
-  
+
 // useEffect(() => {
   //   console.log("Plate render:", {
   //     position: data.Position,
@@ -99,7 +99,10 @@ const Plate: React.FC<PlateProps> = ({
             </div>
             
             {/* Color key */}
-            <div className="select-none flex w-full items-center justify-end mt-0.5">
+            <div
+              data-intro-target={data.Position === 'BTN' ? 'color-key-btn' : undefined}
+              className="select-none flex w-full items-center justify-end mt-0.5"
+            >
               <ColorKey
                 data={combinedData}
                 onActionClick={(action) => onActionClick(action, file)}
