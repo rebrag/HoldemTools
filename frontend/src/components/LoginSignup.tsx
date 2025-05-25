@@ -155,7 +155,6 @@ const LoginSignup = () => {
             <img src="/google-icon.svg" alt="Google" className="w-5 h-5" />
             <span>Sign in with Google</span>
           </button>
-
           </div>
 
           <button
@@ -171,7 +170,7 @@ const LoginSignup = () => {
         </div>
 
         {/* Summary and Video */}
-        <div className="flex flex-row max-[700px]:flex-col gap-4 w-full justify-center items-center">
+        {/* <div className="flex flex-row max-[700px]:flex-col gap-4 w-full justify-center items-center">
           <div className="max-w-sm w-full p-4 bg-white/70 rounded-lg shadow-md">
             <p className="text-gray-800 text-sm">
               Holdemtool is an advanced GTO preflop range tool that guides you on the optimal play for your preflop hands in various situations. Right now, our simulations focus on tournament play with a 1bb ante, and we’re planning to add cash game and ICM simulations soon. Stay tuned!
@@ -190,7 +189,7 @@ const LoginSignup = () => {
               Your browser does not support the video tag.
             </video>
           </div>
-        </div>
+        </div> */}
       </div>
       <div className="text-center select-none">© Josh Garber 2025</div>
     </Layout>

@@ -12,16 +12,18 @@ import { JsonData } from "../utils/utils";
 import Line from "./Line";
 import { Steps } from 'intro.js-react';
 import 'intro.js/introjs.css';
+import { User } from "firebase/auth";
+import LoginSignupModal from "./LoginSignupModal";
 
 const tourSteps = [
   { element: '[data-intro-target="folder-selector"]', intro: 'Choose a pre‑flop sim here.', position: 'bottom' },
   { element: '[data-intro-target="color-key-btn"]', intro: 'Click on an action to see how other players should react.', position: 'bottom'}, 
 ];
 
-const Solver = () => {
+const Solver = ({ user }: { user: User | null }) => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
   const { windowWidth, windowHeight } = useWindowDimensions();
-  const [folder, setFolder] = useState<string>("22UTG_22UTG1_22LJ_22HJ_22CO_22BTN_22SB_22BB");
+  const [folder, setFolder] = useState<string>("23UTG_23UTG1_23LJ_23HJ_23CO_23BTN_23SB_23BB");
   const [plateData, setPlateData] = useState<Record<string, JsonData>>({});
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>({});
   const [lastRange, setLastRange] = useState<string>("");
@@ -40,7 +42,10 @@ const Solver = () => {
   const [playerBets, setPlayerBets] = useState<Record<string, number>>({});
   const [tourRun, setTourRun] = useState(false);
   const [tourReady, setTourReady] = useState(false);
+  const [pendingFolder, setPendingFolder] = useState<string | null>(null);
+  const [showLoginOverlay, setShowLoginOverlay] = useState(false);
   const tourBooted = useRef(localStorage.getItem('tourSeen') === '1');
+
 
   const defaultPlateNames = useMemo(() => {
     const filesArray: string[] = [];
@@ -139,6 +144,14 @@ const Solver = () => {
     }
   }, [tourReady]);
 
+  useEffect(() => {
+  if (user && pendingFolder) {
+    handleFolderSelect(pendingFolder);
+    setPendingFolder(null);
+  }
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [user, pendingFolder]);
+
   useLayoutEffect(() => {
     setLoadedPlates(defaultPlateNames);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -202,23 +215,30 @@ const Solver = () => {
   }, [loadedPlates, folder]);
 
   const handleFolderSelect = useCallback(
-    (selectedFolder: string) => {
-      const newLoadedPlates = defaultPlateNames;
-      setLoadedPlates(newLoadedPlates);
-      setFolder(selectedFolder);
-      setPlateData({});
-      setPlateMapping({});
-      setRandomFillEnabled(false);
-      setPreflopLine(["Root"])
-      const initialAlive: Record<string, boolean> = {};
-      // Use canonical ordering (or spiralPositionOrder if that's what you prefer).
-      positionOrder.forEach((pos) => {
-        initialAlive[pos] = true;
-      });
-      setAlivePlayers(initialAlive);
-    },
-    [defaultPlateNames, positionOrder]
-  );
+  (selectedFolder: string) => {
+    if (!user && selectedFolder !== folder) {
+      setPendingFolder(selectedFolder);
+      setShowLoginOverlay(true);
+      return;
+    }
+
+    const newLoadedPlates = defaultPlateNames;
+    setLoadedPlates(newLoadedPlates);
+    setFolder(selectedFolder);
+    setPlateData({});
+    setPlateMapping({});
+    setRandomFillEnabled(false);
+    setPreflopLine(["Root"]);
+
+    const initialAlive: Record<string, boolean> = {};
+    positionOrder.forEach((pos) => {
+      initialAlive[pos] = true;
+    });
+    setAlivePlayers(initialAlive);
+  },
+  [user, folder, defaultPlateNames, positionOrder]
+);
+
 
   useEffect(() => {
     if (!folder) return;
@@ -676,6 +696,15 @@ const Solver = () => {
       </div>
       <div className="text-center select-none pt-5">© Josh Garber 2025</div>
     </Layout>
+
+    {showLoginOverlay && (
+    <LoginSignupModal onClose={() => {
+        setShowLoginOverlay(false);
+        setPendingFolder(null);
+      }} />
+    )}
+
+
     </>
   );  
 };

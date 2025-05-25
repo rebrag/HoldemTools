@@ -1,10 +1,7 @@
-// src/App.tsx
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { auth } from "./firebase";
-import LoginSignup from "./components/LoginSignup";
 import Solver from "./components/Solver";
-import VerifyEmailPrompt from "./components/VerifyEmailPrompt";
 import LoadingIndicator from "./components/LoadingIndicator";
 import { AppProvider } from "./components/AppContext";
 
@@ -21,32 +18,21 @@ function App() {
   }, []);
 
   if (loading) return (
-      <div
-        className={`absolute inset-0 flex items-center justify-center z-10 transition-opacity duration-300 ${
-          loading ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-        }`}
-      >
-        <LoadingIndicator />
-      </div>);
-
-  let content;
-  if (!user) {
-    content = <LoginSignup />;
-  } else if (!user.emailVerified) {
-    content = <VerifyEmailPrompt />;
-  } else {
-    content = 
-    <AppProvider>
-      <Solver />
-    </AppProvider>
-    ;
-  }
+    <div
+      className={`absolute inset-0 flex items-center justify-center z-10 transition-opacity duration-300 ${
+        loading ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+      }`}
+    >
+      <LoadingIndicator />
+    </div>
+  );
 
   return (
     <div className="min-h-screen flex flex-col">
-      <div className="flex-grow">{content}</div>
-      <div className="text-center">
-        
+      <div className="flex-grow">
+        <AppProvider>
+          <Solver user={user} />
+        </AppProvider>
       </div>
     </div>
   );

@@ -51,7 +51,7 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
         .map((action) => {
           const base = getColorForAction(action);
           // eslint-disable-next-line no-irregular-whitespace
-          const hover = shadeColor(base, -15); // 15 % darker
+          const hover = shadeColor(base, -30); // 15 % darker
           return (
             <div
               key={action}
@@ -66,7 +66,8 @@ const ColorKey: React.FC<ColorKeyProps> = ({ data, onActionClick }) => {
                 className="flex items-center justify-center rounded-sm shadow-sm"
                 style={{
                   width: "100%",
-                  height: "calc(20px + 0.5vw)",
+                  height: "calc(20px + 1vw)",
+                  // height: "100%",
                   backgroundColor: base,
                   border: `2px solid ${base}`,
                 }}
