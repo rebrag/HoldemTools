@@ -465,6 +465,13 @@ const Solver = ({ user }: { user: User | null }) => {
         #RiverConfigIP.BetSize#30 66
         #RiverConfigIP.RaiseSize#a
         #RiverConfigIP.AddAllin#True`;
+
+        if (isICMSim) {
+          fullText = fullText.replace(
+            '#ICM.ICMFormat#Pio ICM structure',
+            '#ICM.ICMFormat#Pio ICM structure\n#ICM.Enabled#True'
+          );
+        }
   
         const effStack = Math.min(
           ...positionOrder
@@ -494,6 +501,7 @@ const Solver = ({ user }: { user: User | null }) => {
       setRandomFillEnabled(false);
       setPlateMapping(prev => ({ ...prev }));
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [loadedPlates, appendPlateNames, availableJsonFiles, playerCount, playerBets, plateData, potSize, positionOrder, lastRangePos, lastRange, metadata, plateMapping]
   );
   
