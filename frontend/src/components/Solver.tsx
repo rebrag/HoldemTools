@@ -62,8 +62,11 @@ const Solver = ({ user }: { user: User | null }) => {
 
   const positionOrder = useMemo(() => {
     if (playerCount === 8) return ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"];
+    if (playerCount === 7) return ["SB", "BB", "UTG1", "LJ", "HJ", "CO", "BTN"];
     if (playerCount === 6) return ["SB", "BB", "LJ", "HJ", "CO", "BTN"];
     if (playerCount === 5) return ["SB", "BB","HJ", "CO", "BTN"];
+    if (playerCount === 4) return ["SB", "BB","CO", "BTN"];
+    if (playerCount === 3) return ["SB", "BB","BTN"];
     if (playerCount === 2) return ["BTN", "BB"];
     return Object.keys(plateMapping);
   }, [playerCount, plateMapping]);
@@ -85,10 +88,16 @@ const Solver = ({ user }: { user: User | null }) => {
     const initialAlive: Record<string, boolean> = {};
     const positions = playerCount === 8 
       ? ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"]
+      : playerCount === 7 
+        ? ["SB", "BB", "UTG1", "LJ", "HJ", "CO", "BTN"]
       : playerCount === 6 
         ? ["SB", "BB", "LJ", "HJ", "CO", "BTN"]
         : playerCount === 5
           ? ["SB", "BB", "HJ", "CO", "BTN"]
+        : playerCount === 4
+          ? ["SB", "BB", "CO", "BTN"]
+        : playerCount === 3
+          ? ["SB", "BB", "BTN"]
         : playerCount === 2 
           ? ["BB", "BTN"]
           : Object.keys(plateMapping);
@@ -512,10 +521,16 @@ const Solver = ({ user }: { user: User | null }) => {
     const initialAlive: Record<string, boolean> = {};
     const positions = playerCount === 8
       ? ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"]
+      : playerCount === 7
+        ? ["SB", "BB","UTG1", "LJ", "HJ", "CO", "BTN"]
       : playerCount === 6
         ? ["SB", "BB", "LJ", "HJ", "CO", "BTN"]
         : playerCount === 5
           ? ["SB", "BB", "HJ", "CO", "BTN"]
+        : playerCount === 4
+          ? ["SB", "BB","CO", "BTN"]
+        : playerCount === 3
+          ? ["SB", "BB", "BTN"]
         : playerCount === 2
           ? ["BB", "BTN"]
           : Object.keys(plateMapping);
@@ -551,6 +566,16 @@ const Solver = ({ user }: { user: User | null }) => {
           "SB": "0.0.0.0.0.0.json", 
           "BB": "0.0.0.0.0.0.1.json"
         });
+      } else if (playerCount === 7) {
+        setPlateMapping({
+          "UTG1": "root.json", 
+          "LJ": "0.json", 
+          "HJ": "0.0.json", 
+          "CO": "0.0.0.json", 
+          "BTN": "0.0.0.0.json",
+          "SB": "0.0.0.0.0.json", 
+          "BB": "0.0.0.0.0.1.json"
+        });
       } else if (playerCount === 6) {
         setPlateMapping({
           "LJ": "root.json", 
@@ -560,13 +585,26 @@ const Solver = ({ user }: { user: User | null }) => {
           "SB": "0.0.0.0.json", 
           "BB": "0.0.0.0.1.json"
         });
-      } else if (playerCount === 5) {
+      }else if (playerCount === 5) {
         setPlateMapping({
           "HJ": "root.json", 
           "CO": "0.json", 
           "BTN": "0.0.json", 
           "SB": "0.0.0.json",
           "BB": "0.0.0.1.json", 
+        });
+      }else if (playerCount === 4) {
+        setPlateMapping({
+          "CO": "root.json", 
+          "BTN": "0.json", 
+          "SB": "0.0.json",
+          "BB": "0.0.1.json", 
+        });
+      }else if (playerCount === 3) {
+        setPlateMapping({
+          "BTN": "root.json", 
+          "SB": "0.json",
+          "BB": "0.1.json", 
         });
       } else if (playerCount === 2) {
         setPlateMapping({
