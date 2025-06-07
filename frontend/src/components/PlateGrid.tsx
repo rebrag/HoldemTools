@@ -19,7 +19,7 @@ type PlateGridProps = {
   playerBets: Record<string, number>;
   isICMSim?: boolean;
   ante?: number;
-  pot?: number
+  pot?: number;
 };
 
 const PlateGrid: React.FC<PlateGridProps> = ({
@@ -83,11 +83,23 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     return [c0, c1];
   }, [orderedEntries]);
 
-  /* ---------- landscape rows (unchanged) ---------- */
+  /* ---------- rows for landscape ---------- */
   const rows: (readonly [string, string])[][] = [];
   for (let i = 0; i < orderedEntries.length; i += gridCols) {
     rows.push(orderedEntries.slice(i, i + gridCols));
   }
+
+  /* ---------- NEW: canonical plate width (landscape only) ---------- */
+  const gapPx = 8;                        // Tailwind `gap-2` ≈ 0.5 rem ≈ 8 px
+  const canonicalPlateWidth = isNarrow
+    ? undefined
+    : Math.min(
+        300,                              // ↖︎ your existing max
+        Math.max(
+          170,                            // ↖︎ your existing min
+          (windowWidth - (gridCols - 1) * gapPx) / gridCols
+        )
+      );
 
   /* ---------- render ---------- */
   return (
@@ -95,7 +107,9 @@ const PlateGrid: React.FC<PlateGridProps> = ({
       {/* loading overlay */}
       <div
         className={`absolute inset-0 flex items-center justify-center z-50 transition-opacity duration-100 ${
-          loading ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+          loading
+            ? "opacity-100 pointer-events-auto"
+            : "opacity-0 pointer-events-none"
         }`}
       >
         <LoadingIndicator />
@@ -105,14 +119,12 @@ const PlateGrid: React.FC<PlateGridProps> = ({
       {ante !== undefined && pot !== undefined && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
           <div className="bg-white/50 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center">
-          <strong>Total:</strong>&nbsp;{pot.toFixed(2)} bb
+            <strong>Total:</strong>&nbsp;{pot.toFixed(2)} bb
             <br />
             <strong>Pot:</strong>&nbsp;{ante} bb
           </div>
         </div>
       )}
-
-
 
       {/* ================== PORTRAIT / NARROW ================== */}
       {isNarrow ? (
@@ -123,8 +135,8 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                 key={`col-${idx}`}
                 className="flex flex-1 flex-col gap-5 justify-center items-center"
                 style={{
-                  minWidth: 170,             /* ► keep ≥ 170 px … */
-                  maxWidth: 400,             /* ► … cap at 400 px   */
+                  minWidth: 170,
+                  maxWidth: 400,
                 }}
               >
                 {col.map(([posKey, file]) => (
@@ -156,11 +168,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
             return (
               <div
                 key={`row-${rowIdx}`}
-                className="grid gap-2"
-                style={{
-                  gridTemplateColumns: `repeat(${plates.length}, minmax(100px, 300px))`,
-                  justifyContent: "center",
-                }}
+                className="flex justify-center gap-2 flex-nowrap"
               >
                 {plates.map(([posKey, file]) => (
                   <Plate
@@ -172,6 +180,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                     alive={alivePlayers[posKey] ?? true}
                     playerBet={playerBets[posKey] ?? 0}
                     isICMSim={isICMSim}
+                    plateWidth={canonicalPlateWidth}           /* NEW */
                   />
                 ))}
               </div>

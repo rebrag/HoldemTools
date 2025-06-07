@@ -12,6 +12,7 @@ interface PlateProps {
   alive: boolean;
   playerBet?: number;
   isICMSim?: boolean;
+  plateWidth?: number;                // NEW – optional fixed width
 }
 
 const Plate: React.FC<PlateProps> = ({
@@ -22,6 +23,7 @@ const Plate: React.FC<PlateProps> = ({
   alive,
   playerBet = 0,
   isICMSim,
+  plateWidth,                         // NEW
 }) => {
   const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
 
@@ -33,7 +35,14 @@ const Plate: React.FC<PlateProps> = ({
     Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1);
 
   return (
-    <div className="relative mb-8 justify-self-center max-w-[400px] w-full text-base">
+    <div
+      className="relative mb-8 justify-self-center max-w-[400px] w-full text-base"
+      style={
+        plateWidth
+          ? { width: plateWidth, maxWidth: plateWidth, minWidth: plateWidth }
+          : undefined
+      }                                /* NEW – pin width if provided */
+    >
       {/* Dealer button */}
       {data?.Position === "BTN" && (
         <div

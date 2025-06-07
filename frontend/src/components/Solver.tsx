@@ -32,6 +32,7 @@ const Solver = ({ user }: { user: User | null }) => {
   const [preflopLine, setPreflopLine] = useState<string[]>(["Root"]);
   const playerCount = useMemo(() => (folder ? folder.split("_").length : 1), [folder]);
   const [alivePlayers, setAlivePlayers] = useState<Record<string, boolean>>({});
+  
   const [metadata, setMetadata] = useState<{ name: string; ante: number; icm: number[] }>({
     name: "",
     ante: 0,
