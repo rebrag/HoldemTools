@@ -1,5 +1,5 @@
 // src/components/RandomizeButton.tsx
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react"; //, useEffect
 import { motion } from "framer-motion";
 
 export interface RandomizeButtonProps {
@@ -27,16 +27,16 @@ const RandomizeButton: React.FC<RandomizeButtonProps> = ({
   };
 
   // Listen for "r" key to trigger the animation
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "r") {
-        triggerAnimation();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [animationSpeed]);
+  // useEffect(() => {
+  //   const handleKeyDown = (e: KeyboardEvent) => {
+  //     if (e.key.toLowerCase() === "r") {
+  //       triggerAnimation();
+  //     }
+  //   };
+  //   window.addEventListener("keydown", handleKeyDown);
+  //   return () => window.removeEventListener("keydown", handleKeyDown);
+  // // eslint-disable-next-line react-hooks/exhaustive-deps
+  // }, [animationSpeed]);
 
   // Combined spin and shake variant
   const variants = {

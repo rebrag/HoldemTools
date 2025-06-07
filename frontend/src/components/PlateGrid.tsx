@@ -104,7 +104,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
       {/* overlay ─ Ante / Pot */}
       {ante !== undefined && pot !== undefined && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
-          <div className="bg-white/10 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center">
+          <div className="bg-white/50 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center">
           <strong>Total:</strong>&nbsp;{pot.toFixed(2)} bb
             <br />
             <strong>Pot:</strong>&nbsp;{ante} bb

@@ -8,7 +8,7 @@ const useKeyboardShortcuts = ({ onToggleRandom }: Options) => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
-        e.key.toLowerCase() === "r" &&
+        e.key === "r" &&
         document.activeElement &&
         !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)
       ) {

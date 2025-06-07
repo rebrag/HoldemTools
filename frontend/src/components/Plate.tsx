@@ -29,20 +29,11 @@ const Plate: React.FC<PlateProps> = ({
     if (data) setCombinedData(combineDataByHand(data));
   }, [data]);
 
-// useEffect(() => {
-  //   console.log("Plate render:", {
-  //     position: data.Position,
-  //     file,
-  //     playerBet,
-  //     alive,
-  //   });
-  // }, [file, data, playerBet, alive]);
-
   const formatBB = (v: number) =>
     Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1);
 
   return (
-    <div className="relative mb-6 justify-self-center max-w-[400px] w-full text-base">
+    <div className="relative mb-8 justify-self-center max-w-[400px] w-full text-base">
       {/* Dealer button */}
       {data?.Position === "BTN" && (
         <div
@@ -67,40 +58,28 @@ const Plate: React.FC<PlateProps> = ({
                 isICMSim={isICMSim}
               />
 
-              {/* Position + BB box             */} 
-              <div className="absolute left-1/2 -bottom-14 -translate-x-1/2 z-20">
-                <div className="bg-white/90 rounded-md p-1 text-center">
-                  <h2
-                    className="font-bold text-gray-800"
-                    style={{ fontSize: "calc(0.6rem + 0.3vw)" }}
-                  >
-                    {data.Position
-                      ? `${data.Position} ${formatBB(data.bb - playerBet)}bb`
-                      : file}
-                  </h2>
+              {/* Position + BB badge */}
+              <div className="absolute left-1/2 -bottom-16 -translate-x-1/2 z-30 pointer-events-none">
+                <div className="bg-white/70 backdrop-blur-sm rounded-md px-2 py-1 text-xs shadow text-center">
+                  <strong>{data.Position} </strong>
+                  {formatBB(data.bb - playerBet)} bb
                 </div>
               </div>
 
-              {/* Player-bet chip */}
+              {/* Player-bet badge */}
               {playerBet !== 0 && (
-                <div className="absolute left-5/6 -bottom-14 -translate-x-1/2 z-20">
-                  <div className="bg-white/95 rounded-md p-0.5 border-2">
-                    <span
-                      className="text-gray-800 font-medium"
-                      style={{ fontSize: "calc(0.6rem + 0.3vw)" }}
-                    >
-                      {formatBB(playerBet)}bb
-                    </span>
+                <div className="absolute left-5/6 -bottom-14 -translate-x-1/2 z-30 pointer-events-none">
+                  <div className="bg-white/70 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center whitespace-nowrap">
+                    <strong>Bet:</strong>&nbsp;{formatBB(playerBet)} bb
                   </div>
                 </div>
               )}
 
-              
             </div>
-            
+
             {/* Color key */}
             <div
-              data-intro-target={data.Position === 'BTN' ? 'color-key-btn' : undefined}
+              data-intro-target={data.Position === "BTN" ? "color-key-btn" : undefined}
               className="select-none flex w-full items-center justify-end mt-0.5"
             >
               <ColorKey
@@ -110,23 +89,15 @@ const Plate: React.FC<PlateProps> = ({
             </div>
           </>
         )}
-        
       </div>
-      {/* ─── Playing-cards SVGs (alive only, z-0) ─── */}
+
+      {/* Playing-cards SVGs (alive only, z-0) */}
       {alive && (
         <div className="absolute left-1/2 -bottom-9 -translate-x-1/2 -z-0 flex">
-          <img
-            src="/playing-cards.svg"
-            alt="cards"
-            className="w-18 h-18"
-          />
-          <img
-            src="/playing-cards.svg"
-            alt="cards"
-            className="w-18 h-18 -ml-8"
-          />
+          <img src="/playing-cards.svg" alt="cards" className="w-18 h-18" />
+          <img src="/playing-cards.svg" alt="cards" className="w-18 h-18 -ml-8" />
         </div>
-        )}
+      )}
     </div>
   );
 };

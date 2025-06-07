@@ -582,7 +582,7 @@ const Solver = ({ user }: { user: User | null }) => {
           "HJ": "0.json", 
           "CO": "0.0.json", 
           "BTN": "0.0.0.json",
-          "SB": "0.0.0.0.json", 
+          "SB": "0.0.0.0.json",
           "BB": "0.0.0.0.1.json"
         });
       }else if (playerCount === 5) {
