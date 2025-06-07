@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+@keyframes spotlight-sweep {
+  0%   { transform: translateY(-120%) rotate(45deg); opacity: 0.2; }
+  25%  { opacity: 0.85; }
+  50%  { transform: translateY(0)       rotate(45deg); opacity: 0.5; }
+  75%  { opacity: 0.85; }
+  100% { transform: translateY(120%)  rotate(45deg); opacity: 0.2; }
+}
+
 /* :root {
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;

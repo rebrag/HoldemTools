@@ -97,7 +97,7 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
       {/* ---------- EV TOOLTIP ---------- */}
       {hoveredEVs && hoveredHand && (
         <div className="absolute bottom-0 left-1/2 -translate-x-1/2 mb-1 z-50 bg-gray-800 text-white text-xs rounded px-2 py-1 pointer-events-none shadow-lg whitespace-nowrap">
-          <div className="text-xs font-bold mb-1 text-center">{hoveredHand}</div>
+          <div className="text-xs font-bold mb-1 text-center">EVs: {hoveredHand}</div>
           {Object.entries(hoveredEVs)
             .sort(([, a], [, b]) => (b ?? -Infinity) - (a ?? -Infinity))
             .map(([action, ev]) => {

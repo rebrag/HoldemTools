@@ -20,6 +20,7 @@ type PlateGridProps = {
   isICMSim?: boolean;
   ante?: number;
   pot?: number;
+  activePlayer?: string;
 };
 
 const PlateGrid: React.FC<PlateGridProps> = ({
@@ -37,6 +38,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   isICMSim,
   ante,
   pot,
+  activePlayer = "UTG",
 }) => {
   /* ---------- layout maths ---------- */
   const isNarrow =
@@ -47,6 +49,9 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   const gridRows = isNarrow ? Math.ceil(files.length / 2) : 2;
   const gridCols = isNarrow ? 2 : Math.ceil(files.length / 2);
   const totalCells = gridRows * gridCols;
+  
+  // NEW: Calculate the max bet on the table
+  const maxBet = playerBets ? Math.max(...Object.values(playerBets)) : 0;
 
   /* ---------- order entries ---------- */
   // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -89,14 +94,14 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     rows.push(orderedEntries.slice(i, i + gridCols));
   }
 
-  /* ---------- NEW: canonical plate width (landscape only) ---------- */
-  const gapPx = 8;                        // Tailwind `gap-2` ≈ 0.5 rem ≈ 8 px
+  /* ---------- canonical plate width (landscape only) ---------- */
+  const gapPx = 8;
   const canonicalPlateWidth = isNarrow
     ? undefined
     : Math.min(
-        300,                              // ↖︎ your existing max
+        400,
         Math.max(
-          170,                            // ↖︎ your existing min
+          170,
           (windowWidth - (gridCols - 1) * gapPx) / gridCols
         )
       );
@@ -149,6 +154,9 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                     alive={alivePlayers[posKey] ?? true}
                     playerBet={playerBets[posKey] ?? 0}
                     isICMSim={isICMSim}
+                    isActive={posKey === activePlayer}
+                    pot={pot}
+                    maxBet={maxBet}
                   />
                 ))}
               </div>
@@ -180,7 +188,10 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                     alive={alivePlayers[posKey] ?? true}
                     playerBet={playerBets[posKey] ?? 0}
                     isICMSim={isICMSim}
-                    plateWidth={canonicalPlateWidth}           /* NEW */
+                    plateWidth={canonicalPlateWidth}
+                    isActive={posKey === activePlayer}
+                    pot={pot}
+                    maxBet={maxBet}
                   />
                 ))}
               </div>

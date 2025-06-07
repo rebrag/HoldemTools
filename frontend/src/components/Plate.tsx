@@ -12,7 +12,10 @@ interface PlateProps {
   alive: boolean;
   playerBet?: number;
   isICMSim?: boolean;
-  plateWidth?: number;                // NEW – optional fixed width
+  plateWidth?: number;
+  isActive?: boolean;
+  pot?: number;     // NEW: Total pot
+  maxBet?: number;  // NEW: The highest current bet to call
 }
 
 const Plate: React.FC<PlateProps> = ({
@@ -23,7 +26,10 @@ const Plate: React.FC<PlateProps> = ({
   alive,
   playerBet = 0,
   isICMSim,
-  plateWidth,                         // NEW
+  plateWidth,
+  isActive = false,
+  pot,
+  maxBet,
 }) => {
   const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
 
@@ -34,15 +40,26 @@ const Plate: React.FC<PlateProps> = ({
   const formatBB = (v: number) =>
     Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1);
 
+  // --- Pot odds calculation ---
+  const potOdds =
+    pot != null && maxBet != null && maxBet > 0
+      ? ((maxBet - playerBet)/ (pot + maxBet-playerBet)) * 100
+      : 0;
+
+  /* ---------- outer wrapper ---------- */
+  const outerClasses =
+    "relative mb-8 justify-self-center max-w-[400px] w-full text-base " +
+    (isActive
+      ? "ring-4 ring-white shadow-yellow-400/50 rounded-md"
+      : "");
+
+  const fixedSizeStyle =
+    plateWidth != null
+      ? { width: plateWidth, maxWidth: plateWidth, minWidth: plateWidth }
+      : undefined;
+
   return (
-    <div
-      className="relative mb-8 justify-self-center max-w-[400px] w-full text-base"
-      style={
-        plateWidth
-          ? { width: plateWidth, maxWidth: plateWidth, minWidth: plateWidth }
-          : undefined
-      }                                /* NEW – pin width if provided */
-    >
+    <div className={outerClasses} style={fixedSizeStyle}>
       {/* Dealer button */}
       {data?.Position === "BTN" && (
         <div
@@ -69,8 +86,8 @@ const Plate: React.FC<PlateProps> = ({
 
               {/* Position + BB badge */}
               <div className="absolute left-1/2 -bottom-16 -translate-x-1/2 z-30 pointer-events-none">
-                <div className="bg-white/70 backdrop-blur-sm rounded-md px-2 py-1 text-xs shadow text-center">
-                  <strong>{data.Position} </strong>
+                <div className="bg-white/70 backdrop-blur-sm rounded-md px-2 py-1 text-xs shadow text-center whitespace-nowrap">
+                  <strong>{data.Position}</strong>&nbsp;
                   {formatBB(data.bb - playerBet)} bb
                 </div>
               </div>
@@ -84,12 +101,25 @@ const Plate: React.FC<PlateProps> = ({
                 </div>
               )}
 
+              {/* Pot-odds badge (NEW) */}
+              {isActive && potOdds > 0 && (
+                <div className="absolute left-1/8 -bottom-16 -translate-x-1/2 z-30 pointer-events-none">
+                  <div className="bg-white/70 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center whitespace-nowrap">
+                    <strong>Pot Odds:</strong>&nbsp;
+                    <br></br>
+                    {potOdds.toFixed(0)}%
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Color key */}
             <div
               data-intro-target={data.Position === "BTN" ? "color-key-btn" : undefined}
-              className="select-none flex w-full items-center justify-end mt-0.5"
+              className={
+                "select-none flex w-full items-center justify-end mt-0.5 " +
+                (isActive ? "animate-pulse" : "")
+              }
             >
               <ColorKey
                 data={combinedData}
@@ -100,7 +130,7 @@ const Plate: React.FC<PlateProps> = ({
         )}
       </div>
 
-      {/* Playing-cards SVGs (alive only, z-0) */}
+      {/* Playing-cards SVGs */}
       {alive && (
         <div className="absolute left-1/2 -bottom-9 -translate-x-1/2 -z-0 flex">
           <img src="/playing-cards.svg" alt="cards" className="w-18 h-18" />

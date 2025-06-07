@@ -32,7 +32,7 @@ const Solver = ({ user }: { user: User | null }) => {
   const [preflopLine, setPreflopLine] = useState<string[]>(["Root"]);
   const playerCount = useMemo(() => (folder ? folder.split("_").length : 1), [folder]);
   const [alivePlayers, setAlivePlayers] = useState<Record<string, boolean>>({});
-  
+  const [activePlayer, setActivePlayer] = useState<string>("");
   const [metadata, setMetadata] = useState<{ name: string; ante: number; icm: number[] }>({
     name: "",
     ante: 0,
@@ -106,8 +106,14 @@ const Solver = ({ user }: { user: User | null }) => {
       initialAlive[pos] = true;
     });
     setAlivePlayers(initialAlive);
+    
+    /* -------- default active = first seat after BB that’s alive -------- */ 
+    const bbIdx = positions.indexOf("BB");
+    const defaultIdx = (bbIdx + 1) % positions.length;
+    setActivePlayer(positions[defaultIdx]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playerCount]);
+
 
   const [loadedPlates, setLoadedPlates] = useState<string[]>(defaultPlateNames);
   const folderRef = useRef(folder);
@@ -267,7 +273,7 @@ const Solver = ({ user }: { user: User | null }) => {
         }
         setPlayerBets(initialBets);
         const blindPot = Object.values(initialBets).reduce((sum, b) => sum + b);
-        const totalPot = blindPot + ante; // ✅ use total ante directly
+        const totalPot = blindPot + ante;
         setPotSize(totalPot);
       })
       .catch(() => {
@@ -363,6 +369,7 @@ const Solver = ({ user }: { user: User | null }) => {
   
       const newAliveMap = Object.fromEntries(positionOrder.map(pos => [pos, aliveList.includes(pos)]));
       setAlivePlayers(newAliveMap);
+      setActivePlayer(aliveList[(activeIndex+1)%aliveList.length]);
   
       const actingPosition = plateData[fileName]?.Position;
       const currentBet = playerBets[actingPosition] || 0;
@@ -436,7 +443,7 @@ const Solver = ({ user }: { user: User | null }) => {
             stackMap[secondPos],
             ...otherStacks,
           ].join("\\n");
-          console.log(stackMap, stacksStr)
+          //console.log(stackMap, stacksStr)
 
       const payoutsStr = Array.isArray(metadata.icm)
       ? metadata.icm.map(v => Math.round(v * 10)).join("\\n")
@@ -541,6 +548,9 @@ const Solver = ({ user }: { user: User | null }) => {
   
     if (clickedIndex === 0 || clickedIndex === 1 || trimmedLine[clickedIndex] === "Fold") {
       setAlivePlayers(initialAlive);
+      const bbIdx = positions.indexOf("BB");
+      const defaultIdx = (bbIdx + 1) % positions.length; //here and line below added
+      setActivePlayer(positions[defaultIdx]);
       const resetBets: Record<string, number> = {};
       if (playerCount === 2) {
         resetBets["BTN"] = 0.5;
@@ -711,6 +721,7 @@ const Solver = ({ user }: { user: User | null }) => {
         isICMSim={isICMSim}
         ante={metadata.ante}
         pot={potSize}
+        activePlayer={activePlayer} 
       />
 
         {metadata && (
