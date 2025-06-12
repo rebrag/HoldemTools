@@ -95,7 +95,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   }
 
   /* ---------- canonical plate width (landscape only) ---------- */
-  const gapPx = 8;
+  const gapPx = 15;
   const canonicalPlateWidth = isNarrow
     ? undefined
     : Math.min(
@@ -176,7 +176,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
             return (
               <div
                 key={`row-${rowIdx}`}
-                className="flex justify-center gap-2 flex-nowrap"
+                className="flex justify-center gap-1 flex-nowrap"
               >
                 {plates.map(([posKey, file]) => (
                   <Plate

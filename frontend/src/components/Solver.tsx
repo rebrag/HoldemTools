@@ -2,7 +2,7 @@ import { useState, useCallback, useLayoutEffect, useEffect, useMemo, useRef } fr
 import NavBar from "./NavBar";
 import PlateGrid from "./PlateGrid";
 import Layout from "./Layout";
-import { actionToNumberMap, actionToPrefixMap2, numberToActionMap} from "../utils/constants"; // 
+import { actionToNumberMap, numberToActionMap, getActionNumber} from "../utils/constants"; // actionToPrefixMap2
 import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import useWindowDimensions from "../hooks/useWindowDimensions";
 import useFolders from "../hooks/useFolders";
@@ -285,7 +285,7 @@ const Solver = ({ user }: { user: User | null }) => {
 
   const convertRangeText = (data: JsonData | undefined, action: string): string => {
     if (!data) return "";
-    const dataKey = actionToPrefixMap2[action] || action;
+    const dataKey = getActionNumber(action) || action;
     if (!data[dataKey]) return "";
     return Object.entries(data[dataKey])
       .map(([hand, values]) => `${hand}:${values[0]}`)
@@ -312,6 +312,7 @@ const Solver = ({ user }: { user: User | null }) => {
         }
       });
       const regex = new RegExp(`^${baseName}(?:\\.0)+\\.json$`);
+      // console.log(regex);
       availableFiles.forEach((file) => {
         if (regex.test(file) && !currentFiles.includes(file)) {
           newFiles.push(file);
@@ -344,7 +345,7 @@ const Solver = ({ user }: { user: User | null }) => {
       const plateName = loadedPlates.find(name => name === fileName);
       if (!plateName) return;
   
-      const actionNumber = actionToNumberMap[action];
+      const actionNumber = getActionNumber(action) ?? "";
       const clickedIndex = loadedPlates.findIndex(name => name === plateName);
       const newLoadedPlates = appendPlateNames(loadedPlates, clickedIndex, actionNumber, availableJsonFiles);
       setLoadedPlates(prev => [...new Set([...prev, ...newLoadedPlates])]);

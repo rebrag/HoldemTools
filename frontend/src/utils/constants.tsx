@@ -8,6 +8,7 @@ export const actionToNumberMap: Record<string, string> = {
     Min: "5",
     Call: "1",
     "Raise 54%": "40054",
+    // "Raise 60%": "40060",
     "Raise 75%": "40075",
     "Raise 50%": "40050",
     "Raise 78%": "40078",
@@ -16,7 +17,23 @@ export const actionToNumberMap: Record<string, string> = {
     "Raise 4bb": "19",
     "Raise 3.5bb": "18",
     "Raise 5bb": "21",
+    "Raise 8.5bb": "28",
+    "Raise 100%": "40100",
+    "Raise 125%": "40125",
   };
+
+  export const getActionNumber = (action: string): string | undefined => {
+  if (actionToNumberMap[action]) return actionToNumberMap[action];
+  const regex = /^Raise (\d{1,3})%$/;
+  const match = action.trim().match(regex);
+  if (match) {
+    const percent = match[1].padStart(3, '0'); // ensures "60" → "060"
+    return `40${percent}`;
+  }
+  return undefined;
+};
+
+
 
   export const numberToActionMap: Record<string, string> = {
     40054: "Raise 54%",
