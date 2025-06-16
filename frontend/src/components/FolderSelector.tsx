@@ -1,138 +1,159 @@
 // src/FolderSelector.tsx
 import React, { useState, useEffect } from "react";
 import { useAuthState } from "react-firebase-hooks/auth";
-import { auth } from "../firebase"; // Using the same Firebase config as in LoginSignup
-import { logUserAction } from "..//logEvent"; // Adjust the path based on your project structure
+import { auth } from "../firebase";
+import { logUserAction } from "../logEvent";          // ← adjust if your path differs
 
+/* ------------------------------------------------------------------ */
+/*  Types                                                             */
+/* ------------------------------------------------------------------ */
 interface FolderSelectorProps {
   folders: string[];
-  currentFolder: string; // Current selected folder name
+  currentFolder: string;                // currently-selected folder
   onFolderSelect: (folder: string) => void;
 }
 
-// Helper to convert underscores to spaces and display friendlier names.
+/* ------------------------------------------------------------------ */
+/*  Display-name helpers                                              */
+/* ------------------------------------------------------------------ */
+//   "25LJ_25HJ_25CO_6BTN_25SB_13BB"  →  "6bb HU" / "25bb All" / readable
 function getDisplayFolderName(folder: string): string {
   const parts = folder.split("_");
-  if (parts.length === 0) return folder;
+  if (!parts.length) return folder;
 
-  // When exactly two parts, check for a leading number in the first part.
   if (parts.length === 2) {
-    const firstMatch = parts[0].match(/^(\d+)/);
-    if (firstMatch) {
-      const firstNum = firstMatch[1];
-      return `${firstNum}bb HU`;
+    const firstNum = parts[0].match(/^(\d+)/)?.[1];
+    return firstNum ? `${firstNum}bb HU` : folder.replace(/_/g, " ");
+  }
+
+  const firstNum = parts[0].match(/^(\d+)/)?.[1];
+  const allSame = firstNum
+    ? parts.every(p => p.match(/^(\d+)/)?.[1] === firstNum)
+    : false;
+  return allSame ? `${firstNum}bb All` : folder.replace(/_/g, " ");
+}
+
+const isAllSameFolder = (folder: string): boolean => {
+  const parts = folder.split("_");
+  const firstNum = parts[0].match(/^(\d+)/)?.[1];
+  return !!firstNum && parts.every(p => p.match(/^(\d+)/)?.[1] === firstNum);
+};
+
+const isHUSimFolder = (folder: string): boolean => {
+  const parts = folder.split("_");
+  return parts.length === 2 && /^\d+/.test(parts[0]);
+};
+
+/* ------------------------------------------------------------------ */
+/*  Search / highlight helpers                                        */
+/* ------------------------------------------------------------------ */
+const highlightMatch = (text: string, query: string): React.ReactNode => {
+  if (!query) return <>{text}</>;
+
+  const isNumber = /^\d+$/.test(query.trim());
+  let idx = -1;
+  const len = query.length;
+
+  if (isNumber) {
+    /* find “<query>” as standalone numeric prefix of any chunk         *
+     *   e.g. query = "5"  → matches "5BB" but *not* "15UTG1"           */
+    const re = new RegExp(`(^|[^0-9])(${query})(?![0-9])`, "i");
+    const m = text.match(re);
+    if (m && typeof m.index === "number") {
+      idx = m.index + m[1].length;   // skip past the look-behind group
     }
-    return folder.replace(/_/g, " ");
+  } else {
+    idx = text.toLowerCase().indexOf(query.toLowerCase());
   }
 
-  // For more than two parts, if every part starts with the same number then use special text
-  const firstMatch = parts[0].match(/^(\d+)/);
-  if (!firstMatch) {
-    return folder.replace(/_/g, " ");
-  }
-  const firstNum = firstMatch[1];
-  const allSame = parts.every((part) => {
-    const match = part.match(/^(\d+)/);
-    return match && match[1] === firstNum;
-  });
-  if (allSame) {
-    return `${firstNum}bb All`;
-  }
-  return folder.replace(/_/g, " ");
-}
+  if (idx === -1) return <>{text}</>;           // nothing to highlight
 
-// Helper: Check if folder qualifies as "allSame"
-function isAllSameFolder(folder: string): boolean {
-  const parts = folder.split("_");
-  if (parts.length === 0) return false;
-  const firstMatch = parts[0].match(/^(\d+)/);
-  if (!firstMatch) return false;
-  const firstNum = firstMatch[1];
-  return parts.every((part) => {
-    const match = part.match(/^(\d+)/);
-    return match && match[1] === firstNum;
-  });
-}
-
-// Helper: Check if folder is a HU simulation folder (exactly two parts and first part starts with digits)
-function isHUSimFolder(folder: string): boolean {
-  const parts = folder.split("_");
-  if (parts.length !== 2) return false;
-  return /^\d+/.test(parts[0]);
-}
-
-// Highlight matching text in the folder name
-const highlightMatch = (folder: string, query: string): React.ReactNode => {
-  if (!query) return <>{folder}</>;
-  const lowerFolder = folder.toLowerCase();
-  const lowerQuery = query.toLowerCase();
-  const startIndex = lowerFolder.indexOf(lowerQuery);
-  if (startIndex === -1) return <>{folder}</>;
-  const beforeMatch = folder.slice(0, startIndex);
-  const matchText = folder.slice(startIndex, startIndex + query.length);
-  const afterMatch = folder.slice(startIndex + query.length);
   return (
     <>
-      {beforeMatch}
-      <strong className="font-bold">{matchText}</strong>
-      {afterMatch}
+      {text.slice(0, idx)}
+      <strong className="font-bold">{text.slice(idx, idx + len)}</strong>
+      {text.slice(idx + len)}
     </>
   );
 };
 
+/** Matches folders according to “exact numeric prefix” rule. */
+const folderMatchesQuery = (folder: string, query: string): boolean => {
+  if (!query) return true;
+
+  const trimmed = query.trim();
+  const isNumber = /^\d+$/.test(trimmed);
+
+  if (isNumber) {
+    // want *exactly* <query> as the leading digits of any chunk
+    return folder.split("_").some(chunk => {
+      const num = chunk.match(/^(\d+)/)?.[1];
+      return num === trimmed;
+    });
+  }
+
+  // non-numeric → fallback substring search
+  return folder
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .includes(trimmed.toLowerCase());
+};
+
+/* ------------------------------------------------------------------ */
+/*  Component                                                         */
+/* ------------------------------------------------------------------ */
 const FolderSelector: React.FC<FolderSelectorProps> = ({
   folders,
   currentFolder,
   onFolderSelect,
 }) => {
   const [user] = useAuthState(auth);
+
   const [inputValue, setInputValue] = useState("");
   const [filteredFolders, setFilteredFolders] = useState<string[]>(folders);
   const [showDropdown, setShowDropdown] = useState(false);
-  const [highlightedIndex, setHighlightedIndex] = useState<number>(-1);
-  const [isSmallViewport, setIsSmallViewport] = useState(window.innerWidth < 440);
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const [isSmallViewport, setIsSmallViewport] = useState(
+    typeof window !== "undefined" && window.innerWidth < 440
+  );
+
+  /* -------- viewport listener ------------------------------------- */
   useEffect(() => {
     const handleResize = () => setIsSmallViewport(window.innerWidth < 440);
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
+  /* -------- search / sort ----------------------------------------- */
   useEffect(() => {
-    const sortedFolders = [...folders]
-  .filter((folder) =>
-    folder.replace(/_/g, " ").toLowerCase().includes(inputValue.toLowerCase())
-  )
-  .sort((a, b) => {
-    // Send HU simulations to the bottom
-    const aHU = isHUSimFolder(a);
-    const bHU = isHUSimFolder(b);
-    if (aHU && !bHU) return 1;
-    if (!aHU && bHU) return -1;
+    const sorted = [...folders]
+      .filter(f => folderMatchesQuery(f, inputValue))
+      .sort((a, b) => {
+        // HU sims last
+        const aHU = isHUSimFolder(a);
+        const bHU = isHUSimFolder(b);
+        if (aHU !== bHU) return aHU ? 1 : -1;
 
-    // Prioritize folders that are "allSame"
-    const aAllSame = isAllSameFolder(a);
-    const bAllSame = isAllSameFolder(b);
-    if (aAllSame && !bAllSame) return -1;
-    if (!aAllSame && bAllSame) return 1;
+        // “allSame” first
+        const aAll = isAllSameFolder(a);
+        const bAll = isAllSameFolder(b);
+        if (aAll !== bAll) return aAll ? -1 : 1;
 
-    // Otherwise, sort by string length
-    return a.length - b.length;
-  });
+        // fallback: shorter first
+        return a.length - b.length;
+      });
 
-setFilteredFolders(sortedFolders);
-setHighlightedIndex(sortedFolders.length > 0 ? 0 : -1);
-
+    setFilteredFolders(sorted);
+    setHighlightedIndex(sorted.length ? 0 : -1);
   }, [inputValue, folders]);
 
-  // Handle folder selection; also log the user action if a folder is selected
+  /* -------- selection --------------------------------------------- */
   const handleSelect = (folder: string) => {
     if (folder !== currentFolder) {
       setInputValue("");
       onFolderSelect(folder);
-      // Log the action if the user is authenticated
+
       if (user) {
-        //console.log("Admin UID:", user.uid);
-        // Using email if available, otherwise the UID
         logUserAction(user.email ?? user.uid, "Opened Folder", folder);
       }
     }
@@ -140,46 +161,41 @@ setHighlightedIndex(sortedFolders.length > 0 ? 0 : -1);
     setHighlightedIndex(-1);
   };
 
-  // Keyboard handling for navigation in the dropdown
+  /* -------- keyboard nav ------------------------------------------ */
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
       setShowDropdown(false);
     } else if (e.key === "ArrowDown" || e.key === "Tab") {
       e.preventDefault();
-      setHighlightedIndex((prev) =>
+      setHighlightedIndex(prev =>
         prev < filteredFolders.length - 1 ? prev + 1 : 0
       );
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setHighlightedIndex((prev) =>
+      setHighlightedIndex(prev =>
         prev > 0 ? prev - 1 : filteredFolders.length - 1
       );
     } else if (e.key === "Enter") {
       if (highlightedIndex >= 0 && highlightedIndex < filteredFolders.length) {
         handleSelect(filteredFolders[highlightedIndex]);
       }
-    } else if (e.key !== "Escape") {
-      setShowDropdown(true);
+    } else {
+      setShowDropdown(true); // start showing dropdown on any other key
     }
   };
 
-  // Toggle dropdown visibility on click of the arrow button
-  const toggleDropdown = () => {
-    setShowDropdown((prev) => !prev);
-  };
-
   return (
-    
     <div
-      data-intro-target="folder-selector"   // ⭐️ Intro.js can now find it
+      data-intro-target="folder-selector"
       className="flex justify-center h-10vh"
     >
       <div className="select-none relative w-full max-w-lg">
+        {/* input + arrow */}
         <div className="relative">
           <input
             type="text"
             value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
+            onChange={e => setInputValue(e.target.value)}
             onFocus={() => setShowDropdown(false)}
             onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
             onKeyDown={handleKeyDown}
@@ -187,10 +203,10 @@ setHighlightedIndex(sortedFolders.length > 0 ? 0 : -1);
             className="shadow-md hover:bg-blue-100 w-full px-4 pr-10 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring focus:border-blue-300"
           />
           <button
-            onMouseDown={(e) => e.preventDefault()} // Prevent input blur on click
-            onClick={toggleDropdown}
-            className="absolute inset-y-0 right-0 flex items-center px-3 focus:outline-none"
             type="button"
+            onMouseDown={e => e.preventDefault()} // keep focus
+            onClick={() => setShowDropdown(prev => !prev)}
+            className="absolute inset-y-0 right-0 flex items-center px-3 focus:outline-none"
           >
             <svg
               className="h-5 w-5 text-gray-600"
@@ -205,22 +221,21 @@ setHighlightedIndex(sortedFolders.length > 0 ? 0 : -1);
             </svg>
           </button>
         </div>
+
+        {/* dropdown */}
         {showDropdown && (
           <ul className="absolute z-10 w-full bg-white border rounded-2xl border-gray-300 mt-1 max-h-150 overflow-auto scrollbar-none">
-            {filteredFolders.map((folder, index) => {
-              const displayName = getDisplayFolderName(folder);
-              return (
-                <li
-                  key={index}
-                  onMouseDown={() => handleSelect(folder)}
-                  className={`px-4 py-1 cursor-pointer hover:bg-gray-100 border-b last:border-0 ${
-                    highlightedIndex === index ? "bg-blue-200" : ""
-                  } ${isSmallViewport ? "text-xs" : ""}`}
-                >
-                  {highlightMatch(displayName, inputValue)}
-                </li>
-              );
-            })}
+            {filteredFolders.map((folder, idx) => (
+              <li
+                key={folder}
+                onMouseDown={() => handleSelect(folder)}
+                className={`px-4 py-1 cursor-pointer hover:bg-gray-100 border-b last:border-0 ${
+                  highlightedIndex === idx ? "bg-blue-200" : ""
+                } ${isSmallViewport ? "text-xs" : ""}`}
+              >
+                {highlightMatch(getDisplayFolderName(folder), inputValue)}
+              </li>
+            ))}
           </ul>
         )}
       </div>

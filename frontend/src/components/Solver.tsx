@@ -46,6 +46,7 @@ const Solver = ({ user }: { user: User | null }) => {
   const [pendingFolder, setPendingFolder] = useState<string | null>(null);
   const [showLoginOverlay, setShowLoginOverlay] = useState(false);
   const tourBooted = useRef(localStorage.getItem('tourSeen') === '1');
+  const lastClickRef = useRef<{ plate: string; action: string } | null>(null);
 
 
   const defaultPlateNames = useMemo(() => {
@@ -344,6 +345,13 @@ const Solver = ({ user }: { user: User | null }) => {
     (action: string, fileName: string) => {
       const plateName = loadedPlates.find(name => name === fileName);
       if (!plateName) return;
+      if (
+      lastClickRef.current &&
+      lastClickRef.current.plate === fileName &&
+      lastClickRef.current.action === action
+    ) {
+      return;                                                    // 🔙 do nothing
+    }
   
       const actionNumber = getActionNumber(action) ?? "";
       const clickedIndex = loadedPlates.findIndex(name => name === plateName);
@@ -518,6 +526,7 @@ const Solver = ({ user }: { user: User | null }) => {
       }
       setRandomFillEnabled(false);
       setPlateMapping(prev => ({ ...prev }));
+      lastClickRef.current = { plate: fileName, action };
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [loadedPlates, appendPlateNames, availableJsonFiles, playerCount, playerBets, plateData, potSize, positionOrder, lastRangePos, lastRange, metadata, plateMapping]
@@ -549,6 +558,7 @@ const Solver = ({ user }: { user: User | null }) => {
   
     if (clickedIndex === 0 || clickedIndex === 1 || trimmedLine[clickedIndex] === "Fold") {
       setAlivePlayers(initialAlive);
+      lastClickRef.current = null;               // <<--- THIS LINE
       const bbIdx = positions.indexOf("BB");
       const defaultIdx = (bbIdx + 1) % positions.length; //here and line below added
       setActivePlayer(positions[defaultIdx]);

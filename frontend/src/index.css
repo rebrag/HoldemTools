@@ -8,6 +8,38 @@
   100% { transform: translateY(120%)  rotate(45deg); opacity: 0.2; }
 }
 
+/* regular horizontal rail */
+.poker-rail {
+  width: min(95vw, 1300px);
+  aspect-ratio: 2.1 / 1;          /* wider than tall */
+  border-radius: 9999px;
+  padding: 12px;
+  background: linear-gradient(145deg, #3d3d3d 0%, #1b1b1b 100%);
+  box-shadow:
+    0 4px 12px rgba(0,0,0,.35),
+    inset 0 2px 8px rgba(255,255,255,.04);
+}
+
+/* portrait modifier – taller than wide */
+.poker-rail.portrait {
+  width: min(80vw, 460px);        /* narrower width */
+  aspect-ratio: 1 / 2.7;          /* vertical oval  */
+}
+
+/* green felt (shared) */
+.poker-felt {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: radial-gradient(
+      ellipse at center,
+      #3c7a3f 0%,
+      #1b5e20 60%,
+      #0d3b12 100%);
+  box-shadow: inset 0 0 22px rgba(0,0,0,.6);
+}
+
+
 /* :root {
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;

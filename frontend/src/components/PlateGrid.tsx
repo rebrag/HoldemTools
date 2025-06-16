@@ -49,8 +49,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   const gridRows = isNarrow ? Math.ceil(files.length / 2) : 2;
   const gridCols = isNarrow ? 2 : Math.ceil(files.length / 2);
   const totalCells = gridRows * gridCols;
-  
-  // NEW: Calculate the max bet on the table
+
   const maxBet = playerBets ? Math.max(...Object.values(playerBets)) : 0;
 
   /* ---------- order entries ---------- */
@@ -100,105 +99,115 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     ? undefined
     : Math.min(
         400,
-        Math.max(
-          170,
-          (windowWidth - (gridCols - 1) * gapPx) / gridCols
-        )
+        Math.max(170, (windowWidth - (gridCols - 1) * gapPx) / gridCols)
       );
 
   /* ---------- render ---------- */
   return (
-    <div className="relative min-h-[300px]">
-      {/* loading overlay */}
+    <div className="relative flex justify-center items-center py-8 overflow-visible">
+      {/* Decorative table – horizontal oval by default, adds “portrait” when isNarrow */}
       <div
-        className={`absolute inset-0 flex items-center justify-center z-50 transition-opacity duration-100 ${
-          loading
-            ? "opacity-100 pointer-events-auto"
-            : "opacity-0 pointer-events-none"
-        }`}
+        className={`poker-table-bg pointer-events-none absolute inset-0 flex justify-center items-center -z-0`}
       >
-        <LoadingIndicator />
+        <div
+          className={`poker-rail ${
+            isNarrow ? "portrait" : ""
+          } overflow-hidden`}
+        >
+          <div className="poker-felt" />
+        </div>
       </div>
 
-      {/* overlay ─ Ante / Pot */}
-      {ante !== undefined && pot !== undefined && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
-          <div className="bg-white/50 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center">
-            <strong>Total:</strong>&nbsp;{pot.toFixed(2)} bb
-            <br />
-            <strong>Pot:</strong>&nbsp;{ante} bb
+      {/* All interactive content */}
+      <div className="relative z-10 w-full min-h-[300px] select-none">
+        {/* loading overlay */}
+        <div
+          className={`absolute inset-0 flex items-center justify-center z-50 transition-opacity duration-100 ${
+            loading
+              ? "opacity-100 pointer-events-auto"
+              : "opacity-0 pointer-events-none"
+          }`}
+        >
+          <LoadingIndicator />
+        </div>
+
+        {/* overlay ─ Ante / Pot */}
+        {ante !== undefined && pot !== undefined && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
+            <div className="bg-white/60 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center">
+              <strong>Total:</strong>&nbsp;{pot.toFixed(2)} bb
+              <br />
+              <strong>Pot:</strong>&nbsp;{ante} bb
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ================== PORTRAIT / NARROW ================== */}
-      {isNarrow ? (
-        <div className="flex justify-center gap-2 w-full select-none border-0 rounded-md">
-          {[col0, col1].map((col, idx) =>
-            col.length ? (
-              <div
-                key={`col-${idx}`}
-                className="flex flex-1 flex-col gap-5 justify-center items-center"
-                style={{
-                  minWidth: 170,
-                  maxWidth: 400,
-                }}
-              >
-                {col.map(([posKey, file]) => (
-                  <Plate
-                    key={posKey}
-                    file={file}
-                    data={plateData[file]}
-                    onActionClick={onActionClick}
-                    randomFillEnabled={randomFillEnabled}
-                    alive={alivePlayers[posKey] ?? true}
-                    playerBet={playerBets[posKey] ?? 0}
-                    isICMSim={isICMSim}
-                    isActive={posKey === activePlayer}
-                    pot={pot}
-                    maxBet={maxBet}
-                  />
-                ))}
-              </div>
-            ) : null
-          )}
-        </div>
-      ) : (
-        /* ================== LANDSCAPE / WIDE ================== */
-        <div className="flex flex-col gap-6 select-none border-0 rounded-md">
-          {rows.map((row, rowIdx) => {
-            const plates = row.filter(([, f]) => f) as (readonly [
-              string,
-              string
-            ])[];
-            if (plates.length === 0) return null;
+        {/* ================== PORTRAIT / NARROW ================== */}
+        {isNarrow ? (
+          <div className="flex justify-center gap-2 w-full">
+            {[col0, col1].map((col, idx) =>
+              col.length ? (
+                <div
+                  key={`col-${idx}`}
+                  className="flex flex-1 flex-col gap-5 justify-center items-center"
+                  style={{ minWidth: 170, maxWidth: 400 }}
+                >
+                  {col.map(([posKey, file]) => (
+                    <Plate
+                      key={posKey}
+                      file={file}
+                      data={plateData[file]}
+                      onActionClick={onActionClick}
+                      randomFillEnabled={randomFillEnabled}
+                      alive={alivePlayers[posKey] ?? true}
+                      playerBet={playerBets[posKey] ?? 0}
+                      isICMSim={isICMSim}
+                      isActive={posKey === activePlayer}
+                      pot={pot}
+                      maxBet={maxBet}
+                    />
+                  ))}
+                </div>
+              ) : null
+            )}
+          </div>
+        ) : (
+          /* ================== LANDSCAPE / WIDE ================== */
+          <div className="flex flex-col gap-6">
+            {rows.map((row, rowIdx) => {
+              const plates = row.filter(([, f]) => f) as (readonly [
+                string,
+                string
+              ])[];
+              if (!plates.length) return null;
 
-            return (
-              <div
-                key={`row-${rowIdx}`}
-                className="flex justify-center gap-1 flex-nowrap"
-              >
-                {plates.map(([posKey, file]) => (
-                  <Plate
-                    key={posKey}
-                    file={file}
-                    data={plateData[file]}
-                    onActionClick={onActionClick}
-                    randomFillEnabled={randomFillEnabled}
-                    alive={alivePlayers[posKey] ?? true}
-                    playerBet={playerBets[posKey] ?? 0}
-                    isICMSim={isICMSim}
-                    plateWidth={canonicalPlateWidth}
-                    isActive={posKey === activePlayer}
-                    pot={pot}
-                    maxBet={maxBet}
-                  />
-                ))}
-              </div>
-            );
-          })}
-        </div>
-      )}
+              return (
+                <div
+                  key={`row-${rowIdx}`}
+                  className="flex justify-center gap-1 flex-nowrap"
+                >
+                  {plates.map(([posKey, file]) => (
+                    <Plate
+                      key={posKey}
+                      file={file}
+                      data={plateData[file]}
+                      onActionClick={onActionClick}
+                      randomFillEnabled={randomFillEnabled}
+                      alive={alivePlayers[posKey] ?? true}
+                      playerBet={playerBets[posKey] ?? 0}
+                      isICMSim={isICMSim}
+                      plateWidth={canonicalPlateWidth}
+                      isActive={posKey === activePlayer}
+                      pot={pot}
+                      maxBet={maxBet}
+                    />
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
