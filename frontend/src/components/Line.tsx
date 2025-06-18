@@ -8,7 +8,7 @@ interface LineProps {
 
 const Line: React.FC<LineProps> = ({ line, onLineClick }) => {
   return (
-    <div className="flex flex-wrap gap-1 p-1">
+    <div className="flex flex-wrap gap-1 p-1 z-10">
       Line:
       {line.map((action, index) => (
         <button

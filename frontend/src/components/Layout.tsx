@@ -6,7 +6,7 @@ interface LayoutProps {
 
 const Layout = ({ children }: LayoutProps) => {
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-green-400 to-green-100">
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-gray-700 to-gray-400">
       {children}
     </div>
   );
