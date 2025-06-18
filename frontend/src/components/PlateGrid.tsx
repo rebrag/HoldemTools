@@ -1,9 +1,17 @@
-import React from "react";
+// src/PlateGrid.tsx
+import React, { useMemo, useState } from "react";
 import Plate from "./Plate";
 import LoadingIndicator from "./LoadingIndicator";
 import { generateSpiralOrder } from "../utils/gridUtils";
-import { JsonData } from "../utils/utils";
+import {
+  JsonData,
+  HandCellData, // used for zoom overlay state
+} from "../utils/utils";
+import DecisionMatrix from "./DecisionMatrix";   // ⭐ add this line
 
+/* ------------------------------------------------------------------ */
+/*  Props                                                             */
+/* ------------------------------------------------------------------ */
 type PlateGridProps = {
   files: string[];
   positions: string[];
@@ -23,6 +31,9 @@ type PlateGridProps = {
   activePlayer?: string;
 };
 
+/* ------------------------------------------------------------------ */
+/*  Component                                                         */
+/* ------------------------------------------------------------------ */
 const PlateGrid: React.FC<PlateGridProps> = ({
   files,
   positions,
@@ -40,7 +51,14 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   pot,
   activePlayer = "UTG",
 }) => {
-  /* ---------- layout maths ---------- */
+  /* =================== ZOOM OVERLAY STATE =================== */
+  const [zoom, setZoom] = useState<{
+    grid: HandCellData[];
+    title: string;
+    isICM: boolean;
+  } | null>(null);
+
+  /* =================== LAYOUT MATHS ========================= */
   const isNarrow =
     files.length === 2
       ? !(windowWidth * 1.3 < windowHeight)
@@ -50,11 +68,12 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   const gridCols = isNarrow ? 2 : Math.ceil(files.length / 2);
   const totalCells = gridRows * gridCols;
 
+  /* highest bet on the table (for pot-odds badge) */
   const maxBet = playerBets ? Math.max(...Object.values(playerBets)) : 0;
 
-  /* ---------- order entries ---------- */
+  /* ---------- order entries (spiral or linear) --------------- */
   // eslint-disable-next-line react-hooks/rules-of-hooks
-  const orderedEntries = React.useMemo(() => {
+  const orderedEntries = useMemo(() => {
     const base = positions.map((p, i) => [p, files[i]] as const);
 
     if (!isSpiralView) return base;
@@ -73,9 +92,9 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     return grid;
   }, [files, positions, isSpiralView, gridRows, gridCols, totalCells]);
 
-  /* ---------- portrait-mode columns ---------- */
+  /* ---------- portrait-mode columns -------------------------- */
   // eslint-disable-next-line react-hooks/rules-of-hooks
-  const [col0, col1] = React.useMemo(() => {
+  const [col0, col1] = useMemo(() => {
     const c0: (readonly [string, string])[] = [];
     const c1: (readonly [string, string])[] = [];
 
@@ -87,13 +106,13 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     return [c0, c1];
   }, [orderedEntries]);
 
-  /* ---------- rows for landscape ---------- */
+  /* ---------- rows for landscape ----------------------------- */
   const rows: (readonly [string, string])[][] = [];
   for (let i = 0; i < orderedEntries.length; i += gridCols) {
     rows.push(orderedEntries.slice(i, i + gridCols));
   }
 
-  /* ---------- canonical plate width (landscape only) ---------- */
+  /* ---------- canonical plate width (landscape only) --------- */
   const gapPx = 15;
   const canonicalPlateWidth = isNarrow
     ? undefined
@@ -102,47 +121,71 @@ const PlateGrid: React.FC<PlateGridProps> = ({
         Math.max(170, (windowWidth - (gridCols - 1) * gapPx) / gridCols)
       );
 
-  /* ---------- render ---------- */
+  /* =================== RENDER ================================ */
   return (
     <div className="relative flex justify-center items-center py-8 overflow-visible">
-      {/* Decorative table – horizontal oval by default, adds “portrait” when isNarrow */}
-      <div
-        className={`poker-table-bg pointer-events-none absolute inset-0 flex justify-center items-center -z-0`}
-      >
-        <div
-          className={`poker-rail ${
-            isNarrow ? "portrait" : ""
-          } overflow-hidden`}
-        >
+      {/* ---------- decorative poker table background ---------- */}
+      <div className="poker-table-bg pointer-events-none absolute inset-0 flex justify-center items-center z-10">
+        <div className={`poker-rail ${isNarrow ? "portrait" : ""} overflow-hidden`}>
           <div className="poker-felt" />
         </div>
       </div>
 
-      {/* All interactive content */}
-      <div className="relative z-10 w-full min-h-[300px] select-none">
-        {/* loading overlay */}
+      {/* ---------- zoom overlay (DecisionMatrix enlarged) ------ */}
+      {zoom && (
         <div
-          className={`absolute inset-0 flex items-center justify-center z-50 transition-opacity duration-100 ${
-            loading
-              ? "opacity-100 pointer-events-auto"
-              : "opacity-0 pointer-events-none"
-          }`}
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-20"
+          onClick={() => setZoom(null)}
         >
-          <LoadingIndicator />
-        </div>
+          <div
+            className="bg-white rounded-lg shadow-xl p-3 relative"
+            onClick={(e) => e.stopPropagation()}  /* keep clicks inside dialog */
+          >
+            <button
+              onClick={() => setZoom(null)}
+              className="absolute top-2 right-2 text-lg font-bold"
+            >
+            </button>
 
-        {/* overlay ─ Ante / Pot */}
-        {ante !== undefined && pot !== undefined && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
-            <div className="bg-white/60 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center">
-              <strong>Total:</strong>&nbsp;{pot.toFixed(2)} bb
-              <br />
-              <strong>Pot:</strong>&nbsp;{ante} bb
+            <h2 className="text-center font-semibold mb-2">{zoom.title}</h2>
+
+            {/* the matrix itself */}
+            <div className="w-[90vw] max-w-[600px] mx-auto">
+              <DecisionMatrix
+                gridData={zoom.grid}        /* ← actual 13×13 data */
+                randomFillEnabled={false}
+                isICMSim={zoom.isICM}
+              />
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* ================== PORTRAIT / NARROW ================== */}
+      {/* ---------- loading overlay ---------------------------- */}
+      <div
+        className={`absolute inset-0 flex items-center justify-center z-50 transition-opacity duration-100 ${
+          loading
+            ? "opacity-100 pointer-events-auto"
+            : "opacity-0 pointer-events-none"
+        }`}
+      >
+        <LoadingIndicator />
+      </div>
+
+      {/* ---------- Ante / Pot badge --------------------------- */}
+      {ante !== undefined && pot !== undefined && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-15">
+          <div className="bg-white/60 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center">
+            <strong>Total:</strong>&nbsp;{pot.toFixed(2)} bb
+            <br />
+            <strong>Pot:</strong>&nbsp;{ante} bb
+          </div>
+        </div>
+      )}
+
+      {/* ---------- plates layout ------------------------------ */}
+      <div className="relative z-10 w-full min-h-[300px] select-none">
+        {/* ----- PORTRAIT / NARROW ----- */}
         {isNarrow ? (
           <div className="flex justify-center gap-2 w-full">
             {[col0, col1].map((col, idx) =>
@@ -165,6 +208,9 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                       isActive={posKey === activePlayer}
                       pot={pot}
                       maxBet={maxBet}
+                      onMatrixZoom={(grid, title, isICM) =>
+                        setZoom({ grid, title, isICM })
+                      }
                     />
                   ))}
                 </div>
@@ -172,7 +218,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
             )}
           </div>
         ) : (
-          /* ================== LANDSCAPE / WIDE ================== */
+          /* ----- LANDSCAPE / WIDE ----- */
           <div className="flex flex-col gap-6">
             {rows.map((row, rowIdx) => {
               const plates = row.filter(([, f]) => f) as (readonly [
@@ -200,6 +246,9 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                       isActive={posKey === activePlayer}
                       pot={pot}
                       maxBet={maxBet}
+                      onMatrixZoom={(grid, title, isICM) =>
+                        setZoom({ grid, title, isICM })
+                      }
                     />
                   ))}
                 </div>

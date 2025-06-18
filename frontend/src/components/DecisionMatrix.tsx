@@ -14,6 +14,7 @@ interface DecisionMatrixProps extends HTMLAttributes<HTMLDivElement> {
   gridData: HandCellData[];
   randomFillEnabled?: boolean;
   isICMSim?: boolean;
+  onMatrixClick?: () => void;           /* ⭐ NEW prop */
 }
 
 /** Canonical 13×13 “standard grid” ordering */
@@ -37,6 +38,7 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
   gridData,
   randomFillEnabled: randomFill,
   isICMSim = false,
+  onMatrixClick,                        /* ⭐ receive it */
   ...rest
 }) => {
   /* ---------------- LIFECYCLE DEBUG (optional) ---------------- */
@@ -71,6 +73,7 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
     <div
       {...rest}
       ref={containerRef}
+      onClick={onMatrixClick}            /* ⭐ makes matrix clickable */
       className="relative grid grid-cols-13 gap-0 w-full aspect-square rounded-md overflow-hidden"
     >
       {orderedGridData.map((handData, idx) =>

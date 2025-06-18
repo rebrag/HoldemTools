@@ -4,6 +4,7 @@ import ColorKey from "./ColorKey";
 import DecisionMatrix from "./DecisionMatrix";
 import DealerButton from "./DealerButton";
 
+
 interface PlateProps {
   file: string;
   data: JsonData;
@@ -16,6 +17,7 @@ interface PlateProps {
   isActive?: boolean;
   pot?: number;     // NEW: Total pot
   maxBet?: number;  // NEW: The highest current bet to call
+  onMatrixZoom?: (grid: HandCellData[], title: string, isICM: boolean) => void; /* ⭐ NEW prop */
 }
 
 const Plate: React.FC<PlateProps> = ({
@@ -30,6 +32,7 @@ const Plate: React.FC<PlateProps> = ({
   isActive = false,
   pot,
   maxBet,
+  onMatrixZoom,                                        /* ⭐ receive it */
 }) => {
   const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
 
@@ -82,6 +85,9 @@ const Plate: React.FC<PlateProps> = ({
                 gridData={combinedData}
                 randomFillEnabled={randomFillEnabled}
                 isICMSim={isICMSim}
+                onMatrixClick={() =>
+                  onMatrixZoom?.(combinedData, data.Position, !!isICMSim)
+                }
               />
 
               {/* Position + BB badge */}
