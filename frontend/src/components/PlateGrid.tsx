@@ -8,6 +8,7 @@ import {
   HandCellData, // used for zoom overlay state
 } from "../utils/utils";
 import DecisionMatrix from "./DecisionMatrix";   // ⭐ add this line
+import { motion, AnimatePresence } from "framer-motion";
 
 /* ------------------------------------------------------------------ */
 /*  Props                                                             */
@@ -56,6 +57,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     grid: HandCellData[];
     title: string;
     isICM: boolean;
+    id: string;
   } | null>(null);
 
   /* =================== LAYOUT MATHS ========================= */
@@ -131,35 +133,44 @@ const PlateGrid: React.FC<PlateGridProps> = ({
         </div>
       </div>
 
-      {/* ---------- zoom overlay (DecisionMatrix enlarged) ------ */}
-      {zoom && (
-        <div
-          className="fixed inset-0 bg-black/60 flex items-center justify-center z-20"
-          onClick={() => setZoom(null)}
-        >
-          <div
-            className="bg-white rounded-lg shadow-xl p-3 relative"
-            onClick={(e) => e.stopPropagation()}  /* keep clicks inside dialog */
+      {/* ---------- zoom overlay (DecisionMatrix enlarged) ---------- */}
+      <AnimatePresence>
+        {zoom && (
+          <motion.div
+            key="zoom-backdrop"
+            className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setZoom(null)}
           >
-            <button
-              onClick={() => setZoom(null)}
-              className="absolute top-2 right-2 text-lg font-bold"
+            <motion.div
+              layoutId={`matrix-${zoom.id}`}      /* same id as the plate */
+              className="bg-white rounded-lg shadow-xl p-3 relative
+                        w-[90vw] max-w-[600px]"  /* <<< gives it full width */
+              initial={{ borderRadius: 12 }}
+              onClick={(e) => e.stopPropagation()}
             >
-            </button>
+              <button
+                onClick={() => setZoom(null)}
+                className="absolute top-2 right-2 text-lg font-bold"
+              >
+                ×
+              </button>
 
-            <h2 className="text-center font-semibold mb-2">{zoom.title}</h2>
+              <h2 className="text-center font-semibold mb-2">{zoom.title}</h2>
 
-            {/* the matrix itself */}
-            <div className="w-[90vw] max-w-[600px] mx-auto">
               <DecisionMatrix
-                gridData={zoom.grid}        /* ← actual 13×13 data */
+                gridData={zoom.grid}
                 randomFillEnabled={false}
                 isICMSim={zoom.isICM}
               />
-            </div>
-          </div>
-        </div>
-      )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+
 
       {/* ---------- loading overlay ---------------------------- */}
       <div
@@ -208,8 +219,8 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                       isActive={posKey === activePlayer}
                       pot={pot}
                       maxBet={maxBet}
-                      onMatrixZoom={(grid, title, isICM) =>
-                        setZoom({ grid, title, isICM })
+                      onMatrixZoom={(grid, title, isICM, id) =>
+                        setZoom({ grid, title, isICM, id })
                       }
                     />
                   ))}
@@ -246,8 +257,8 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                       isActive={posKey === activePlayer}
                       pot={pot}
                       maxBet={maxBet}
-                      onMatrixZoom={(grid, title, isICM) =>
-                        setZoom({ grid, title, isICM })
+                      onMatrixZoom={(grid, title, isICM, id) =>
+                        setZoom({ grid, title, isICM, id })
                       }
                     />
                   ))}

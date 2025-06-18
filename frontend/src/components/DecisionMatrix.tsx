@@ -63,6 +63,19 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
     }
   }, [gridData]);
 
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setMatrixWidth(entry.contentRect.width);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   /* ---------------- HOVER STATE ---------------- */
   const [hoveredEVs, setHoveredEVs] =
     useState<Record<string, number> | null>(null);
