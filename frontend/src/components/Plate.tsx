@@ -4,11 +4,12 @@ import { combineDataByHand, HandCellData, JsonData } from "../utils/utils";
 import ColorKey from "./ColorKey";
 import DecisionMatrix from "./DecisionMatrix";
 import DealerButton from "./DealerButton";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 
+/* ─────────────  props  ───────────── */
 interface PlateProps {
   file: string;
-  data: JsonData;
+  data: JsonData | undefined;          // ← may be undefined while loading
   onActionClick: (action: string, file: string) => void;
   randomFillEnabled?: boolean;
   alive: boolean;
@@ -26,6 +27,15 @@ interface PlateProps {
   ) => void;
 }
 
+/* ─────────────  skeleton  ───────────── */
+const Skeleton: React.FC = () => (
+  <div className="w-full" aria-label="loading">
+    <div className="w-full aspect-square rounded-md bg-gray-200 animate-pulse" />
+    <div className="mt-1 h-4 rounded bg-gray-200/70 animate-pulse" />
+  </div>
+);
+
+/* ─────────────  component  ───────────── */
 const Plate: React.FC<PlateProps> = ({
   file,
   data,
@@ -40,22 +50,31 @@ const Plate: React.FC<PlateProps> = ({
   maxBet,
   onMatrixZoom,
 }) => {
-  /* ---------- data prep ---------- */
-  const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
+  /* ---------- keep “previous” data until next JSON arrives ---------- */
+  const [displayData, setDisplayData] = useState<JsonData | undefined>(
+    data && Object.keys(data).length ? data : undefined
+  );
+
+  /* real grid comes in → update displayData */
   useEffect(() => {
-    if (data) setCombinedData(combineDataByHand(data));
+    if (data && Object.keys(data).length) setDisplayData(data);
   }, [data]);
 
-  const fmtBB = (v: number) =>
-    Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1);
+  /* convert to hand-cell grid whenever displayData changes */
+  const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
+  useEffect(() => {
+    if (displayData) setCombinedData(combineDataByHand(displayData));
+  }, [displayData]);
 
-  /* pot-odds for active player */
+  /* ---------- helpers ---------- */
+  const fmtBB = (v: number) => (Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1));
+
   const potOdds =
     pot != null && maxBet != null && maxBet > playerBet
       ? ((maxBet - playerBet) / (pot + maxBet - playerBet)) * 100
       : 0;
 
-  /* sizing */
+  /* ---------- sizing ---------- */
   const outerCls =
     "relative mb-8 justify-self-center max-w-[400px] w-full text-base " +
     (isActive ? "ring-4 ring-white shadow-yellow-400/50 rounded-md" : "");
@@ -65,11 +84,13 @@ const Plate: React.FC<PlateProps> = ({
       ? { width: plateWidth, maxWidth: plateWidth, minWidth: plateWidth }
       : undefined;
 
-  /* ---------- render ---------- */
+  /* ==========================================================
+     render
+     ========================================================== */
   return (
     <div className={outerCls} style={sizeStyle}>
-      {/* dealer button */}
-      {data?.Position === "BTN" && (
+      {/* dealer button only if final JSON says this is BTN */}
+      {displayData?.Position === "BTN" && (
         <div
           className="absolute z-0"
           style={{ top: "-16%", right: "-8%", width: "33%", aspectRatio: "1" }}
@@ -78,36 +99,59 @@ const Plate: React.FC<PlateProps> = ({
         </div>
       )}
 
-      {/* plate background */}
       <div
-        className="border rounded-[7px] shadow-md p-0.5 bg-white transition-opacity duration-500 ease-in-out relative z-10"
+        className="border rounded-[7px] shadow-md p-0.5 bg-white transition-opacity duration-500 relative z-10"
         style={{ opacity: alive ? 1 : 0.4 }}
       >
-        {data && (
-          <>
-            {/* ----- grid + badges ----- */}
-            <div className="relative">
-              {/* clickable DecisionMatrix — shares layoutId with overlay */}
-              <motion.div layoutId={`matrix-${data.Position}`} className="cursor-pointer">
+        <div className="relative">
+          <AnimatePresence mode="wait" initial={false}>
+            {displayData ? (
+              /* -------- real grid -------- */
+              <motion.div
+                key="grid"
+                layoutId={`matrix-${displayData.Position}`}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="cursor-pointer"
+              >
                 <DecisionMatrix
                   gridData={combinedData}
                   randomFillEnabled={randomFillEnabled}
                   isICMSim={isICMSim}
                   onMatrixClick={() =>
-                    onMatrixZoom?.(combinedData, data.Position, isICMSim, data.Position)
+                    onMatrixZoom?.(
+                      combinedData,
+                      displayData.Position,
+                      isICMSim,
+                      displayData.Position
+                    )
                   }
                 />
               </motion.div>
+            ) : (
+              /* -------- skeleton -------- */
+              <motion.div
+                key="skeleton"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+              >
+                <Skeleton />
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-              {/* stack-size badge */}
+          {/* ­­­badges (show only when we have real data) */}
+          {displayData && (
+            <>
               <div className="absolute left-1/2 -bottom-16 -translate-x-1/2 z-30 pointer-events-none">
                 <div className="bg-white/70 backdrop-blur-sm rounded-md px-2 py-1 text-xs shadow text-center whitespace-nowrap">
-                  <strong>{data.Position}</strong>&nbsp;
-                  {fmtBB(data.bb - playerBet)} bb
+                  <strong>{displayData.Position}</strong>&nbsp;
+                  {fmtBB(displayData.bb - playerBet)} bb
                 </div>
               </div>
 
-              {/* bet badge */}
               {playerBet !== 0 && (
                 <div className="absolute left-[85%] -bottom-14 -translate-x-1/2 z-30 pointer-events-none">
                   <div className="bg-white/70 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center whitespace-nowrap">
@@ -116,7 +160,6 @@ const Plate: React.FC<PlateProps> = ({
                 </div>
               )}
 
-              {/* pot-odds badge */}
               {isActive && potOdds > 0 && (
                 <div className="absolute left-[15%] -bottom-16 -translate-x-1/2 z-30 pointer-events-none">
                   <div className="bg-white/70 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center whitespace-nowrap">
@@ -126,24 +169,26 @@ const Plate: React.FC<PlateProps> = ({
                   </div>
                 </div>
               )}
-            </div>
+            </>
+          )}
+        </div>
 
-            {/* color key */}
-            <div
-              data-intro-target={
-                data.Position === "BTN" ? "color-key-btn" : undefined
-              }
-              className={
-                "select-none flex w-full items-center justify-end mt-0.5 " +
-                (isActive ? "animate-pulse" : "")
-              }
-            >
-              <ColorKey
-                data={combinedData}
-                onActionClick={(action) => onActionClick(action, file)}
-              />
-            </div>
-          </>
+        {/* color-key bar (only with real data) */}
+        {displayData && (
+          <div
+            data-intro-target={
+              displayData.Position === "BTN" ? "color-key-btn" : undefined
+            }
+            className={
+              "select-none flex w-full items-center justify-end mt-0.5 " +
+              (isActive ? "animate-pulse" : "")
+            }
+          >
+            <ColorKey
+              data={combinedData}
+              onActionClick={(action) => onActionClick(action, file)}
+            />
+          </div>
         )}
       </div>
 
@@ -151,11 +196,7 @@ const Plate: React.FC<PlateProps> = ({
       {alive && (
         <div className="absolute left-1/2 -bottom-9 -translate-x-1/2 -z-0 flex">
           <img src="/playing-cards.svg" alt="cards" className="w-18 h-18" />
-          <img
-            src="/playing-cards.svg"
-            alt="cards"
-            className="w-18 h-18 -ml-8"
-          />
+          <img src="/playing-cards.svg" alt="cards" className="w-18 h-18 -ml-8" />
         </div>
       )}
     </div>

@@ -69,6 +69,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   const gridRows = isNarrow ? Math.ceil(files.length / 2) : 2;
   const gridCols = isNarrow ? 2 : Math.ceil(files.length / 2);
   const totalCells = gridRows * gridCols;
+  const railPortrait = gridRows > gridCols;
 
   /* highest bet on the table (for pot-odds badge) */
   const maxBet = playerBets ? Math.max(...Object.values(playerBets)) : 0;
@@ -101,7 +102,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     const c1: (readonly [string, string])[] = [];
 
     orderedEntries.forEach(([posKey, file], idx) => {
-      if (!file) return;
+      if (!posKey) return;
       (idx % 2 === 0 ? c0 : c1).push([posKey, file]);
     });
 
@@ -117,18 +118,28 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   /* ---------- canonical plate width (landscape only) --------- */
   const gapPx = 15;
   const canonicalPlateWidth = isNarrow
-    ? undefined
-    : Math.min(
-        400,
-        Math.max(170, (windowWidth - (gridCols - 1) * gapPx) / gridCols)
-      );
+  ? undefined
+  : (() => {
+      /* free space after gaps */
+      const wAvail = windowWidth  - (gridCols) * gapPx;
+      const hAvail = windowHeight - (gridRows) * gapPx;
+
+      /* what width would fit by width alone?  (existing logic)      */
+      const fitByW = wAvail / gridCols;
+
+      /* what width would fit by height?  plates are square → height = width */
+      const fitByH = hAvail / (gridRows+1);
+
+      /* choose the smaller so nothing spills vertically or horizontally */
+      return Math.max(170, Math.min(fitByW, fitByH));
+    })();
 
   /* =================== RENDER ================================ */
   return (
-    <div className="relative flex justify-center items-center py-8 overflow-visible">
+    <div className="relative flex justify-center items-center py-2 overflow-visible border-0">
       {/* ---------- decorative poker table background ---------- */}
       <div className="poker-table-bg pointer-events-none absolute inset-0 flex justify-center items-center z-10">
-        <div className={`poker-rail ${isNarrow ? "portrait" : ""} overflow-hidden`}>
+        <div className={`poker-rail ${railPortrait ? "portrait" : ""} overflow-hidden`}>
           <div className="poker-felt" />
         </div>
       </div>
@@ -185,14 +196,20 @@ const PlateGrid: React.FC<PlateGridProps> = ({
 
       {/* ---------- Ante / Pot badge --------------------------- */}
       {ante !== undefined && pot !== undefined && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-15">
-          <div className="bg-white/60 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center">
-            <strong>Total:</strong>&nbsp;{pot.toFixed(2)} bb
-            <br />
-            <strong>Pot:</strong>&nbsp;{ante} bb
-          </div>
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-15">
+        <div className="bg-white/60 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center">
+          <strong>Total:</strong>&nbsp;{pot.toFixed(2)} bb
+          {/* show Pot: row only if ante is non-zero */}
+          {ante !== 0 && (
+            <>
+              <br />
+              <strong>Pot:</strong>&nbsp;{ante} bb
+            </>
+          )}
         </div>
-      )}
+      </div>
+    )}
+
 
       {/* ---------- plates layout ------------------------------ */}
       <div className="relative z-10 w-full min-h-[300px] select-none">
@@ -232,7 +249,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
           /* ----- LANDSCAPE / WIDE ----- */
           <div className="flex flex-col gap-6">
             {rows.map((row, rowIdx) => {
-              const plates = row.filter(([, f]) => f) as (readonly [
+              const plates = row.filter(([posKey]) => posKey) as (readonly [
                 string,
                 string
               ])[];
@@ -241,7 +258,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
               return (
                 <div
                   key={`row-${rowIdx}`}
-                  className="flex justify-center gap-1 flex-nowrap"
+                  className="flex justify-center gap-2 flex-nowrap"
                 >
                   {plates.map(([posKey, file]) => (
                     <Plate

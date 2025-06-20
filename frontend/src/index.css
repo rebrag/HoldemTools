@@ -8,33 +8,45 @@
   100% { transform: translateY(120%)  rotate(45deg); opacity: 0.2; }
 }
 
-/* regular horizontal rail */
+/* =========================================
+   Poker-table rail  (fills wrapper’s box)
+   ========================================= */
 .poker-rail {
-  width: min(95vw, 1300px);
+  /* Stretch across the whole wrapper */
+  width: 90%;
+  /* height is derived from aspect-ratio */
+  height: auto;
+
+  /* Preserve pill shape */
   aspect-ratio: 2.1 / 1;          /* wider than tall */
   border-radius: 9999px;
-  padding: 12px;
-  background: linear-gradient(145deg, #3d3d3d 0%, #1b1b1b 100%);
+
+  /* Rail look */
+  padding: 18px;
+  background: linear-gradient(145deg,#3d3d3d 0%,#1b1b1b 100%);
   box-shadow:
     0 4px 12px rgba(0,0,0,.35),
     inset 0 2px 8px rgba(255,255,255,.04);
+
+  /* Never spill out of the wrapper */
+  max-height: 90%;
+  max-width : 90%;
 }
 
-/* portrait modifier – taller than wide */
+/* Portrait modifier – take the full height instead */
 .poker-rail.portrait {
-  width: min(80vw, 460px);        /* narrower width */
-  aspect-ratio: 1 / 2.7;          /* vertical oval  */
-  
-  
+  width : auto;            /* width follows height */
+  height: 100%;            /* fill wrapper’s height */
+  aspect-ratio: 1 / 2.4;   /* tall oval */
+  max-width: 100%;
 }
+
 
 /* green felt (shared) */
 .poker-felt {
   width: 100%;
   height: 100%;
-
   box-sizing: content-box;
-  
   border-radius: inherit;
   background: radial-gradient(
       ellipse at center,
@@ -43,73 +55,3 @@
       #0d3b12 100%);
   box-shadow: inset 0 0 22px rgba(0,0,0,.6);
 }
-
-
-/* :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
-}
-
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
-}
-
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
-} */

@@ -252,6 +252,9 @@ const Solver = ({ user }: { user: User | null }) => {
       initialAlive[pos] = true;
     });
     setAlivePlayers(initialAlive);
+    const bbIdx = positionOrder.indexOf("BB");
+    const nextIdx = (bbIdx + 1) % positionOrder.length;
+    setActivePlayer(positionOrder[nextIdx]);
   },
   [user, folder, defaultPlateNames, positionOrder]
 );
@@ -686,7 +689,7 @@ const Solver = ({ user }: { user: User | null }) => {
         {(folderError || filesError) && (
           <div className="text-red-500">{folderError || filesError}</div>
         )}
-       {displayPlates.some((p) => p !== "") && (
+       {/* {displayPlates.some((p) => p !== "") && ( */}
         <div className="flex items-center">
           <Line line={preflopLine} onLineClick={(i) => handleLineClick(i)} />
 
@@ -700,7 +703,7 @@ const Solver = ({ user }: { user: User | null }) => {
             i
           </button>
         </div>
-      )}
+      {/* )} */}
 
       {/* render the draggable instructions only when needed */}
       {/* {showInstructions && (
@@ -736,18 +739,31 @@ const Solver = ({ user }: { user: User | null }) => {
       />
 
         {metadata && (
-          <div className="text-sm mt-1 mb-2 text-center text-gray-600">
-            {metadata.name && <div><strong>Sim:</strong> {metadata.name}</div>}
-            {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
-              <div>
-              <strong>ICM Structure:</strong><br />
+  /* outer flex just centers the badge */
+  <div className="flex justify-center mt-1 mb-2 pointer-events-none select-none">
+    <div className="bg-white/60 backdrop-blur-sm rounded-md px-2 py-1 text-xs shadow text-center text-gray-800">
+
+      {/* ----- Sim name (if any) ----- */}
+      {metadata.name && (
+        <>
+          <strong>Sim:</strong>&nbsp;{metadata.name}
+          {/* add a break only if we’ll show ICM below */}
+          {Array.isArray(metadata.icm) && metadata.icm.length > 0 && <br />}
+        </>
+      )}
+
+      {/* ----- ICM structure ----- */}
+      {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
+            <>
+              <strong>ICM&nbsp;Structure:</strong>
+              <br />
               {metadata.icm.map((value, idx) => {
-                const rank = idx + 1;
+                const rank   = idx + 1;
                 const suffix =
                   rank === 1 ? "st" :
                   rank === 2 ? "nd" :
                   rank === 3 ? "rd" : "th";
-            
+
                 return (
                   <div key={idx}>
                     {rank}
@@ -755,15 +771,21 @@ const Solver = ({ user }: { user: User | null }) => {
                   </div>
                 );
               })}
-            </div>
-            
-            ) : (
-              <div><strong>ICM:</strong> None</div>
-            )}
-          </div>
-        )}
+            </>
+          ) : (
+            /* only show “None” if there wasn’t a Sim name above */
+            !metadata.name && (
+              <>
+                <strong>ICM:</strong>&nbsp;None
+              </>
+            )
+          )}
+        </div>
       </div>
-      <div className="text-center select-none pt-5">© Josh Garber 2025</div>
+    )}
+
+      </div>
+      <div className="text-center select-none pt-5">© HoldemTools 2025</div>
     </Layout>
 
     {showLoginOverlay && (
