@@ -1,26 +1,40 @@
-import React from 'react';
+// src/components/Line.tsx
+import React from "react";
+import { getColorForAction } from "../utils/utils";
 
+/* ---------- props ---------- */
 interface LineProps {
   line: string[];
-  // Called when a line button is clicked; index indicates which button.
-  onLineClick: (action: number) => void;
+  onLineClick: (index: number) => void;
 }
 
-const Line: React.FC<LineProps> = ({ line, onLineClick }) => {
-  return (
-    <div className="flex flex-wrap gap-1 p-1 z-10">
+/* ---------- component ---------- */
+const Line: React.FC<LineProps> = ({ line, onLineClick }) => (
+  <div className="flex flex-wrap gap-1 items-center p-1">
+    <span
+      className="mr-2 select-none text-[11px] font-semibold tracking-widest uppercase text-gray-400">
       Line:
-      {line.map((action, index) => (
+    </span>
+
+
+    {line.map((action: string, idx: number) => {
+      const label = action === "Root" ? "Reset" : action;
+      const base =
+        action === "Root" ? "#6b7280" /* gray-500 */ : getColorForAction(action);
+
+      return (
         <button
-          key={index}
-          onClick={() => onLineClick(index)}
-          className="px-1.5 py-0.5 bg-gray-200 hover:bg-gray-300 text-black rounded-md transition-colors"
+          key={idx}
+          onClick={() => onLineClick(idx)}
+          style={{ backgroundColor: base }}
+          className="px-2 py-0.5 rounded-full text-white text-xs
+                     hover:brightness-110 active:scale-95 transition"
         >
-          {action === 'Root' ? 'Reset' : action}
+          {label}
         </button>
-      ))}
-    </div>
-  );
-};
+      );
+    })}
+  </div>
+);
 
 export default Line;

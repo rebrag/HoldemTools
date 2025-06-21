@@ -3,6 +3,11 @@ import React, { useState, useEffect } from "react";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "../firebase";
 import { logUserAction } from "../logEvent";          // ← adjust if your path differs
+import {
+  sortFoldersLikeSelector,
+  // isAllSameFolder,     // you still need these locally
+  // isHUSimFolder
+} from "../utils/folderSort";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
@@ -33,16 +38,16 @@ function getDisplayFolderName(folder: string): string {
   return allSame ? `${firstNum}bb All` : folder.replace(/_/g, " ");
 }
 
-const isAllSameFolder = (folder: string): boolean => {
-  const parts = folder.split("_");
-  const firstNum = parts[0].match(/^(\d+)/)?.[1];
-  return !!firstNum && parts.every(p => p.match(/^(\d+)/)?.[1] === firstNum);
-};
+// const isAllSameFolder = (folder: string): boolean => {
+//   const parts = folder.split("_");
+//   const firstNum = parts[0].match(/^(\d+)/)?.[1];
+//   return !!firstNum && parts.every(p => p.match(/^(\d+)/)?.[1] === firstNum);
+// };
 
-const isHUSimFolder = (folder: string): boolean => {
-  const parts = folder.split("_");
-  return parts.length === 2 && /^\d+/.test(parts[0]);
-};
+// const isHUSimFolder = (folder: string): boolean => {
+//   const parts = folder.split("_");
+//   return parts.length === 2 && /^\d+/.test(parts[0]);
+// };
 
 /* ------------------------------------------------------------------ */
 /*  Search / highlight helpers                                        */
@@ -126,23 +131,9 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
 
   /* -------- search / sort ----------------------------------------- */
   useEffect(() => {
-    const sorted = [...folders]
-      .filter(f => folderMatchesQuery(f, inputValue))
-      .sort((a, b) => {
-        // HU sims last
-        const aHU = isHUSimFolder(a);
-        const bHU = isHUSimFolder(b);
-        if (aHU !== bHU) return aHU ? 1 : -1;
-
-        // “allSame” first
-        const aAll = isAllSameFolder(a);
-        const bAll = isAllSameFolder(b);
-        if (aAll !== bAll) return aAll ? -1 : 1;
-
-        // fallback: shorter first
-        return a.length - b.length;
-      });
-
+    const sorted = sortFoldersLikeSelector(
+      folders.filter(f => folderMatchesQuery(f, inputValue))
+    );
     setFilteredFolders(sorted);
     setHighlightedIndex(sorted.length ? 0 : -1);
   }, [inputValue, folders]);

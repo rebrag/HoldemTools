@@ -79,8 +79,6 @@ const Solver = ({ user }: { user: User | null }) => {
       : windowWidth * 1.3 < windowHeight;
   const gridRows = isNarrow ? Math.ceil(positionOrder.length / 2) : 2;
   const gridCols = isNarrow ? 2 : Math.ceil(positionOrder.length / 2);
-  
-  // Create a grid array (row-major order) using your canonical order.
   const gridArray = Array(gridRows * gridCols).fill(null);
   positionOrder.forEach((pos, i) => {
     gridArray[i] = pos;
@@ -107,8 +105,6 @@ const Solver = ({ user }: { user: User | null }) => {
       initialAlive[pos] = true;
     });
     setAlivePlayers(initialAlive);
-    
-    /* -------- default active = first seat after BB that’s alive -------- */ 
     const bbIdx = positions.indexOf("BB");
     const defaultIdx = (bbIdx + 1) % positions.length;
     setActivePlayer(positions[defaultIdx]);
@@ -135,7 +131,6 @@ const Solver = ({ user }: { user: User | null }) => {
       plateData: { ...plateData },
       plateMapping: { ...plateMapping },
     };
-    //console.log(metadata.icm)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folder]);
 
@@ -656,8 +651,13 @@ const Solver = ({ user }: { user: User | null }) => {
   
   
   useKeyboardShortcuts({
-    onToggleRandom: () => setRandomFillEnabled((prev) => !prev),
-  });
+  onToggleRandom: () => setRandomFillEnabled(prev => !prev),
+  folders,
+  currentFolder: folder,
+  onFolderSelect: handleFolderSelect,
+});
+
+
   
   // useEffect(() => {
   //   console.log("players: ", playerCount,
