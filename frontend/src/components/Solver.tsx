@@ -340,195 +340,197 @@ const Solver = ({ user }: { user: User | null }) => {
   
 
   const handleActionClick = useCallback(
-    (action: string, fileName: string) => {
-      const plateName = loadedPlates.find(name => name === fileName);
-      if (!plateName) return;
-      if (
+  (action: string, fileName: string) => {
+    const plateName = loadedPlates.find(name => name === fileName);
+    if (!plateName) return;
+    if (
       lastClickRef.current &&
       lastClickRef.current.plate === fileName &&
       lastClickRef.current.action === action
     ) {
-      return;                                                    // 🔙 do nothing
+      return; // 🔙 do nothing
     }
-  
-      const actionNumber = getActionNumber(action) ?? "";
-      const clickedIndex = loadedPlates.findIndex(name => name === plateName);
-      const newLoadedPlates = appendPlateNames(loadedPlates, clickedIndex, actionNumber, availableJsonFiles);
-      setLoadedPlates(prev => [...new Set([...prev, ...newLoadedPlates])]);
-  
-      const parts = fileName.replace(".json", "").split(".");
-      const aliveList = [...positionOrder];
-      let activeIndex = playerCount === 2 ? 0 : 2;
-  
-      for (const part of parts) {
-        if (part === "root") continue;
-        const n = parseInt(part, 10);
-        if (n === 0) {
-          aliveList.splice(activeIndex, 1);
-          if (aliveList.length > 0 && activeIndex >= aliveList.length) {
-            activeIndex = 0;
-          }
-        } else {
-          activeIndex = (activeIndex + 1) % aliveList.length;
-        }
-        
-      }
-  
-      const newAliveMap = Object.fromEntries(positionOrder.map(pos => [pos, aliveList.includes(pos)]));
-      setAlivePlayers(newAliveMap);
-      setActivePlayer(aliveList[(activeIndex+1)%aliveList.length]);
-  
-      const actingPosition = plateData[fileName]?.Position;
-      const currentBet = playerBets[actingPosition] || 0;
-      const stackSize = plateData[fileName]?.bb || 0;
 
-      if (action === "Fold") {
-        setAlivePlayers(prev => ({ ...prev, [actingPosition]: false }));
-        // you may also want to zero that player’s bet:
-        // setPlayerBets(prev => ({ ...prev, [actingPosition]: 0 }));
-        //return;                                          // nothing else to do
+    const actionNumber = getActionNumber(action) ?? "";
+    const clickedIndex = loadedPlates.findIndex(name => name === plateName);
+    const newLoadedPlates = appendPlateNames(loadedPlates, clickedIndex, actionNumber, availableJsonFiles);
+    setLoadedPlates(prev => [...new Set([...prev, ...newLoadedPlates])]);
+
+    const parts = fileName.replace(".json", "").split(".");
+    const aliveList = [...positionOrder];
+    let activeIndex = playerCount === 2 ? 0 : 2;
+
+    for (const part of parts) {
+      if (part === "root") continue;
+      const n = parseInt(part, 10);
+      if (n === 0) {
+        aliveList.splice(activeIndex, 1);
+        if (aliveList.length > 0 && activeIndex >= aliveList.length) {
+          activeIndex = 0;
+        }
+      } else {
+        activeIndex = (activeIndex + 1) % aliveList.length;
       }
-  
-      let newBetAmount = currentBet;
-      if (action === "Min") newBetAmount = 2;
-      else if (action === "ALLIN") newBetAmount = stackSize;
-      else if (action.startsWith("Raise ")) {
-        const val = action.split(" ")[1];
-        const maxBet = Math.max(...Object.values(playerBets));
-        newBetAmount = val.endsWith("bb")
-          ? maxBet + parseFloat(val)
-          : maxBet + (parseFloat(val) / 100) * (potSize + maxBet);
-      } else if (action === "Call") {
-        newBetAmount = Math.max(...Object.values(playerBets));
+    }
+
+    const newAliveMap = Object.fromEntries(positionOrder.map(pos => [pos, aliveList.includes(pos)]));
+    setAlivePlayers(newAliveMap);
+    setActivePlayer(aliveList[(activeIndex + 1) % aliveList.length]);
+
+    const actingPosition = plateData[fileName]?.Position;
+    const currentBet = playerBets[actingPosition] || 0;
+    const stackSize = plateData[fileName]?.bb || 0;
+
+    if (action === "Fold") {
+      setAlivePlayers(prev => ({ ...prev, [actingPosition]: false }));
+      // you may also want to zero that player’s bet:
+      // setPlayerBets(prev => ({ ...prev, [actingPosition]: 0 }));
+      //return;                                       // nothing else to do
+    }
+
+    let newBetAmount = currentBet;
+    if (action === "Min") newBetAmount = 2;
+    else if (action === "ALLIN") newBetAmount = stackSize;
+    else if (action.startsWith("Raise ")) {
+      const val = action.split(" ")[1];
+      const maxBet = Math.max(...Object.values(playerBets));
+      newBetAmount = val.endsWith("bb")
+        ? maxBet + parseFloat(val)
+        : maxBet + (parseFloat(val) / 100) * (potSize + maxBet);
+    } else if (action === "Call") {
+      const amountToCall = Math.max(...Object.values(playerBets));
+      // Ensure the player doesn't bet more than their stack when calling
+      newBetAmount = Math.min(amountToCall, stackSize);
+    }
+
+    const newPotSize = potSize + Math.max(0, newBetAmount - currentBet);
+    setPotSize(newPotSize);
+    setPlayerBets(prev => ({ ...prev, [actingPosition]: newBetAmount }));
+
+    let fullText = "";
+    if (action === "Call") {
+      const callData = plateData[fileName];
+      const callingPos = callData?.Position;
+      const [range0, range1] = (positionOrder.indexOf(callingPos ?? "") < positionOrder.indexOf(lastRangePos))
+        ? [convertRangeText(callData, action), lastRange]
+        : [lastRange, convertRangeText(callData, action)];
+
+      const stackMap = Object.fromEntries(
+        positionOrder.map((pos) => {
+          const plate = plateMapping[pos];
+          const bb = plateData[plate]?.bb ?? 0;
+          const bet =
+            pos === actingPosition ? newBetAmount : playerBets[pos] ?? 0;
+          return [pos, Math.round((bb - bet) * 100)];
+        })
+      );
+
+      let firstPos = lastRangePos; // raiser / Min
+      let secondPos = actingPosition; // caller
+      // Fallback in weird edge-cases (e.g., first click is Call)
+      if (!firstPos) firstPos = secondPos;
+
+      /* put them in table order */
+      if (
+        firstPos &&
+        secondPos &&
+        positionOrder.indexOf(firstPos) < positionOrder.indexOf(secondPos)
+      ) {
+        [firstPos, secondPos] = [secondPos, firstPos];
       }
-  
-      const newPotSize = potSize + Math.max(0, newBetAmount - currentBet);
-      setPotSize(newPotSize);
-      setPlayerBets(prev => ({ ...prev, [actingPosition]: newBetAmount }));
-  
-      let fullText = "";
-      if (action === "Call") {
-        const callData = plateData[fileName];
-        const callingPos = callData?.Position;
-        const [range0, range1] = (positionOrder.indexOf(callingPos ?? "") < positionOrder.indexOf(lastRangePos))
-          ? [convertRangeText(callData, action), lastRange]
-          : [lastRange, convertRangeText(callData, action)];
-  
-          const stackMap = Object.fromEntries(
-            positionOrder.map((pos) => {
-              const plate = plateMapping[pos];
-              const bb = plateData[plate]?.bb ?? 0;
-              const bet =
-                pos === actingPosition ? newBetAmount : playerBets[pos] ?? 0;
-              return [pos, Math.round((bb - bet) * 100)];
-            })
-          );
-          
-          let firstPos = lastRangePos;   // raiser / Min
-          let secondPos = actingPosition; // caller
-          // Fallback in weird edge-cases (e.g., first click is Call)
-          if (!firstPos) firstPos = secondPos;
-          
-          /* put them in table order */
-          if (
-            firstPos &&
-            secondPos &&
-            positionOrder.indexOf(firstPos) < positionOrder.indexOf(secondPos)
-          ) {
-            [firstPos, secondPos] = [secondPos, firstPos];
-          }
-          
-          /* -------- build #ICM.Stacks# -------- */
-          const stackEntries = new Set([firstPos, secondPos]);
-          
-          const otherStacks = positionOrder
-            .filter((pos) => !stackEntries.has(pos))
-            .map((pos) => stackMap[pos] ?? 0);
-          
-          const stacksStr = [
-            stackMap[firstPos],
-            stackMap[secondPos],
-            ...otherStacks,
-          ].join("\\n");
-          //console.log(stackMap, stacksStr)
+
+      /* -------- build #ICM.Stacks# -------- */
+      const stackEntries = new Set([firstPos, secondPos]);
+
+      const otherStacks = positionOrder
+        .filter((pos) => !stackEntries.has(pos))
+        .map((pos) => stackMap[pos] ?? 0);
+
+      const stacksStr = [
+        stackMap[firstPos],
+        stackMap[secondPos],
+        ...otherStacks,
+      ].join("\\n");
+      //console.log(stackMap, stacksStr)
 
       const payoutsStr = Array.isArray(metadata.icm)
-      ? metadata.icm.map(v => Math.round(v * 10)).join("\\n")
-      : "0\\n0\\n0\\n0";
-  
-        fullText = `#Type#NoLimit
-        #Range0#${range0}
-        #Range1#${range1}
-        #ICM.ICMFormat#Pio ICM structure
-        #ICM.Payouts#${payoutsStr}
-        #ICM.Stacks#${stacksStr}
-        #Pot#${(newPotSize * 100).toFixed(0)}
-        #EffectiveStacks#1800
-        #AllinThreshold#60
-        #AddAllinOnlyIfLessThanThisTimesThePot#250
-        #MergeSimilarBets#True
-        #MergeSimilarBetsThreshold#12
-        #CapEnabled#True
-        #CapPerStreet#3\\n3\\n3
-        #CapMode#NoLimit
-        #FlopConfig.RaiseSize#33
-        #FlopConfig.AddAllin#True
-        #TurnConfig.BetSize#50
-        #TurnConfig.RaiseSize#a
-        #TurnConfig.AddAllin#True
-        #RiverConfig.BetSize#30 66
-        #RiverConfig.RaiseSize#a
-        #RiverConfig.AddAllin#True
-        #RiverConfig.DonkBetSize#30
-        #FlopConfigIP.BetSize#25
-        #FlopConfigIP.RaiseSize#a
-        #FlopConfigIP.AddAllin#True
-        #TurnConfigIP.BetSize#50
-        #TurnConfigIP.RaiseSize#a
-        #TurnConfigIP.AddAllin#True
-        #RiverConfigIP.BetSize#30 66
-        #RiverConfigIP.RaiseSize#a
-        #RiverConfigIP.AddAllin#True`;
+        ? metadata.icm.map(v => Math.round(v * 10)).join("\\n")
+        : "0\\n0\\n0\\n0";
 
-        if (isICMSim) {
-          fullText = fullText.replace(
-            '#ICM.ICMFormat#Pio ICM structure',
-            '#ICM.ICMFormat#Pio ICM structure\n#ICM.Enabled#True'
-          );
-        }
-  
-        const effStack = Math.min(
-          ...positionOrder
-            .filter(pos => newAliveMap[pos])
-            .map(pos => {
-              const stack = plateData[plateMapping[pos]]?.bb ?? 0;
-              const bet = pos === actingPosition ? newBetAmount : playerBets[pos] ?? 0;
-              return stack - bet;
-            })
+      fullText = `#Type#NoLimit
+      #Range0#${range0}
+      #Range1#${range1}
+      #ICM.ICMFormat#Pio ICM structure
+      #ICM.Payouts#${payoutsStr}
+      #ICM.Stacks#${stacksStr}
+      #Pot#${(newPotSize * 100).toFixed(0)}
+      #EffectiveStacks#1800
+      #AllinThreshold#60
+      #AddAllinOnlyIfLessThanThisTimesThePot#250
+      #MergeSimilarBets#True
+      #MergeSimilarBetsThreshold#12
+      #CapEnabled#True
+      #CapPerStreet#3\\n3\\n3
+      #CapMode#NoLimit
+      #FlopConfig.RaiseSize#33
+      #FlopConfig.AddAllin#True
+      #TurnConfig.BetSize#50
+      #TurnConfig.RaiseSize#a
+      #TurnConfig.AddAllin#True
+      #RiverConfig.BetSize#30 66
+      #RiverConfig.RaiseSize#a
+      #RiverConfig.AddAllin#True
+      #RiverConfig.DonkBetSize#30
+      #FlopConfigIP.BetSize#25
+      #FlopConfigIP.RaiseSize#a
+      #FlopConfigIP.AddAllin#True
+      #TurnConfigIP.BetSize#50
+      #TurnConfigIP.RaiseSize#a
+      #TurnConfigIP.AddAllin#True
+      #RiverConfigIP.BetSize#30 66
+      #RiverConfigIP.RaiseSize#a
+      #RiverConfigIP.AddAllin#True`;
+
+      if (isICMSim) {
+        fullText = fullText.replace(
+          '#ICM.ICMFormat#Pio ICM structure',
+          '#ICM.ICMFormat#Pio ICM structure\n#ICM.Enabled#True'
         );
-        const adjustedText = fullText
-          .replace(/#Pot#\d+/, `#Pot#${(newPotSize * 100).toFixed(0)}`)
-          .replace(/#EffectiveStacks#\d+/, `#EffectiveStacks#${Math.round(effStack * 100)}`);
-        navigator.clipboard.writeText(adjustedText);
-      } else if (action !== "ALLIN") {
-        const data = plateData[fileName];
-        const currentRange = convertRangeText(data, action);
-        if (currentRange) {
-          setLastRange(currentRange);
-          setLastRangePos(data.Position);
-        }
       }
-      setPreflopLine(["Root", ...parts.filter(p => p !== "root").map(p => numberToActionMap[p]), action]);
-      if (newLoadedPlates.length !== loadedPlates.length || !newLoadedPlates.every((v, i) => v === loadedPlates[i])) {
-        setLoadedPlates(newLoadedPlates);
+
+      const effStack = Math.min(
+        ...positionOrder
+          .filter(pos => newAliveMap[pos])
+          .map(pos => {
+            const stack = plateData[plateMapping[pos]]?.bb ?? 0;
+            const bet = pos === actingPosition ? newBetAmount : playerBets[pos] ?? 0;
+            return stack - bet;
+          })
+      );
+      const adjustedText = fullText
+        .replace(/#Pot#\d+/, `#Pot#${(newPotSize * 100).toFixed(0)}`)
+        .replace(/#EffectiveStacks#\d+/, `#EffectiveStacks#${Math.round(effStack * 100)}`);
+      navigator.clipboard.writeText(adjustedText);
+    } else if (action !== "ALLIN") {
+      const data = plateData[fileName];
+      const currentRange = convertRangeText(data, action);
+      if (currentRange) {
+        setLastRange(currentRange);
+        setLastRangePos(data.Position);
       }
-      setRandomFillEnabled(false);
-      setPlateMapping(prev => ({ ...prev }));
-      lastClickRef.current = { plate: fileName, action };
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [loadedPlates, appendPlateNames, availableJsonFiles, playerCount, playerBets, plateData, potSize, positionOrder, lastRangePos, lastRange, metadata, plateMapping]
-  );
+    }
+    setPreflopLine(["Root", ...parts.filter(p => p !== "root").map(p => numberToActionMap[p]), action]);
+    if (newLoadedPlates.length !== loadedPlates.length || !newLoadedPlates.every((v, i) => v === loadedPlates[i])) {
+      setLoadedPlates(newLoadedPlates);
+    }
+    setRandomFillEnabled(false);
+    setPlateMapping(prev => ({ ...prev }));
+    lastClickRef.current = { plate: fileName, action };
+  },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [loadedPlates, appendPlateNames, availableJsonFiles, playerCount, playerBets, plateData, potSize, positionOrder, lastRangePos, lastRange, metadata, plateMapping]
+);
+
   
 
   const handleLineClick = useCallback((clickedIndex: number) => {

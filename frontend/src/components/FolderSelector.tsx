@@ -131,6 +131,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
 
   /* -------- search / sort ----------------------------------------- */
   useEffect(() => {
+    console.log(folders)
     const sorted = sortFoldersLikeSelector(
       folders.filter(f => folderMatchesQuery(f, inputValue))
     );

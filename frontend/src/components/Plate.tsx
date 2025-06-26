@@ -115,8 +115,16 @@ const Plate: React.FC<PlateProps> = ({
         </div>
       )}
 
-      <div
-        className="rounded-[7px] bg-white shadow-md p-0.5  transition-opacity duration-500 relative z-10"
+      {/* plate background – now a motion.div so it animates with the grid */}
+      <motion.div
+        /* share a layout context with the grid so they morph together */
+        layout
+        layoutId={`plate-${displayData?.Position ?? file}`}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: alive ? 1 : 0.4 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.25 }}
+        className="border rounded-[7px] shadow-md p-0.5 bg-white relative z-10"
         style={{ opacity: alive ? 1 : 0.4 }}
       >
         {/* FULL PLATE or SKELETON */}
@@ -204,7 +212,7 @@ const Plate: React.FC<PlateProps> = ({
             </motion.div>
           )}
         </AnimatePresence>
-      </div>
+      </motion.div>
 
       {/* decorative cards */}
       {alive && (
