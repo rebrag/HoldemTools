@@ -118,4 +118,4 @@ src/
 
 Closed‑source © 2025 Joshua Garber – Demo code and screenshots may be reused under the MIT License **excluding** solver outputs and proprietary range data.
 
-> Interested in the full stack? Let’s chat: \<contact email> or LinkedIn.
+> Interested in the full stack? Let’s chat: thejoshgarber@gmail.com or LinkedIn: https://www.linkedin.com/in/joshua-garber/.
