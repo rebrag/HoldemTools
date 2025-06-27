@@ -167,7 +167,7 @@ const Solver = ({ user }: { user: User | null }) => {
   useLayoutEffect(() => {
     setLoadedPlates(defaultPlateNames);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folder]);
+  }, [folder, playerCount]);
 
   // Keep plateMapping consistent with loadedPlates.
   useEffect(() => {
@@ -238,7 +238,7 @@ const Solver = ({ user }: { user: User | null }) => {
     setLoadedPlates(newLoadedPlates);
     setFolder(selectedFolder);
     setPlateData({});
-    setPlateMapping({});
+    // setPlateMapping({});
     setRandomFillEnabled(false);
     setPreflopLine(["Root"]);
 
