@@ -3,6 +3,7 @@ import NavBar from "./NavBar";
 import PlateGrid from "./PlateGrid";
 import Layout from "./Layout";
 import { actionToNumberMap, numberToActionMap, getActionNumber} from "../utils/constants"; // actionToPrefixMap2
+import { getInitialMapping } from "../utils/getInitialMapping";
 import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import useWindowDimensions from "../hooks/useWindowDimensions";
 import useFolders from "../hooks/useFolders";
@@ -227,33 +228,34 @@ const Solver = ({ user }: { user: User | null }) => {
   }, [loadedPlates, folder]);
 
   const handleFolderSelect = useCallback(
-  (selectedFolder: string) => {
-    if (!user && selectedFolder !== folder) {
-      setPendingFolder(selectedFolder);
-      setShowLoginOverlay(true);
-      return;
-    }
-
-    const newLoadedPlates = defaultPlateNames;
-    setLoadedPlates(newLoadedPlates);
-    setFolder(selectedFolder);
-    setPlateData({});
-    // setPlateMapping({});
-    setRandomFillEnabled(false);
-    setPreflopLine(["Root"]);
-
-    const initialAlive: Record<string, boolean> = {};
-    positionOrder.forEach((pos) => {
-      initialAlive[pos] = true;
-    });
-    setAlivePlayers(initialAlive);
-    const bbIdx = positionOrder.indexOf("BB");
-    const nextIdx = (bbIdx + 1) % positionOrder.length;
-    setActivePlayer(positionOrder[nextIdx]);
-  },
-  [user, folder, defaultPlateNames, positionOrder]
+    (selectedFolder: string) => {
+      // — 1️⃣ Gate for unauthenticated users (your existing logic)
+      if (!user && selectedFolder !== folder) {
+        setPendingFolder(selectedFolder);
+        setShowLoginOverlay(true);
+        return;
+      }
+      // — 2️⃣ Figure out the new seat count from the folder name
+      const newPlayerCount = selectedFolder.split("_").length;
+      // — 3️⃣ Reset synchronous state first
+      const freshPlates   = defaultPlateNames;                 // root / 0 / 0.0 …
+      const freshMapping  = getInitialMapping(newPlayerCount); // instant mapping
+      setLoadedPlates(freshPlates);
+      setPlateMapping(freshMapping);
+      setPlateData({});                 // wipe old JSON
+      setFolder(selectedFolder);
+      setPreflopLine(["Root"]);
+      setRandomFillEnabled(false);
+      // — 4️⃣ Reset alive players & active seat
+      const initialAlive: Record<string, boolean> = {};
+      Object.keys(freshMapping).forEach(pos => (initialAlive[pos] = true));
+      setAlivePlayers(initialAlive);
+      const bbIdx   = Object.keys(freshMapping).indexOf("BB");
+      const nextIdx = (bbIdx + 1) % Object.keys(freshMapping).length;
+      setActivePlayer(Object.keys(freshMapping)[nextIdx]);
+    },
+    [user, folder, defaultPlateNames]
 );
-
 
   useEffect(() => {
     if (!folder) return;

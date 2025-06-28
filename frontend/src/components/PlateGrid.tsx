@@ -1,18 +1,10 @@
-// src/PlateGrid.tsx
 import React, { useMemo, useState } from "react";
 import Plate from "./Plate";
 import LoadingIndicator from "./LoadingIndicator";
 import { generateSpiralOrder } from "../utils/gridUtils";
-import {
-  JsonData,
-  HandCellData, // used for zoom overlay state
-} from "../utils/utils";
-import DecisionMatrix from "./DecisionMatrix";   // ⭐ add this line
-import { motion, AnimatePresence } from "framer-motion";
+import { JsonData, HandCellData } from "../utils/utils";
+import DecisionMatrix from "./DecisionMatrix";
 
-/* ------------------------------------------------------------------ */
-/*  Props                                                             */
-/* ------------------------------------------------------------------ */
 type PlateGridProps = {
   files: string[];
   positions: string[];
@@ -32,9 +24,6 @@ type PlateGridProps = {
   activePlayer?: string;
 };
 
-/* ------------------------------------------------------------------ */
-/*  Component                                                         */
-/* ------------------------------------------------------------------ */
 const PlateGrid: React.FC<PlateGridProps> = ({
   files,
   positions,
@@ -50,7 +39,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   isICMSim,
   ante,
   pot,
-  activePlayer = "UTG",
+  activePlayer = "UTG"
 }) => {
   /* =================== ZOOM OVERLAY STATE =================== */
   const [zoom, setZoom] = useState<{
@@ -72,7 +61,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   const railPortrait = gridRows > gridCols;
 
   /* highest bet on the table (for pot-odds badge) */
-  const maxBet = playerBets ? Math.max(...Object.values(playerBets)) : 0;
+  const maxBet = Math.max(...Object.values(playerBets));
 
   /* ---------- order entries (spiral or linear) --------------- */
   // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -86,7 +75,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
 
     const grid: (readonly [string, string])[] = new Array(totalCells).fill([
       "",
-      "",
+      ""
     ]);
     generateSpiralOrder(gridRows, gridCols).forEach(([r, c], i) => {
       grid[r * gridCols + c] = padded[i];
@@ -118,77 +107,57 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   /* ---------- canonical plate width (landscape only) --------- */
   const gapPx = 15;
   const canonicalPlateWidth = isNarrow
-  ? undefined
-  : (() => {
-      /* free space after gaps */
-      const wAvail = windowWidth  - (gridCols) * gapPx;
-      const hAvail = windowHeight - (gridRows) * gapPx;
-
-      /* what width would fit by width alone?  (existing logic)      */
-      const fitByW = wAvail / gridCols;
-
-      /* what width would fit by height?  plates are square → height = width */
-      const fitByH = hAvail / (gridRows+1);
-
-      /* choose the smaller so nothing spills vertically or horizontally */
-      return Math.max(170, Math.min(fitByW, fitByH));
-    })();
+    ? undefined
+    : (() => {
+        const wAvail = windowWidth - gridCols * gapPx;
+        const hAvail = windowHeight - gridRows * gapPx;
+        const fitByW = wAvail / gridCols;
+        const fitByH = hAvail / (gridRows + 1);
+        return Math.max(170, Math.min(fitByW, fitByH));
+      })();
 
   /* =================== RENDER ================================ */
   return (
     <div className="relative flex justify-center items-center py-2 overflow-visible border-0">
-      {/* ---------- decorative poker table background ---------- */}
+      {/* ---------- decorative poker-table background ---------- */}
       <div className="poker-table-bg pointer-events-none absolute inset-0 flex justify-center items-center z-10">
         <div className={`poker-rail ${railPortrait ? "portrait" : ""} overflow-hidden`}>
           <div className="poker-felt" />
         </div>
       </div>
 
-      {/* ---------- zoom overlay (DecisionMatrix enlarged) ---------- */}
-      <AnimatePresence>
-        {zoom && (
-          <motion.div
-            key="zoom-backdrop"
-            className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setZoom(null)}
+      {/* ---------- zoom overlay (simple, no AnimatePresence) ---------- */}
+      {zoom && (
+        <div
+          className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center"
+          onClick={() => setZoom(null)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl p-3 w-[90vw] max-w-[600px] relative"
+            onClick={(e) => e.stopPropagation()}
           >
-            <motion.div
-              layoutId={`matrix-${zoom.id}`}      /* same id as the plate */
-              className="bg-white rounded-lg shadow-xl p-3 relative
-                        w-[90vw] max-w-[600px]"  /* <<< gives it full width */
-              initial={{ borderRadius: 12 }}
-              onClick={(e) => e.stopPropagation()}
+            <button
+              onClick={() => setZoom(null)}
+              className="absolute top-2 right-2 text-lg font-bold"
             >
-              <button
-                onClick={() => setZoom(null)}
-                className="absolute top-2 right-2 text-lg font-bold"
-              >
-                ×
-              </button>
+              ×
+            </button>
 
-              <h2 className="text-center font-semibold mb-2">{zoom.title}</h2>
+            <h2 className="text-center font-semibold mb-2">{zoom.title}</h2>
 
-              <DecisionMatrix
-                gridData={zoom.grid}
-                randomFillEnabled={false}
-                isICMSim={zoom.isICM}
-              />
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-
+            <DecisionMatrix
+              gridData={zoom.grid}
+              randomFillEnabled={false}
+              isICMSim={zoom.isICM}
+            />
+          </div>
+        </div>
+      )}
 
       {/* ---------- loading overlay ---------------------------- */}
       <div
         className={`absolute inset-0 flex items-center justify-center z-50 transition-opacity duration-100 ${
-          loading
-            ? "opacity-100 pointer-events-auto"
-            : "opacity-0 pointer-events-none"
+          loading ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
       >
         <LoadingIndicator />
@@ -196,20 +165,18 @@ const PlateGrid: React.FC<PlateGridProps> = ({
 
       {/* ---------- Ante / Pot badge --------------------------- */}
       {ante !== undefined && pot !== undefined && (
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-15">
-        <div className="bg-white/60 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center">
-          <strong>Total:</strong>&nbsp;{pot.toFixed(2)} bb
-          {/* show Pot: row only if ante is non-zero */}
-          {ante !== 0 && (
-            <>
-              <br />
-              <strong>Pot:</strong>&nbsp;{ante} bb
-            </>
-          )}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-15">
+          <div className="bg-white/60 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center">
+            <strong>Total:</strong>&nbsp;{pot.toFixed(2)} bb
+            {ante !== 0 && (
+              <>
+                <br />
+                <strong>Pot:</strong>&nbsp;{ante} bb
+              </>
+            )}
+          </div>
         </div>
-      </div>
-    )}
-
+      )}
 
       {/* ---------- plates layout ------------------------------ */}
       <div className="relative z-10 w-full min-h-[300px] select-none">

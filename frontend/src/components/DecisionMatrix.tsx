@@ -1,4 +1,3 @@
-// src/components/DecisionMatrix.tsx
 import {
   useMemo,
   useState,
@@ -9,12 +8,14 @@ import {
 } from "react";
 import HandCell from "./HandCell";
 import { HandCellData } from "../utils/utils";
+import { ALL_ACTIONS } from "../utils/constants";
 
+/* ---------- props ---------- */
 interface DecisionMatrixProps extends HTMLAttributes<HTMLDivElement> {
-  gridData: HandCellData[];
+  gridData: HandCellData[];          // may be empty when JSON not loaded yet
   randomFillEnabled?: boolean;
   isICMSim?: boolean;
-  onMatrixClick?: () => void;           /* ⭐ NEW prop */
+  onMatrixClick?: () => void;
 }
 
 /** Canonical 13×13 “standard grid” ordering */
@@ -34,16 +35,25 @@ const HAND_ORDER = [
   "A2o","K2o","Q2o","J2o","T2o","92o","82o","72o","62o","52o","42o","32o","22",
 ];
 
+/* ---------- helper: fabricate an “empty” cell ---------- */
+const BLANK_ACTIONS = ALL_ACTIONS.concat("UNKNOWN").reduce<Record<string, number>>(
+  (obj, a) => ({ ...obj, [a]: 0 }),
+  {}
+);
+
+const makeBlankCell = (hand: string): HandCellData & { evs: Record<string, number> } => ({
+  hand,
+  actions: { ...BLANK_ACTIONS },   // every action weight = 0
+  evs: {},                         // no EVs while blank
+});
+
 const DecisionMatrix: FC<DecisionMatrixProps> = ({
   gridData,
   randomFillEnabled: randomFill,
   isICMSim = false,
-  onMatrixClick,                        /* ⭐ receive it */
+  onMatrixClick,
   ...rest
 }) => {
-  /* ---------------- LIFECYCLE DEBUG (optional) ---------------- */
-  // useEffect(() => { console.log("DecisionMatrix mounted"); return () => console.log("…unmounted"); }, []);
-
   /* ---------------- ORDERED DATA  ---------------- */
   const orderedGridData = useMemo(
     () =>
@@ -86,42 +96,41 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
     <div
       {...rest}
       ref={containerRef}
-      onClick={onMatrixClick}            /* ⭐ makes matrix clickable */
+      onClick={onMatrixClick}
       className="relative grid grid-cols-13 gap-0 w-full aspect-square rounded-md overflow-hidden"
     >
-      {orderedGridData.map((handData, idx) =>
-        handData ? (
+      {orderedGridData.map((handData, idx) => {
+        const cellData = handData ?? makeBlankCell(HAND_ORDER[idx]);
+        return (
           <HandCell
-            key={handData.hand}
-            data={handData}
+            key={cellData.hand}
+            data={cellData}
             randomFill={randomFill}
             matrixWidth={matrixWidth}
             onHover={(evs) => {
               setHoveredEVs(evs);
-              setHoveredHand(handData.hand);
+              setHoveredHand(cellData.hand);
             }}
             onLeave={() => {
               setHoveredEVs(null);
               setHoveredHand(null);
             }}
           />
-        ) : (
-          <div key={idx} className="empty-cell" />
-        )
-      )}
+        );
+      })}
 
       {/* ---------- EV TOOLTIP ---------- */}
       {hoveredEVs && hoveredHand && (
         <div className="absolute bottom-0 left-1/2 -translate-x-1/2 mb-1 z-50 bg-gray-800 text-white text-xs rounded px-2 py-1 pointer-events-none shadow-lg whitespace-nowrap">
-          <div className="text-xs font-bold mb-1 text-center">EVs: {hoveredHand}</div>
+          <div className="text-xs font-bold mb-1 text-center">
+            EVs: {hoveredHand}
+          </div>
           {Object.entries(hoveredEVs)
             .sort(([, a], [, b]) => (b ?? -Infinity) - (a ?? -Infinity))
             .map(([action, ev]) => {
               let display = "N/A";
               if (ev != null && !isNaN(ev)) {
-                display = isICMSim
-                  ? `$${(ev).toFixed(2)}`
-                  : `${ev.toFixed(2)} bb`;
+                display = isICMSim ? `$${ev.toFixed(2)}` : `${ev.toFixed(2)} bb`;
               }
               return (
                 <div key={action}>

@@ -1,15 +1,38 @@
-// src/components/Plate.tsx
-import React, { useEffect, useState, CSSProperties } from "react";
+import React, { CSSProperties, useEffect, useMemo, useState } from "react";
 import { combineDataByHand, HandCellData, JsonData } from "../utils/utils";
 import ColorKey from "./ColorKey";
 import DecisionMatrix from "./DecisionMatrix";
 import DealerButton from "./DealerButton";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
+
+/* ───────────────────── helpers ───────────────────── */
+
+const HAND_ORDER = [
+  "AA","AKs","AQs","AJs","ATs","A9s","A8s","A7s","A6s","A5s","A4s","A3s","A2s",
+  "AKo","KK","KQs","KJs","KTs","K9s","K8s","K7s","K6s","K5s","K4s","K3s","K2s",
+  "AQo","KQo","QQ","QJs","QTs","Q9s","Q8s","Q7s","Q6s","Q5s","Q4s","Q3s","Q2s",
+  "AJo","KJo","QJo","JJ","JTs","J9s","J8s","J7s","J6s","J5s","J4s","J3s","J2s",
+  "ATo","KTo","QTo","JTo","TT","T9s","T8s","T7s","T6s","T5s","T4s","T3s","T2s",
+  "A9o","K9o","Q9o","J9o","T9o","99","98s","97s","96s","95s","94s","93s","92s",
+  "A8o","K8o","Q8o","J8o","T8o","98o","88","87s","86s","85s","84s","83s","82s",
+  "A7o","K7o","Q7o","J7o","T7o","97o","87o","77","76s","75s","74s","73s","72s",
+  "A6o","K6o","Q6o","J6o","T6o","96o","86o","76o","66","65s","64s","63s","62s",
+  "A5o","K5o","Q5o","J5o","T5o","95o","85o","75o","65o","55","54s","53s","52s",
+  "A4o","K4o","Q4o","J4o","T4o","94o","84o","74o","64o","54o","44","43s","42s",
+  "A3o","K3o","Q3o","J3o","T3o","93o","83o","73o","63o","53o","43o","33","32s",
+  "A2o","K2o","Q2o","J2o","T2o","92o","82o","72o","62o","52o","42o","32o","22"
+];
+
+const EMPTY_GRID: HandCellData[] = HAND_ORDER.map((hand) => ({
+  hand,
+  actions: {} as Record<string, number>,
+  evs: {} as Record<string, number>
+}));
 
 /* ───────────────────── props ───────────────────── */
 interface PlateProps {
   file: string;
-  data: JsonData | undefined;            // may be undefined while loading
+  data: JsonData | undefined;            // incoming JSON (undefined while loading)
   onActionClick: (action: string, file: string) => void;
   randomFillEnabled?: boolean;
   alive: boolean;
@@ -27,32 +50,6 @@ interface PlateProps {
   ) => void;
 }
 
-/* ───────────────────── skeleton ───────────────────── */
-const Skeleton: React.FC = () => (
-  <div className="w-full">
-    {/* 13×13 grey grid */}
-    <div className="grid grid-cols-13 gap-[1px] w-full aspect-square">
-      {Array.from({ length: 169 }).map((_, i) => (
-        <div
-          key={i}
-          className="bg-gray-200 w-full h-full rounded-sm"
-        />
-      ))}
-    </div>
-
-    {/* three grey colour-key buttons */}
-     <div className="flex gap-0.5 mt-1 w-full">
-   {Array.from({ length: 3 }).map((_, i) => (
-     <div
-      key={i}
-      className="flex-1 min-w-0 rounded bg-gray-200/70 animate-pulse"
-      style={{ height: "calc(20px + 1vw)" }}
-     />
-   ))}
- </div>
-  </div>
-);
-
 /* ──────────────────── component ──────────────────── */
 const Plate: React.FC<PlateProps> = ({
   file,
@@ -66,21 +63,21 @@ const Plate: React.FC<PlateProps> = ({
   isActive = false,
   pot,
   maxBet,
-  onMatrixZoom,
+  onMatrixZoom
 }) => {
-  /* keep previous data until new JSON arrives */
-  const [displayData, setDisplayData] = useState<JsonData | undefined>(
-    data && Object.keys(data).length ? data : undefined
-  );
-
+  /* keep the last **valid** JSON so we don't flash back to zeros */
+  const [displayData, setDisplayData] = useState<JsonData | undefined>(data);
   useEffect(() => {
-    if (data && Object.keys(data).length) setDisplayData(data);
+    if (data) setDisplayData(data);   // ignore undefined updates
   }, [data]);
 
-  /* grid conversion */
-  const [combinedData, setCombinedData] = useState<HandCellData[]>([]);
-  useEffect(() => {
-    if (displayData) setCombinedData(combineDataByHand(displayData));
+  /* is this plate still waiting for its first ever JSON? */
+  const keyLoading = !displayData;    // ⬅︎ NEW
+
+  /* grid for DecisionMatrix & ColorKey */
+  const gridData: HandCellData[] = useMemo(() => {
+    if (!displayData) return EMPTY_GRID;
+    return combineDataByHand(displayData);
   }, [displayData]);
 
   /* helpers */
@@ -115,50 +112,39 @@ const Plate: React.FC<PlateProps> = ({
         </div>
       )}
 
-      {/* plate background – now a motion.div so it animates with the grid */}
+      {/* plate background */}
       <motion.div
-        /* share a layout context with the grid so they morph together */
         layout
-        layoutId={`plate-${displayData?.Position ?? file}`}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: alive ? 1 : 0.4 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.25 }}
         className="border rounded-[7px] shadow-md p-0.5 bg-white relative z-10"
         style={{ opacity: alive ? 1 : 0.4 }}
+        initial={false}
+        animate={{ opacity: alive ? 1 : 0.4, scale: 1 }}
+        transition={{ duration: 0.25 }}
       >
-        {/* FULL PLATE or SKELETON */}
-        <AnimatePresence mode="wait" initial={false}>
-          {displayData ? (
-            /* ───── full plate ───── */
-            <motion.div
-              key="full"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="relative"
-            >
-              {/* decision-matrix grid */}
-              <motion.div
-                layoutId={`matrix-${displayData.Position}`}
-                className="cursor-pointer"
-              >
-                <DecisionMatrix
-                  gridData={combinedData}
-                  randomFillEnabled={randomFillEnabled}
-                  isICMSim={isICMSim}
-                  onMatrixClick={() =>
-                    onMatrixZoom?.(
-                      combinedData,
-                      displayData.Position,
-                      isICMSim,
-                      displayData.Position
-                    )
-                  }
-                />
-              </motion.div>
+        {/* decision-matrix grid */}
+        <div className="relative">
+          <div
+            className="cursor-pointer"
+            onClick={() =>
+              displayData &&
+              onMatrixZoom?.(
+                gridData,
+                displayData.Position,
+                isICMSim,
+                displayData.Position
+              )
+            }
+          >
+            <DecisionMatrix
+              gridData={gridData}
+              randomFillEnabled={randomFillEnabled && !!displayData}
+              isICMSim={isICMSim}
+            />
+          </div>
 
-              {/* badges */}
+          {/* badges – only when real data is present */}
+          {displayData && (
+            <>
               <div className="absolute left-1/2 -bottom-8 -translate-x-1/2 z-30 pointer-events-none">
                 <div className="bg-white/70 backdrop-blur-sm rounded-md px-2 py-1 text-xs shadow text-center whitespace-nowrap">
                   <strong>{displayData.Position}</strong>&nbsp;
@@ -183,42 +169,29 @@ const Plate: React.FC<PlateProps> = ({
                   </div>
                 </div>
               )}
-
-              {/* colour-key */}
-              <div
-                data-intro-target={
-                  displayData.Position === "BTN" ? "color-key-btn" : undefined
-                }
-                className={
-                  "select-none flex w-full items-center justify-end mt-0.5 " +
-                  (isActive ? "animate-pulse" : "")
-                }
-              >
-                <ColorKey
-                  data={combinedData}
-                  onActionClick={(action) => onActionClick(action, file)}
-                />
-              </div>
-            </motion.div>
-          ) : (
-            /* ───── skeleton ───── */
-            <motion.div
-              key="skeleton"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-            >
-              <Skeleton />
-            </motion.div>
+            </>
           )}
-        </AnimatePresence>
+
+          {/* colour-key – *always* rendered; shows shadow while loading */}
+          <div className="select-none flex w-full items-center justify-end mt-0.5">
+            <ColorKey
+              data={gridData}
+              loading={keyLoading}                    // ⬅︎ NEW
+              onActionClick={(action) => onActionClick(action, file)}
+            />
+          </div>
+        </div>
       </motion.div>
 
       {/* decorative cards */}
       {alive && (
         <div className="absolute left-1/2 -bottom-9 -translate-x-1/2 -z-0 flex">
           <img src="/playing-cards.svg" alt="cards" className="w-18 h-18" />
-          <img src="/playing-cards.svg" alt="cards" className="w-18 h-18 -ml-8" />
+          <img
+            src="/playing-cards.svg"
+            alt="cards"
+            className="w-18 h-18 -ml-8"
+          />
         </div>
       )}
     </div>
