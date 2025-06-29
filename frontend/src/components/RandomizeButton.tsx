@@ -39,24 +39,25 @@ const RandomizeButton: React.FC<RandomizeButtonProps> = ({
   // }, [animationSpeed]);
 
   // Combined spin and shake variant
+  // Combined spin-only variant
   const variants = {
-    idle: { rotate: 0, x: 0 },
-    spinShake: {
+    idle: { rotate: 0 },
+    spin: {
       rotate: [0, 360],
-      x: [0, -10, 10, -10, 10, 0],
       transition: { duration: animationSpeed, ease: "easeInOut" },
     },
   };
 
+
   return (
     <motion.button onClick={handleClick} className="focus:outline-none select-none">
       <motion.img
-        src="/dice.svg"
+        src="/diceOrig.svg"
         alt="Dice"
-        style={{ width: "40px", height: "40px" }}
-        animate={animate ? "spinShake" : "idle"}
+        style={{ width: 40, height: 40 }}
+        animate={animate ? "spin" : "idle"}   // ← use "spin" now
         variants={variants}
-        whileHover={{ scale: 1.2 }}
+        whileHover={{ scale: 1.1 }}
       />
     </motion.button>
   );

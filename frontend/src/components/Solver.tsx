@@ -15,6 +15,7 @@ import { Steps } from 'intro.js-react';
 import 'intro.js/introjs.css';
 import { User } from "firebase/auth";
 import LoginSignupModal from "./LoginSignupModal";
+import RandomizeButton from "./RandomizeButton";
 
 const tourSteps = [
   { element: '[data-intro-target="folder-selector"]', intro: 'Choose a pre‑flop sim here.', position: 'bottom' },
@@ -681,47 +682,32 @@ const Solver = ({ user }: { user: User | null }) => {
 
     <Layout>
       <NavBar
-        randomFillEnabled={randomFillEnabled}
-        toggleRandomization={() => setRandomFillEnabled(prev => !prev)}
+        // randomFillEnabled={randomFillEnabled}
+        // toggleRandomization={() => setRandomFillEnabled(prev => !prev)}
         folders={folders}
         currentFolder={folder}
         onFolderSelect={handleFolderSelect}
         toggleViewMode={() => setIsSpiralView(prev => !prev)}
         isSpiralView={isSpiralView}
+        startWalkthrough={() => setTourRun(true)}
       />
       <div className="pt-13 p-1 flex-grow">
         {(folderError || filesError) && (
           <div className="text-red-500">{folderError || filesError}</div>
         )}
        {/* {displayPlates.some((p) => p !== "") && ( */}
-        <div className="flex items-center">
-          <Line line={preflopLine} onLineClick={(i) => handleLineClick(i)} />
+       <div className="relative flex items-center mt-1">
+        <Line line={preflopLine} onLineClick={handleLineClick} />
 
-          {/* info button */}
-          <button
-            // onClick={() => setShowInstructions(true)}
-            onClick={() => setTourRun(true)}
-            className="absolute right-0 mr-2 flex items-center justify-center w-4 h-4 rounded-full bg-blue-800 text-white text-sm font-bold shadow"
-            title="Show instructions"
-          >
-            i
-          </button>
+        {/* Randomize button lives on top-right of the bar */}
+        <div className="absolute right-0 mr-3 z-20">
+          <RandomizeButton
+            randomFillEnabled={randomFillEnabled}
+            setRandomFillEnabled={() => setRandomFillEnabled(prev => !prev)}
+          />
         </div>
-      {/* )} */}
+      </div>
 
-      {/* render the draggable instructions only when needed */}
-      {/* {showInstructions && (
-         <div className="fixed inset-0 z-50">
-        <InstructionBox onClose={() => setShowInstructions(false)}>
-          <h2 className="text-lg font-bold mb-2">Instructions</h2>
-          <p className="text-sm lg:text-md">
-            Use the navigation bar above to choose a pre-flop sim.<br />
-            Click on an action (other than fold) to view the reactions to that action.<br />
-            Use the&nbsp;<strong>Line</strong>&nbsp;buttons to reset the tree or jump back to any action.
-          </p>
-        </InstructionBox>
-        </div>
-      )} */}
   
       <PlateGrid
         files={displayPlates}
