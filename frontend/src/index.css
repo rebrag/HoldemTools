@@ -60,3 +60,21 @@
 .no-scrollbar::-webkit-scrollbar { display: none; }
 /* Firefox */
 .no-scrollbar { scrollbar-width: none; }
+
+/* ─── Fancy scrollbar — works in all Chromium-based browsers ─── */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;               /* slim bar */
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;  /* invisible track */
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #1e3a8a;      /* dark blue to match header (#1e3a8a ≈ bg-gray-800) */
+  border-radius: 9999px;    /* pill */
+}
+/* Firefox */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #1e3a8a transparent;
+}
+
