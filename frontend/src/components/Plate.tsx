@@ -116,9 +116,9 @@ const Plate: React.FC<PlateProps> = ({
       <motion.div
         layout
         className="border rounded-[7px] shadow-md p-0.5 bg-white relative z-10"
-        style={{ opacity: alive ? 1 : 0.4 }}
+        style={{ opacity: alive ? 1 : 0.3 }}
         initial={false}
-        animate={{ opacity: alive ? 1 : 0.4, scale: 1 }}
+        animate={{ opacity: alive ? 1 : 0.3, scale: 1 }}
         transition={{ duration: 0.25 }}
       >
         {/* decision-matrix grid */}
@@ -145,7 +145,7 @@ const Plate: React.FC<PlateProps> = ({
           {/* badges – only when real data is present */}
           {displayData && (
             <>
-              <div className="absolute left-1/2 -bottom-8 -translate-x-1/2 z-30 pointer-events-none">
+              <div className="absolute left-1/2 -bottom-7 -translate-x-1/2 z-30 pointer-events-none">
                 <div className="bg-white/70 backdrop-blur-sm rounded-md px-2 py-1 text-xs shadow text-center whitespace-nowrap">
                   <strong>{displayData.Position}</strong>&nbsp;
                   {fmtBB(displayData.bb - playerBet)} bb

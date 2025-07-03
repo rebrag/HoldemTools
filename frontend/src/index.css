@@ -1,37 +1,84 @@
+@import url("https://fonts.googleapis.com/css2?family=Unica+One&display=swap");
 @import "tailwindcss";
 
-@keyframes spotlight-sweep {
-  0%   { transform: translateY(-120%) rotate(45deg); opacity: 0.2; }
-  25%  { opacity: 0.85; }
-  50%  { transform: translateY(0)       rotate(45deg); opacity: 0.5; }
-  75%  { opacity: 0.85; }
-  100% { transform: translateY(120%)  rotate(45deg); opacity: 0.2; }
+
+/* src/index.css  (after the @tailwind directives) */
+@layer utilities {
+  .text-gradient {
+    background: linear-gradient(135deg, #8abbca 0%, rgb(208, 189, 189) 100%);
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
 }
 
-/* =========================================
-   Poker-table rail  (fills wrapper’s box)
-   ========================================= */
+/* ─────────────────────────────────────────────────────────────
+   Elevated rail — realistic lip + drop-shadow
+   (leave your original .poker-rail rules in place)
+   ───────────────────────────────────────────────────────────── */
+/* =========================================================
+   Elevated rail
+   ========================================================= */
 .poker-rail {
-  /* Stretch across the whole wrapper */
+  position: relative;                      /* pseudo-elements live here */
   width: 90%;
-  /* height is derived from aspect-ratio */
-  height: auto;
-
-  /* Preserve pill shape */
-  aspect-ratio: 2.1 / 1;          /* wider than tall */
+  aspect-ratio: 2.1 / 1;
   border-radius: 9999px;
-
-  /* Rail look */
   padding: 18px;
-  background: linear-gradient(145deg,#3d3d3d 0%,#1b1b1b 100%);
-  box-shadow:
-    0 4px 12px rgba(0,0,0,.35),
-    inset 0 2px 8px rgba(255,255,255,.04);
 
-  /* Never spill out of the wrapper */
+  /* vinyl / leather tone (keep or tweak) */
+  background: linear-gradient(145deg, #3d3d3d 0%, #1b1b1b 100%);
+
+  /* ✨ 3-part depth recipe                          */
+  /* 1) big outer drop → rail floats above felt     */
+  /* 2) pale inner highlight → top curve catches light  */
+  /* 3) dark inner lip → underside recedes          */
+  box-shadow:
+    0 14px 28px rgba(0, 0, 0, 0.55),       /* outer drop */
+    inset 0 4px 6px  rgba(255,255,255,0.08), /* highlight */
+    inset 0 -3px 10px rgba(0,0,0,0.60);      /* lower lip */
+
   max-height: 90%;
   max-width : 90%;
 }
+
+
+/* 💡 lip highlight: catches “light” on the top edge */
+.poker-rail::before {
+  content: "";
+  position: absolute;
+  inset: 0;                                /* match parent */
+  border-radius: inherit;
+  pointer-events: none;
+
+  /* narrow feather across the upper arc only */
+  mask: linear-gradient(165deg, #000 30%, transparent 65%);
+  background: radial-gradient(
+      ellipse at 30% 0%,
+      rgba(255,255,255,0.28) 0%,
+      rgba(255,255,255,0) 70%
+  );
+}
+
+
+/* toggle with the "led-on" class */
+.poker-rail::after {
+  content: "";
+  position: absolute;
+  inset: 6px;                              /* tucked inside rail */
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+      ellipse at center,
+      rgba(40,232,169,0.25) 0%,
+      rgba(40,232,169,0) 70%
+  );
+  filter: blur(6px);
+  opacity: 0;
+  transition: opacity .4s ease;
+}
+.poker-rail.led-on::after { opacity: 1; }
+
+
 
 /* Portrait modifier – take the full height instead */
 .poker-rail.portrait {
@@ -56,25 +103,21 @@
   box-shadow: inset 0 0 22px rgba(0,0,0,.6);
 }
 
-/* hide horizontal scrollbar – Chrome / Safari */
-.no-scrollbar::-webkit-scrollbar { display: none; }
-/* Firefox */
-.no-scrollbar { scrollbar-width: none; }
+.poker-rail-inner {
+  position: absolute;
+  inset: 12px;                /* ← distance between the two rails   */
+  border-radius: inherit;     /* same pill shape                    */
+  padding: 16px;              /* thickness of the cushion           */
+  overflow: hidden;           /* keep felt from spilling out        */
+  
+  /* vinyl cushion look — lighter & a touch warmer */
+  background: linear-gradient(140deg, #4a4a4a 0%, #2c2c2c 100%);
+  
+  /* depth cues */
+  box-shadow:
+    0 6px 14px rgba(0,0,0,.45),              /* subtle lift */
+    inset 0 3px 6px rgba(255,255,255,.06),   /* top highlight */
+    inset 0 -4px 10px rgba(0,0,0,.55);       /* lower lip */
 
-/* ─── Fancy scrollbar — works in all Chromium-based browsers ─── */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 8px;               /* slim bar */
+  /* portrait version inherits size from outer rail */
 }
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;  /* invisible track */
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #1e3a8a;      /* dark blue to match header (#1e3a8a ≈ bg-gray-800) */
-  border-radius: 9999px;    /* pill */
-}
-/* Firefox */
-.custom-scrollbar {
-  scrollbar-width: thin;
-  scrollbar-color: #1e3a8a transparent;
-}
-

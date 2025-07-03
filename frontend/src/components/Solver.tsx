@@ -286,13 +286,18 @@ const Solver = ({ user }: { user: User | null }) => {
   }, [folder, API_BASE_URL, playerCount]);
 
   const convertRangeText = (data: JsonData | undefined, action: string): string => {
-    if (!data) return "";
-    const dataKey = getActionNumber(action) || action;
-    if (!data[dataKey]) return "";
-    return Object.entries(data[dataKey])
-      .map(([hand, values]) => `${hand}:${values[0]}`)
-      .join(",");
-  };
+  if (!data) return "";
+  // Primary key: "1", "5", "3" … (getActionNumber)  
+  const key = getActionNumber(action) ?? action;
+  const alt = action;                    // fallback to the literal word
+  const bucket = data[key] || data[alt];
+  if (!bucket) return "";
+  return Object.entries(bucket)
+    .filter(([, vals]) => vals[0] > 0)      // only freq > 0
+    .map(([hand, vals]) => `${hand}:${vals[0]}`)
+    .join(",");
+};
+
 
   const appendPlateNames = useCallback(
     (

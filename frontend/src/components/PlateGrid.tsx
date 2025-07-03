@@ -121,10 +121,11 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     <div className="relative flex justify-center items-center py-2 overflow-visible border-0">
       {/* ---------- decorative poker-table background ---------- */}
       <div className="poker-table-bg pointer-events-none absolute inset-0 flex justify-center items-center z-10">
-        <div className={`poker-rail ${railPortrait ? "portrait" : ""} overflow-hidden`}>
+        <div className={`poker-rail ${railPortrait ? "portrait" : ""} overflow-hidden relative`}>
           <div className="poker-felt" />
         </div>
       </div>
+
 
       {/* ---------- zoom overlay (simple, no AnimatePresence) ---------- */}
       {zoom && (
@@ -179,15 +180,15 @@ const PlateGrid: React.FC<PlateGridProps> = ({
       )}
 
       {/* ---------- plates layout ------------------------------ */}
-      <div className="relative z-10 w-full min-h-[300px] select-none">
+      <div className="relative z-10 w-5/6 min-h-[300px] select-none">
         {/* ----- PORTRAIT / NARROW ----- */}
         {isNarrow ? (
-          <div className="flex justify-center gap-2 w-full">
+          <div className="flex justify-center gap-6 w-full">
             {[col0, col1].map((col, idx) =>
               col.length ? (
                 <div
                   key={`col-${idx}`}
-                  className="flex flex-1 flex-col gap-5 justify-center items-center"
+                  className="flex flex-1 flex-col gap-1 justify-center items-center"
                   style={{ minWidth: 170, maxWidth: 400 }}
                 >
                   {col.map(([posKey, file]) => (
@@ -214,7 +215,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
           </div>
         ) : (
           /* ----- LANDSCAPE / WIDE ----- */
-          <div className="flex flex-col gap-6">
+          <div className="flex flex-col gap-8">
             {rows.map((row, rowIdx) => {
               const plates = row.filter(([posKey]) => posKey) as (readonly [
                 string,

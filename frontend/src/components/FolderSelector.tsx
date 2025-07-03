@@ -83,7 +83,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
 
   /* DEBUG: log whenever `items` changes */
   useEffect(() => {
-    console.log("Filtered items:", items);
+    // console.log("Filtered items:", items);
   }, [items]);
 
   /* -------- safe select ------------------------------------------ */
@@ -116,13 +116,13 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   const maxSeats = items.length
     ? Math.max(...items.map(f => f.split("_").length))
     : 2;
-  console.log("maxSeats detected:", maxSeats);
+  // console.log("maxSeats detected:", maxSeats);
 
   const header =
     SEAT_ORDER[maxSeats] ||
     (items[0] ? Object.keys(parseFolderSafe(items[0]).stacks).sort() : []);
 
-  console.log("Header derived:", header);
+  // console.log("Header derived:", header);
 
   const cols = header.length + 1; // +1 for Avg.
 
