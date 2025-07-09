@@ -1,3 +1,4 @@
+/* ─────────────────────  Plate.tsx  (full file) ───────────────────── */
 import React, { CSSProperties, useEffect, useMemo, useState } from "react";
 import { combineDataByHand, HandCellData, JsonData } from "../utils/utils";
 import ColorKey from "./ColorKey";
@@ -32,7 +33,7 @@ const EMPTY_GRID: HandCellData[] = HAND_ORDER.map((hand) => ({
 /* ───────────────────── props ───────────────────── */
 interface PlateProps {
   file: string;
-  data: JsonData | undefined;            // incoming JSON (undefined while loading)
+  data: JsonData | undefined;
   onActionClick: (action: string, file: string) => void;
   randomFillEnabled?: boolean;
   alive: boolean;
@@ -68,11 +69,11 @@ const Plate: React.FC<PlateProps> = ({
   /* keep the last **valid** JSON so we don't flash back to zeros */
   const [displayData, setDisplayData] = useState<JsonData | undefined>(data);
   useEffect(() => {
-    if (data) setDisplayData(data);   // ignore undefined updates
+    if (data) setDisplayData(data);
   }, [data]);
 
   /* is this plate still waiting for its first ever JSON? */
-  const keyLoading = !displayData;    // ⬅︎ NEW
+  const keyLoading = !displayData;
 
   /* grid for DecisionMatrix & ColorKey */
   const gridData: HandCellData[] = useMemo(() => {
@@ -91,7 +92,7 @@ const Plate: React.FC<PlateProps> = ({
 
   /* sizing */
   const outerCls =
-    "relative mb-8 justify-self-center max-w-[400px] w-full text-base " +
+    "relative mb-10 justify-self-center max-w-[400px] w-full text-base " +
     (isActive ? "ring-4 ring-white shadow-yellow-400/50 rounded-md" : "");
 
   const sizeStyle: CSSProperties | undefined =
@@ -142,41 +143,44 @@ const Plate: React.FC<PlateProps> = ({
             />
           </div>
 
-          {/* badges – only when real data is present */}
+          {/* ─────  BADGES  (equal thirds)  ───── */}
           {displayData && (
-            <>
-              <div className="absolute left-1/2 -bottom-7 -translate-x-1/2 z-30 pointer-events-none">
-                <div className="bg-white/70 backdrop-blur-sm rounded-md px-2 py-1 text-xs shadow text-center whitespace-nowrap">
+            <div className="absolute -bottom-7 left-0 w-full flex text-xs pointer-events-none z-30">
+              {/* left 1/3 – Pot Odds (only when active & available) */}
+              <div className="w-1/3 flex justify-center">
+                {isActive && potOdds > 0 && (
+                  <div className="bg-white/70 backdrop-blur-sm rounded-md px-1 py-0 shadow text-center whitespace-nowrap">
+                    <strong>Pot&nbsp;Odds:</strong>
+                    <br />
+                    {potOdds.toFixed(0)}%
+                  </div>
+                )}
+              </div>
+
+              {/* middle 1/3 – Position + stack */}
+              <div className="w-1/3 flex justify-center">
+                <div className="bg-white/70 backdrop-blur-sm rounded-md px-0.5 py-1 shadow text-center whitespace-nowrap">
                   <strong>{displayData.Position}</strong>&nbsp;
                   {fmtBB(displayData.bb - playerBet)} bb
                 </div>
               </div>
 
-              {playerBet !== 0 && (
-                <div className="absolute left-[85%] -bottom-6 -translate-x-1/2 z-30 pointer-events-none">
-                  <div className="bg-white/70 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center whitespace-nowrap">
+              {/* right 1/3 – Bet size (if any) */}
+              <div className="w-1/3 flex justify-center">
+                {playerBet !== 0 && (
+                  <div className="bg-white/70 backdrop-blur-sm rounded-md px-1 py-1 shadow text-center whitespace-nowrap">
                     <strong>Bet:</strong>&nbsp;{fmtBB(playerBet)} bb
                   </div>
-                </div>
-              )}
-
-              {isActive && potOdds > 0 && (
-                <div className="absolute left-[15%] -bottom-8 -translate-x-1/2 z-30 pointer-events-none">
-                  <div className="bg-white/70 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center whitespace-nowrap">
-                    <strong>Pot&nbsp;Odds:</strong>
-                    <br />
-                    {potOdds.toFixed(0)}%
-                  </div>
-                </div>
-              )}
-            </>
+                )}
+              </div>
+            </div>
           )}
 
-          {/* colour-key – *always* rendered; shows shadow while loading */}
+          {/* colour-key – always rendered; shows skeleton while loading */}
           <div className="select-none flex w-full items-center justify-end mt-0.5">
             <ColorKey
               data={gridData}
-              loading={keyLoading}                    // ⬅︎ NEW
+              loading={keyLoading}
               onActionClick={(action) => onActionClick(action, file)}
             />
           </div>
@@ -184,14 +188,23 @@ const Plate: React.FC<PlateProps> = ({
       </motion.div>
 
       {/* decorative cards */}
+      {/* ───────── decorative cards (always perfectly centred) ───────── */}
       {alive && (
-        <div className="absolute left-1/2 -bottom-9 -translate-x-1/2 -z-0 flex">
-          <img src="/playing-cards.svg" alt="cards" className="w-18 h-18" />
-          <img
-            src="/playing-cards.svg"
-            alt="cards"
-            className="w-18 h-18 -ml-8"
-          />
+        <div className="absolute inset-x-0 -bottom-9 flex justify-center -z-0">
+          <div className="relative w-18 h-18">
+            {/* left-tilted card */}
+            <img
+              src="/playing-cards.svg"
+              alt="cards"
+              className="absolute inset-0 w-full h-full transform rotate-[0deg] translate-x-[-8%]"
+            />
+            {/* right-tilted card */}
+            <img
+              src="/playing-cards.svg"
+              alt="cards"
+              className="absolute inset-0 w-full h-full transform -rotate-[0deg] translate-x-[8%]"
+            />
+          </div>
         </div>
       )}
     </div>
