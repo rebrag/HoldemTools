@@ -29,21 +29,80 @@ const SEAT_ORDER: Record<number, string[]> = {
 };
 
 /* ────────────────────────────────────────────────────────────────── */
+/*  Debug toggle                                                      */
+/* ────────────────────────────────────────────────────────────────── */
+const DEBUG_FILTER = true; // <-- set true to see console.debug output
+
+const dbg = (...args: unknown[]) => {
+  if (DEBUG_FILTER) console.debug("[FolderSelector]", ...args);
+};
+
+/* ────────────────────────────────────────────────────────────────── */
 /*  Helpers                                                           */
 /* ────────────────────────────────────────────────────────────────── */
 
-/* Safe parser that logs malformed chunks */
+/** Canonicalize numeric strings: "018"->"18", "18.0"->"18", "15.50"->"15.5". */
+const canonNum = (s: string): string => {
+  let t = s.replace(/^0+(\d)/, "$1");
+  t = t.replace(/(\.\d*?)0+$/, "$1");
+  t = t.replace(/\.$/, "");
+  return t;
+};
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Split a folder name into chunks with number + position. */
+type Chunk = { numRaw: string; numCanon: string; pos: string; chunkRaw: string };
+const splitChunks = (folder: string): Chunk[] =>
+  folder
+    .split("_")
+    .map((ch) => {
+      const m = ch.match(/^(\d+(?:\.\d+)?)([A-Z0-9]+)$/i);
+      if (!m) return { numRaw: "", numCanon: "", pos: "", chunkRaw: ch };
+      const [, numRaw, posRaw] = m;
+      return {
+        numRaw,
+        numCanon: canonNum(numRaw),
+        pos: posRaw.toUpperCase(),
+        chunkRaw: ch,
+      };
+    })
+    .filter((c) => c.pos !== "");
+
+/** Map positions → canonical numeric string. */
+const getPosNumMap = (folder: string): Record<string, string> => {
+  const map: Record<string, string> = {};
+  for (const c of splitChunks(folder)) {
+    map[c.pos] = c.numCanon;
+  }
+  return map;
+};
+
+/**
+ * Pure-number match: boundary-aware and tolerant to leading zeros & trailing .0
+ * Matches "_15HJ_" / "_015HJ_" / "_15.0CO" but NOT "_150HJ_" or "_15.5CO_".
+ */
+const hasExactNumber = (folder: string, rawNum: string): boolean => {
+  const want = canonNum(rawNum);
+  const esc = escapeRe(want);
+  // (^|_)0*NUM(.0+)?<POS>(_|$)
+  const re = new RegExp(String.raw`(?:^|_)0*${esc}(?:\.0+)?[A-Za-z0-9]+(?=_|$)`);
+  return re.test(folder);
+};
+
+/** Safe parser kept for table rendering (avg + per-seat values). */
 function parseFolderSafe(folder: string) {
-  const parts  = folder.split("_");
+  const parts = folder.split("_");
   const stacks: Record<string, number> = {};
 
-  parts.forEach(ch => {
-    const m = ch.match(/^(\d+(?:\.\d+)?)([A-Z0-9]+)/);  // new – 14, 14.5, 25.5…
+  parts.forEach((ch) => {
+    const m = ch.match(/^(\d+(?:\.\d+)?)([A-Z][A-Z0-9+]*)$/i);
     if (!m) {
       console.warn("❌  Bad chunk:", ch, "in folder:", folder);
       return;
     }
-    const [, num, pos] = m;
+    const [, num, posRaw] = m;
+    const pos = posRaw.toUpperCase();
     stacks[pos] = Number(num);
   });
 
@@ -65,42 +124,97 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
 }) => {
   const [user] = useAuthState(auth);
 
-  const [input, setInput]     = useState("");
-  const [items, setItems]     = useState<string[]>(folders);
-  const [open, setOpen]       = useState(false);
-  const [hi, setHi]           = useState(-1);
+  const [input, setInput] = useState("");
+  const [items, setItems] = useState<string[]>(folders);
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(-1);
 
   /* -------- filter + sort ---------------------------------------- */
   useEffect(() => {
     const q = input.trim().toLowerCase();
+    const tokens = q.split(/\s+/).filter(Boolean);
 
-    const list = sortFoldersLikeSelector(
-      folders.filter(f => {
-        if (!q) return true;
+    type Pair = { rawNum: string; pos: string };
+    const pairs: Pair[] = [];
+    const numStrs: string[] = [];
+    const words: string[] = [];
 
-        // extract numbers from the query (supports 8, 8.0, 14.5, etc.)
-        const nums = (q.match(/\d+(?:\.\d+)?/g) || []).map(n => Number(n));
+    // classify tokens
+    for (const t of tokens) {
+      // require the pos to start with a letter (allows UTG1, HJ, CO, UTG+1, etc.)
+      const mPair = t.match(/^(\d+(?:\.\d+)?)([a-z][a-z0-9+]*)$/i);
 
-        if (nums.length > 0) {
-          // numeric-mode: include only if ANY player's stack equals ANY queried number
-          const { stacks } = parseFolderSafe(f);
-          const values = Object.values(stacks);
-          return nums.some(n => values.some(v => v === n));
-        }
+      if (mPair) {
+        pairs.push({ rawNum: mPair[1], pos: mPair[2].toUpperCase() });
+        continue;
+      }
+      const mNum = t.match(/^\d+(?:\.\d+)?$/); // pure number like "15" or "14.5"
+      if (mNum) {
+        numStrs.push(mNum[0]);
+        continue;
+      }
+      words.push(t); // plain text like "hj", "btn"
+    }
 
-        // fallback: normal substring search (for text like "btn", "utg", etc.)
-        return f.toLowerCase().includes(q);
-      })
-    );
+    if (DEBUG_FILTER) {
+      dbg("query:", q, { tokens, pairs, numStrs, words });
+    }
+
+    // Optional: pre-check for numeric-only query to see quick candidate count
+    if (DEBUG_FILTER && pairs.length === 0 && words.length === 0 && numStrs.length > 0) {
+      const regs = numStrs.map((n) => {
+        const esc = escapeRe(canonNum(n));
+        return new RegExp(String.raw`(?:^|_)0*${esc}(?:\.0+)?[A-Za-z0-9]+(?=_|$)`);
+      });
+      const candidateCount = folders.filter((f) => regs.every((re) => re.test(f))).length;
+      dbg("numeric-only precheck candidates:", candidateCount);
+    }
+
+    const filtered = folders.filter((f) => {
+      if (!q) return true;
+
+      // 1) number+position pairs: ALL must match exactly by canonical string
+      if (pairs.length > 0) {
+        const posMap = getPosNumMap(f);
+        const okPairs = pairs.every(({ rawNum, pos }) => {
+          const want = canonNum(rawNum);
+          const have = posMap[pos];
+          return have !== undefined && have === want;
+        });
+        if (!okPairs) return false;
+
+        // When pairs exist, they are the key filters; ignore loose nums/words.
+        return true;
+      }
+
+      // 2) standalone numbers: each must appear as an exact chunk number
+      if (numStrs.length > 0) {
+        if (!numStrs.every((s) => hasExactNumber(f, s))) return false;
+      }
+
+      // 3) plain words: all must be present as substrings
+      if (words.length > 0 && !words.every((w) => f.toLowerCase().includes(w))) {
+        return false;
+      }
+
+      return true;
+    });
+
+    const list = sortFoldersLikeSelector(filtered);
+
+    if (DEBUG_FILTER) {
+      dbg("post-filter count:", filtered.length, "post-sort count:", list.length);
+      if (tokens.length > 0 && list.length === 0) {
+        // dump a small sample to help diagnose
+        const sample = folders.slice(0, 10);
+        dbg("sample folders (first 10):", sample);
+        dbg("sample splitChunks of first 3:", sample.slice(0, 3).map((s) => splitChunks(s)));
+      }
+    }
+
     setItems(list);
     setHi(list.length ? 0 : -1);
   }, [input, folders]);
-
-
-  /* DEBUG: log whenever `items` changes */
-  useEffect(() => {
-    // console.log("Filtered items:", items);
-  }, [items]);
 
   /* -------- safe select ------------------------------------------ */
   const choose = (folder: string) => {
@@ -113,15 +227,15 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   };
 
   /* -------- keyboard nav ----------------------------------------- */
-  const nav: React.KeyboardEventHandler<HTMLInputElement> = e => {
+  const nav: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
     if (e.key === "Escape") setOpen(false);
-    else if (e.key === "ArrowDown" || e.key === "Tab") {
+    else if ((e.key === "ArrowDown" || e.key === "Tab") && items.length > 0) {
       e.preventDefault();
-      setHi(p => (p + 1) % items.length);
-    } else if (e.key === "ArrowUp") {
+      setHi((p) => (p + 1) % items.length);
+    } else if (e.key === "ArrowUp" && items.length > 0) {
       e.preventDefault();
-      setHi(p => (p - 1 + items.length) % items.length);
-    } else if (e.key === "Enter" && hi >= 0) {
+      setHi((p) => (p - 1 + items.length) % items.length);
+    } else if (e.key === "Enter" && hi >= 0 && items.length > 0) {
       choose(items[hi]);
     } else {
       setOpen(true);
@@ -129,16 +243,11 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   };
 
   /* -------- header build ----------------------------------------- */
-  const maxSeats = items.length
-    ? Math.max(...items.map(f => f.split("_").length))
-    : 2;
-  // console.log("maxSeats detected:", maxSeats);
+  const maxSeats = items.length ? Math.max(...items.map((f) => f.split("_").length)) : 2;
 
   const header =
     SEAT_ORDER[maxSeats] ||
     (items[0] ? Object.keys(parseFolderSafe(items[0]).stacks).sort() : []);
-
-  // console.log("Header derived:", header);
 
   const cols = header.length + 1; // +1 for Avg.
 
@@ -152,7 +261,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
         <div className="relative">
           <input
             value={input}
-            onChange={e => setInput(e.target.value)}
+            onChange={(e) => setInput(e.target.value)}
             onFocus={() => setOpen(true)}
             onBlur={() => setTimeout(() => setOpen(false), 150)}
             onKeyDown={nav}
@@ -166,20 +275,18 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
           />
           <button
             type="button"
-            onMouseDown={e => e.preventDefault()}
-            onClick={() => setOpen(p => !p)}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setOpen((p) => !p)}
             className="absolute inset-y-0 right-0 flex items-center px-3"
+            aria-label="Toggle folder list"
+            title="Toggle folder list"
           >
-            <svg
-              className="h-5 w-5 text-gray-600"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-            >
-                <path
-    fillRule="evenodd"
-    d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.23 8.27a.75.75 0 01.02-1.06z"
-    clipRule="evenodd"
-  />
+            <svg className="h-5 w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
+              <path
+                fillRule="evenodd"
+                d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.23 8.27a.75.75 0 01.02-1.06z"
+                clipRule="evenodd"
+              />
             </svg>
           </button>
         </div>
@@ -194,19 +301,14 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
                 className="grid text-xs font-semibold text-gray-200 bg-gray-800 sticky top-0"
               >
                 <div className="px-2 py-1 border-r border-gray-700">Avg.</div>
-                {header.map(pos => (
-                  <div
-                    key={pos}
-                    className="px-2 py-1 border-r border-gray-700 text-center"
-                  >
+                {header.map((pos) => (
+                  <div key={pos} className="px-2 py-1 border-r border-gray-700 text-center">
                     {pos}
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="text-center p-2 text-red-600 text-xs">
-                ⚠️ Unable to build seat header
-              </div>
+              <div className="text-center p-2 text-red-600 text-xs">⚠️ Unable to build seat header</div>
             )}
 
             {/* rows */}
@@ -227,11 +329,8 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
                   <div className="px-2 py-1 border-t border-r text-center">{avg}</div>
 
                   {/* seat stacks */}
-                  {header.map(pos => (
-                    <div
-                      key={pos}
-                      className="px-2 py-1 border-t text-center"
-                    >
+                  {header.map((pos) => (
+                    <div key={pos} className="px-2 py-1 border-t text-center">
                       {stacks[pos] ?? ""}
                     </div>
                   ))}
