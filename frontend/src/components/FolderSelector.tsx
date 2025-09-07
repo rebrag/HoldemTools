@@ -72,14 +72,30 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
 
   /* -------- filter + sort ---------------------------------------- */
   useEffect(() => {
+    const q = input.trim().toLowerCase();
+
     const list = sortFoldersLikeSelector(
-      folders.filter(f =>
-        f.toLowerCase().includes(input.trim().toLowerCase())
-      )
+      folders.filter(f => {
+        if (!q) return true;
+
+        // extract numbers from the query (supports 8, 8.0, 14.5, etc.)
+        const nums = (q.match(/\d+(?:\.\d+)?/g) || []).map(n => Number(n));
+
+        if (nums.length > 0) {
+          // numeric-mode: include only if ANY player's stack equals ANY queried number
+          const { stacks } = parseFolderSafe(f);
+          const values = Object.values(stacks);
+          return nums.some(n => values.some(v => v === n));
+        }
+
+        // fallback: normal substring search (for text like "btn", "utg", etc.)
+        return f.toLowerCase().includes(q);
+      })
     );
     setItems(list);
     setHi(list.length ? 0 : -1);
   }, [input, folders]);
+
 
   /* DEBUG: log whenever `items` changes */
   useEffect(() => {

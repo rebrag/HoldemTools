@@ -100,19 +100,30 @@ export const sortFoldersLikeSelector = (folders: string[]): string[] => {
   const orderedNonHU: string[] = [];
 
   Object.values(buckets)
-    .sort((ga, gb) => {
-      const aAll = isAllSameFolder(ga[0]);
-      const bAll = isAllSameFolder(gb[0]);
-      if (aAll !== bAll) return aAll ? -1 : 1;
+  .sort((ga, gb) => {
+    const aAll = isAllSameFolder(ga[0]);
+    const bAll = isAllSameFolder(gb[0]);
 
-      if (aAll && bAll) {
-        const na = parseInt(ga[0].match(/^(\d+)/)?.[1] || "0", 10);
-        const nb = parseInt(gb[0].match(/^(\d+)/)?.[1] || "0", 10);
-        return na - nb;
-      }
-      return ga[0].length - gb[0].length;
-    })
-    .forEach(g => orderedNonHU.push(...orderGroupByRotation(g)));
+    // Keep "all-same" buckets before mixed as you already had
+    if (aAll !== bAll) return aAll ? -1 : 1;
+
+    if (aAll && bAll) {
+      // NEW: primary sort = number of players (desc)
+      const pa = getStacks(ga[0]).length;
+      const pb = getStacks(gb[0]).length;
+      if (pa !== pb) return pb - pa;
+
+      // Tie-break: stack size (asc), same as before
+      const na = parseInt(ga[0].match(/^(\d+)/)?.[1] || "0", 10);
+      const nb = parseInt(gb[0].match(/^(\d+)/)?.[1] || "0", 10);
+      return na - nb;
+    }
+
+    // non "all-same": keep your existing heuristic
+    return ga[0].length - gb[0].length;
+  })
+  .forEach(g => orderedNonHU.push(...orderGroupByRotation(g)));
+
 
   const orderedHU = HU.sort((a, b) => a.length - b.length);
 
