@@ -4,6 +4,9 @@ import { auth } from "./firebase";
 import LoadingIndicator from "./components/LoadingIndicator";
 import { AppProvider } from "./components/AppContext";
 import AppShell from "./components/AppShell";
+// import PHEvaluator from "poker-hand-evaluator-wasm";
+
+
 
 type Section = "solver" | "equity";
 
@@ -28,6 +31,14 @@ function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // useEffect(() => {
+  //   (async () => {
+  //     await PHEvaluator.ready();
+  //     const r = PHEvaluator.evaluate7("As","Kd","Ah","Kh","Qd","2c","9h");
+  //     console.log("WASM ready; hand value:", r.value, r.categoryName?.());
+  //   })().catch(err => console.error("WASM failed:", err));
+  // }, []);
 
   // Keep state in sync if the hash changes (e.g., back/forward)
   useEffect(() => {

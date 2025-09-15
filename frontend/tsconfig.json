@@ -5,6 +5,13 @@
     { "path": "./tsconfig.node.json" }
   ],
   "compilerOptions": {
-    "jsx": "react-jsx", // or "react" if you're not using the new JSX transform
+    "target": "ES2020",
+    "module": "ESNext",
+    "lib": ["ES2020", "DOM", "WebWorker"],
+    "moduleResolution": "Bundler",
+    "types": ["vite/client"],
+    "strict": true,
+    "jsx": "react-jsx",
+    "skipLibCheck": true
   }
 }

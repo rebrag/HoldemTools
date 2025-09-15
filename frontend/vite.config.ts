@@ -7,4 +7,8 @@ export default defineConfig({
   plugins: [react(),
     tailwindcss(),
   ],
+  optimizeDeps: {
+    // exclude: ["poker-hand-evaluator-wasm"]
+  }
+  
 })
