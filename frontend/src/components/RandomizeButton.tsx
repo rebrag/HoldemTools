@@ -1,11 +1,10 @@
 // src/components/RandomizeButton.tsx
-import React, { useState } from "react"; //, useEffect
+import React, { useState } from "react";
 import { motion } from "framer-motion";
 
 export interface RandomizeButtonProps {
   randomFillEnabled: boolean;
   setRandomFillEnabled: () => void;
-  // Optional prop to set the animation speed in seconds (default: 0.5)
   animationSpeed?: number;
 }
 
@@ -26,20 +25,6 @@ const RandomizeButton: React.FC<RandomizeButtonProps> = ({
     triggerAnimation();
   };
 
-  // Listen for "r" key to trigger the animation
-  // useEffect(() => {
-  //   const handleKeyDown = (e: KeyboardEvent) => {
-  //     if (e.key.toLowerCase() === "r") {
-  //       triggerAnimation();
-  //     }
-  //   };
-  //   window.addEventListener("keydown", handleKeyDown);
-  //   return () => window.removeEventListener("keydown", handleKeyDown);
-  // // eslint-disable-next-line react-hooks/exhaustive-deps
-  // }, [animationSpeed]);
-
-  // Combined spin and shake variant
-  // Combined spin-only variant
   const variants = {
     idle: { rotate: 0 },
     spin: {
@@ -55,7 +40,7 @@ const RandomizeButton: React.FC<RandomizeButtonProps> = ({
         src="/diceOrig.svg"
         alt="Dice"
         style={{ width: 40, height: 40 }}
-        animate={animate ? "spin" : "idle"}   // ← use "spin" now
+        animate={animate ? "spin" : "idle"} 
         variants={variants}
         whileHover={{ scale: 1.1 }}
       />

@@ -20,22 +20,22 @@ const AccountMenu = () => {
   };
 
   return (
-    <div>
+    <div className="space-y-2">
       {/* Desktop view: show full account info */}
-      <div className="hidden sm:flex items-center space-x-2">
+      <div className="hidden sm:flex items-center flex-wrap gap-2">
         <span className="text-sm font-bold">Account:</span>
         <span className="text-sm">{user?.email}</span>
-        <button onClick={handleLogout} className="text-xs text-blue-500 hover:underline">
+        <button onClick={handleLogout} className="text-xs text-blue-600 hover:underline">
           Logout
         </button>
       </div>
-      {/* Mobile view: show only a small logout button */}
-      <div className="flex sm:hidden ">
-        <button onClick={handleLogout} className="text-xs text-blue-500 cursor-pointer hover:underline">
+      {/* Mobile view: compact */}
+      <div className="flex sm:hidden">
+        <button onClick={handleLogout} className="text-xs text-blue-600 hover:underline">
           Logout
         </button>
       </div>
-      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+      {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
     </div>
   );
 };

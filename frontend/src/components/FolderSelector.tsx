@@ -31,7 +31,7 @@ const SEAT_ORDER: Record<number, string[]> = {
 /* ────────────────────────────────────────────────────────────────── */
 /*  Debug toggle                                                      */
 /* ────────────────────────────────────────────────────────────────── */
-const DEBUG_FILTER = true; // <-- set true to see console.debug output
+const DEBUG_FILTER = false; // <-- set true to see console.debug output
 
 const dbg = (...args: unknown[]) => {
   if (DEBUG_FILTER) console.debug("[FolderSelector]", ...args);

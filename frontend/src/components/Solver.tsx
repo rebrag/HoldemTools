@@ -687,16 +687,19 @@ const Solver = ({ user }: { user: User | null }) => {
 
     <Layout>
       <NavBar
-        // randomFillEnabled={randomFillEnabled}
-        // toggleRandomization={() => setRandomFillEnabled(prev => !prev)}
-        folders={folders}
-        currentFolder={folder}
-        onFolderSelect={handleFolderSelect}
-        toggleViewMode={() => setIsSpiralView(prev => !prev)}
-        isSpiralView={isSpiralView}
-        startWalkthrough={() => setTourRun(true)}
-      />
-      <div className="pt-13 p-1 flex-grow">
+          // randomFillEnabled={randomFillEnabled}
+          // toggleRandomization={() => setRandomFillEnabled(prev => !prev)}
+          folders={folders}
+          currentFolder={folder}
+          onFolderSelect={handleFolderSelect}
+          toggleViewMode={() => setIsSpiralView(prev => !prev)}
+          isSpiralView={isSpiralView}
+          startWalkthrough={() => setTourRun(true)} section={"solver"} goToEquity={function (): void {
+            throw new Error("Function not implemented.");
+          } } goToSolver={function (): void {
+            throw new Error("Function not implemented.");
+          } }      />
+      <div className="pt-1 p-1 flex-grow">
         {(folderError || filesError) && (
           <div className="text-red-500">{folderError || filesError}</div>
         )}

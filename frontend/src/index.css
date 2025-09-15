@@ -11,10 +11,6 @@
   }
 }
 
-/* ─────────────────────────────────────────────────────────────
-   Elevated rail — realistic lip + drop-shadow
-   (leave your original .poker-rail rules in place)
-   ───────────────────────────────────────────────────────────── */
 /* =========================================================
    Elevated rail
    ========================================================= */
@@ -25,13 +21,7 @@
   border-radius: 9999px;
   padding: 18px;
 
-  /* vinyl / leather tone (keep or tweak) */
   background: linear-gradient(145deg, #3d3d3d 0%, #1b1b1b 100%);
-
-  /* ✨ 3-part depth recipe                          */
-  /* 1) big outer drop → rail floats above felt     */
-  /* 2) pale inner highlight → top curve catches light  */
-  /* 3) dark inner lip → underside recedes          */
   box-shadow:
     0 14px 28px rgba(0, 0, 0, 0.55),       /* outer drop */
     inset 0 4px 6px  rgba(255,255,255,0.08), /* highlight */
