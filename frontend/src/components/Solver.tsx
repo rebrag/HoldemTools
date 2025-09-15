@@ -708,7 +708,7 @@ const Solver = ({ user }: { user: User | null }) => {
         <Line line={preflopLine} onLineClick={handleLineClick} />
 
         {/* Randomize button lives on top-right of the bar */}
-        <div className="absolute right-0 mr-3 z-20">
+        <div className="absolute right-0 mr-1 z-20">
           <RandomizeButton
             randomFillEnabled={randomFillEnabled}
             setRandomFillEnabled={() => setRandomFillEnabled(prev => !prev)}

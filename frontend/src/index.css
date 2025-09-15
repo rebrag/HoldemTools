@@ -1,8 +1,6 @@
 @import url("https://fonts.googleapis.com/css2?family=Unica+One&display=swap");
 @import "tailwindcss";
 
-
-/* src/index.css  (after the @tailwind directives) */
 @layer utilities {
   .text-gradient {
     background: linear-gradient(135deg, #8abbca 0%, rgb(208, 189, 189) 100%);
@@ -11,9 +9,6 @@
   }
 }
 
-/* =========================================================
-   Elevated rail
-   ========================================================= */
 .poker-rail {
   position: relative;                      /* pseudo-elements live here */
   width: 90%;
@@ -23,24 +18,20 @@
 
   background: linear-gradient(145deg, #3d3d3d 0%, #1b1b1b 100%);
   box-shadow:
-    0 14px 28px rgba(0, 0, 0, 0.55),       /* outer drop */
-    inset 0 4px 6px  rgba(255,255,255,0.08), /* highlight */
-    inset 0 -3px 10px rgba(0,0,0,0.60);      /* lower lip */
+    0 14px 28px rgba(0, 0, 0, 0.55),  
+    inset 0 4px 6px  rgba(255,255,255,0.08),
+    inset 0 -3px 10px rgba(0,0,0,0.60); 
 
   max-height: 90%;
   max-width : 90%;
 }
 
-
-/* 💡 lip highlight: catches “light” on the top edge */
 .poker-rail::before {
   content: "";
   position: absolute;
-  inset: 0;                                /* match parent */
+  inset: 0; 
   border-radius: inherit;
   pointer-events: none;
-
-  /* narrow feather across the upper arc only */
   mask: linear-gradient(165deg, #000 30%, transparent 65%);
   background: radial-gradient(
       ellipse at 30% 0%,
@@ -49,8 +40,6 @@
   );
 }
 
-
-/* toggle with the "led-on" class */
 .poker-rail::after {
   content: "";
   position: absolute;
@@ -69,8 +58,6 @@
 .poker-rail.led-on::after { opacity: 1; }
 
 
-
-/* Portrait modifier – take the full height instead */
 .poker-rail.portrait {
   width : auto;            /* width follows height */
   height: 100%;            /* fill wrapper’s height */
@@ -78,8 +65,6 @@
   max-width: 100%;
 }
 
-
-/* green felt (shared) */
 .poker-felt {
   width: 100%;
   height: 100%;
@@ -95,19 +80,13 @@
 
 .poker-rail-inner {
   position: absolute;
-  inset: 12px;                /* ← distance between the two rails   */
-  border-radius: inherit;     /* same pill shape                    */
-  padding: 16px;              /* thickness of the cushion           */
-  overflow: hidden;           /* keep felt from spilling out        */
-  
-  /* vinyl cushion look — lighter & a touch warmer */
+  inset: 12px;
+  border-radius: inherit;
+  padding: 16px;
+  overflow: hidden;
   background: linear-gradient(140deg, #4a4a4a 0%, #2c2c2c 100%);
-  
-  /* depth cues */
   box-shadow:
-    0 6px 14px rgba(0,0,0,.45),              /* subtle lift */
-    inset 0 3px 6px rgba(255,255,255,.06),   /* top highlight */
-    inset 0 -4px 10px rgba(0,0,0,.55);       /* lower lip */
-
-  /* portrait version inherits size from outer rail */
+    0 6px 14px rgba(0,0,0,.45),
+    inset 0 3px 6px rgba(255,255,255,.06),
+    inset 0 -4px 10px rgba(0,0,0,.55);       
 }
