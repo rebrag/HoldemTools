@@ -53,7 +53,7 @@ const CardPicker: React.FC<CardPickerProps> = ({
             type="button"
             onClick={() => !disabled && onPick(code)}
             className={`rounded-md transition focus:outline-none
-              ${isUsed ? "opacity-70" : "hover:opacity-90"}
+              ${isUsed ? "opacity-30" : "hover:opacity-90"}
               ${disabled ? "cursor-not-allowed" : "cursor-pointer"}`}
             // no padding here—keep tile size == card size, spacing from grid gap
             aria-pressed={isUsed}

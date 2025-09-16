@@ -57,7 +57,7 @@ const PlayingCard: React.FC<PlayingCardProps> = ({ code, size = "md", width, cla
   return (
     <div
       className={clsx(
-        "relative inline-flex aspect-[3/4] items-center justify-center rounded-xl bg-white",
+        "relative inline-flex aspect-[3/4] items-center justify-center rounded-lg bg-white",
         "border border-gray-300 shadow-sm overflow-hidden select-none",
         className
       )}
