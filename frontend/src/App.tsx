@@ -4,7 +4,6 @@ import { auth } from "./firebase";
 import LoadingIndicator from "./components/LoadingIndicator";
 import { AppProvider } from "./components/AppContext";
 import AppShell from "./components/AppShell";
-import { useDisableMobileGestures } from "./hooks/useDisableMobileGestures";
 
 type Section = "solver" | "equity";
 
@@ -20,9 +19,6 @@ const readPath = (): Section => {
 const pathFor = (section: Section) => `/${section}`;
 
 function App() {
-
-  
-  useDisableMobileGestures();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 

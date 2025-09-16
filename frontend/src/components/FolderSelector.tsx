@@ -267,7 +267,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
             onKeyDown={nav}
             placeholder="Search Preflop Sims…"
             className="
-              shadow-md hover:bg-blue-100
+              bg-white/95 shadow-md hover:bg-blue-100
               w-full px-4 pr-10 py-2
               border border-gray-300 rounded-xl
               focus:outline-none focus:ring focus:border-blue-300

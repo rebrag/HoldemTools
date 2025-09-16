@@ -11,9 +11,14 @@
 
 /* prevent any horizontal scroll anywhere */
 html, body {
-  width: 100%;
-  max-width: 100%;
-  overflow-x: hidden;
+    height: 100%;
+    /* This line ensures the gradient covers the full viewport height */
+    background: linear-gradient(to bottom right, #4b5563, #9ca3af);
+}
+
+body {
+    /* This handles the scroll behavior */
+    overflow-y: auto;
 }
 
 /* whichever root your app uses */

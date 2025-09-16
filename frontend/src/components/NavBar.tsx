@@ -1,14 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
-import FolderSelector from "./FolderSelector";
 import AccountMenu from "./AccountMenu";
 
 export interface NavBarProps {
   section: "solver" | "equity";
-  folders: string[];
-  currentFolder: string;
-  onFolderSelect: (folder: string) => void;
-  goToEquity: () => void;   // should call history.pushState("/equity")
-  goToSolver: () => void;   // should call history.pushState("/solver")
+  goToEquity: () => void;   // should push "/equity" and set state
+  goToSolver: () => void;   // should push "/solver" and set state
   startWalkthrough: () => void;
   toggleViewMode?: () => void;
   isSpiralView?: boolean;
@@ -16,9 +12,6 @@ export interface NavBarProps {
 
 const NavBar: React.FC<NavBarProps> = ({
   section,
-  folders,
-  currentFolder,
-  onFolderSelect,
   goToEquity,
   goToSolver,
   startWalkthrough,
@@ -48,19 +41,17 @@ const NavBar: React.FC<NavBarProps> = ({
       ? "bg-indigo-600 text-white"
       : "bg-emerald-600 text-white";
 
-  // Fallback helpers: if parent handlers don't push a path, force it here.
+  // Safety net: ensure URL has the correct path even if parent handler forgot
   const pushPathIfNeeded = (path: "/solver" | "/equity") => {
     if (typeof window === "undefined") return;
     if (window.location.pathname !== path) {
       window.history.pushState({}, "", path);
-      // We do NOT change app state here because your real handlers should.
-      // If needed, you can dispatch a custom event that your app listens to.
     }
   };
 
   const onClickEquity = () => {
-    goToEquity();                 // primary (should push + set state)
-    pushPathIfNeeded("/equity");  // safety net if the above didn’t push
+    goToEquity();
+    pushPathIfNeeded("/equity");
     closeMenu();
   };
 
@@ -85,17 +76,9 @@ const NavBar: React.FC<NavBarProps> = ({
           </svg>
         </button>
 
-        {/* center block */}
+        {/* center spacer (keeps title row height stable) */}
         <div className="flex-grow mx-4">
-          {section === "solver" ? (
-            <FolderSelector
-              folders={folders}
-              currentFolder={currentFolder}
-              onFolderSelect={onFolderSelect}
-            />
-          ) : (
-            <div className="h-6" aria-hidden="true" />
-          )}
+          <div className="h-6" aria-hidden="true" />
         </div>
 
         {/* right: section bubble */}
@@ -145,7 +128,6 @@ const NavBar: React.FC<NavBarProps> = ({
             </div>
 
             <div className="px-4 py-3 space-y-2">
-              {/* No href / no hash — use handlers */}
               <button
                 type="button"
                 onClick={onClickEquity}

@@ -16,6 +16,7 @@ import 'intro.js/introjs.css';
 import { User } from "firebase/auth";
 import LoginSignupModal from "./LoginSignupModal";
 import RandomizeButton from "./RandomizeButton";
+import FolderSelector from "./FolderSelector";  // 👈 bring it here
 
 const tourSteps = [
   { element: '[data-intro-target="folder-selector"]', intro: 'Choose a pre‑flop sim here.', position: 'bottom' },
@@ -679,110 +680,117 @@ const Solver = ({ user }: { user: User | null }) => {
   // const [isSpiralView, setIsSpiralView] = useState(true);
   
   return (
-    <>
-    <Steps enabled={tourRun}
-             steps={tourSteps}
-             initialStep={0}
-             onExit={() => setTourRun(false)} />
+  <>
+    <Steps enabled={tourRun} steps={tourSteps} initialStep={0} onExit={() => setTourRun(false)} />
 
     <Layout>
       <div className="pt-1 p-1 flex-grow">
         {(folderError || filesError) && (
           <div className="text-red-500">{folderError || filesError}</div>
         )}
-       {/* {displayPlates.some((p) => p !== "") && ( */}
-       <div className="relative flex items-center mt-1">
-        <Line line={preflopLine} onLineClick={handleLineClick} />
 
-        {/* Randomize button lives on top-right of the bar */}
-        <div className="absolute right-0 mr-1 z-20">
-          <RandomizeButton
+        {/* Folder selector row (below NavBar, above Line/Randomize) */}
+        <div className="px-2 sm:px-4 mt-1 mb-3">
+          <div className="mx-auto w-full max-w-5xl">
+            {/* create a high stacking context so the dropdown can sit above plates */}
+            <div className="relative z-50">
+              <div data-intro-target="folder-selector" className="w-auto">
+                {/* If your FolderSelector supports className, pass w-full to stretch it */}
+                <FolderSelector
+                  folders={folders}
+                  currentFolder={folder}
+                  onFolderSelect={handleFolderSelect}
+                  // @ts-expect-error (only if FolderSelector supports this prop)
+                  className="w-full"
+                  // menuClassName="z-50"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Line + Randomize */}
+        <div className="relative flex items-center mt-1">
+          <Line line={preflopLine} onLineClick={handleLineClick} />
+          <div className="absolute right-0 mr-1 z-20">
+            <RandomizeButton
+              randomFillEnabled={randomFillEnabled}
+              setRandomFillEnabled={() => setRandomFillEnabled(prev => !prev)}
+            />
+          </div>
+        </div>
+
+        {/* Plate grid (ensure it's under the folder selector layer) */}
+        <div className="relative z-0">
+          <PlateGrid
+            files={displayPlates}
+            positions={positionOrder}
+            selectedFolder={folder}
             randomFillEnabled={randomFillEnabled}
-            setRandomFillEnabled={() => setRandomFillEnabled(prev => !prev)}
+            onActionClick={handleActionClick}
+            windowWidth={windowWidth}
+            windowHeight={windowHeight}
+            plateData={plateData}
+            loading={loading}
+            alivePlayers={alivePlayers}
+            playerBets={playerBets}
+            isICMSim={isICMSim}
+            ante={metadata.ante}
+            pot={potSize}
+            activePlayer={activePlayer}
           />
         </div>
-      </div>
-
-  
-      <PlateGrid
-        files={displayPlates}
-        positions={positionOrder}
-        selectedFolder={folder}
-        // isSpiralView={isSpiralView}
-        randomFillEnabled={randomFillEnabled}
-        onActionClick={handleActionClick}
-        windowWidth={windowWidth}
-        windowHeight={windowHeight}
-        plateData={plateData}
-        loading={loading}
-        alivePlayers={alivePlayers}
-        playerBets={playerBets} // ✅ Pass this down
-        isICMSim={isICMSim}
-        ante={metadata.ante}
-        pot={potSize}
-        activePlayer={activePlayer} 
-      />
 
         {metadata && (
-  /* outer flex just centers the badge */
-  <div className="flex justify-center mt-1 mb-2 pointer-events-none select-none">
-    <div className="bg-white/60 backdrop-blur-sm rounded-md px-2 py-1 text-xs shadow text-center text-gray-800">
-
-      {/* ----- Sim name (if any) ----- */}
-      {metadata.name && (
-        <>
-          <strong>Sim:</strong>&nbsp;{metadata.name}
-          {/* add a break only if we’ll show ICM below */}
-          {Array.isArray(metadata.icm) && metadata.icm.length > 0 && <br />}
-        </>
-      )}
-
-      {/* ----- ICM structure ----- */}
-      {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
-            <>
-              <strong>ICM&nbsp;Structure:</strong>
-              <br />
-              {metadata.icm.map((value, idx) => {
-                const rank   = idx + 1;
-                const suffix =
-                  rank === 1 ? "st" :
-                  rank === 2 ? "nd" :
-                  rank === 3 ? "rd" : "th";
-
-                return (
-                  <div key={idx}>
-                    {rank}
-                    <sup>{suffix}</sup>: ${value.toLocaleString()}
-                  </div>
-                );
-              })}
-            </>
-          ) : (
-            /* only show “None” if there wasn’t a Sim name above */
-            !metadata.name && (
-              <>
-                <strong>ICM:</strong>&nbsp;None
-              </>
-            )
-          )}
-        </div>
+          <div className="flex justify-center mt-1 mb-2 pointer-events-none select-none">
+            <div className="bg-white/60 backdrop-blur-sm rounded-md px-2 py-1 text-xs shadow text-center text-gray-800">
+              {metadata.name && (
+                <>
+                  <strong>Sim:</strong>&nbsp;{metadata.name}
+                  {Array.isArray(metadata.icm) && metadata.icm.length > 0 && <br />}
+                </>
+              )}
+              {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
+                <>
+                  <strong>ICM&nbsp;Structure:</strong>
+                  <br />
+                  {metadata.icm.map((value, idx) => {
+                    const rank = idx + 1;
+                    const suffix = rank === 1 ? "st" : rank === 2 ? "nd" : rank === 3 ? "rd" : "th";
+                    return (
+                      <div key={idx}>
+                        {rank}
+                        <sup>{suffix}</sup>: ${value.toLocaleString()}
+                      </div>
+                    );
+                  })}
+                </>
+              ) : (
+                !metadata.name && (
+                  <>
+                    <strong>ICM:</strong>&nbsp;None
+                  </>
+                )
+              )}
+            </div>
+          </div>
+        )}
       </div>
-    )}
 
-      </div>
       <div className="text-center select-none pt-5">© HoldemTools 2025</div>
     </Layout>
 
     {showLoginOverlay && (
-    <LoginSignupModal onClose={() => {
-        setShowLoginOverlay(false);
-        setPendingFolder(null);
-      }} />
+      <LoginSignupModal
+        onClose={() => {
+          setShowLoginOverlay(false);
+          setPendingFolder(null);
+        }}
+      />
     )}
+  </>
+);
 
-
-    </>
-  );  
 };
 
 export default Solver;

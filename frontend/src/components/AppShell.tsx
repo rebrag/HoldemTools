@@ -1,4 +1,3 @@
-import React, { useState } from "react";
 import type { User } from "firebase/auth";
 import NavBar from "./NavBar";
 import Solver from "./Solver";
@@ -12,8 +11,6 @@ interface AppShellProps {
 }
 
 const AppShell: React.FC<AppShellProps> = ({ user, section, goToEquity, goToSolver }) => {
-  const [folders] = useState<string[]>([]);
-  const [currentFolder, setCurrentFolder] = useState("");
 
   const startWalkthrough = () => console.log("start walkthrough");
 
@@ -21,9 +18,6 @@ const AppShell: React.FC<AppShellProps> = ({ user, section, goToEquity, goToSolv
     <div className="min-h-screen bg-gray-50">
       <NavBar
         section={section}
-        folders={folders}
-        currentFolder={currentFolder}
-        onFolderSelect={setCurrentFolder}
         startWalkthrough={startWalkthrough}
         goToEquity={goToEquity}
         goToSolver={goToSolver}
