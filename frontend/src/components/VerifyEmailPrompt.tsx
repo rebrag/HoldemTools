@@ -3,7 +3,6 @@ import { useState } from "react";
 import { auth } from "../firebase";
 import { useNavigate } from "react-router-dom";
 import { signOut } from "firebase/auth";
-import Layout from "./Layout";
 
 const VerifyEmailPrompt = () => {
   const [message, setMessage] = useState("");
@@ -24,7 +23,7 @@ const VerifyEmailPrompt = () => {
   };
 
   return (
-    <Layout>
+    <div className="h-auto flex flex-col">
       <div className="flex items-center justify-center p-4 flex-grow">
         <div className="w-full max-w-md p-8 bg-white shadow-md rounded text-center">
           <h2 className="text-2xl font-bold mb-4 border-b pb-2 border-gray-200">
@@ -48,7 +47,7 @@ const VerifyEmailPrompt = () => {
           </button>
         </div>
       </div>
-    </Layout>
+    </div>
   );
 };
 
