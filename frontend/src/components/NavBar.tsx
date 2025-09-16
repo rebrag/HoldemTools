@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import AccountMenu from "./AccountMenu";
 
 export interface NavBarProps {
   section: "solver" | "equity";
   goToEquity: () => void;   // should push "/equity" and set state
   goToSolver: () => void;   // should push "/solver" and set state
-  startWalkthrough: () => void;
   toggleViewMode?: () => void;
   isSpiralView?: boolean;
 }
@@ -14,7 +14,6 @@ const NavBar: React.FC<NavBarProps> = ({
   section,
   goToEquity,
   goToSolver,
-  startWalkthrough,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -26,12 +25,15 @@ const NavBar: React.FC<NavBarProps> = ({
     if (!menuOpen) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closeMenu(); };
     document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
+
+    // Lock body scroll while modal is open
+    const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+
     const id = window.setTimeout(() => modalRef.current?.focus(), 0);
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      document.body.style.overflow = prevOverflow;
       window.clearTimeout(id);
     };
   }, [menuOpen]);
@@ -94,72 +96,70 @@ const NavBar: React.FC<NavBarProps> = ({
         </div>
       </div>
 
-      {/* left-anchored compact modal */}
-      {menuOpen && (
-        <div className="fixed inset-0 z-50">
-          <div
-            className="absolute inset-0 bg-black/50"
-            onClick={closeMenu}
-            aria-hidden="true"
-          />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="navbar-modal-title"
-            ref={modalRef}
-            tabIndex={-1}
-            className="absolute top-14 left-2 sm:left-4 w-64 sm:w-72 max-w-[90vw] rounded-2xl bg-white shadow-2xl outline-none"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-4 py-3 border-b">
-              <h2 id="navbar-modal-title" className="text-base font-semibold text-gray-900">
-                Menu
-              </h2>
-              <button
-                onClick={closeMenu}
-                className="p-2 rounded-md hover:bg-gray-100 text-gray-600"
-                aria-label="Close menu"
-              >
-                <svg className="h-5 w-5" viewBox="0 0 24 24" stroke="currentColor" fill="none">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"
-                        d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
+      {/* Modal rendered via portal so it always overlays everything */}
+      {menuOpen &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-[1200]">
+            {/* Backdrop */}
+            <div
+              className="absolute inset-0 bg-black/50"
+              onClick={closeMenu}
+              aria-hidden="true"
+            />
+            {/* Panel */}
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="navbar-modal-title"
+              ref={modalRef}
+              tabIndex={-1}
+              className="absolute top-14 left-2 sm:left-4 w-64 sm:w-72 max-w-[90vw] rounded-2xl bg-white shadow-2xl outline-none z-[1210]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b">
+                <h2 id="navbar-modal-title" className="text-base font-semibold text-gray-900">
+                  Menu
+                </h2>
+                <button
+                  onClick={closeMenu}
+                  className="p-2 rounded-md hover:bg-gray-100 text-gray-600"
+                  aria-label="Close menu"
+                >
+                  <svg className="h-5 w-5" viewBox="0 0 24 24" stroke="currentColor" fill="none">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"
+                          d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
 
-            <div className="px-4 py-3 space-y-2">
-              <button
-                type="button"
-                onClick={onClickEquity}
-                className="w-full text-left px-4 py-2 rounded-lg bg-gray-100 text-gray-800 hover:bg-gray-200"
-                aria-current={section === "equity" ? "page" : undefined}
-              >
-                Equity Calculator
-              </button>
+              <div className="px-4 py-3 space-y-2">
+                <button
+                  type="button"
+                  onClick={onClickEquity}
+                  className="w-full text-left px-4 py-2 rounded-lg bg-gray-100 text-gray-800 hover:bg-gray-200"
+                  aria-current={section === "equity" ? "page" : undefined}
+                >
+                  Equity Calculator
+                </button>
 
-              <button
-                type="button"
-                onClick={onClickSolver}
-                className="w-full text-left px-4 py-2 rounded-lg bg-gray-100 text-gray-800 hover:bg-gray-200"
-                aria-current={section === "solver" ? "page" : undefined}
-              >
-                Solver
-              </button>
+                <button
+                  type="button"
+                  onClick={onClickSolver}
+                  className="w-full text-left px-4 py-2 rounded-lg bg-gray-100 text-gray-800 hover:bg-gray-200"
+                  aria-current={section === "solver" ? "page" : undefined}
+                >
+                  Solver
+                </button>
 
-              <button
-                onClick={() => { startWalkthrough(); closeMenu(); }}
-                className="w-full text-left px-4 py-2 rounded-lg bg-gray-100 text-gray-800 hover:bg-gray-200"
-              >
-                Walkthrough
-              </button>
-
-              <div className="pt-2 border-t">
-                <AccountMenu />
+                <div className="pt-2 border-t">
+                  <AccountMenu />
+                </div>
               </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </nav>
   );
 };

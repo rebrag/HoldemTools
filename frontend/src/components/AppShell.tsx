@@ -12,13 +12,12 @@ interface AppShellProps {
 
 const AppShell: React.FC<AppShellProps> = ({ user, section, goToEquity, goToSolver }) => {
 
-  const startWalkthrough = () => console.log("start walkthrough");
+  // const startWalkthrough = () => console.log("start walkthrough");
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen">
       <NavBar
         section={section}
-        startWalkthrough={startWalkthrough}
         goToEquity={goToEquity}
         goToSolver={goToSolver}
       />

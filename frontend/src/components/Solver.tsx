@@ -1,7 +1,6 @@
 import { useState, useCallback, useLayoutEffect, useEffect, useMemo, useRef } from "react";
 // import NavBar from "./NavBar";
 import PlateGrid from "./PlateGrid";
-import Layout from "./Layout";
 import { actionToNumberMap, numberToActionMap, getActionNumber} from "../utils/constants"; // actionToPrefixMap2
 import { getInitialMapping } from "../utils/getInitialMapping";
 import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
@@ -683,7 +682,7 @@ const Solver = ({ user }: { user: User | null }) => {
   <>
     <Steps enabled={tourRun} steps={tourSteps} initialStep={0} onExit={() => setTourRun(false)} />
 
-    <Layout>
+    <div className="h-auto flex flex-col">
       <div className="pt-1 p-1 flex-grow">
         {(folderError || filesError) && (
           <div className="text-red-500">{folderError || filesError}</div>
@@ -778,7 +777,7 @@ const Solver = ({ user }: { user: User | null }) => {
       </div>
 
       <div className="text-center select-none pt-5">© HoldemTools 2025</div>
-    </Layout>
+    </div>
 
     {showLoginOverlay && (
       <LoginSignupModal

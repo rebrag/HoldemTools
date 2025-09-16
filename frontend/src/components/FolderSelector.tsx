@@ -293,7 +293,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
 
         {/* dropdown */}
         {open && (
-          <div className="absolute z-10 w-full mt-1 max-h-160 overflow-auto border bg-white shadow-lg">
+          <div className="absolute z-5 w-full mt-1 max-h-160 overflow-auto border bg-white shadow-lg">
             {/* header row */}
             {header.length > 0 ? (
               <div

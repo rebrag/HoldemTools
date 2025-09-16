@@ -4,6 +4,7 @@ import { auth } from "./firebase";
 import LoadingIndicator from "./components/LoadingIndicator";
 import { AppProvider } from "./components/AppContext";
 import AppShell from "./components/AppShell";
+import './index.css';
 
 type Section = "solver" | "equity";
 

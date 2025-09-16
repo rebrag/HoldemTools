@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useMemo, useState, useCallback } from "react";
-import Layout from "./Layout";
+// import Layout from "./Layout";
 import RandomizeButton from "./RandomizeButton";
 import PokerBackground from "./PokerBackground";
 import { buildDeck, sampleN, tokenize, sortCardsDesc } from "../lib/cards";
@@ -417,7 +417,7 @@ const EquityCalc: React.FC = () => {
   );
 
   return (
-    <Layout>
+    <div className="h-auto flex flex-col">
       {/* Keep background behind content */}
       <div className="fixed inset-0 z-1">
         <PokerBackground />
@@ -550,7 +550,7 @@ const EquityCalc: React.FC = () => {
           </div>
         </div>
       </div>
-    </Layout>
+    </div>
   );
 };
 
