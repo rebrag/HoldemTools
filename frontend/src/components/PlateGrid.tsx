@@ -9,7 +9,7 @@ type PlateGridProps = {
   files: string[];
   positions: string[];
   selectedFolder: string;
-  isSpiralView: boolean;
+  // isSpiralView: boolean;
   randomFillEnabled: boolean;
   onActionClick: (action: string, file: string) => void;
   windowWidth: number;
@@ -27,7 +27,7 @@ type PlateGridProps = {
 const PlateGrid: React.FC<PlateGridProps> = ({
   files,
   positions,
-  isSpiralView,
+  // isSpiralView,
   randomFillEnabled,
   onActionClick,
   windowWidth,
@@ -68,7 +68,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   const orderedEntries = useMemo(() => {
     const base = positions.map((p, i) => [p, files[i]] as const);
 
-    if (!isSpiralView) return base;
+    // if (!isSpiralView) return base;
 
     const padded = [...base];
     while (padded.length < totalCells) padded.push(["", ""]);
@@ -82,7 +82,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     });
 
     return grid;
-  }, [files, positions, isSpiralView, gridRows, gridCols, totalCells]);
+  }, [files, positions,  gridRows, gridCols, totalCells]); //isSpiralView,
 
   /* ---------- portrait-mode columns -------------------------- */
   // eslint-disable-next-line react-hooks/rules-of-hooks

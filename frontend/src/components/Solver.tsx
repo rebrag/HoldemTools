@@ -1,5 +1,5 @@
 import { useState, useCallback, useLayoutEffect, useEffect, useMemo, useRef } from "react";
-import NavBar from "./NavBar";
+// import NavBar from "./NavBar";
 import PlateGrid from "./PlateGrid";
 import Layout from "./Layout";
 import { actionToNumberMap, numberToActionMap, getActionNumber} from "../utils/constants"; // actionToPrefixMap2
@@ -676,7 +676,7 @@ const Solver = ({ user }: { user: User | null }) => {
   // }, [loadedPlates, plateMapping, plateData]);
   
   const [randomFillEnabled, setRandomFillEnabled] = useState(false);
-  const [isSpiralView, setIsSpiralView] = useState(true);
+  // const [isSpiralView, setIsSpiralView] = useState(true);
   
   return (
     <>
@@ -686,19 +686,6 @@ const Solver = ({ user }: { user: User | null }) => {
              onExit={() => setTourRun(false)} />
 
     <Layout>
-      <NavBar
-          // randomFillEnabled={randomFillEnabled}
-          // toggleRandomization={() => setRandomFillEnabled(prev => !prev)}
-          folders={folders}
-          currentFolder={folder}
-          onFolderSelect={handleFolderSelect}
-          toggleViewMode={() => setIsSpiralView(prev => !prev)}
-          isSpiralView={isSpiralView}
-          startWalkthrough={() => setTourRun(true)} section={"solver"} goToEquity={function (): void {
-            throw new Error("Function not implemented.");
-          } } goToSolver={function (): void {
-            throw new Error("Function not implemented.");
-          } }      />
       <div className="pt-1 p-1 flex-grow">
         {(folderError || filesError) && (
           <div className="text-red-500">{folderError || filesError}</div>
@@ -721,7 +708,7 @@ const Solver = ({ user }: { user: User | null }) => {
         files={displayPlates}
         positions={positionOrder}
         selectedFolder={folder}
-        isSpiralView={isSpiralView}
+        // isSpiralView={isSpiralView}
         randomFillEnabled={randomFillEnabled}
         onActionClick={handleActionClick}
         windowWidth={windowWidth}

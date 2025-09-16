@@ -4,60 +4,64 @@ import { auth } from "./firebase";
 import LoadingIndicator from "./components/LoadingIndicator";
 import { AppProvider } from "./components/AppContext";
 import AppShell from "./components/AppShell";
-// import PHEvaluator from "poker-hand-evaluator-wasm";
-
-
 
 type Section = "solver" | "equity";
 
-// Helper to read #solver / #equity (default: solver)
-const readHash = (): Section => {
+/** Read the current section from the URL path (e.g., /solver, /equity). Default: solver. */
+const readPath = (): Section => {
   if (typeof window === "undefined") return "solver";
-  const h = window.location.hash.replace("#", "").toLowerCase();
-  return h === "equity" ? "equity" : "solver";
+  // Grab first non-empty segment
+  const seg = window.location.pathname.replace(/^\/+/, "").split("/")[0]?.toLowerCase();
+  return seg === "equity" ? "equity" : "solver";
 };
+
+/** Build a URL path for a section. If you deploy under a subpath, prepend it here. */
+const pathFor = (section: Section) => `/${section}`;
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // SECTION STATE (synced with hash)
-  const [section, setSection] = useState<Section>(readHash);
+  // SECTION STATE (synced with path, not hash)
+  const [section, setSection] = useState<Section>(() => readPath());
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsub = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setLoading(false);
     });
-    return () => unsubscribe();
+    return () => unsub();
   }, []);
 
-  // useEffect(() => {
-  //   (async () => {
-  //     await PHEvaluator.ready();
-  //     const r = PHEvaluator.evaluate7("As","Kd","Ah","Kh","Qd","2c","9h");
-  //     console.log("WASM ready; hand value:", r.value, r.categoryName?.());
-  //   })().catch(err => console.error("WASM failed:", err));
-  // }, []);
-
-  // Keep state in sync if the hash changes (e.g., back/forward)
+  // On first mount, ensure the URL is a clean section path. If at root "/", rewrite to default.
   useEffect(() => {
-    const onHash = () => setSection(readHash());
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+    const current = readPath();
+    setSection(current);
+    const isRoot = window.location.pathname === "/" || window.location.pathname === "";
+    if (isRoot) {
+      // Put /solver (or /equity) in the URL without adding a history entry
+      window.history.replaceState({}, "", pathFor(current));
+    }
   }, []);
 
-  // Navigation handlers (update hash + state immediately)
-  const goToSolver = () => {
-    if (window.location.hash !== "#solver") window.location.hash = "solver";
-    setSection("solver");
-    // console.log("→ section: solver");
+  // Keep state in sync with back/forward navigation
+  useEffect(() => {
+    const onPop = () => setSection(readPath());
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  // Navigation handlers (update path + state immediately)
+  const navigate = (next: Section, replace = false) => {
+    const url = pathFor(next);
+    if (replace) window.history.replaceState({}, "", url);
+    else window.history.pushState({}, "", url);
+    setSection(next);
   };
-  const goToEquity = () => {
-    if (window.location.hash !== "#equity") window.location.hash = "equity";
-    setSection("equity");
-    // console.log("→ section: equity");
-  };
+
+  const goToEquity = () => { console.log("goToEquity"); navigate("equity"); };
+  const goToSolver = () => { console.log("goToSolver"); navigate("solver"); };
+
 
   if (loading) {
     return (

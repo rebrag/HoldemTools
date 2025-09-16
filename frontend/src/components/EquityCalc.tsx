@@ -12,7 +12,7 @@ import PlayingCard from "./PlayingCard";
 // const pct = (n: number, d: number) => (d ? ((100 * n) / d).toFixed(2) + "%" : "—");
 
 const CARD_W = "clamp(36px, 5.4vw, 62px)";
-const SLOT_GAP = "6px";
+const SLOT_GAP = "4px";
 const widthForCap = (cap: number) =>
   `calc(${cap} * var(--card-w) + ${(cap - 1)} * var(--slot-gap))`;
 
@@ -51,13 +51,13 @@ const SeatPanel: React.FC<SeatPanelProps> = React.memo(
         style={slotVars}
       >
         {/* Input matches total slot width */}
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center gap-1 mb-2">
           <input
             value={value}
             onChange={(e) => onChange(e.target.value)}
             placeholder={`${label}`}
             className="rounded-md bg-white px-2 py-1 text-sm outline-none border border-gray-300 shadow-sm"
-            style={{ width: widthForCap(cap), maxWidth: "100%" }}
+            style={{ width: widthForCap(cap), maxWidth: "80%" }}
           />
           <MemoRandomizeButton
             randomFillEnabled={randFlag && !computing}
@@ -544,8 +544,8 @@ const EquityCalc: React.FC = () => {
               onPick={onPickCard}
               size="sm"
               /* Your preferred width */
-              cardWidth="clamp(28px, 5.8vw, 56px)"
-              gapPx={6}
+              cardWidth="clamp(22px, 5.8vw, 56px)"
+              gapPx={4}
             />
           </div>
         </div>

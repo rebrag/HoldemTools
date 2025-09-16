@@ -7,8 +7,8 @@ export interface NavBarProps {
   folders: string[];
   currentFolder: string;
   onFolderSelect: (folder: string) => void;
-  goToEquity: () => void;
-  goToSolver: () => void;
+  goToEquity: () => void;   // should call history.pushState("/equity")
+  goToSolver: () => void;   // should call history.pushState("/solver")
   startWalkthrough: () => void;
   toggleViewMode?: () => void;
   isSpiralView?: boolean;
@@ -30,23 +30,45 @@ const NavBar: React.FC<NavBarProps> = ({
   const closeMenu = () => setMenuOpen(false);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && closeMenu();
-    if (menuOpen) {
-      document.addEventListener("keydown", onKey);
-      const prev = document.body.style.overflow;
-      document.body.style.overflow = "hidden";
-      setTimeout(() => modalRef.current?.focus(), 0);
-      return () => {
-        document.removeEventListener("keydown", onKey);
-        document.body.style.overflow = prev;
-      };
-    }
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closeMenu(); };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const id = window.setTimeout(() => modalRef.current?.focus(), 0);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+      window.clearTimeout(id);
+    };
   }, [menuOpen]);
 
   const pillClass =
     section === "solver"
       ? "bg-indigo-600 text-white"
       : "bg-emerald-600 text-white";
+
+  // Fallback helpers: if parent handlers don't push a path, force it here.
+  const pushPathIfNeeded = (path: "/solver" | "/equity") => {
+    if (typeof window === "undefined") return;
+    if (window.location.pathname !== path) {
+      window.history.pushState({}, "", path);
+      // We do NOT change app state here because your real handlers should.
+      // If needed, you can dispatch a custom event that your app listens to.
+    }
+  };
+
+  const onClickEquity = () => {
+    goToEquity();                 // primary (should push + set state)
+    pushPathIfNeeded("/equity");  // safety net if the above didn’t push
+    closeMenu();
+  };
+
+  const onClickSolver = () => {
+    goToSolver();
+    pushPathIfNeeded("/solver");
+    closeMenu();
+  };
 
   return (
     <nav className="fixed top-0 left-0 right-0 bg-white shadow-md z-40">
@@ -72,7 +94,6 @@ const NavBar: React.FC<NavBarProps> = ({
               onFolderSelect={onFolderSelect}
             />
           ) : (
-            // keep height so the layout doesn't jump when switching sections
             <div className="h-6" aria-hidden="true" />
           )}
         </div>
@@ -82,6 +103,7 @@ const NavBar: React.FC<NavBarProps> = ({
           <span
             className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${pillClass}`}
             aria-label={`Current section: ${section}`}
+            aria-current="page"
             title={`Current section: ${section}`}
           >
             {section === "solver" ? "Solver" : "Equity"}
@@ -92,7 +114,11 @@ const NavBar: React.FC<NavBarProps> = ({
       {/* left-anchored compact modal */}
       {menuOpen && (
         <div className="fixed inset-0 z-50">
-          <div className="absolute inset-0 bg-black/50" onClick={closeMenu} aria-hidden="true" />
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={closeMenu}
+            aria-hidden="true"
+          />
           <div
             role="dialog"
             aria-modal="true"
@@ -119,17 +145,21 @@ const NavBar: React.FC<NavBarProps> = ({
             </div>
 
             <div className="px-4 py-3 space-y-2">
+              {/* No href / no hash — use handlers */}
               <button
                 type="button"
-                onClick={() => { window.location.hash = "equity"; goToEquity(); closeMenu(); }}
+                onClick={onClickEquity}
                 className="w-full text-left px-4 py-2 rounded-lg bg-gray-100 text-gray-800 hover:bg-gray-200"
+                aria-current={section === "equity" ? "page" : undefined}
               >
                 Equity Calculator
               </button>
+
               <button
                 type="button"
-                onClick={() => { window.location.hash = "solver"; goToSolver(); closeMenu(); }}
+                onClick={onClickSolver}
                 className="w-full text-left px-4 py-2 rounded-lg bg-gray-100 text-gray-800 hover:bg-gray-200"
+                aria-current={section === "solver" ? "page" : undefined}
               >
                 Solver
               </button>
