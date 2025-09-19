@@ -1,6 +1,6 @@
 /* eslint-disable no-empty */
 import { useEffect, useRef, useState } from "react";
-import { buildDeck, tokenize  } from "../lib/cards"; //sortCardsDesc
+import { buildDeck, tokenize } from "../lib/cards"; // sortCardsDesc
 import { gameLabel, GameType, EquityResult } from "../lib/types";
 import { wilsonHalf } from "../lib/stats";
 import {
@@ -9,8 +9,8 @@ import {
 } from "../lib/constants";
 import { RANK_IDX, SUIT_IDX } from "../lib/cards";
 
-
 type BarPct = { p1: number; tie: number; p2: number };
+type ComputeOptions = { dead?: string[] }; // NEW: cards to exclude (e.g., other board’s known cards)
 
 const workerCount = () => {
   const hc = typeof navigator !== "undefined" ? (navigator.hardwareConcurrency || 4) : 4;
@@ -49,8 +49,9 @@ export function useEquitySimulation() {
     }
   };
 
-  const validate = (board: string, p1: string, p2: string):
-    { ok: boolean; msg?: string; game?: GameType } => {
+  const validate = (
+    board: string, p1: string, p2: string
+  ): { ok: boolean; msg?: string; game?: GameType } => {
     const b = tokenize(board);
     const h1 = tokenize(p1);
     const h2 = tokenize(p2);
@@ -68,23 +69,24 @@ export function useEquitySimulation() {
     const set = new Set(all);
     if (set.size !== all.length) return { ok: false, msg: "Duplicate cards detected." };
     for (const c of all) {
-        const r = c[0].toUpperCase();
-        const s = c[1].toLowerCase();
-        if (
-            !Object.prototype.hasOwnProperty.call(RANK_IDX, r) ||
-            !Object.prototype.hasOwnProperty.call(SUIT_IDX, s)
-        ) {
-            return { ok: false, msg: `Invalid card: ${c}` };
-        }
+      const r = c[0].toUpperCase();
+      const s = c[1].toLowerCase();
+      if (
+        !Object.prototype.hasOwnProperty.call(RANK_IDX, r) ||
+        !Object.prototype.hasOwnProperty.call(SUIT_IDX, s)
+      ) {
+        return { ok: false, msg: `Invalid card: ${c}` };
+      }
     }
 
     const game: GameType = both2 ? "texas-holdem" : both4 ? "omaha4" : "omaha5";
     return { ok: true, game };
   };
 
-  const exactPostflop = async (game: GameType, b: string[], h1: string[], h2: string[]) => {
+  // Exact postflop enumeration; `dead` cards (e.g., from the other board) are removed from `avail`.
+  const exactPostflop = async (game: GameType, b: string[], h1: string[], h2: string[], dead?: string[]) => {
     const deck = buildDeck();
-    const used = new Set<string>([...b, ...h1, ...h2]);
+    const used = new Set<string>([...b, ...h1, ...h2, ...(dead ?? [])]); // NEW: include dead
     const avail = deck.filter((c) => !used.has(c));
 
     type ExactMsg =
@@ -100,7 +102,6 @@ export function useEquitySimulation() {
       setSamples(m.n);
       if (m.type === "done") {
         const label = b.length === 3 ? "from the flop" : b.length === 4 ? "from the turn" : "on the river";
-        // No explicit counts in status to avoid showing runouts
         setStatus(`Exact enumeration complete ${label} (${gameLabel[game]}).`);
         try { w.terminate(); } catch {}
       }
@@ -112,13 +113,14 @@ export function useEquitySimulation() {
       try { w.terminate(); } catch {}
     };
 
+    // Worker expects board + avail deck; excluding `dead` is handled via avail above.
     w.postMessage({ type: "start-exact", payload: { game, h1, h2, board: b, avail } });
   };
 
-  const compute = async (board: string, p1: string, p2: string) => {
+  // NOTE: added `opts?: ComputeOptions`
+  const compute = async (board: string, p1: string, p2: string, opts?: ComputeOptions) => {
     if (computing) return;
     setStatus("");
-    // setResult(null);
 
     const v = validate(board, p1, p2);
     if (!v.ok) { setStatus(v.msg || "Invalid input."); return; }
@@ -128,14 +130,15 @@ export function useEquitySimulation() {
     const h1 = tokenize(p1);
     const h2 = tokenize(p2);
 
+    // POSTFLOP PATH (exact enumeration)
     if (b.length > 0) {
       setComputing(true);
-      await exactPostflop(game, b, h1, h2);
+      await exactPostflop(game, b, h1, h2, opts?.dead); // NEW: pass dead
       setComputing(false);
       return;
     }
 
-    // Preflop Monte Carlo
+    // PREFLOP PATH (Monte Carlo)
     setComputing(true);
     setProgress(0);
     setSamples(0);
@@ -162,9 +165,9 @@ export function useEquitySimulation() {
       const worst = n ? Math.max(wilsonHalf(p1p, n, DEFAULT_Z), wilsonHalf(p2p, n, DEFAULT_Z)) : 1;
 
       if (reason === "converged") {
-        setStatus(`Precision target reached (worst CI half-width ${(worst*100).toFixed(3)}%).`);
+        setStatus(`Precision target reached (worst CI half-width ${(worst * 100).toFixed(3)}%).`);
       } else if (reason === "cap") {
-        setStatus(`Max samples reached (worst CI half-width ${(worst*100).toFixed(3)}%).`);
+        setStatus(`Max samples reached (worst CI half-width ${(worst * 100).toFixed(3)}%).`);
       } else {
         setStatus("Simulation canceled.");
       }
@@ -199,8 +202,7 @@ export function useEquitySimulation() {
           const p1p = (agg.w1 + 0.5 * agg.t) / n;
           const p2p = (agg.w2 + 0.5 * agg.t) / n;
           const worst = Math.max(wilsonHalf(p1p, n, DEFAULT_Z), wilsonHalf(p2p, n, DEFAULT_Z));
-          // Keep status generic—no sample counts shown
-          setStatus(`Running… current worst CI half-width ${(worst*100).toFixed(3)}%`);
+          setStatus(`Running… current worst CI half-width ${(worst * 100).toFixed(3)}%`);
 
           if (n >= MIN_PREFLOP_SAMPLES && worst <= (DEFAULT_CI_PCT / 100)) {
             stoppedRef.current = true;
@@ -231,9 +233,10 @@ export function useEquitySimulation() {
         try { w.terminate(); } catch {}
       };
 
+      // NEW: pass dead (safe if worker ignores it)
       w.postMessage({
         type: "start-preflop",
-        payload: { game, h1, h2, seed, reportEvery: REPORT_EVERY, maxSamples: perMax }
+        payload: { game, h1, h2, seed, reportEvery: REPORT_EVERY, maxSamples: perMax, dead: opts?.dead ?? [] }
       });
 
       workers.push(w);

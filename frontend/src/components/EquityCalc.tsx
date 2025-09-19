@@ -47,7 +47,7 @@ type SeatPanelProps = {
   label: string;
   value: string;
   onChange: (s: string) => void;
-  onClear: () => void;                       // NEW
+  onClear: () => void;
   cards: string[];
   emptySlots: number;
   onRandomize: () => void;
@@ -75,7 +75,6 @@ const SeatPanel: React.FC<SeatPanelProps> = React.memo(
         className="bg-white/95 border border-gray-200 rounded-xl shadow-md px-3 py-2 flex flex-col items-center"
         style={slotVars}
       >
-        {/* Input matches total slot width */}
         <div className="flex items-center gap-1 mb-2">
           <input
             value={value}
@@ -92,7 +91,6 @@ const SeatPanel: React.FC<SeatPanelProps> = React.memo(
           />
         </div>
 
-        {/* Cards + empty slots */}
         <div className="flex items-center" style={{ gap: "var(--slot-gap)" }}>
           {cards.map((c) => (
             <button
@@ -129,7 +127,6 @@ const SeatPanel: React.FC<SeatPanelProps> = React.memo(
           })}
         </div>
 
-        {/* Equity: total EV + per-board rows */}
         <div className="mt-2 text-[11px] text-gray-800 text-center">
           <div className="font-semibold text-emerald-700">Total Equity: {totalEVText}</div>
           {breakdowns.map((b) => (
@@ -151,7 +148,7 @@ type BoardPanelProps = {
   value: string;
   onChange: (s: string) => void;
   onRandomize: () => void;
-  onClear: () => void;                        // NEW
+  onClear: () => void;
   cards: string[];
   emptySlots: number;
   cardWidth: string;
@@ -182,8 +179,8 @@ const BoardPanel: React.FC<BoardPanelProps> = React.memo(
             className="rounded-md bg-white px-2 py-1 text-sm outline-none border border-gray-300 shadow-sm"
             style={{ width: widthForCap(5), maxWidth: "100%" }}
           />
-          <TinyClearButton onPress={onClear} />
-          <MemoRandomizeButton
+        <TinyClearButton onPress={onClear} />
+        <MemoRandomizeButton
             randomFillEnabled={randFlag && !computing}
             setRandomFillEnabled={onRandomize}
             animationSpeed={0.5}
@@ -317,12 +314,33 @@ const EquityCalc: React.FC = () => {
   const removeCodeFromStr = (codes: string, code: string) =>
     sortCardsDesc(tokenize(codes).filter((c) => c !== code)).join(" ");
 
+  // Determine the next target for an added card, honoring flop → turn → river across two boards.
+  const nextAddTarget = (
+    boards: 1 | 2,
+    capSize: 2 | 4 | 5,
+    p1Len: number, p2Len: number, b1Len: number, b2Len: number
+  ): "p1" | "p2" | "b1" | "b2" | null => {
+    if (p1Len < capSize) return "p1";
+    if (p2Len < capSize) return "p2";
+    // Flop
+    if (b1Len < 3) return "b1";
+    if (boards === 2 && b2Len < 3) return "b2";
+    // Turn
+    if (b1Len < 4) return "b1";
+    if (boards === 2 && b2Len < 4) return "b2";
+    // River
+    if (b1Len < 5) return "b1";
+    if (boards === 2 && b2Len < 5) return "b2";
+    return null;
+  };
+
   const onPickCard = (code: string) => {
     const p1Arr = tokenize(p1);
     const p2Arr = tokenize(p2);
     const b1Arr = tokenize(board1);
     const b2Arr = tokenize(board2);
 
+    // toggle off if already placed
     if (p1Arr.includes(code)) { setP1(removeCodeFromStr(p1, code)); return; }
     if (p2Arr.includes(code)) { setP2(removeCodeFromStr(p2, code)); return; }
     if (b1Arr.includes(code)) { 
@@ -336,17 +354,29 @@ const EquityCalc: React.FC = () => {
       return; 
     }
 
-    if (p1Arr.length < cap) { setP1(sortCardsDesc([...p1Arr, code]).join(" ")); return; }
-    if (p2Arr.length < cap) { setP2(sortCardsDesc([...p2Arr, code]).join(" ")); return; }
-    if (b1Arr.length < 5)   { setBoard1(encodeBoard([...b1Arr, code]).join(" ")); return; }
-    if (boardsCount === 2 && b2Arr.length < 5) {
-      setBoard2(encodeBoard([...b2Arr, code]).join(" "));
+    // add in the desired order
+    const target = nextAddTarget(boardsCount, cap, p1Arr.length, p2Arr.length, b1Arr.length, b2Arr.length);
+    switch (target) {
+      case "p1":
+        setP1(sortCardsDesc([...p1Arr, code]).join(" "));
+        return;
+      case "p2":
+        setP2(sortCardsDesc([...p2Arr, code]).join(" "));
+        return;
+      case "b1":
+        setBoard1(encodeBoard([...b1Arr, code]).join(" "));
+        return;
+      case "b2":
+        setBoard2(encodeBoard([...b2Arr, code]).join(" "));
+        return;
+      default:
+        return;
     }
   };
 
   const p1Cards = sortCardsDesc(tokenize(p1));
   const p2Cards = sortCardsDesc(tokenize(p2));
-  const b1Cards = tokenize(board1); // keep board order as encoded (first 3 sorted already)
+  const b1Cards = tokenize(board1); // already encoded (first 3 sorted)
   const b2Cards = tokenize(board2);
 
   const p1Empty = Math.max(0, cap - p1Cards.length);
@@ -389,14 +419,10 @@ const EquityCalc: React.FC = () => {
 
   const fmt = (v?: number) => (v === undefined ? "—" : `${v.toFixed(2)}%`);
 
-  /* Determine which ghost card to highlight as “NEXT” */
+  // NEXT ghost marker: align with the same add ordering
   const nextTarget = useMemo(() => {
-    if (p1Cards.length < cap) return "p1" as const;
-    if (p2Cards.length < cap) return "p2" as const;
-    if (b1Cards.length < 5)   return "b1" as const;
-    if (boardsCount === 2 && b2Cards.length < 5) return "b2" as const;
-    return null;
-  }, [p1Cards.length, p2Cards.length, b1Cards.length, b2Cards.length, cap, boardsCount]);
+    return nextAddTarget(boardsCount, cap, p1Cards.length, p2Cards.length, b1Cards.length, b2Cards.length);
+  }, [boardsCount, cap, p1Cards.length, p2Cards.length, b1Cards.length, b2Cards.length]);
 
   /* Actions */
   const handleCompute = useCallback(() => {
@@ -404,8 +430,9 @@ const EquityCalc: React.FC = () => {
       sim2.cancelAll();
       sim1.compute(board1, p1, p2);
     } else {
-      sim1.compute(board1, p1, p2);
-      sim2.compute(board2, p1, p2);
+      // exclude the other board's known cards from each run (dead cards)
+      sim1.compute(board1, p1, p2, { dead: tokenize(board2) });
+      sim2.compute(board2, p1, p2, { dead: tokenize(board1) });
     }
     lastComputedKeyRef.current = currentKey;
   }, [boardsCount, board1, board2, p1, p2, sim1, sim2, currentKey]);
@@ -568,7 +595,7 @@ const EquityCalc: React.FC = () => {
               onChange={setP1}
               onClear={() => setP1("")}
               cards={p1Cards}
-              emptySlots={p1Empty}  // 2/4/5 depending on mode
+              emptySlots={p1Empty}
               onRandomize={randomizeP1}
               totalEVText={fmt(totalP1EV)}
               breakdowns={[
@@ -589,7 +616,7 @@ const EquityCalc: React.FC = () => {
               onChange={setP2}
               onClear={() => setP2("")}
               cards={p2Cards}
-              emptySlots={p2Empty}  // 2/4/5 depending on mode
+              emptySlots={p2Empty}
               onRandomize={randomizeP2}
               totalEVText={fmt(totalP2EV)}
               breakdowns={[
