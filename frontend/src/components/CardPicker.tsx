@@ -1,3 +1,4 @@
+// src/components/CardPicker.tsx
 import React from "react";
 import PlayingCard from "./PlayingCard";
 import { RANKS } from "../lib/cards";
@@ -20,7 +21,7 @@ const CardPicker: React.FC<CardPickerProps> = ({
   onPick,
   disabled,
   size = "sm",
-  cardWidth = "clamp(28px, 5.8vw, 56px)", // safe default; tweak to taste
+  cardWidth = "clamp(28px, 5.8vw, 56px)",
   gapPx = 6,
   className,
 }) => {
@@ -40,7 +41,6 @@ const CardPicker: React.FC<CardPickerProps> = ({
         // 13 equal columns; rows auto-fill
         gridTemplateColumns: "repeat(13, var(--card-w))",
         gap: `${gapPx}px`,
-        // expose the variable for children and math if needed
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ["--card-w" as any]: widthToken,
       }}
@@ -51,7 +51,7 @@ const CardPicker: React.FC<CardPickerProps> = ({
           <button
             key={code}
             type="button"
-            onClick={() => !disabled && onPick(code)}
+            onPointerDown={(e) => { e.preventDefault(); if (!disabled) onPick(code); }}
             className={`rounded-md transition focus:outline-none
               ${isUsed ? "opacity-30" : "hover:opacity-90"}
               ${disabled ? "cursor-not-allowed" : "cursor-pointer"}`}
