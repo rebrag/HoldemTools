@@ -72,24 +72,30 @@ const SeatPanel: React.FC<SeatPanelProps> = React.memo(
     };
     return (
       <div
-        className="bg-white/95 border border-gray-200 rounded-xl shadow-md px-3 py-2 flex flex-col items-center"
+        className="w-full bg-white/95 border border-gray-200 rounded-xl shadow-md px-3 py-2 flex flex-col items-center"
         style={slotVars}
       >
-        <div className="flex items-center gap-1 mb-2">
-          <input
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={`${label}`}
-            className="rounded-md bg-white px-2 py-1 text-sm outline-none border border-gray-300 shadow-sm"
-            style={{ width: widthForCap(cap), maxWidth: "80%" }}
-          />
+        <div className="flex items-center gap-1 mb-2 w-full">
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={`${label}`}
+          className="flex-1 min-w-0 rounded-md bg-white px-2 py-1 text-sm outline-none border border-gray-300 shadow-sm truncate"
+          // Let it grow, but never exceed the SeatPanel width on small screens
+          style={{ width: `min(100%, ${widthForCap(cap)})` }}
+        />
+        <div className="shrink-0">
           <TinyClearButton onPress={onClear} />
+        </div>
+        <div className="shrink-0">
           <MemoRandomizeButton
             randomFillEnabled={randFlag && !computing}
             setRandomFillEnabled={onRandomize}
             animationSpeed={0.5}
           />
         </div>
+      </div>
+
 
         <div className="flex items-center" style={{ gap: "var(--slot-gap)" }}>
           {cards.map((c) => (
@@ -171,21 +177,26 @@ const BoardPanel: React.FC<BoardPanelProps> = React.memo(
         className="bg-white/95 border border-gray-200 rounded-xl shadow-md px-3 py-2 flex flex-col items-center"
         style={slotVars}
       >
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center gap-2 mb-2 w-full">
           <input
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            placeholder={`${label} (e.g., Ah Kh Qd ...)`}
-            className="rounded-md bg-white px-2 py-1 text-sm outline-none border border-gray-300 shadow-sm"
-            style={{ width: widthForCap(5), maxWidth: "100%" }}
+            placeholder={`${label} (ex: Ah Kh Qd ...)`}
+            className="flex-1 min-w-0 rounded-md bg-white px-2 py-1 text-sm outline-none border border-gray-300 shadow-sm truncate"
+            style={{ width: `min(100%, ${widthForCap(5)})` }}
           />
-        <TinyClearButton onPress={onClear} />
-        <MemoRandomizeButton
-            randomFillEnabled={randFlag && !computing}
-            setRandomFillEnabled={onRandomize}
-            animationSpeed={0.5}
-          />
+          <div className="shrink-0">
+            <TinyClearButton onPress={onClear} />
+          </div>
+          <div className="shrink-0">
+            <MemoRandomizeButton
+              randomFillEnabled={randFlag && !computing}
+              setRandomFillEnabled={onRandomize}
+              animationSpeed={0.5}
+            />
+          </div>
         </div>
+
 
         <div className="flex items-center" style={{ gap: "var(--slot-gap)" }}>
           {cards.map((c) => (
@@ -590,7 +601,7 @@ const EquityCalc: React.FC = () => {
           {/* Seats row */}
           <div className="grid grid-cols-2 md:grid-cols-2 gap-4 items-start">
             <SeatPanel
-              label={mode === "NLH" ? "e.g. AsKd" : mode === "PLO4" ? "e.g. AhKhQdJs" : "e.g. AsKsQsJsTs"}
+              label={mode === "NLH" ? "ex: AsKd" : mode === "PLO4" ? "ex: AhKhQdJs" : "ex: AsKsQsJsTs"}
               value={p1}
               onChange={setP1}
               onClear={() => setP1("")}
@@ -611,7 +622,7 @@ const EquityCalc: React.FC = () => {
             />
 
             <SeatPanel
-              label={mode === "NLH" ? "e.g. QhQs" : mode === "PLO4" ? "e.g. QhQsJhTd" : "e.g. QhQsJhTd9c"}
+              label={mode === "NLH" ? "ex: QhQs" : mode === "PLO4" ? "ex: QhQsJhTd" : "ex: QhQsJhTd9c"}
               value={p2}
               onChange={setP2}
               onClear={() => setP2("")}
@@ -634,13 +645,13 @@ const EquityCalc: React.FC = () => {
         </div>
 
         {/* Card Picker */}
-        <div className="w-full pb-8">
+        <div className="w-full pb-6">
           <div className="mx-auto w-full max-w-screen-xl">
             <CardPicker
               used={usedPickerSet}
               onPick={onPickCard}
               size="sm"
-              cardWidth="clamp(22px, 5.8vw, 56px)"
+              cardWidth="clamp(22px, 6vw, 56px)"
               gapPx={4}
             />
           </div>

@@ -1,29 +1,25 @@
-/* src/index.css */
-@import "tailwindcss";  /* v4 all-in-one */
 @import url("https://fonts.googleapis.com/css2?family=Unica+One&display=swap");
+@import "tailwindcss";
 
-/* src/index.css */
-html, body, #root { min-height: 100%; }  /* use min-height so long pages still show gradient */
+html, body, #root { min-height: 100%; }
+
 body {
   margin: 0;
   background: linear-gradient(135deg, #374151, #9ca3af);
 }
-  /* don't set background yet */
 
-
-/* keep your utilities / other classes */
+/* Utilities */
 @layer utilities {
   .text-gradient {
     /* background: linear-gradient(135deg, #8abbca 0%, rgb(208, 189, 189) 100%); */
     background-clip: text;
+    -webkit-background-clip: text;   /* Safari */
     -webkit-text-fill-color: transparent;
   }
 }
 
-/* (optional) your poker styles… */
-
 .poker-rail {
-  position: relative;                      /* pseudo-elements live here */
+  position: relative;
   width: 90%;
   aspect-ratio: 2.1 / 1;
   border-radius: 9999px;
@@ -69,7 +65,6 @@ body {
   transition: opacity .4s ease;
 }
 .poker-rail.led-on::after { opacity: 1; }
-
 
 .poker-rail.portrait {
   width : auto;            /* width follows height */

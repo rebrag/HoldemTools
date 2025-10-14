@@ -1,5 +1,12 @@
 /* ─────────────────────  Plate.tsx  (full file) ───────────────────── */
-import React, { CSSProperties, useEffect, useMemo, useState } from "react";
+import React, {
+  CSSProperties,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  ReactNode,
+} from "react";
 import { combineDataByHand, HandCellData, JsonData } from "../utils/utils";
 import ColorKey from "./ColorKey";
 import DecisionMatrix from "./DecisionMatrix";
@@ -30,8 +37,112 @@ const EMPTY_GRID: HandCellData[] = HAND_ORDER.map((hand) => ({
   evs: {} as Record<string, number>
 }));
 
+/* ───────────────────── AutoFitText (single-line, auto-scaling) ───────────────────── */
+const AutoFitText: React.FC<{
+  children: ReactNode;
+  minPx?: number;
+  maxPx?: number;
+  className?: string;
+  title?: string;
+}> = ({ children, minPx = 8, maxPx = 14, className = "", title }) => {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLSpanElement>(null);
+  const [size, setSize] = useState<number>(maxPx);
+  const [scale, setScale] = useState<number>(1);
+
+  const fit = () => {
+    const wrap = wrapRef.current;
+    const inner = innerRef.current;
+    if (!wrap || !inner) return;
+
+    const maxW = wrap.clientWidth;
+    if (maxW <= 0) return;
+
+    inner.style.fontSize = `${maxPx}px`;
+    inner.style.whiteSpace = "nowrap";
+    inner.style.transform = "scale(1)";
+    inner.style.transformOrigin = "center";
+
+    let lo = minPx;
+    let hi = maxPx;
+    let best = minPx;
+
+    while (lo <= hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      inner.style.fontSize = `${mid}px`;
+      const tooWide = inner.scrollWidth > maxW;
+      if (!tooWide) { best = mid; lo = mid + 1; } else { hi = mid - 1; }
+    }
+
+    setSize(best);
+    inner.style.fontSize = `${best}px`;
+    const widthAtBest = inner.scrollWidth;
+    if (widthAtBest > maxW) {
+      const s = Math.max(0.75, maxW / widthAtBest);
+      setScale(s);
+    } else {
+      setScale(1);
+    }
+  };
+
+  useEffect(() => {
+    fit();
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const ro = new ResizeObserver(() => fit());
+    ro.observe(wrap);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    fit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [children]);
+
+  return (
+    <div
+      ref={wrapRef}
+      className={`w-full overflow-hidden ${className}`}
+      title={title}
+      style={{ lineHeight: 1.05 }}
+    >
+      <span
+        ref={innerRef}
+        style={{
+          fontSize: size,
+          display: "inline-block",
+          whiteSpace: "nowrap",
+          transform: `scale(${scale})`,
+          transformOrigin: "center",
+          willChange: "transform",
+        }}
+      >
+        {children}
+      </span>
+    </div>
+  );
+};
+
+/* ───────────────────── PlateZoom payload ───────────────────── */
+export type PlateZoomPayload = {
+  id: string;
+  position: string;
+  grid: HandCellData[];
+  isICMSim: boolean;
+  stackBB: number;
+  playerBet: number;
+  pot?: number;
+  maxBet?: number;
+  potOddsPct: number;
+  isActive: boolean;
+  alive: boolean;
+  file: string;
+};
+
 /* ───────────────────── props ───────────────────── */
 interface PlateProps {
+  plateId?: string;  // stable id for shared layout (pass file)
   file: string;
   data: JsonData | undefined;
   onActionClick: (action: string, file: string) => void;
@@ -43,16 +154,12 @@ interface PlateProps {
   isActive?: boolean;
   pot?: number;
   maxBet?: number;
-  onMatrixZoom?: (
-    grid: HandCellData[],
-    title: string,
-    isICM: boolean,
-    id: string
-  ) => void;
+  onPlateZoom?: (payload: PlateZoomPayload) => void;
 }
 
 /* ──────────────────── component ──────────────────── */
 const Plate: React.FC<PlateProps> = ({
+  plateId,
   file,
   data,
   onActionClick,
@@ -64,149 +171,175 @@ const Plate: React.FC<PlateProps> = ({
   isActive = false,
   pot,
   maxBet,
-  onMatrixZoom
+  onPlateZoom
 }) => {
-  /* keep the last **valid** JSON so we don't flash back to zeros */
   const [displayData, setDisplayData] = useState<JsonData | undefined>(data);
-  useEffect(() => {
-    if (data) setDisplayData(data);
-  }, [data]);
+  useEffect(() => { if (data) setDisplayData(data); }, [data]);
 
-  /* is this plate still waiting for its first ever JSON? */
   const keyLoading = !displayData;
 
-  /* grid for DecisionMatrix & ColorKey */
   const gridData: HandCellData[] = useMemo(() => {
     if (!displayData) return EMPTY_GRID;
     return combineDataByHand(displayData);
   }, [displayData]);
 
-  /* helpers */
-  const fmtBB = (v: number) =>
-    Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1);
+  const fmtBB = (v: number) => (Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1));
 
   const potOdds =
     pot != null && maxBet != null && maxBet > playerBet
       ? ((maxBet - playerBet) / (pot + maxBet - playerBet)) * 100
       : 0;
 
-  /* sizing */
   const outerCls =
-    "relative mb-10 justify-self-center max-w-[400px] w-full text-base " +
-    (isActive ? "ring-4 ring-white shadow-yellow-400/50 rounded-md" : "");
+    "relative mb-10 justify-self-center max-w-[400px] w-full text-base";
 
   const sizeStyle: CSSProperties | undefined =
     plateWidth != null
       ? { width: plateWidth, maxWidth: plateWidth, minWidth: plateWidth }
       : undefined;
 
-  /* ───────────────────── render ───────────────────── */
+  const showBet = playerBet !== 0;
+  const showPotOdds = isActive && showBet;
+  const baseCols = 2;
+  const infoCols = baseCols + (showBet ? 1 : 0) + (showPotOdds ? 1 : 0);
+  const colsClass =
+    infoCols === 4 ? "grid-cols-4" : infoCols === 3 ? "grid-cols-3" : "grid-cols-2";
+
+  const stableId = plateId ?? file;
+
   return (
     <div className={outerCls} style={sizeStyle}>
-      {/* dealer button */}
-      {displayData?.Position === "BTN" && (
-        <div
-          className="absolute z-0"
-          style={{ top: "-16%", right: "-8%", width: "33%", aspectRatio: "1" }}
-        >
-          <DealerButton />
-        </div>
-      )}
-
-      {/* plate background */}
+      {/* Entire plate wrapper animates; overflow visible so background adornments can extend out */}
       <motion.div
         layout
-        className="border rounded-[7px] shadow-md p-0.5 bg-white relative z-10"
-        style={{ opacity: alive ? 1 : 0.3 }}
+        layoutId={`plate-${stableId}`}
+        className="relative overflow-visible"
         initial={false}
-        animate={{ opacity: alive ? 1 : 0.3, scale: 1 }}
+        animate={{ scale: isActive ? 1.02 : 1, opacity: alive ? 1 : 0.3 }}
         transition={{ duration: 0.25 }}
       >
-        {/* decision-matrix grid */}
-        <div className="relative">
+        {/* ===== Background adornments (BEHIND panel) ===== */}
+        {/* Dealer button: top-right, behind panel, can extend outside */}
+        {displayData?.Position === "BTN" && (
           <div
-            className="cursor-pointer"
-            onClick={() =>
-              displayData &&
-              onMatrixZoom?.(
-                gridData,
-                displayData.Position,
-                isICMSim,
-                displayData.Position
-              )
-            }
+            className="absolute z-0"
+            style={{ top: "-16%", right: "-8%", width: "33%", aspectRatio: "1" }}
           >
-            <DecisionMatrix
-              gridData={gridData}
-              randomFillEnabled={randomFillEnabled && !!displayData}
-              isICMSim={isICMSim}
-            />
+            <DealerButton />
           </div>
+        )}
 
-          {/* ─────  BADGES  (equal thirds)  ───── */}
-          {displayData && (
-            <div className="absolute -bottom-7 left-0 w-full flex text-xs pointer-events-none z-30">
-              {/* left 1/3 – Pot Odds (only when active & available) */}
-              <div className="w-1/3 flex justify-center">
-                {isActive && potOdds > 0 && (
-                  <div className="bg-white/70 backdrop-blur-sm rounded-md px-1 py-0 shadow text-center whitespace-nowrap">
-                    <strong>Pot&nbsp;Odds:</strong>
-                    <br />
-                    {potOdds.toFixed(0)}%
+        {/* Decorative cards: bottom center, behind panel, extend outside */}
+        {alive && (
+          <div className="absolute inset-x-0 -bottom-9 flex justify-center z-0 pointer-events-none">
+            <div className="relative w-18 h-18">
+              <img
+                src="/playing-cards.svg"
+                alt="cards"
+                className="absolute inset-0 w-full h-full transform rotate-[0deg] translate-x-[-8%]"
+              />
+              <img
+                src="/playing-cards.svg"
+                alt="cards"
+                className="absolute inset-0 w-full h-full transform -rotate-[0deg] translate-x-[8%]"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* ===== Foreground panel (white card) ===== */}
+        <div
+          className={`relative z-10 border rounded-[7px] shadow-md p-0.5 bg-white ${
+            isActive ? "border-emerald-400" : "border-gray-200"
+          }`}
+        >
+          {/* decision-matrix grid */}
+          <div className="relative">
+            <div
+              className="cursor-pointer"
+              onClick={() => {
+                if (!displayData) return;
+                onPlateZoom?.({
+                  id: stableId,
+                  position: displayData.Position,
+                  grid: gridData,
+                  isICMSim,
+                  stackBB: displayData.bb - playerBet,
+                  playerBet,
+                  pot,
+                  maxBet,
+                  potOddsPct: Math.max(0, potOdds),
+                  isActive,
+                  alive,
+                  file
+                });
+              }}
+            >
+              <DecisionMatrix
+                gridData={gridData}
+                randomFillEnabled={randomFillEnabled && !!displayData}
+                isICMSim={isICMSim}
+              />
+            </div>
+
+            {/* colour-key */}
+            <div className="select-none flex w-full items-center justify-end mt-0.5">
+              <ColorKey
+                data={gridData}
+                loading={keyLoading}
+                onActionClick={(action) => onActionClick(action, file)}
+              />
+            </div>
+
+            {/* info row */}
+            {displayData && (
+              <div className="mt-1 w-full">
+                <div className={`grid gap-1 w-full ${colsClass}`}>
+                  <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-1 shadow text-center overflow-hidden">
+                    <AutoFitText title="Position">
+                      <strong>{displayData.Position}</strong>
+                    </AutoFitText>
                   </div>
-                )}
-              </div>
 
-              {/* middle 1/3 – Position + stack */}
-              <div className="w-1/3 flex justify-center">
-                <div className="bg-white/70 backdrop-blur-sm rounded-md px-0.5 py-1 shadow text-center whitespace-nowrap">
-                  <strong>{displayData.Position}</strong>&nbsp;
-                  {fmtBB(displayData.bb - playerBet)} bb
+                  <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-1 shadow text-center overflow-hidden">
+                    <AutoFitText title="Stack">
+                      <strong>Stack:</strong>&nbsp;{fmtBB(displayData.bb - playerBet)}&nbsp;bb
+                    </AutoFitText>
+                  </div>
+
+                  {showBet && (
+                    <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-1 shadow text-center overflow-hidden">
+                      <AutoFitText title="Bet">
+                        <strong>Bet:</strong>&nbsp;{fmtBB(playerBet)}&nbsp;bb
+                      </AutoFitText>
+                    </div>
+                  )}
+
+                  {showPotOdds && (
+                    <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-1 shadow text-center overflow-hidden">
+                      <AutoFitText title="Pot Odds">
+                        <strong>Pot&nbsp;Odds:</strong>&nbsp;{Math.max(0, potOdds).toFixed(0)}%
+                      </AutoFitText>
+                    </div>
+                  )}
                 </div>
               </div>
+            )}
+          </div>
+        </div>
 
-              {/* right 1/3 – Bet size (if any) */}
-              <div className="w-1/3 flex justify-center">
-                {playerBet !== 0 && (
-                  <div className="bg-white/70 backdrop-blur-sm rounded-md px-1 py-1 shadow text-center whitespace-nowrap">
-                    <strong>Bet:</strong>&nbsp;{fmtBB(playerBet)} bb
-                  </div>
-                )}
-              </div>
+        {/* ===== Top overlays (above panel) ===== */}
+        {isActive && (
+          <>
+            <div className="pointer-events-none absolute -inset-1 rounded-[9px] ring-2 ring-emerald-400/80 shadow-[0_0_0_6px_rgba(16,185,129,0.18)] animate-pulse z-20" />
+            <div className="absolute -top-3 -right-3 z-20">
+              <span className="text-[10px] bg-emerald-600 text-white rounded px-1.5 py-0.5 shadow">
+                ACTION
+              </span>
             </div>
-          )}
-
-          {/* colour-key – always rendered; shows skeleton while loading */}
-          <div className="select-none flex w-full items-center justify-end mt-0.5">
-            <ColorKey
-              data={gridData}
-              loading={keyLoading}
-              onActionClick={(action) => onActionClick(action, file)}
-            />
-          </div>
-        </div>
+          </>
+        )}
       </motion.div>
-
-      {/* decorative cards */}
-      {/* ───────── decorative cards (always perfectly centred) ───────── */}
-      {alive && (
-        <div className="absolute inset-x-0 -bottom-9 flex justify-center -z-0">
-          <div className="relative w-18 h-18">
-            {/* left-tilted card */}
-            <img
-              src="/playing-cards.svg"
-              alt="cards"
-              className="absolute inset-0 w-full h-full transform rotate-[0deg] translate-x-[-8%]"
-            />
-            {/* right-tilted card */}
-            <img
-              src="/playing-cards.svg"
-              alt="cards"
-              className="absolute inset-0 w-full h-full transform -rotate-[0deg] translate-x-[8%]"
-            />
-          </div>
-        </div>
-      )}
     </div>
   );
 };
