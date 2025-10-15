@@ -1,41 +1,41 @@
 // src/components/AccountMenu.tsx
-import { auth } from "../firebase";
-import { signOut } from "firebase/auth";
-import { useState } from "react";
+import React from "react";
 
-const AccountMenu = () => {
-  const user = auth.currentUser;
-  const [error, setError] = useState<string | null>(null);
+type AccountMenuProps = {
+  isLoggedIn: boolean;
+  onLogin: () => void;
+  onLogout: () => void;
+  displayLabel?: boolean;        // when true, show "Account:"
+  userEmail?: string | null;
+};
 
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError(String(err));
-      }
-    }
-  };
-
+const AccountMenu: React.FC<AccountMenuProps> = ({
+  isLoggedIn,
+  onLogin,
+  onLogout,
+  displayLabel = false,
+  userEmail,
+}) => {
   return (
-    <div className="space-y-2">
-      {/* Desktop view: show full account info */}
-      <div className="hidden sm:flex items-center flex-wrap gap-2">
-        <span className="text-sm font-bold">Account:</span>
-        <span className="text-sm">{user?.email}</span>
-        <button onClick={handleLogout} className="text-xs text-blue-600 hover:underline">
-          Logout
+    <div className="flex flex-col gap-2">
+      {displayLabel && (
+        <div className="text-sm font-medium text-gray-700">
+          Account{userEmail ? `: ${userEmail}` : ":"}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <button
+          onPointerDown={(e) => {
+            e.preventDefault();
+            // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+            isLoggedIn ? onLogout() : onLogin();
+          }}
+          className="rounded-md bg-gray-900 text-white px-3 py-1.5 text-sm hover:bg-gray-800"
+        >
+          {isLoggedIn ? "Logout" : "Login"}
         </button>
       </div>
-      {/* Mobile view: compact */}
-      <div className="flex sm:hidden">
-        <button onClick={handleLogout} className="text-xs text-blue-600 hover:underline">
-          Logout
-        </button>
-      </div>
-      {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
     </div>
   );
 };

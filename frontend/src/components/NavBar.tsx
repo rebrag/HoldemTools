@@ -3,6 +3,16 @@ import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import AccountMenu from "./AccountMenu";
 
+/* Firebase Auth (assumes you have Firebase initialized elsewhere) */
+import {
+  getAuth,
+  onAuthStateChanged,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut,
+  type User,
+} from "firebase/auth";
+
 export interface NavBarProps {
   section: "solver" | "equity";
   goToEquity: () => void;   // should push "/equity" and set state
@@ -18,6 +28,26 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
   const [toolsOpen, setToolsOpen] = useState(false);
   const toolsBtnRef = useRef<HTMLButtonElement>(null);
   const toolsMenuRef = useRef<HTMLDivElement>(null);
+
+  // ---- Auth state ----
+  const [user, setUser] = useState<User | null>(null);
+  useEffect(() => {
+    const auth = getAuth();
+    return onAuthStateChanged(auth, (u) => setUser(u));
+  }, []);
+
+  const handleLogin = async () => {
+    const auth = getAuth();
+    const provider = new GoogleAuthProvider();
+    await signInWithPopup(auth, provider);
+    setMenuOpen(false);
+  };
+
+  const handleLogout = async () => {
+    const auth = getAuth();
+    await signOut(auth);
+    setMenuOpen(false);
+  };
 
   const openMenu = () => setMenuOpen(true);
   const closeMenu = () => setMenuOpen(false);
@@ -164,26 +194,14 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
               </div>
 
               <div className="px-4 py-3 space-y-2">
-                <button
-                  type="button"
-                  onPointerDown={(e) => { e.preventDefault(); goEquity(); closeMenu(); }}
-                  className="w-full text-left px-4 py-2 rounded-lg bg-gray-100 text-gray-800 hover:bg-gray-200"
-                  aria-current={section === "equity" ? "page" : undefined}
-                >
-                  Equity Calculator
-                </button>
-
-                <button
-                  type="button"
-                  onPointerDown={(e) => { e.preventDefault(); goSolver(); closeMenu(); }}
-                  className="w-full text-left px-4 py-2 rounded-lg bg-gray-100 text-gray-800 hover:bg-gray-200"
-                  aria-current={section === "solver" ? "page" : undefined}
-                >
-                  Solver
-                </button>
-
-                <div className="pt-2 border-t">
-                  <AccountMenu />
+                <div className="pt-2">
+                  <AccountMenu
+                    isLoggedIn={!!user}
+                    displayLabel={!!user}                 // show "Account:" only if logged in
+                    userEmail={user?.email ?? null}
+                    onLogin={handleLogin}
+                    onLogout={handleLogout}
+                  />
                 </div>
               </div>
             </div>

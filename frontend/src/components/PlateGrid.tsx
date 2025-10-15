@@ -88,7 +88,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
         const wAvail = windowWidth - gridCols * gapPx;
         const hAvail = windowHeight - gridRows * gapPx;
         const fitByW = wAvail / gridCols;
-        const fitByH = hAvail / (gridRows + 1);
+        const fitByH = hAvail / (gridRows + 2);
         return Math.max(170, Math.min(fitByW, fitByH));
       })();
 

@@ -142,7 +142,7 @@ export type PlateZoomPayload = {
 
 /* ───────────────────── props ───────────────────── */
 interface PlateProps {
-  plateId?: string;  // stable id for shared layout (pass file)
+  plateId?: string;  // kept for compatibility but not used for shared layout
   file: string;
   data: JsonData | undefined;
   onActionClick: (action: string, file: string) => void;
@@ -174,6 +174,7 @@ const Plate: React.FC<PlateProps> = ({
   onPlateZoom
 }) => {
   const [displayData, setDisplayData] = useState<JsonData | undefined>(data);
+  // This was fine before; keep the same behavior.
   useEffect(() => { if (data) setDisplayData(data); }, [data]);
 
   const keyLoading = !displayData;
@@ -191,7 +192,7 @@ const Plate: React.FC<PlateProps> = ({
       : 0;
 
   const outerCls =
-    "relative mb-10 justify-self-center max-w-[400px] w-full text-base";
+    "relative mb-7 justify-self-center max-w-[400px] w-full text-base";
 
   const sizeStyle: CSSProperties | undefined =
     plateWidth != null
@@ -200,26 +201,20 @@ const Plate: React.FC<PlateProps> = ({
 
   const showBet = playerBet !== 0;
   const showPotOdds = isActive && showBet;
-  const baseCols = 2;
-  const infoCols = baseCols + (showBet ? 1 : 0) + (showPotOdds ? 1 : 0);
-  const colsClass =
-    infoCols === 4 ? "grid-cols-4" : infoCols === 3 ? "grid-cols-3" : "grid-cols-2";
-
-  const stableId = plateId ?? file;
 
   return (
     <div className={outerCls} style={sizeStyle}>
       {/* Entire plate wrapper animates; overflow visible so background adornments can extend out */}
       <motion.div
-        layout
-        layoutId={`plate-${stableId}`}
-        className="relative overflow-visible"
+        // ⬇️ REMOVE shared-layout props to prevent ghosting
+        // layout
+        // layoutId={`plate-${plateId ?? file}`}
+        className="relative overflow-visible will-change-transform"
         initial={false}
         animate={{ scale: isActive ? 1.02 : 1, opacity: alive ? 1 : 0.3 }}
         transition={{ duration: 0.25 }}
       >
         {/* ===== Background adornments (BEHIND panel) ===== */}
-        {/* Dealer button: top-right, behind panel, can extend outside */}
         {displayData?.Position === "BTN" && (
           <div
             className="absolute z-0"
@@ -229,9 +224,8 @@ const Plate: React.FC<PlateProps> = ({
           </div>
         )}
 
-        {/* Decorative cards: bottom center, behind panel, extend outside */}
         {alive && (
-          <div className="absolute inset-x-0 -bottom-9 flex justify-center z-0 pointer-events-none">
+          <div className="absolute inset-x-0 -bottom-7 flex justify-center z-0 pointer-events-none">
             <div className="relative w-18 h-18">
               <img
                 src="/playing-cards.svg"
@@ -260,7 +254,7 @@ const Plate: React.FC<PlateProps> = ({
               onClick={() => {
                 if (!displayData) return;
                 onPlateZoom?.({
-                  id: stableId,
+                  id: plateId ?? file,
                   position: displayData.Position,
                   grid: gridData,
                   isICMSim,
@@ -291,38 +285,49 @@ const Plate: React.FC<PlateProps> = ({
               />
             </div>
 
-            {/* info row */}
+            {/* info rows */}
             {displayData && (
-              <div className="mt-1 w-full">
-                <div className={`grid gap-1 w-full ${colsClass}`}>
-                  <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-1 shadow text-center overflow-hidden">
+              <div className="mt-1 w-full space-y-1">
+                {/* Row 1: Position (30%) + Stack (70%) */}
+                <div
+                  className="grid gap-1 w-full"
+                  style={{ gridTemplateColumns: "30% 1fr" }}
+                >
+                  <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
                     <AutoFitText title="Position">
                       <strong>{displayData.Position}</strong>
                     </AutoFitText>
                   </div>
 
-                  <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-1 shadow text-center overflow-hidden">
+                  <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
                     <AutoFitText title="Stack">
                       <strong>Stack:</strong>&nbsp;{fmtBB(displayData.bb - playerBet)}&nbsp;bb
                     </AutoFitText>
                   </div>
+                </div>
 
-                  {showBet && (
-                    <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-1 shadow text-center overflow-hidden">
+                {/* Row 2: Bet + Pot Odds */}
+                {showBet && (
+                  <div
+                    className={`grid gap-1 w-full ${
+                      showPotOdds ? "grid-cols-2" : "grid-cols-1"
+                    }`}
+                  >
+                    {showPotOdds && (
+                      <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
+                        <AutoFitText title="Pot Odds">
+                          <strong>Pot&nbsp;Odds:</strong>&nbsp;{Math.max(0, potOdds).toFixed(0)}%
+                        </AutoFitText>
+                      </div>
+                    )}
+                    <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
                       <AutoFitText title="Bet">
                         <strong>Bet:</strong>&nbsp;{fmtBB(playerBet)}&nbsp;bb
                       </AutoFitText>
                     </div>
-                  )}
 
-                  {showPotOdds && (
-                    <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-1 shadow text-center overflow-hidden">
-                      <AutoFitText title="Pot Odds">
-                        <strong>Pot&nbsp;Odds:</strong>&nbsp;{Math.max(0, potOdds).toFixed(0)}%
-                      </AutoFitText>
-                    </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

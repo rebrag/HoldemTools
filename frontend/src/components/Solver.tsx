@@ -783,7 +783,7 @@ const Solver = ({ user }: { user: User | null }) => {
       <LoginSignupModal
         onClose={() => {
           setShowLoginOverlay(false);
-          setPendingFolder(null);
+          // setPendingFolder(null);
         }}
       />
     )}
