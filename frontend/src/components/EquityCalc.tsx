@@ -522,11 +522,6 @@ const EquityCalc: React.FC = () => {
 
   return (
     <div className="h-auto flex flex-col">
-      {/* Keep background behind content */}
-      <div className="fixed inset-0 z-1">
-        <PokerBackground />
-      </div>
-
       <div className="relative z-10 mx-auto max-w-screen-xl px-3 sm:px-6 overflow-x-hidden">
         {/* Header: Mode/Boards + Actions */}
         <div className="grid grid-cols-2 items-start gap-3 pt-3">
@@ -562,89 +557,97 @@ const EquityCalc: React.FC = () => {
           </div>
         </div>
 
-        {/* Main stack: Boards / Seats row */}
-        <div className="grid gap-4 my-3">
-          {/* Boards area (panel behind board) */}
-          <div className="flex flex-col items-center gap-4">
-            <BoardPanel
-              label="Board 1"
-              value={board1}
-              onChange={setBoard1}
-              onRandomize={randomizeBoard1}
-              onClear={() => setBoard1("")}
-              cards={b1Cards}
-              emptySlots={b1Empty}
-              cardWidth={CARD_W}
-              slotGap={SLOT_GAP}
-              randFlag={randFlag}
-              computing={computing}
-              highlightFirstEmpty={nextTarget === "b1" && b1Empty > 0}
-            />
-            {boardsCount === 2 && (
+        {/* === Background-scoped stack: ONLY boards & seats have the background === */}
+        <div className="relative my-3">
+          {/* Background sits behind this block only */}
+          <div className="pointer-events-none absolute inset-0 -z-10">
+            <PokerBackground />
+          </div>
+
+          {/* Main stack: Boards / Seats row */}
+          <div className="grid gap-4">
+            {/* Boards area (panel behind board) */}
+            <div className="flex flex-col items-center gap-4">
               <BoardPanel
-                label="Board 2"
-                value={board2}
-                onChange={setBoard2}
-                onRandomize={randomizeBoard2}
-                onClear={() => setBoard2("")}
-                cards={b2Cards}
-                emptySlots={b2Empty}
+                label="Board 1"
+                value={board1}
+                onChange={setBoard1}
+                onRandomize={randomizeBoard1}
+                onClear={() => setBoard1("")}
+                cards={b1Cards}
+                emptySlots={b1Empty}
                 cardWidth={CARD_W}
                 slotGap={SLOT_GAP}
                 randFlag={randFlag}
                 computing={computing}
-                highlightFirstEmpty={nextTarget === "b2" && b2Empty > 0}
+                highlightFirstEmpty={nextTarget === "b1" && b1Empty > 0}
               />
-            )}
-          </div>
+              {boardsCount === 2 && (
+                <BoardPanel
+                  label="Board 2"
+                  value={board2}
+                  onChange={setBoard2}
+                  onRandomize={randomizeBoard2}
+                  onClear={() => setBoard2("")}
+                  cards={b2Cards}
+                  emptySlots={b2Empty}
+                  cardWidth={CARD_W}
+                  slotGap={SLOT_GAP}
+                  randFlag={randFlag}
+                  computing={computing}
+                  highlightFirstEmpty={nextTarget === "b2" && b2Empty > 0}
+                />
+              )}
+            </div>
 
-          {/* Seats row */}
-          <div className="grid grid-cols-2 md:grid-cols-2 gap-4 items-start">
-            <SeatPanel
-              label={mode === "NLH" ? "ex: AsKd" : mode === "PLO4" ? "ex: AhKhQdJs" : "ex: AsKsQsJsTs"}
-              value={p1}
-              onChange={setP1}
-              onClear={() => setP1("")}
-              cards={p1Cards}
-              emptySlots={p1Empty}
-              onRandomize={randomizeP1}
-              totalEVText={fmt(totalP1EV)}
-              breakdowns={[
-                { label: "Board 1", winText: fmt(isFresh && s1.ready ? s1.p1WinPct : undefined), tieText: fmt(isFresh && s1.ready ? s1.tiePct : undefined) },
-                ...(boardsCount === 2 ? [{ label: "Board 2", winText: fmt(isFresh && s2.ready ? s2.p1WinPct : undefined), tieText: fmt(isFresh && s2.ready ? s2.tiePct : undefined) }] : []),
-              ]}
-              cap={cap}
-              cardWidth={CARD_W}
-              slotGap={SLOT_GAP}
-              randFlag={randFlag}
-              computing={computing}
-              highlightFirstEmpty={nextTarget === "p1" && p1Empty > 0}
-            />
+            {/* Seats row */}
+            <div className="grid grid-cols-2 md:grid-cols-2 gap-4 items-start">
+              <SeatPanel
+                label={mode === "NLH" ? "ex: AsKd" : mode === "PLO4" ? "ex: AhKhQdJs" : "ex: AsKsQsJsTs"}
+                value={p1}
+                onChange={setP1}
+                onClear={() => setP1("")}
+                cards={p1Cards}
+                emptySlots={p1Empty}
+                onRandomize={randomizeP1}
+                totalEVText={fmt(totalP1EV)}
+                breakdowns={[
+                  { label: "Board 1", winText: fmt(isFresh && s1.ready ? s1.p1WinPct : undefined), tieText: fmt(isFresh && s1.ready ? s1.tiePct : undefined) },
+                  ...(boardsCount === 2 ? [{ label: "Board 2", winText: fmt(isFresh && s2.ready ? s2.p1WinPct : undefined), tieText: fmt(isFresh && s2.ready ? s2.tiePct : undefined) }] : []),
+                ]}
+                cap={cap}
+                cardWidth={CARD_W}
+                slotGap={SLOT_GAP}
+                randFlag={randFlag}
+                computing={computing}
+                highlightFirstEmpty={nextTarget === "p1" && p1Empty > 0}
+              />
 
-            <SeatPanel
-              label={mode === "NLH" ? "ex: QhQs" : mode === "PLO4" ? "ex: QhQsJhTd" : "ex: QhQsJhTd9c"}
-              value={p2}
-              onChange={setP2}
-              onClear={() => setP2("")}
-              cards={p2Cards}
-              emptySlots={p2Empty}
-              onRandomize={randomizeP2}
-              totalEVText={fmt(totalP2EV)}
-              breakdowns={[
-                { label: "Board 1", winText: fmt(isFresh && s1.ready ? s1.p2WinPct : undefined), tieText: fmt(isFresh && s1.ready ? s1.tiePct : undefined) },
-                ...(boardsCount === 2 ? [{ label: "Board 2", winText: fmt(isFresh && s2.ready ? s2.p2WinPct : undefined), tieText: fmt(isFresh && s2.ready ? s2.tiePct : undefined) }] : []),
-              ]}
-              cap={cap}
-              cardWidth={CARD_W}
-              slotGap={SLOT_GAP}
-              randFlag={randFlag}
-              computing={computing}
-              highlightFirstEmpty={nextTarget === "p2" && p2Empty > 0}
-            />
+              <SeatPanel
+                label={mode === "NLH" ? "ex: QhQs" : mode === "PLO4" ? "ex: QhQsJhTd" : "ex: QhQsJhTd9c"}
+                value={p2}
+                onChange={setP2}
+                onClear={() => setP2("")}
+                cards={p2Cards}
+                emptySlots={p2Empty}
+                onRandomize={randomizeP2}
+                totalEVText={fmt(totalP2EV)}
+                breakdowns={[
+                  { label: "Board 1", winText: fmt(isFresh && s1.ready ? s1.p2WinPct : undefined), tieText: fmt(isFresh && s1.ready ? s1.tiePct : undefined) },
+                  ...(boardsCount === 2 ? [{ label: "Board 2", winText: fmt(isFresh && s2.ready ? s2.p2WinPct : undefined), tieText: fmt(isFresh && s2.ready ? s2.tiePct : undefined) }] : []),
+                ]}
+                cap={cap}
+                cardWidth={CARD_W}
+                slotGap={SLOT_GAP}
+                randFlag={randFlag}
+                computing={computing}
+                highlightFirstEmpty={nextTarget === "p2" && p2Empty > 0}
+              />
+            </div>
           </div>
         </div>
 
-        {/* Card Picker */}
+        {/* Card Picker (no background behind this section) */}
         <div className="w-full pb-6">
           <div className="mx-auto w-full max-w-screen-xl">
             <CardPicker

@@ -15,7 +15,7 @@ import 'intro.js/introjs.css';
 import { User } from "firebase/auth";
 import LoginSignupModal from "./LoginSignupModal";
 import RandomizeButton from "./RandomizeButton";
-import FolderSelector from "./FolderSelector";  // 👈 bring it here
+import FolderSelector from "./FolderSelector";
 
 const tourSteps = [
   { element: '[data-intro-target="folder-selector"]', intro: 'Choose a pre‑flop sim here.', position: 'bottom' },
@@ -171,7 +171,6 @@ const Solver = ({ user }: { user: User | null }) => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folder, playerCount]);
 
-  // Keep plateMapping consistent with loadedPlates.
   useEffect(() => {
     setPlateMapping((prev) => {
       const filtered: Record<string, string> = {};
@@ -230,24 +229,20 @@ const Solver = ({ user }: { user: User | null }) => {
 
   const handleFolderSelect = useCallback(
     (selectedFolder: string) => {
-      // — 1️⃣ Gate for unauthenticated users (your existing logic)
       if (!user && selectedFolder !== folder) {
         setPendingFolder(selectedFolder);
         setShowLoginOverlay(true);
         return;
       }
-      // — 2️⃣ Figure out the new seat count from the folder name
       const newPlayerCount = selectedFolder.split("_").length;
-      // — 3️⃣ Reset synchronous state first
-      const freshPlates   = defaultPlateNames;                 // root / 0 / 0.0 …
-      const freshMapping  = getInitialMapping(newPlayerCount); // instant mapping
+      const freshPlates   = defaultPlateNames;   
+      const freshMapping  = getInitialMapping(newPlayerCount); 
       setLoadedPlates(freshPlates);
       setPlateMapping(freshMapping);
-      setPlateData({});                 // wipe old JSON
+      setPlateData({});
       setFolder(selectedFolder);
       setPreflopLine(["Root"]);
       setRandomFillEnabled(false);
-      // — 4️⃣ Reset alive players & active seat
       const initialAlive: Record<string, boolean> = {};
       Object.keys(freshMapping).forEach(pos => (initialAlive[pos] = true));
       setAlivePlayers(initialAlive);
@@ -711,7 +706,7 @@ const Solver = ({ user }: { user: User | null }) => {
         {/* Line + Randomize */}
         <div className="relative flex items-center mt-1">
           <Line line={preflopLine} onLineClick={handleLineClick} />
-          <div className="absolute right-0 mr-1 z-20">
+          <div className="absolute right-0 mr-2 z-20">
             <RandomizeButton
               randomFillEnabled={randomFillEnabled}
               setRandomFillEnabled={() => setRandomFillEnabled(prev => !prev)}
