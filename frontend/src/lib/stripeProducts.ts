@@ -1,5 +1,5 @@
 // lib/stripeProducts.ts
-import { collection, getDocs, query, where, doc, collectionGroup } from 'firebase/firestore';
+import { collection, getDocs, query, where} from 'firebase/firestore';
 import { db } from '../firebase';
 
 // Load all active products with their active prices

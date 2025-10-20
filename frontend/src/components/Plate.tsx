@@ -184,6 +184,15 @@ const Plate: React.FC<PlateProps> = ({
     return combineDataByHand(displayData);
   }, [displayData]);
 
+  // NEW: detect if any cell exposes a 'Call' action (non-zero or present)
+  const hasCallAction = useMemo(() => {
+    return gridData.some((cell) => {
+      if (!cell?.actions) return false;
+      const v = (cell.actions as Record<string, number | undefined>)["Call"];
+      return (typeof v === "number" ? v > 0 : "Call" in cell.actions);
+    });
+  }, [gridData]);
+
   const fmtBB = (v: number) => (Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1));
 
   const potOdds =
@@ -200,7 +209,8 @@ const Plate: React.FC<PlateProps> = ({
       : undefined;
 
   const showBet = playerBet !== 0;
-  const showPotOdds = isActive && showBet;
+  // NEW: show Pot Odds when the plate is active AND it has a 'Call' action
+  const showPotOdds = isActive && hasCallAction;
 
   return (
     <div className={outerCls} style={sizeStyle}>
@@ -211,7 +221,7 @@ const Plate: React.FC<PlateProps> = ({
         // layoutId={`plate-${plateId ?? file}`}
         className="relative overflow-visible will-change-transform"
         initial={false}
-        animate={{ scale: isActive ? 1.02 : 1, opacity: alive ? 1 : 0.3 }}
+        animate={{ scale: isActive ? 1.00 : 1, opacity: alive ? 1 : 0.3 }}
         transition={{ duration: 0.25 }}
       >
         {/* ===== Background adornments (BEHIND panel) ===== */}
@@ -225,21 +235,39 @@ const Plate: React.FC<PlateProps> = ({
         )}
 
         {alive && (
-          <div className="absolute inset-x-0 -bottom-7 flex justify-center z-0 pointer-events-none">
-            <div className="relative w-18 h-18">
+          <div className="absolute inset-x-0 -bottom-8 flex justify-center z-0 pointer-events-none">
+            {/* size the whole cluster here */}
+            <div className="relative w-32 h-32"> {/* bigger: w-36 h-36 if you want */}
+              {/* left card */}
               <img
                 src="/playing-cards.svg"
                 alt="cards"
-                className="absolute inset-0 w-full h-full transform rotate-[0deg] translate-x-[-8%]"
+                className="
+                  absolute left-1/2 top-1/2
+                  -translate-x-8/16 -translate-y-1/2
+                  block
+                  w-full h-full
+                  origin-bottom
+                  rotate-[-0deg]    /* fan angle */
+                "
               />
+              {/* right card */}
               <img
                 src="/playing-cards.svg"
                 alt="cards"
-                className="absolute inset-0 w-full h-full transform -rotate-[0deg] translate-x-[8%]"
+                className="
+                  absolute left-1/2 top-1/2
+                  -translate-x-2/16 -translate-y-1/2
+                  block
+                  w-full h-full
+                  origin-bottom
+                  rotate-[0deg]
+                "
               />
             </div>
           </div>
         )}
+
 
         {/* ===== Foreground panel (white card) ===== */}
         <div
@@ -306,11 +334,11 @@ const Plate: React.FC<PlateProps> = ({
                   </div>
                 </div>
 
-                {/* Row 2: Bet + Pot Odds */}
-                {showBet && (
+                {/* Row 2: Bet + Pot Odds (now driven by hasCallAction & isActive) */}
+                {(showBet || showPotOdds) && (
                   <div
                     className={`grid gap-1 w-full ${
-                      showPotOdds ? "grid-cols-2" : "grid-cols-1"
+                      showBet && showPotOdds ? "grid-cols-2" : "grid-cols-1"
                     }`}
                   >
                     {showPotOdds && (
@@ -320,12 +348,14 @@ const Plate: React.FC<PlateProps> = ({
                         </AutoFitText>
                       </div>
                     )}
-                    <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
-                      <AutoFitText title="Bet">
-                        <strong>Bet:</strong>&nbsp;{fmtBB(playerBet)}&nbsp;bb
-                      </AutoFitText>
-                    </div>
 
+                    {showBet && (
+                      <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
+                        <AutoFitText title="Bet">
+                          <strong>Bet:</strong>&nbsp;{fmtBB(playerBet)}&nbsp;bb
+                        </AutoFitText>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

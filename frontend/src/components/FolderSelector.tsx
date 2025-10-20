@@ -1,9 +1,9 @@
-// src/components/FolderSelector.tsx
 import React, { useState, useEffect } from "react";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "../firebase";
 import { logUserAction } from "../logEvent";
 import { sortFoldersLikeSelector } from "../utils/folderSort";
+import type { FolderMetadata } from "../hooks/useFolders";
 
 /* ────────────────────────────────────────────────────────────────── */
 /*  Types                                                             */
@@ -12,6 +12,8 @@ interface FolderSelectorProps {
   folders: string[];
   currentFolder: string;
   onFolderSelect: (folder: string) => void;
+  /** NEW: metadata for each folder (from useFolders) */
+  metaByFolder?: Record<string, FolderMetadata | null>;
 }
 
 /* ────────────────────────────────────────────────────────────────── */
@@ -25,14 +27,13 @@ const SEAT_ORDER: Record<number, string[]> = {
   6: ["SB", "BB", "LJ", "HJ", "CO", "BTN"],
   7: ["SB", "BB", "UTG1", "LJ", "HJ", "CO", "BTN"],
   8: ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"],
-  9: ["SB", "BB", "UTG", "UTG1", "UTG2", "LJ", "HJ", "CO", "BTN"], // 9-max
+  9: ["SB", "BB", "UTG", "UTG1", "UTG2", "LJ", "HJ", "CO", "BTN"],
 };
 
 /* ────────────────────────────────────────────────────────────────── */
 /*  Debug toggle                                                      */
 /* ────────────────────────────────────────────────────────────────── */
-const DEBUG_FILTER = false; // <-- set true to see console.debug output
-
+const DEBUG_FILTER = false;
 const dbg = (...args: unknown[]) => {
   if (DEBUG_FILTER) console.debug("[FolderSelector]", ...args);
 };
@@ -114,6 +115,16 @@ function parseFolderSafe(folder: string) {
   return { stacks, avg };
 }
 
+/** Tiny badge */
+const TagBadge: React.FC<{ text: string; title?: string }> = ({ text, title }) => (
+  <span
+    title={title}
+    className="inline-block text-[10px] leading-4 px-1.5 py-[1px] rounded-full bg-gray-200 text-gray-700 border border-gray-300"
+  >
+    {text}
+  </span>
+);
+
 /* ────────────────────────────────────────────────────────────────── */
 /*  Component                                                         */
 /* ────────────────────────────────────────────────────────────────── */
@@ -121,6 +132,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   folders,
   currentFolder,
   onFolderSelect,
+  metaByFolder,
 }) => {
   const [user] = useAuthState(auth);
 
@@ -139,41 +151,25 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
     const numStrs: string[] = [];
     const words: string[] = [];
 
-    // classify tokens
     for (const t of tokens) {
-      // require the pos to start with a letter (allows UTG1, HJ, CO, UTG+1, etc.)
       const mPair = t.match(/^(\d+(?:\.\d+)?)([a-z][a-z0-9+]*)$/i);
-
       if (mPair) {
         pairs.push({ rawNum: mPair[1], pos: mPair[2].toUpperCase() });
         continue;
       }
-      const mNum = t.match(/^\d+(?:\.\d+)?$/); // pure number like "15" or "14.5"
+      const mNum = t.match(/^\d+(?:\.\d+)?$/);
       if (mNum) {
         numStrs.push(mNum[0]);
         continue;
       }
-      words.push(t); // plain text like "hj", "btn"
+      words.push(t);
     }
 
-    if (DEBUG_FILTER) {
-      dbg("query:", q, { tokens, pairs, numStrs, words });
-    }
-
-    // Optional: pre-check for numeric-only query to see quick candidate count
-    if (DEBUG_FILTER && pairs.length === 0 && words.length === 0 && numStrs.length > 0) {
-      const regs = numStrs.map((n) => {
-        const esc = escapeRe(canonNum(n));
-        return new RegExp(String.raw`(?:^|_)0*${esc}(?:\.0+)?[A-Za-z0-9]+(?=_|$)`);
-      });
-      const candidateCount = folders.filter((f) => regs.every((re) => re.test(f))).length;
-      dbg("numeric-only precheck candidates:", candidateCount);
-    }
+    if (DEBUG_FILTER) dbg("query:", q, { tokens, pairs, numStrs, words });
 
     const filtered = folders.filter((f) => {
       if (!q) return true;
 
-      // 1) number+position pairs: ALL must match exactly by canonical string
       if (pairs.length > 0) {
         const posMap = getPosNumMap(f);
         const okPairs = pairs.every(({ rawNum, pos }) => {
@@ -182,17 +178,13 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
           return have !== undefined && have === want;
         });
         if (!okPairs) return false;
-
-        // When pairs exist, they are the key filters; ignore loose nums/words.
         return true;
       }
 
-      // 2) standalone numbers: each must appear as an exact chunk number
       if (numStrs.length > 0) {
         if (!numStrs.every((s) => hasExactNumber(f, s))) return false;
       }
 
-      // 3) plain words: all must be present as substrings
       if (words.length > 0 && !words.every((w) => f.toLowerCase().includes(w))) {
         return false;
       }
@@ -201,17 +193,6 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
     });
 
     const list = sortFoldersLikeSelector(filtered);
-
-    if (DEBUG_FILTER) {
-      dbg("post-filter count:", filtered.length, "post-sort count:", list.length);
-      if (tokens.length > 0 && list.length === 0) {
-        // dump a small sample to help diagnose
-        const sample = folders.slice(0, 10);
-        dbg("sample folders (first 10):", sample);
-        dbg("sample splitChunks of first 3:", sample.slice(0, 3).map((s) => splitChunks(s)));
-      }
-    }
-
     setItems(list);
     setHi(list.length ? 0 : -1);
   }, [input, folders]);
@@ -244,12 +225,12 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
 
   /* -------- header build ----------------------------------------- */
   const maxSeats = items.length ? Math.max(...items.map((f) => f.split("_").length)) : 2;
-
   const header =
     SEAT_ORDER[maxSeats] ||
     (items[0] ? Object.keys(parseFolderSafe(items[0]).stacks).sort() : []);
 
-  const cols = header.length + 1; // +1 for Avg.
+  // NEW: add a "Tags" column BEFORE "Avg."
+  const cols = header.length + 2;
 
   /* ---------------------------------------------------------------- */
   /*  Render                                                          */
@@ -293,13 +274,14 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
 
         {/* dropdown */}
         {open && (
-          <div className="absolute z-5 w-full mt-1 max-h-160 overflow-auto border bg-white shadow-lg">
+          <div className="absolute z-10 w-full mt-1 max-h-160 overflow-auto border bg-white shadow-lg">
             {/* header row */}
             {header.length > 0 ? (
               <div
                 style={{ gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))` }}
                 className="grid text-xs font-semibold text-gray-200 bg-gray-800 sticky top-0"
               >
+                <div className="px-2 py-1 border-r border-gray-700">Tags</div>
                 <div className="px-2 py-1 border-r border-gray-700">Avg.</div>
                 {header.map((pos) => (
                   <div key={pos} className="px-2 py-1 border-r border-gray-700 text-center">
@@ -314,7 +296,11 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
             {/* rows */}
             {items.map((folder, idx) => {
               const { stacks, avg } = parseFolderSafe(folder);
-              if (Object.keys(stacks).length === 0) return null; // skip bad
+              if (Object.keys(stacks).length === 0) return null;
+
+              const meta = metaByFolder?.[folder] ?? null;
+              // const isIcm = !!meta?.isIcm;
+              const isFT = !!meta?.name && meta.name.toUpperCase().includes("FT");
 
               return (
                 <div
@@ -325,6 +311,12 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
                     idx === hi ? "bg-blue-200" : "hover:bg-gray-100"
                   }`}
                 >
+                  {/* NEW: tags cell (left of Avg.) */}
+                  <div className="px-2 py-1 border-t border-r flex items-center gap-1">
+                    {isFT && <TagBadge text="FT" title="Final Table structure" />}
+                    {/* {isIcm && <TagBadge text="ICM" title="ICM payouts present" />} */}
+                  </div>
+
                   {/* avg */}
                   <div className="px-2 py-1 border-t border-r text-center">{avg}</div>
 

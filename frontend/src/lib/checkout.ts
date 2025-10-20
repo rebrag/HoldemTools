@@ -1,37 +1,55 @@
-// lib/checkout.ts
-import { addDoc, collection, doc, onSnapshot } from 'firebase/firestore';
-import { db } from '../firebase';
-import { auth } from '../firebase';
+import { db } from "../firebase";
+import { collection, addDoc, onSnapshot } from "firebase/firestore";
 
-export async function startSubscriptionCheckout(priceId: string) {
-  const user = auth.currentUser;
-  if (!user) throw new Error('You must be signed in');
+type StartCheckoutOpts = {
+  uid: string;
+  priceId: string;
+  successUrl: string;
+  cancelUrl: string;
+  allowPromotionCodes?: boolean;
+};
 
-  // Create a new Checkout Session
-  const csRef = await addDoc(
-    collection(doc(db, 'customers', user.uid), 'checkout_sessions'),
+export async function startSubscriptionCheckout({
+  uid,
+  priceId,
+  successUrl,
+  cancelUrl,
+  allowPromotionCodes = true,
+}: StartCheckoutOpts): Promise<void> {
+  // Create a new Checkout Session doc under customers/{uid}/checkout_sessions
+  const ref = await addDoc(
+    collection(db, "customers", uid, "checkout_sessions"),
     {
+      mode: "subscription",
       price: priceId,
-      mode: 'subscription',
-      allow_promotion_codes: true,
-      success_url: `${window.location.origin}/account?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${window.location.origin}/pricing`,
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      allow_promotion_codes: allowPromotionCodes,
+      client: "web",
     }
   );
 
-  // Wait for the extension to populate the session URL, then redirect
-  return new Promise<void>((resolve, reject) => {
-    const unsub = onSnapshot(csRef, (snap) => {
+  // Listen for the extension to write back the session URL or sessionId
+  return new Promise((resolve, reject) => {
+    const unsub = onSnapshot(ref, (snap) => {
       const data = snap.data();
       if (!data) return;
-      if (data.error) {
+
+      // Surface extension errors if present
+      if (data.error?.message) {
         unsub();
-        reject(new Error(data.error.message ?? 'Checkout failed'));
+        reject(new Error(data.error.message));
+        return;
       }
+
+      // Prefer 'url' (works without Stripe.js); fallback to sessionId
       if (data.url) {
         unsub();
         window.location.assign(data.url);
         resolve();
+      } else if (data.sessionId) {
+        // If you want to use Stripe.js instead, use Option B below
+        // and call stripe.redirectToCheckout({ sessionId: data.sessionId })
       }
     });
   });

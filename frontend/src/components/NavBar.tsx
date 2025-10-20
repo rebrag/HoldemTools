@@ -19,9 +19,10 @@ export interface NavBarProps {
   goToSolver: () => void;   // should push "/solver" and set state
   toggleViewMode?: () => void;
   isSpiralView?: boolean;
+  tier?: "free" | "plus" | "pro"; // NEW
 }
 
-const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
+const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => { //, tier
   const [menuOpen, setMenuOpen] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -137,18 +138,18 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
             >
               <div className="py-1">
                 <button
+                  onPointerDown={(e) => { e.preventDefault(); goSolver(); }}
+                  className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
+                  aria-current={section === "solver" ? "page" : undefined}
+                >
+                  Solutions
+                </button>
+                <button
                   onPointerDown={(e) => { e.preventDefault(); goEquity(); }}
                   className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
                   aria-current={section === "equity" ? "page" : undefined}
                 >
                   Equity Calculator
-                </button>
-                <button
-                  onPointerDown={(e) => { e.preventDefault(); goSolver(); }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
-                  aria-current={section === "solver" ? "page" : undefined}
-                >
-                  Solver
                 </button>
               </div>
             </div>
@@ -202,6 +203,20 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
                     onLogin={handleLogin}
                     onLogout={handleLogout}
                   />
+                
+                {/* {user && (
+                  <span
+                    className={[
+                      "ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
+                      tier === "pro" ? "bg-emerald-100 text-emerald-700" :
+                      tier === "plus" ? "bg-indigo-100 text-indigo-700" :
+                                        "bg-gray-100 text-gray-700"
+                    ].join(" ")}
+                    title={`Your plan: ${tier ?? "free"}`}
+                  >
+                    {tier === "pro" ? "Pro" : tier === "plus" ? "Plus" : "Free"}
+                  </span>
+                )} */}
                 </div>
               </div>
             </div>

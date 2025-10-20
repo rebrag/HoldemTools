@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="300" height="420" viewBox="0 0 300 420" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#0b1220"/>
+    </linearGradient>
+    <pattern id="tile" width="36" height="36" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="36" height="36" fill="none"/>
+      <circle cx="18" cy="18" r="2" fill="#94a3b8" opacity="0.35"/>
+      <rect x="16" y="4" width="4" height="28" rx="2" fill="#22c55e" opacity="0.25"/>
+      <rect x="4" y="16" width="28" height="4" rx="2" fill="#22c55e" opacity="0.25"/>
+    </pattern>
+    <filter id="shadow2" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#0a0a0f" flood-opacity="0.22"/>
+    </filter>
+    <clipPath id="round2">
+      <rect x="10" y="10" width="280" height="400" rx="28"/>
+    </clipPath>
+    <radialGradient id="vig" cx="50%" cy="40%" r="70%">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.35"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Card body with shadow -->
+  <g filter="url(#shadow2)">
+    <rect x="10" y="10" width="280" height="400" rx="28" fill="url(#bg2)"/>
+  </g>
+
+  <!-- Thicker white outside border -->
+  <rect x="10" y="10" width="280" height="400" rx="28" fill="none" stroke="#ffffff" stroke-width="12"/>
+
+  <!-- Pattern + vignette inside rounded clip -->
+  <g clip-path="url(#round2)">
+    <rect x="10" y="10" width="280" height="400" fill="url(#tile)" opacity="0.9"/>
+    <rect x="10" y="10" width="280" height="400" fill="url(#vig)"/>
+  </g>
+
+  <!-- Inner hairline -->
+  <rect x="14" y="14" width="272" height="392" rx="24" fill="none" stroke="#334155" stroke-width="1"/>
+</svg>
