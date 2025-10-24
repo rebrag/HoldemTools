@@ -9,7 +9,7 @@ interface ColorKeyProps {
   onActionClick?: (action: string) => void;
 }
 
-const BOX_HEIGHT = "calc(20px + 1vw)";
+const BOX_HEIGHT = "calc(23px)";
 
 const ColorKey: React.FC<ColorKeyProps> = ({
   data,

@@ -26,10 +26,6 @@ import {
   isTierSufficient,
   type FolderMetaLike,
 } from "../lib/stripeTiers";
-
-
-
-
 import { startSubscriptionCheckout } from "../lib/checkout";
 
 const tourSteps = [
@@ -41,10 +37,7 @@ const Solver = ({ user }: { user: User | null }) => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
   const { windowWidth, windowHeight } = useWindowDimensions();
   const uid = user?.uid ?? null;
-
-  // 👇 user’s current tier from Firestore (free/plus/pro)
   const { tier, loading: tierLoading } = useTier(uid);
-
   const [folder, setFolder] = useState<string>("23UTG_23UTG1_23LJ_23HJ_23CO_23BTN_23SB_23BB");
   const [plateData, setPlateData] = useState<Record<string, JsonData>>({});
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>({});
@@ -65,8 +58,6 @@ const Solver = ({ user }: { user: User | null }) => {
   const [playerBets, setPlayerBets] = useState<Record<string, number>>({});
   const [tourRun, setTourRun] = useState(false);
   const [tourReady, setTourReady] = useState(false);
-
-  // gating + upsell
   const [pendingFolder, setPendingFolder] = useState<string | null>(null);
   const [pendingTier, setPendingTier] = useState<Tier | null>(null);
   const [showLoginOverlay, setShowLoginOverlay] = useState(false);
@@ -514,40 +505,40 @@ const Solver = ({ user }: { user: User | null }) => {
           : "0\n0\n0\n0";
 
         fullText = `#Type#NoLimit
-#Range0#${range0}
-#Range1#${range1}
-#ICM.ICMFormat#Pio ICM structure
-#ICM.Payouts#${payoutsStr}
-#ICM.Stacks#${stacksStr}
-#Pot#${(newPotSize * 100).toFixed(0)}
-#EffectiveStacks#1800
-#AllinThreshold#60
-#AddAllinOnlyIfLessThanThisTimesThePot#250
-#MergeSimilarBets#True
-#MergeSimilarBetsThreshold#12
-#CapEnabled#True
-#CapPerStreet#3
-3
-3
-#CapMode#NoLimit
-#FlopConfig.RaiseSize#33
-#FlopConfig.AddAllin#True
-#TurnConfig.BetSize#50
-#TurnConfig.RaiseSize#a
-#TurnConfig.AddAllin#True
-#RiverConfig.BetSize#30 66
-#RiverConfig.RaiseSize#a
-#RiverConfig.AddAllin#True
-#RiverConfig.DonkBetSize#30
-#FlopConfigIP.BetSize#25
-#FlopConfigIP.RaiseSize#a
-#FlopConfigIP.AddAllin#True
-#TurnConfigIP.BetSize#50
-#TurnConfigIP.RaiseSize#a
-#TurnConfigIP.AddAllin#True
-#RiverConfigIP.BetSize#30 66
-#RiverConfigIP.RaiseSize#a
-#RiverConfigIP.AddAllin#True`;
+        #Range0#${range0}
+        #Range1#${range1}
+        #ICM.ICMFormat#Pio ICM structure
+        #ICM.Payouts#${payoutsStr}
+        #ICM.Stacks#${stacksStr}
+        #Pot#${(newPotSize * 100).toFixed(0)}
+        #EffectiveStacks#1800
+        #AllinThreshold#60
+        #AddAllinOnlyIfLessThanThisTimesThePot#250
+        #MergeSimilarBets#True
+        #MergeSimilarBetsThreshold#12
+        #CapEnabled#True
+        #CapPerStreet#3
+        3
+        3
+        #CapMode#NoLimit
+        #FlopConfig.RaiseSize#33
+        #FlopConfig.AddAllin#True
+        #TurnConfig.BetSize#50
+        #TurnConfig.RaiseSize#a
+        #TurnConfig.AddAllin#True
+        #RiverConfig.BetSize#30 66
+        #RiverConfig.RaiseSize#a
+        #RiverConfig.AddAllin#True
+        #RiverConfig.DonkBetSize#30
+        #FlopConfigIP.BetSize#25
+        #FlopConfigIP.RaiseSize#a
+        #FlopConfigIP.AddAllin#True
+        #TurnConfigIP.BetSize#50
+        #TurnConfigIP.RaiseSize#a
+        #TurnConfigIP.AddAllin#True
+        #RiverConfigIP.BetSize#30 66
+        #RiverConfigIP.RaiseSize#a
+        #RiverConfigIP.AddAllin#True`;
 
         if (isICMSim) {
           fullText = fullText.replace(
@@ -754,7 +745,7 @@ const Solver = ({ user }: { user: User | null }) => {
             </div>
           </div>
 
-          <div className="relative flex items-center mt-1">
+          <div className="relative flex items-center mt-1 mb-1">
             <Line line={preflopLine} onLineClick={handleLineClick} />
             <div className="absolute right-0 mr-2 z-20">
               <RandomizeButton
