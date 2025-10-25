@@ -159,23 +159,53 @@ const Plate: React.FC<PlateProps> = ({
 
   return (
     <div className={outerCls} style={sizeStyle}>
-      {/* Scoped CSS to force vertical key and 50/50 sidebar split */}
       <style>{`
-        .ck-vertical { display:flex; flex-direction:column; width:100%; height:100%; }
-        .ck-vertical .ck-top { flex: 1 1 37%; min-height:0; display:flex; flex-direction:column; gap:4px; }
-        .ck-vertical .ck-bottom { flex: 1 1 63%; min-height:0; overflow:auto; }
-        .ck-vertical .flex { flex-direction: column !important; flex-wrap: nowrap !important; }
-        .ck-vertical button { width:100% !important; }
+        .ck-vertical {
+          display: flex;
+          flex-direction: column;
+          width: 100%;
+          height: 100%;
+        }
+
+        .ck-vertical .ck-top {
+          flex: 1 1 50%;
+          min-height: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        /* bottom half: color key fills upward from bottom */
+        .ck-vertical .ck-bottom {
+          flex: 1 1 50%;
+          min-height: 0;
+          display: flex;
+          flex-direction: column;
+          justify-content: flex-end; /* anchor to bottom */
+          overflow: visible;
+        }
+
+        /* ensure color key buttons are vertical and full width */
+        .ck-vertical .ck-bottom .flex {
+          flex-direction: column !important;
+          flex-wrap: nowrap !important;
+        }
+
+        .ck-vertical .ck-bottom button {
+          width: 100% !important;
+        }
       `}</style>
+
+
 
       <motion.div
         className="relative overflow-visible will-change-transform"
         initial={false}
-        animate={{ scale: isActive ? 1.0 : 1, opacity: alive ? 1 : 0.3 }}
+        animate={{ scale: isActive ? 1.0 : 1, opacity: alive ? 1 : 0.2 }}
         transition={{ duration: 0.25 }}
       >
         {displayData?.Position === "BTN" && (
-          <div className="absolute z-0" style={{ top: "-16%", right: "-8%", width: "33%", aspectRatio: "1" }}>
+          <div className="absolute z-0 pointer-events-none" style={{ top: "-16%", right: "-8%", width: "33%", aspectRatio: "1" }}>
             <DealerButton />
           </div>
         )}
@@ -238,13 +268,13 @@ const Plate: React.FC<PlateProps> = ({
                       </div>
                       <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0 py-0 shadow text-center overflow-hidden">
                         <AutoFitText title="Stack">
-                          <strong>Stack:</strong>&nbsp;{((displayData?.bb ?? 0) - playerBet).toFixed(1)}&nbsp;bb
+                          {((displayData?.bb ?? 0) - playerBet).toFixed(1)} bb
                         </AutoFitText>
                       </div>
                       {showPotOdds && (
                         <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0 py-0 shadow text-center overflow-hidden">
                           <AutoFitText title="Pot Odds">
-                            <strong>Pot&nbsp;Odds:</strong>&nbsp;{Math.max(0, potOdds).toFixed(0)}%
+                            <strong>Pot Odds:</strong> {Math.max(0, potOdds).toFixed(0)}%
                           </AutoFitText>
                         </div>
                       )}

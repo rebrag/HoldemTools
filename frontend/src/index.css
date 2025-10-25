@@ -1,102 +1,205 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 @import url("https://fonts.googleapis.com/css2?family=Unica+One&display=swap");
 @import "tailwindcss";
+
+html {
+  font-family: "Inter", ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+}
 
 html, body, #root { min-height: 100%; }
 
 body {
   margin: 0;
-  background: linear-gradient(135deg, #374151, #9ca3af);
+  background:
+    radial-gradient(1200px 900px at 20% 10%, #2b3541 0%, #121418 60%, #0b0c0e 100%),
+    linear-gradient(135deg, #26303a, #0d1116);
+  color: #111827;
 }
+
 
 /* Utilities */
 @layer utilities {
   .text-gradient {
-    /* background: linear-gradient(135deg, #8abbca 0%, rgb(208, 189, 189) 100%); */
     background-clip: text;
-    -webkit-background-clip: text;   /* Safari */
+    -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
   }
 }
 
+/* === Container-scoped background wrapper =========================
+   Mount <PokerBackground/> inside a relative parent; this layer will
+   fill *that* parent only (not the viewport). */
+.poker-table-bg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;               /* clip rail to the parent box */
+}
+.poker-table-bg::before {
+  content: '';
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(1200px 600px at 50% -10%, rgba(255,255,255,0.06), transparent 60%),
+    radial-gradient(700px 400px at 10% 90%, rgba(40,232,169,0.06), transparent 70%),
+    radial-gradient(600px 500px at 90% 85%, rgba(255,255,255,0.05), transparent 70%);
+  filter: blur(2px);
+}
+
+/* === TABLE RAIL (container-sized; no vw/vh) ===================== */
 .poker-rail {
   position: relative;
-  width: 90%;
-  aspect-ratio: 2.1 / 1;
+  width: 100%;                    /* fill container width */
+  height: auto;
+  aspect-ratio: 2.2 / 1;          /* wide oval by default */
+  max-height: 100%;               /* never exceed parent height */
   border-radius: 9999px;
-  padding: 18px;
+  padding: 18px;                  /* leather thickness */
 
-  background: linear-gradient(145deg, #3d3d3d 0%, #1b1b1b 100%);
   box-shadow:
-    0 14px 28px rgba(0, 0, 0, 0.55),  
-    inset 0 4px 6px  rgba(255,255,255,0.08),
-    inset 0 -3px 10px rgba(0,0,0,0.60); 
-
-  max-height: 90%;
-  max-width : 90%;
+    0 30px 60px rgba(0,0,0,0.55),
+    0 8px 18px rgba(0,0,0,0.45);
+  background:
+    /* subtle leather grain */
+    radial-gradient(100% 120% at 20% 30%, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0) 50%),
+    radial-gradient(120% 140% at 80% 70%, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0) 60%),
+    repeating-linear-gradient(25deg, rgba(255,255,255,0.015) 0 2px, rgba(0,0,0,0.02) 2px 4px),
+    linear-gradient(145deg, #3b3a39 0%, #1e1c1b 100%);
 }
 
+/* portrait variant (taller oval) — toggled by component */
+.poker-rail.portrait {
+  aspect-ratio: 1 / 2.3;
+}
+
+/* soft rim highlight */
 .poker-rail::before {
   content: "";
-  position: absolute;
-  inset: 0; 
+  position: absolute; inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  mask: linear-gradient(165deg, #000 30%, transparent 65%);
-  background: radial-gradient(
-      ellipse at 30% 0%,
-      rgba(255,255,255,0.28) 0%,
-      rgba(255,255,255,0) 70%
-  );
+  background:
+    radial-gradient(120% 100% at 50% -10%, rgba(255,255,255,0.17), rgba(255,255,255,0.02) 55%, transparent 65%),
+    radial-gradient(120% 100% at 50% 110%, rgba(0,0,0,0.45), transparent 65%),
+    radial-gradient(160% 80% at 0% 50%, rgba(255,255,255,0.06), transparent 50%),
+    radial-gradient(160% 80% at 100% 50%, rgba(255,255,255,0.06), transparent 50%);
+  mask: radial-gradient(circle at center, black 55%, transparent 65%);
 }
 
+/* inner neon glow (toggle with .led-on) */
 .poker-rail::after {
   content: "";
-  position: absolute;
-  inset: 6px;                              /* tucked inside rail */
+  position: absolute; inset: 8px;
   border-radius: inherit;
   pointer-events: none;
-  background: radial-gradient(
-      ellipse at center,
-      rgba(40,232,169,0.25) 0%,
-      rgba(40,232,169,0) 70%
-  );
+  background: radial-gradient(ellipse at center, rgba(40,232,169,0.22) 0%, rgba(40,232,169,0) 70%);
   filter: blur(6px);
   opacity: 0;
   transition: opacity .4s ease;
 }
 .poker-rail.led-on::after { opacity: 1; }
 
-.poker-rail.portrait {
-  width : auto;            /* width follows height */
-  height: 100%;            /* fill wrapper’s height */
-  aspect-ratio: 1 / 2.4;   /* tall oval */
-  max-width: 100%;
+/* brushed studs around the rail */
+.poker-rail .studs {
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  --stud: radial-gradient(circle at 30% 30%, #fafafa 0 20%, #c9c9c9 21% 45%, #777 46% 60%, transparent 61%);
+  mask: radial-gradient(circle at 50% 50%, transparent calc(50% - 18px), black calc(50% - 16px));
+  background: conic-gradient(from 0deg at 50% 50%, transparent 0 360deg);
+}
+.poker-rail .studs::before {
+  content: "";
+  position: absolute; inset: 14px;
+  border-radius: inherit;
+  background:
+    var(--stud) 50% 1.5%/18px 18px no-repeat,
+    var(--stud) 98.5% 50%/18px 18px no-repeat,
+    var(--stud) 50% 98.5%/18px 18px no-repeat,
+    var(--stud) 1.5% 50%/18px 18px no-repeat,
+    var(--stud) 85% 12%/18px 18px no-repeat,
+    var(--stud) 88% 88%/18px 18px no-repeat,
+    var(--stud) 12% 88%/18px 18px no-repeat,
+    var(--stud) 12% 12%/18px 18px no-repeat;
+  opacity: .65;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,.35));
 }
 
+/* === FELT (logo, stitching, sweep) ============================= */
 .poker-felt {
   width: 100%;
   height: 100%;
   box-sizing: content-box;
   border-radius: inherit;
-  background: radial-gradient(
-      ellipse at center,
-      #3c7a3f 0%,
-      #1b5e20 60%,
-      #0d3b12 100%);
-  box-shadow: inset 0 0 22px rgba(0,0,0,.6);
-}
-
-.poker-rail-inner {
-  position: absolute;
-  inset: 12px;
-  border-radius: inherit;
-  padding: 16px;
+  position: relative;
+  background: radial-gradient(100% 85% at 50% 40%, #32783a 0%, #165c26 60%, #0f3e16 100%);
+  box-shadow: inset 0 0 26px rgba(0,0,0,.65);
   overflow: hidden;
-  background: linear-gradient(140deg, #4a4a4a 0%, #2c2c2c 100%);
-  box-shadow:
-    0 6px 14px rgba(0,0,0,.45),
-    inset 0 3px 6px rgba(255,255,255,.06),
-    inset 0 -4px 10px rgba(0,0,0,.55);       
 }
 
-/* body { background: red !important; } */
+/* stitch line inside the leather rim */
+.poker-felt::before {
+  content: '';
+  position: absolute; inset: 12px;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    0 0 0 2px rgba(0,0,0,.35) inset,
+    0 0 0 1px rgba(255,255,255,.06) inset;
+  background:
+    radial-gradient(circle, rgba(0,0,0,.35) 2px, transparent 3px) left top / 16px 16px repeat,
+    transparent;
+  -webkit-mask: radial-gradient(closest-side, black calc(100% - 9px), transparent calc(100% - 8px));
+          mask: radial-gradient(closest-side, black calc(100% - 9px), transparent calc(100% - 8px));
+  opacity: .6;
+}
+
+/* subtle center logo */
+.poker-felt::after {
+  content: 'HOLDEMTOOLS';
+  font-family: 'Unica One', system-ui, sans-serif;
+  letter-spacing: 4px;
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: clamp(18px, 3.6vw, 42px);
+  color: rgba(255,255,255,0.06);
+  text-shadow: 0 1px 0 rgba(0,0,0,0.55);
+  pointer-events: none;
+}
+
+/* animated light sweep */
+@keyframes tableSweep {
+  0%   { transform: translateX(-120%) rotate(12deg); opacity: 0; }
+  20%  { opacity: .12; }
+  60%  { opacity: .06; }
+  100% { transform: translateX(120%)  rotate(12deg); opacity: 0; }
+}
+.poker-felt .sweep {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,.12) 50%, transparent 100%);
+  -webkit-mask: radial-gradient(closest-side, #000 60%, transparent 65%);
+          mask: radial-gradient(closest-side, #000 60%, transparent 65%);
+  transform: translateX(-120%) rotate(12deg);
+  animation: tableSweep 6.5s ease-in-out 1.2s infinite;
+  mix-blend-mode: screen;
+  opacity: 0;
+}
+
+/* seat pips around the edge */
+.poker-rail .pips {
+  position: absolute; inset: 6px;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 2.5%, rgba(255,255,255,.3) 0 2px, transparent 3px) 50% 0 / 24px 24px repeat-x,
+    radial-gradient(circle at 97.5% 50%, rgba(255,255,255,.3) 0 2px, transparent 3px) 100% 50% / 24px 24px repeat-y,
+    radial-gradient(circle at 50% 97.5%, rgba(255,255,255,.3) 0 2px, transparent 3px) 50% 100% / 24px 24px repeat-x,
+    radial-gradient(circle at 2.5% 50%, rgba(255,255,255,.3) 0 2px, transparent 3px) 0 50% / 24px 24px repeat-y;
+  opacity: .15;
+}

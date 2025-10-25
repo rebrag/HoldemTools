@@ -811,7 +811,7 @@ const Solver = ({ user }: { user: User | null }) => {
           )}
         </div>
 
-        <div className="text-center select-none pt-5">© HoldemTools 2025</div>
+        <div className="text-center select-none pt-5 text-white/70">© HoldemTools 2025</div>
       </div>
 
       {showLoginOverlay && (

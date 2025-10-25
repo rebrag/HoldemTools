@@ -522,8 +522,9 @@ const EquityCalc: React.FC = () => {
 
   return (
     <div className="h-auto flex flex-col">
+      {/* Page content container */}
       <div className="relative z-10 mx-auto max-w-screen-xl px-3 sm:px-6 overflow-x-hidden">
-        {/* Header: Mode/Boards + Actions */}
+        {/* Header */}
         <div className="grid grid-cols-2 items-start gap-3 pt-3">
           <div className="justify-self-start flex items-center gap-2">
             {modeDropdown}
@@ -557,16 +558,14 @@ const EquityCalc: React.FC = () => {
           </div>
         </div>
 
-        {/* === Background-scoped stack: ONLY boards & seats have the background === */}
+        {/* === Scoped background block: ONLY boards + seats === */}
         <div className="relative my-3">
-          {/* Background sits behind this block only */}
-          <div className="pointer-events-none absolute inset-0 -z-10">
-            <PokerBackground />
-          </div>
+          {/* Background behind this block only */}
+          <PokerBackground />
 
-          {/* Main stack: Boards / Seats row */}
-          <div className="grid gap-4">
-            {/* Boards area (panel behind board) */}
+          {/* Foreground content defines the height of the background */}
+          <div className="relative z-10 grid gap-4">
+            {/* Boards */}
             <div className="flex flex-col items-center gap-4">
               <BoardPanel
                 label="Board 1"
@@ -600,7 +599,7 @@ const EquityCalc: React.FC = () => {
               )}
             </div>
 
-            {/* Seats row */}
+            {/* Seats */}
             <div className="grid grid-cols-2 md:grid-cols-2 gap-4 items-start">
               <SeatPanel
                 label={mode === "NLH" ? "ex: AsKd" : mode === "PLO4" ? "ex: AhKhQdJs" : "ex: AsKsQsJsTs"}
@@ -647,7 +646,7 @@ const EquityCalc: React.FC = () => {
           </div>
         </div>
 
-        {/* Card Picker (no background behind this section) */}
+        {/* Card Picker (no table behind this) */}
         <div className="w-full pb-6">
           <div className="mx-auto w-full max-w-screen-xl">
             <CardPicker
@@ -662,6 +661,7 @@ const EquityCalc: React.FC = () => {
       </div>
     </div>
   );
+
 };
 
 export default EquityCalc;

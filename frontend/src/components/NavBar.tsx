@@ -111,10 +111,26 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
           </svg>
         </button>
 
-        {/* center spacer */}
-        <div className="flex-grow mx-4">
-          <div className="h-6" aria-hidden="true" />
+
+        {/* center brand (replaces the center spacer) */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <a
+            href="/"
+            className="pointer-events-auto inline-flex items-center gap-2 select-none"
+            aria-label="HoldemTools Home"
+          >
+            <img
+              src="/vite5.svg"
+              alt=""
+              className="h-6 w-6"
+              draggable="false"
+            />
+            <span className="text-sm sm:text-base font-semibold tracking-wide text-gray-900">
+              HoldemTools
+            </span>
+          </a>
         </div>
+
 
         {/* right: Tools dropdown */}
         <div className="relative">

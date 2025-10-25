@@ -1,38 +1,36 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 /**
- * Renders the poker table rail + felt as before,
- * but now exposes an interactive overlay (children) that is positioned
- * exactly on top of the felt so you can place seats, board, etc.
+ * Container-sized poker table.
+ * Mount this inside a parent with `position:relative` and it will fill only that box.
+ * Portrait/wide toggles via a ResizeObserver on the parent.
  */
 const PokerBackground: React.FC<React.PropsWithChildren<{ ledOn?: boolean }>> = ({
   children,
   ledOn = true,
 }) => {
-  const [vw, setVw] = useState<number>(
-    typeof window !== "undefined" ? window.innerWidth : 1200
-  );
-  const [vh, setVh] = useState<number>(
-    typeof window !== "undefined" ? window.innerHeight : 800
-  );
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [portrait, setPortrait] = useState(false);
 
   useEffect(() => {
-    const onResize = () => { setVw(window.innerWidth); setVh(window.innerHeight); };
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    const el = wrapRef.current?.parentElement; // observe the container we fill
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setPortrait(width * 1.3 < height);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
-  const railPortrait = vw * 1.3 < vh;
-
   return (
-    <div className="poker-table-bg absolute inset-0 flex justify-center items-center z-0">
-      <div
-        className={`poker-rail ${railPortrait ? "portrait" : ""} ${
-          ledOn ? "led-on" : ""
-        } relative`}
-      >
-        <div className="poker-felt" />
-        {/* Interactive overlay that matches the rail’s bounds */}
+    <div ref={wrapRef} className="poker-table-bg">
+      <div className={`poker-rail ${portrait ? "portrait" : ""} ${ledOn ? "led-on" : ""} relative`}>
+        <div className="studs" />
+        <div className="pips" />
+        <div className="poker-felt">
+          <div className="sweep" />
+        </div>
         <div className="absolute inset-0 z-10 pointer-events-auto">
           {children}
         </div>
