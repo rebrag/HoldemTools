@@ -191,7 +191,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     >
       <div className="poker-table-bg pointer-events-none absolute inset-0 flex justify-center items-center z-10">
         <div className={`poker-rail ${railPortrait ? "portrait" : ""} overflow-visible relative`}>
-          <div className="poker-felt" />
+          <div className="poker-felt overflow-hidden" />
         </div>
       </div>
 

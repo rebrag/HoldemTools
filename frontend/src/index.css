@@ -73,7 +73,7 @@ body {
 
 /* portrait variant (taller oval) — toggled by component */
 .poker-rail.portrait {
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 1 / 1.5;
 }
 
 /* soft rim highlight */
