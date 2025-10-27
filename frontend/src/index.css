@@ -73,7 +73,7 @@ body {
 
 /* portrait variant (taller oval) — toggled by component */
 .poker-rail.portrait {
-  aspect-ratio: 1 / 2.3;
+  aspect-ratio: 1 / 1;
 }
 
 /* soft rim highlight */
@@ -144,7 +144,8 @@ body {
 /* stitch line inside the leather rim */
 .poker-felt::before {
   content: '';
-  position: absolute; inset: 12px;
+  position: absolute; 
+  inset: 12px;
   border-radius: inherit;
   pointer-events: none;
   box-shadow:
