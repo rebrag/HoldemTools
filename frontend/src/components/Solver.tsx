@@ -235,7 +235,7 @@ const Solver = ({ user }: { user: User | null }) => {
     const timer = setTimeout(() => {
       didTimeout = true;
       setLoading(true);
-    }, 700);
+    }, 0);
     const source = axios.CancelToken.source();
 
     Promise.all(
@@ -747,7 +747,7 @@ const Solver = ({ user }: { user: User | null }) => {
 
           <div className="relative flex items-center mt-1 mb-1">
             <Line line={preflopLine} onLineClick={handleLineClick} />
-            <div className="absolute right-0 mr-2 z-20">
+            <div className="absolute right-0 mr-2 z-20 scale-90">
               <RandomizeButton
                 randomFillEnabled={randomFillEnabled}
                 setRandomFillEnabled={() => setRandomFillEnabled((prev) => !prev)}

@@ -45,8 +45,9 @@ body {
   background:
     radial-gradient(1200px 600px at 50% -10%, rgba(255,255,255,0.06), transparent 60%),
     radial-gradient(700px 400px at 10% 90%, rgba(40,232,169,0.06), transparent 70%),
-    radial-gradient(600px 500px at 90% 85%, rgba(255,255,255,0.05), transparent 70%);
-  filter: blur(2px);
+    radial-gradient(600px 500px at 90% 85%, rgba(255,255,255,0.05), transparent 70%);opacity: 0.2;            /* was default 1 — soften */
+  mix-blend-mode: soft-light;
+  filter: blur(3px);       /* a touch more blur hides seams */
 }
 
 /* === TABLE RAIL (container-sized; no vw/vh) ===================== */
@@ -58,7 +59,7 @@ body {
   max-height: 100%;               /* never exceed parent height */
   border-radius: 9999px;
   padding: 18px;                  /* leather thickness */
-
+  box-sizing: border-box;
   box-shadow:
     0 30px 60px rgba(0,0,0,0.55),
     0 8px 18px rgba(0,0,0,0.45);

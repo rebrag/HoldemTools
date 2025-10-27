@@ -21,6 +21,10 @@ const EMPTY_GRID: HandCellData[] = HAND_ORDER.map((hand) => ({
   evs: {} as Record<string, number>
 }));
 
+/** Smart numeric formatter: show decimals only when needed */
+const fmt = (n: number, decimals = 1) =>
+  Math.abs(n % 1) > 1e-9 ? n.toFixed(decimals) : n.toFixed(0);
+
 const AutoFitText: React.FC<{
   children: ReactNode;
   minPx?: number;
@@ -138,7 +142,6 @@ const Plate: React.FC<PlateProps> = ({
     });
   }, [gridData]);
 
-
   const potOdds =
     pot != null && maxBet != null && maxBet > playerBet
       ? ((maxBet - playerBet) / (pot + maxBet - playerBet)) * 100
@@ -157,6 +160,10 @@ const Plate: React.FC<PlateProps> = ({
   const dmWidth = compact && dmWidthPx ? dmWidthPx : undefined;
   const sidebarWidth = compact && sidebarWidthPx ? sidebarWidthPx : undefined;
 
+  // convenience numbers used in UI
+  const stackBB = ((displayData?.bb ?? 0) - playerBet);
+  const betBB = playerBet;
+
   return (
     <div className={outerCls} style={sizeStyle}>
       <style>{`
@@ -166,7 +173,6 @@ const Plate: React.FC<PlateProps> = ({
           width: 100%;
           height: 100%;
         }
-
         .ck-vertical .ck-top {
           flex: 1 1 50%;
           min-height: 0;
@@ -174,7 +180,6 @@ const Plate: React.FC<PlateProps> = ({
           flex-direction: column;
           gap: 4px;
         }
-
         /* bottom half: color key fills upward from bottom */
         .ck-vertical .ck-bottom {
           flex: 1 1 50%;
@@ -184,24 +189,20 @@ const Plate: React.FC<PlateProps> = ({
           justify-content: flex-end; /* anchor to bottom */
           overflow: visible;
         }
-
         /* ensure color key buttons are vertical and full width */
         .ck-vertical .ck-bottom .flex {
           flex-direction: column !important;
           flex-wrap: nowrap !important;
         }
-
         .ck-vertical .ck-bottom button {
           width: 100% !important;
         }
       `}</style>
 
-
-
       <motion.div
         className="relative overflow-visible will-change-transform"
         initial={false}
-        animate={{ scale: isActive ? 1.0 : 1, opacity: alive ? 1 : 0.2 }}
+        animate={{ scale: isActive ? 1.0 : 1, opacity: alive ? 1 : 0.1 }}
         transition={{ duration: 0.25 }}
       >
         {displayData?.Position === "BTN" && (
@@ -210,16 +211,16 @@ const Plate: React.FC<PlateProps> = ({
           </div>
         )}
 
-        {alive && !compact && (
+        {/* {alive && !compact && (
           <div className="absolute inset-x-0 -bottom-8 flex justify-center z-0 pointer-events-none">
             <div className="relative w-32 h-32">
               <img src="/playing-cards.svg" alt="cards" className="absolute left-1/2 top-1/2 -translate-x-8/16 -translate-y-1/2 block w-full h-full origin-bottom rotate-[-0deg]" />
               <img src="/playing-cards.svg" alt="cards" className="absolute left-1/2 top-1/2 -translate-x-2/16 -translate-y-1/2 block w-full h-full origin-bottom rotate-[0deg]" />
             </div>
           </div>
-        )}
+        )} */}
 
-        <div className={`relative z-10 border rounded-[7px] shadow-md p-0 bg-white ${isActive ? "border-emerald-400" : "border-gray-200"}`}>
+        <div className={`relative z-10 border rounded-[7px] shadow-md p-0 bg-white/20 ${isActive ? "border-emerald-400" : "border-gray-200"}`}>
           <div className="relative">
             {compact ? (
               // ── COMPACT (mobile): LEFT DM (square), RIGHT sidebar fills the remainder
@@ -236,7 +237,7 @@ const Plate: React.FC<PlateProps> = ({
                           position: displayData.Position,
                           grid: gridData,
                           isICMSim,
-                          stackBB: (displayData.bb ?? 0) - playerBet,
+                          stackBB,
                           playerBet,
                           pot,
                           maxBet,
@@ -263,25 +264,25 @@ const Plate: React.FC<PlateProps> = ({
                     <div className="ck-top">
                       <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0 py-0 shadow text-center overflow-hidden">
                         <AutoFitText title="Position">
-                          <strong>{displayData?.Position ?? ""}</strong>
+                          <strong>{displayData?.Position ?? ""}</strong> {fmt(stackBB, 1)}bb
                         </AutoFitText>
                       </div>
-                      <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0 py-0 shadow text-center overflow-hidden">
+                      {/* <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0 py-0 shadow text-center overflow-hidden">
                         <AutoFitText title="Stack">
-                          {((displayData?.bb ?? 0) - playerBet).toFixed(1)} bb
+                          {fmt(stackBB, 1)}&nbsp;bb
                         </AutoFitText>
-                      </div>
+                      </div> */}
                       {showPotOdds && (
                         <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0 py-0 shadow text-center overflow-hidden">
                           <AutoFitText title="Pot Odds">
-                            <strong>Pot Odds:</strong> {Math.max(0, potOdds).toFixed(0)}%
+                            <strong>Pot&nbsp;Odds:</strong>&nbsp;{fmt(Math.max(0, potOdds), 1)}%
                           </AutoFitText>
                         </div>
                       )}
                       {playerBet !== 0 && (
                         <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0 py-0 shadow text-center overflow-hidden">
                           <AutoFitText title="Bet">
-                            <strong>Bet:</strong>&nbsp;{playerBet.toFixed(1)}&nbsp;bb
+                            <strong>Bet:</strong>&nbsp;{fmt(betBB, 1)}&nbsp;bb
                           </AutoFitText>
                         </div>
                       )}
@@ -310,7 +311,7 @@ const Plate: React.FC<PlateProps> = ({
                       position: displayData.Position,
                       grid: gridData,
                       isICMSim,
-                      stackBB: (displayData?.bb ?? 0) - playerBet,
+                      stackBB,
                       playerBet,
                       pot,
                       maxBet,
@@ -341,12 +342,12 @@ const Plate: React.FC<PlateProps> = ({
                     <div className="grid gap-1 w-full" style={{ gridTemplateColumns: "30% 1fr" }}>
                       <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
                         <AutoFitText title="Position">
-                          <strong>{displayData.Position}</strong>
+                          <strong>{displayData.Position}</strong> 
                         </AutoFitText>
                       </div>
                       <div className="min-w-0  bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
                         <AutoFitText title="Stack">
-                          <strong>Stack:</strong>&nbsp;{(((displayData.bb ?? 0) - playerBet)).toFixed(1)}&nbsp;bb
+                          <strong>Stack:</strong>&nbsp;{fmt(stackBB, 1)}&nbsp;bb
                         </AutoFitText>
                       </div>
                     </div>
@@ -356,14 +357,14 @@ const Plate: React.FC<PlateProps> = ({
                         {(isActive && hasCallAction) && (
                           <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
                             <AutoFitText title="Pot Odds">
-                              <strong>Pot&nbsp;Odds:</strong>&nbsp;{Math.max(0, potOdds).toFixed(1)}%
+                              <strong>Pot&nbsp;Odds:</strong>&nbsp;{fmt(Math.max(0, potOdds), 1)}%
                             </AutoFitText>
                           </div>
                         )}
                         {playerBet !== 0 && (
                           <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
                             <AutoFitText title="Bet">
-                              <strong>Bet:</strong>&nbsp;{playerBet.toFixed(1)}&nbsp;bb
+                              <strong>Bet:</strong>&nbsp;{fmt(betBB, 1)}&nbsp;bb
                             </AutoFitText>
                           </div>
                         )}

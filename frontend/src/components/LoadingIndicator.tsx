@@ -1,13 +1,37 @@
 import React from "react";
-import PuffLoader from "react-spinners/PuffLoader";
 
-const LoadingIndicator: React.FC = () => {
+type Props = {
+  size?: number;        // px
+  spin?: boolean;       // rotate animation on/off
+  durationMs?: number;  // rotation speed
+};
+
+const LoadingIndicator: React.FC<Props> = ({ size = 100, spin = true, durationMs = 800 }) => {
   return (
     <div
-      style={{
-      }}
+      style={{ display: "grid", placeItems: "center", padding: "0.75rem" }}
+      aria-busy="true"
+      aria-live="polite"
     >
-      <PuffLoader size={100} color="#000000" />
+      <img
+        src="/holdemtools-spinner.svg"
+        alt="Loading…"
+        width={size}
+        height={size}
+        style={{
+          // IMPORTANT: include the animation NAME, not just duration
+          animation: spin ? ` ${durationMs}ms linear infinite` : undefined,
+          imageRendering: "auto",
+        }}
+      />
+      <style>
+        {`
+          @keyframes ht-spin {
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
+          }
+        `}
+      </style>
     </div>
   );
 };

@@ -10,7 +10,7 @@
     </clipPath>
     <style>
       @keyframes spin { to { transform: rotate(360deg); } }
-      .spin { transform-origin: 64px 64px; animation: spin 2.8s linear infinite; }
+      .spin { transform-origin: 64px 64px; animation: spin 1.4s linear infinite; }
     </style>
   </defs>
 

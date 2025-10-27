@@ -80,13 +80,13 @@ const Line: React.FC<LineProps> = ({ line, onLineClick }) => {
       <div
         ref={scrollerRef}
         style={{ width: `calc(100% - ${RESERVED_RIGHT}px)` }}
-        className="flex flex-nowrap overflow-x-auto scroll-smooth space-x-1 no-scrollbar"
+        className="flex flex-nowrap overflow-x-auto scroll-smooth space-x-0.5 no-scrollbar"
       >
         {/* “LINE:” label */}
         <div
           className="
             flex items-center justify-center flex-shrink-0
-            px-2 py-1 font-semibold text-gray-200 whitespace-nowrap
+            px-1 py-1 font-semibold text-gray-200 whitespace-nowrap
             text-[0.65rem]
           "
         >

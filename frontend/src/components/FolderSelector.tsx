@@ -91,6 +91,8 @@ const hasExactNumber = (folder: string, rawNum: string): boolean => {
   return re.test(folder);
 };
 
+
+
 /** Safe parser kept for table rendering (avg + per-seat values). */
 function parseFolderSafe(folder: string) {
   const parts = folder.split("_");
