@@ -1,13 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "../firebase";
 import { logUserAction } from "../logEvent";
 import { sortFoldersLikeSelector } from "../utils/folderSort";
 import type { FolderMetadata } from "../hooks/useFolders";
 
-/* ────────────────────────────────────────────────────────────────── */
-/*  Types                                                             */
-/* ────────────────────────────────────────────────────────────────── */
 interface FolderSelectorProps {
   folders: string[];
   currentFolder: string;
@@ -16,19 +13,7 @@ interface FolderSelectorProps {
   metaByFolder?: Record<string, FolderMetadata | null>;
 }
 
-/* ────────────────────────────────────────────────────────────────── */
-/*  Seat orders for 2- to 9-handed tables                             */
-/* ────────────────────────────────────────────────────────────────── */
-const SEAT_ORDER: Record<number, string[]> = {
-  2: ["BTN", "BB"],
-  3: ["SB", "BB", "BTN"],
-  4: ["SB", "BB", "CO", "BTN"],
-  5: ["SB", "BB", "HJ", "CO", "BTN"],
-  6: ["SB", "BB", "LJ", "HJ", "CO", "BTN"],
-  7: ["SB", "BB", "UTG1", "LJ", "HJ", "CO", "BTN"],
-  8: ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"],
-  9: ["SB", "BB", "UTG", "UTG1", "UTG2", "LJ", "HJ", "CO", "BTN"],
-};
+type FTFilter = "any" | "only" | "exclude";
 
 /* ────────────────────────────────────────────────────────────────── */
 /*  Debug toggle                                                      */
@@ -91,7 +76,8 @@ const hasExactNumber = (folder: string, rawNum: string): boolean => {
   return re.test(folder);
 };
 
-
+// fixed header order
+const DESIRED_HEADER_ORDER = ["UTG", "UTG1", "UTG2", "LJ", "HJ", "CO", "BTN", "SB", "BB"];
 
 /** Safe parser kept for table rendering (avg + per-seat values). */
 function parseFolderSafe(folder: string) {
@@ -143,6 +129,14 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(-1);
 
+  // filter UI state
+  const [showFilter, setShowFilter] = useState(false);
+  const [playersFilter, setPlayersFilter] = useState<number | null>(null); // null = Any
+  const [ftFilter, setFtFilter] = useState<FTFilter>("any"); // "any" | "only" | "exclude"
+
+  // keep a ref to the input wrapper so dropdown positions nicely
+  const inputWrapRef = useRef<HTMLDivElement | null>(null);
+
   /* -------- filter + sort ---------------------------------------- */
   useEffect(() => {
     const q = input.trim().toLowerCase();
@@ -167,28 +161,37 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
       words.push(t);
     }
 
-    if (DEBUG_FILTER) dbg("query:", q, { tokens, pairs, numStrs, words });
+    if (DEBUG_FILTER) dbg("query:", q, { tokens, pairs, numStrs, words, playersFilter, ftFilter });
 
     const filtered = folders.filter((f) => {
-      if (!q) return true;
-
-      if (pairs.length > 0) {
-        const posMap = getPosNumMap(f);
-        const okPairs = pairs.every(({ rawNum, pos }) => {
-          const want = canonNum(rawNum);
-          const have = posMap[pos];
-          return have !== undefined && have === want;
-        });
-        if (!okPairs) return false;
-        return true;
+      // text/query filter
+      if (q) {
+        if (pairs.length > 0) {
+          const posMap = getPosNumMap(f);
+          const okPairs = pairs.every(({ rawNum, pos }) => {
+            const want = canonNum(rawNum);
+            const have = posMap[pos];
+            return have !== undefined && have === want;
+          });
+          if (!okPairs) return false;
+        } else {
+          if (numStrs.length > 0 && !numStrs.every((s) => hasExactNumber(f, s))) return false;
+          if (words.length > 0 && !words.every((w) => f.toLowerCase().includes(w))) return false;
+        }
       }
 
-      if (numStrs.length > 0) {
-        if (!numStrs.every((s) => hasExactNumber(f, s))) return false;
+      // players filter
+      if (playersFilter !== null) {
+        const count = f.split("_").length;
+        if (count !== playersFilter) return false;
       }
 
-      if (words.length > 0 && !words.every((w) => f.toLowerCase().includes(w))) {
-        return false;
+      // Final Table tri-state filter
+      if (ftFilter !== "any") {
+        const meta = metaByFolder?.[f] ?? null;
+        const isFT = !!meta?.name && meta.name.toUpperCase().includes("FT");
+        if (ftFilter === "only" && !isFT) return false;
+        if (ftFilter === "exclude" && isFT) return false;
       }
 
       return true;
@@ -197,7 +200,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
     const list = sortFoldersLikeSelector(filtered);
     setItems(list);
     setHi(list.length ? 0 : -1);
-  }, [input, folders]);
+  }, [input, folders, playersFilter, ftFilter, metaByFolder]);
 
   /* -------- safe select ------------------------------------------ */
   const choose = (folder: string) => {
@@ -211,8 +214,10 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
 
   /* -------- keyboard nav ----------------------------------------- */
   const nav: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
-    if (e.key === "Escape") setOpen(false);
-    else if ((e.key === "ArrowDown" || e.key === "Tab") && items.length > 0) {
+    if (e.key === "Escape") {
+      setOpen(false);
+      setShowFilter(false);
+    } else if ((e.key === "ArrowDown" || e.key === "Tab") && items.length > 0) {
       e.preventDefault();
       setHi((p) => (p + 1) % items.length);
     } else if (e.key === "ArrowUp" && items.length > 0) {
@@ -226,57 +231,181 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   };
 
   /* -------- header build ----------------------------------------- */
-  const maxSeats = items.length ? Math.max(...items.map((f) => f.split("_").length)) : 2;
-  const header =
-    SEAT_ORDER[maxSeats] ||
-    (items[0] ? Object.keys(parseFolderSafe(items[0]).stacks).sort() : []);
+  const header = (() => {
+    const present = new Set<string>();
+    for (const f of items) {
+      const { stacks } = parseFolderSafe(f);
+      for (const pos of Object.keys(stacks)) present.add(pos.toUpperCase());
+    }
+    const ordered = DESIRED_HEADER_ORDER.filter((pos) => present.has(pos));
+    return ordered.length ? ordered : DESIRED_HEADER_ORDER;
+  })();
 
-  // NEW: add a "Tags" column BEFORE "Avg."
   const cols = header.length + 2;
 
-  /* ---------------------------------------------------------------- */
-  /*  Render                                                          */
-  /* ---------------------------------------------------------------- */
+  // derived count for placeholder
+  const numSims = items.length;
+
   return (
     <div data-intro-target="folder-selector" className="flex justify-center">
       <div className="relative w-full max-w-lg">
-        {/* input + toggle */}
-        <div className="relative">
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onFocus={() => setOpen(true)}
-            onBlur={() => setTimeout(() => setOpen(false), 150)}
-            onKeyDown={nav}
-            placeholder="Search Preflop Sims…"
-            className="
-              bg-white/95 shadow-md hover:bg-blue-100
-              w-full px-4 pr-10 py-2
-              border border-gray-300 rounded-xl
-              focus:outline-none focus:ring focus:border-blue-300
-            "
-          />
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => setOpen((p) => !p)}
-            className="absolute inset-y-0 right-0 flex items-center px-3"
-            aria-label="Toggle folder list"
-            title="Toggle folder list"
-          >
-            <svg className="h-5 w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
-              <path
-                fillRule="evenodd"
-                d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.23 8.27a.75.75 0 01.02-1.06z"
-                clipRule="evenodd"
-              />
-            </svg>
-          </button>
+        {/* input + dropdown-toggle + FILTER button */}
+        <div className="flex items-stretch gap-2">
+          <div ref={inputWrapRef} className="relative flex-1">
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onFocus={() => setOpen(true)}
+              onBlur={() => setTimeout(() => setOpen(false), 150)}
+              onKeyDown={nav}
+              placeholder={`Search ${numSims} Preflop Solutions…`}
+              className="
+                bg-white/95 shadow-md hover:bg-blue-100
+                w-full px-4 pr-10 py-2
+                border border-gray-300 rounded-xl
+                focus:outline-none focus:ring focus:border-blue-300
+              "
+            />
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setOpen((p) => !p)}
+              className="absolute inset-y-0 right-0 flex items-center px-3"
+              aria-label="Toggle folder list"
+              title="Toggle folder list"
+            >
+              <svg className="h-5 w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
+                <path
+                  fillRule="evenodd"
+                  d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.23 8.27a.75.75 0 01.02-1.06z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </button>
+          </div>
+
+          {/* Filter Button + Popover */}
+          <div className="relative">
+            <button
+              type="button"
+              aria-label="Open filters"
+              title="Filters"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setShowFilter((p) => !p)}
+              className="
+                h-10 w-10 shrink-0
+                inline-flex items-center justify-center
+                rounded-xl border border-gray-300 bg-white/95 shadow-md
+                hover:bg-gray-100 focus:outline-none focus:ring
+              "
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5 text-gray-700" fill="currentColor">
+                <path d="M3 5a1 1 0 011-1h16a1 1 0 01.8 1.6l-6.2 8.27V19a1 1 0 01-.553.894l-3 1.5A1 1 0 019 20.5v-5.63L2.2 5.6A1 1 0 013 5z" />
+              </svg>
+            </button>
+
+            {showFilter && (
+              <div
+                className="absolute right-0 mt-2 w-68 rounded-xl border border-gray-200 bg-white shadow-lg p-3 z-20"
+                onMouseDown={(e) => e.preventDefault()} // keep open when clicking inside
+              >
+                {/* Number of players */}
+                <div className="mb-3">
+                  <div className="text-xs font-semibold text-gray-600 mb-1">Number of players</div>
+                  <div className="flex flex-wrap gap-1">
+                    <button
+                      className={`px-1 py-1 rounded-md text-xs border ${
+                        playersFilter === null
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
+                      }`}
+                      onClick={() => setPlayersFilter(null)}
+                    >
+                      Any
+                    </button>
+                    {[2, 3, 4, 5, 6, 7, 8].map((n) => (
+                      <button
+                        key={n}
+                        className={`px-2 py-1 rounded-md text-xs border ${
+                          playersFilter === n
+                            ? "bg-blue-600 text-white border-blue-600"
+                            : "bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
+                        }`}
+                        onClick={() =>
+                          setPlayersFilter((prev) => (prev === n ? null : n))
+                        }
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Final Table */}
+                <div className="mb-2">
+                  <div className="text-xs font-semibold text-gray-600 mb-1">Final Table</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <button
+                      className={`px-2 py-1 rounded-md text-xs border ${
+                        ftFilter === "any"
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
+                      }`}
+                      onClick={() => setFtFilter("any")}
+                    >
+                      Any
+                    </button>
+                    <button
+                      className={`px-2 py-1 rounded-md text-xs border ${
+                        ftFilter === "only"
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
+                      }`}
+                      onClick={() => setFtFilter("only")}
+                    >
+                      Final Table
+                    </button>
+                    <button
+                      className={`px-2 py-1 rounded-md text-xs border ${
+                        ftFilter === "exclude"
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
+                      }`}
+                      onClick={() => setFtFilter("exclude")}
+                    >
+                      Exclude FT
+                    </button>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
+                  <button
+                    className="text-xs text-blue-700 hover:underline"
+                    onClick={() => {
+                      setPlayersFilter(null);
+                      setFtFilter("any");
+                    }}
+                  >
+                    Reset filters
+                  </button>
+                  <button
+                    className="text-xs text-gray-600 hover:underline"
+                    onClick={() => setShowFilter(false)}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* dropdown */}
         {open && (
-          <div className="absolute z-10 w-full mt-1 max-h-160 overflow-auto border bg-white shadow-lg">
+          <div
+            className="absolute z-10 w-full mt-1 max-h-160 overflow-auto border bg-white shadow-lg"
+            onMouseDown={(e) => e.preventDefault()}
+          >
             {/* header row */}
             {header.length > 0 ? (
               <div
@@ -301,7 +430,6 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
               if (Object.keys(stacks).length === 0) return null;
 
               const meta = metaByFolder?.[folder] ?? null;
-              // const isIcm = !!meta?.isIcm;
               const isFT = !!meta?.name && meta.name.toUpperCase().includes("FT");
 
               return (
@@ -313,16 +441,12 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
                     idx === hi ? "bg-blue-200" : "hover:bg-gray-100"
                   }`}
                 >
-                  {/* NEW: tags cell (left of Avg.) */}
                   <div className="px-2 py-1 border-t border-r flex items-center gap-1">
                     {isFT && <TagBadge text="FT" title="Final Table structure" />}
-                    {/* {isIcm && <TagBadge text="ICM" title="ICM payouts present" />} */}
                   </div>
 
-                  {/* avg */}
                   <div className="px-2 py-1 border-t border-r text-center">{avg}</div>
 
-                  {/* seat stacks */}
                   {header.map((pos) => (
                     <div key={pos} className="px-2 py-1 border-t text-center">
                       {stacks[pos] ?? ""}

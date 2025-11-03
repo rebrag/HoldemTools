@@ -745,7 +745,7 @@ const Solver = ({ user }: { user: User | null }) => {
             </div>
           </div>
 
-          <div className="relative flex items-center mt-1 mb-1">
+          <div className="relative flex items-center mt-1 mb-2">
             <Line line={preflopLine} onLineClick={handleLineClick} />
             <div className="absolute right-0 mr-2 z-20 scale-90">
               <RandomizeButton
