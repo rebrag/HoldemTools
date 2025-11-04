@@ -15,7 +15,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("GTOLiteAPI")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+b198ef99c972aae3c30ff7084499d9784f098fe4")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+2cac97bcb4d480286e3d89c5cc53e1fe6657a7e5")]
 [assembly: System.Reflection.AssemblyProductAttribute("GTOLiteAPI")]
 [assembly: System.Reflection.AssemblyTitleAttribute("GTOLiteAPI")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
