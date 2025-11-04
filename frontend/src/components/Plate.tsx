@@ -155,8 +155,6 @@ const Plate: React.FC<PlateProps> = ({
       ? { width: plateWidth, maxWidth: plateWidth, minWidth: plateWidth }
       : undefined;
 
-  const showPotOdds = isActive && hasCallAction;
-
   const dmWidth = compact && dmWidthPx ? dmWidthPx : undefined;
   const sidebarWidth = compact && sidebarWidthPx ? sidebarWidthPx : undefined;
 
@@ -180,16 +178,14 @@ const Plate: React.FC<PlateProps> = ({
           flex-direction: column;
           gap: 4px;
         }
-        /* bottom half: color key fills upward from bottom */
         .ck-vertical .ck-bottom {
           flex: 1 1 50%;
           min-height: 0;
           display: flex;
           flex-direction: column;
-          justify-content: flex-end; /* anchor to bottom */
+          justify-content: flex-end; 
           overflow: visible;
         }
-        /* ensure color key buttons are vertical and full width */
         .ck-vertical .ck-bottom .flex {
           flex-direction: column !important;
           flex-wrap: nowrap !important;
@@ -258,35 +254,25 @@ const Plate: React.FC<PlateProps> = ({
                 </div>
 
                 {/* RIGHT: takes the rest so plate = (half) exactly */}
-                <div className="shrink-0" style={{ width: sidebarWidth, height: dmWidth, minHeight: 0 }}>
+                <div className="shrink-0 pt-1.5" style={{ width: sidebarWidth, height: dmWidth, minHeight: 0 }}>
                   <div className="ck-vertical">
                     {/* top 50%: info */}
+                    {/* top 50%: one shared badge for Position + Stack (+ Bet if present) */}
                     <div className="ck-top">
-                      <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0 py-0 shadow text-center overflow-hidden">
-                        <AutoFitText title="Position">
-                          <strong>{displayData?.Position ?? ""}</strong> {fmt(stackBB, 1)}bb
+                      <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0 pt-0 pb-0 shadow text-center overflow-hidden">
+                        <AutoFitText title="Position and Stack">
+                          <strong>{displayData?.Position ?? ""}</strong>&nbsp;{fmt(stackBB, 1)}bb
                         </AutoFitText>
-                      </div>
-                      {/* <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0 py-0 shadow text-center overflow-hidden">
-                        <AutoFitText title="Stack">
-                          {fmt(stackBB, 1)}&nbsp;bb
-                        </AutoFitText>
-                      </div> */}
-                      {showPotOdds && (
-                        <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0 py-0 shadow text-center overflow-hidden">
-                          <AutoFitText title="Pot Odds">
-                            <strong>Pot&nbsp;Odds:</strong>&nbsp;{fmt(Math.max(0, potOdds), 1)}%
-                          </AutoFitText>
-                        </div>
-                      )}
-                      {playerBet !== 0 && (
-                        <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0 py-0 shadow text-center overflow-hidden">
+
+                        {betBB !== 0 && (
                           <AutoFitText title="Bet">
                             <strong>Bet:</strong>&nbsp;{fmt(betBB, 1)}&nbsp;bb
                           </AutoFitText>
-                        </div>
-                      )}
+                        )}
+                      </div>
+                      {/* Pot Odds intentionally hidden in compact mode */}
                     </div>
+
 
                     {/* bottom 50%: ColorKey (vertical stack; scroll if overflow) */}
                     <div className="ck-bottom">

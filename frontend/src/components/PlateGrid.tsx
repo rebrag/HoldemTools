@@ -200,6 +200,13 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     return Math.min(scaled, maxByContainer, 900);
   };
 
+  // === Badge classes: smaller when isNarrow ===
+  const badgeClass =
+    "backdrop-blur-sm rounded-md shadow text-center " +
+    (isNarrow
+      ? "bg-white/60 px-0.5 py-0.5 text-[8px]"   // smaller on narrow
+      : "bg-white/60 px-2 py-0 text-xs");          // default on landscape
+
   return (
     <div
       className={`border-0 relative flex justify-center ${
@@ -255,10 +262,10 @@ const PlateGrid: React.FC<PlateGridProps> = ({
             <LoadingIndicator />
           </div>
 
-          {/* Pot/ante badge */}
+          {/* Pot/ante badge (smaller in narrow) */}
           {ante !== undefined && pot !== undefined && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
-              <div className="bg-white/60 backdrop-blur-sm rounded-md px-2 py-0 text-xs shadow text-center">
+              <div className={`${badgeClass}`}>
                 <strong>Total:</strong> {fmt(Math.max(0, pot), 1)} bb
                 {ante !== 0 && (
                   <>

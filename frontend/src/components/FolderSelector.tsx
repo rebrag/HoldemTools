@@ -294,7 +294,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   const cols = header.length + 2;
 
   // derived count for placeholder — show total available solutions, not current filtered list
-  const numSims = sourceFolders.length;
+  const numSims = items.length;
 
   return (
     <div data-intro-target="folder-selector" className="flex justify-center">

@@ -1,10 +1,12 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ // useWindowDimensions.ts
 import { useEffect, useRef, useState } from "react";
 
 function readViewport() {
-  const vv = (window as any).visualViewport;
-  const width = vv?.width ?? window.innerWidth;
-  const height = vv?.height ?? window.innerHeight;
+  // Use the *layout* viewport so pinch-zoom doesn't affect sizes
+  const width =
+    document.documentElement.clientWidth || window.innerWidth;
+  const height =
+    document.documentElement.clientHeight || window.innerHeight;
   return { windowWidth: Math.round(width), windowHeight: Math.round(height) };
 }
 
@@ -23,7 +25,7 @@ export default function useWindowDimensions() {
         const widthChanged = next.windowWidth !== last.current.windowWidth;
         const heightDelta = Math.abs(next.windowHeight - last.current.windowHeight);
 
-        // If only height changed a little (<120px), treat it as URL-bar jiggle → ignore.
+        // Ignore small height jiggle (mobile URL bar show/hide)
         if (!widthChanged && heightDelta < 120) return;
 
         last.current = next;
@@ -31,13 +33,11 @@ export default function useWindowDimensions() {
       });
     };
 
-    // Prefer visualViewport if available; fall back to window resize.
-    (window as any).visualViewport?.addEventListener("resize", onResize);
+    // Note: do NOT listen to visualViewport.resize (fires on pinch)
     window.addEventListener("orientationchange", onResize);
     window.addEventListener("resize", onResize);
 
     return () => {
-      (window as any).visualViewport?.removeEventListener("resize", onResize);
       window.removeEventListener("orientationchange", onResize);
       window.removeEventListener("resize", onResize);
       cancelAnimationFrame(raf);

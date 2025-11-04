@@ -115,12 +115,34 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
             className="pointer-events-auto inline-flex items-center gap-2 select-none"
             aria-label="HoldemTools Home"
           >
-            <img src="/vite5.svg" alt="" className="h-6 w-6" draggable="false" />
+            {/* Logo container so we can layer the spade */}
+            <span className="relative inline-block h-6 w-6 shrink-0">
+              {/* Vite blob */}
+              <img
+                src="/vite5.svg"
+                alt=""
+                className="absolute inset-0 h-full w-full"
+                draggable="false"
+              />
+              {/* Spade overlay — ensure this file exists; see note below */}
+              <img
+                // If your spade is in /public: keep "/spade.svg"
+                // If it's in src/assets: import it at top:
+                //   import spadeUrl from '../assets/spade.svg';
+                // and use: src={spadeUrl}
+                src="/spade.svg"
+                alt=""
+                className="absolute right-[-2px] bottom-[-2px] h-3.5 w-3.5 drop-shadow-sm"
+                draggable="false"
+              />
+            </span>
+
             <span className="text-sm sm:text-base font-semibold tracking-wide text-gray-900">
               HoldemTools
             </span>
           </a>
         </div>
+
 
         {/* right: Tools dropdown */}
         <div className="relative">
