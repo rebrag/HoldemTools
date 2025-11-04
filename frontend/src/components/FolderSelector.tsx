@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState, useEffect, useRef } from "react";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "../firebase";
@@ -24,6 +25,36 @@ const dbg = (...args: unknown[]) => {
 };
 
 /* ────────────────────────────────────────────────────────────────── */
+/*  Exclusions & heuristics                                          */
+/* ────────────────────────────────────────────────────────────────── */
+
+// Names / prefixes we know are not “solution folders”
+const EXCLUDE_NAMES = [/^onlinerangedata$/i, /^logs?$/i, /^gametrees$/i];
+const EXCLUDE_EXTS = [".txt", ".log", ".csv", ".json"];
+
+// Looks like a solution if it has at least two chunks that start with digits
+// e.g. "20UTG_15HJ_12CO"
+const looksLikeSolutionFolder = (name: string) => {
+  const chunks = name.split("_").filter(Boolean);
+  const nums = chunks
+    .map((ch) => /^(\d+)/.exec(ch)?.[1])
+    .filter(Boolean);
+  return nums.length >= 2;
+};
+
+const isExcludedName = (name: string) =>
+  EXCLUDE_NAMES.some((re) => re.test(name)) ||
+  name.includes("/") || // nested paths / files
+  EXCLUDE_EXTS.some((ext) => name.toLowerCase().endsWith(ext));
+
+const countNumericChunks = (name: string) =>
+  name
+    .split("_")
+    .filter(Boolean)
+    .map((ch) => /^(\d+)/.exec(ch)?.[1])
+    .filter(Boolean).length;
+
+/* ────────────────────────────────────────────────────────────────── */
 /*  Helpers                                                           */
 /* ────────────────────────────────────────────────────────────────── */
 
@@ -44,7 +75,10 @@ const splitChunks = (folder: string): Chunk[] =>
     .split("_")
     .map((ch) => {
       const m = ch.match(/^(\d+(?:\.\d+)?)([A-Z0-9]+)$/i);
-      if (!m) return { numRaw: "", numCanon: "", pos: "", chunkRaw: ch };
+      if (!m) {
+        if (DEBUG_FILTER) console.debug("⏩ Ignoring non-solution chunk:", ch, "in", folder);
+        return { numRaw: "", numCanon: "", pos: "", chunkRaw: ch };
+      }
       const [, numRaw, posRaw] = m;
       return {
         numRaw,
@@ -79,7 +113,7 @@ const hasExactNumber = (folder: string, rawNum: string): boolean => {
 // fixed header order
 const DESIRED_HEADER_ORDER = ["UTG", "UTG1", "UTG2", "LJ", "HJ", "CO", "BTN", "SB", "BB"];
 
-/** Safe parser kept for table rendering (avg + per-seat values). */
+/** Silent parser for table rendering (avg + per-seat values). */
 function parseFolderSafe(folder: string) {
   const parts = folder.split("_");
   const stacks: Record<string, number> = {};
@@ -87,7 +121,8 @@ function parseFolderSafe(folder: string) {
   parts.forEach((ch) => {
     const m = ch.match(/^(\d+(?:\.\d+)?)([A-Z][A-Z0-9+]*)$/i);
     if (!m) {
-      console.warn("❌  Bad chunk:", ch, "in folder:", folder);
+      // no console.warn — just ignore bad chunks
+      if (DEBUG_FILTER) console.debug("⏩ Ignoring bad chunk:", ch, "in", folder);
       return;
     }
     const [, num, posRaw] = m;
@@ -95,10 +130,9 @@ function parseFolderSafe(folder: string) {
     stacks[pos] = Number(num);
   });
 
+  const denom = Object.keys(stacks).length || 1;
   const avg =
-    Math.round(
-      (Object.values(stacks).reduce((s, v) => s + v, 0) / parts.length) * 10
-    ) / 10;
+    Math.round((Object.values(stacks).reduce((s, v) => s + v, 0) / denom) * 10) / 10;
 
   return { stacks, avg };
 }
@@ -125,7 +159,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   const [user] = useAuthState(auth);
 
   const [input, setInput] = useState("");
-  const [items, setItems] = useState<string[]>(folders);
+  const [items, setItems] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(-1);
 
@@ -136,6 +170,15 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
 
   // keep a ref to the input wrapper so dropdown positions nicely
   const inputWrapRef = useRef<HTMLDivElement | null>(null);
+
+  // Base source list, cleaned of obviously non-solution entries up front.
+  const sourceFolders = React.useMemo(
+    () =>
+      folders.filter(
+        (f) => !isExcludedName(f) && looksLikeSolutionFolder(f)
+      ),
+    [folders]
+  );
 
   /* -------- filter + sort ---------------------------------------- */
   useEffect(() => {
@@ -163,7 +206,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
 
     if (DEBUG_FILTER) dbg("query:", q, { tokens, pairs, numStrs, words, playersFilter, ftFilter });
 
-    const filtered = folders.filter((f) => {
+    const filtered = sourceFolders.filter((f) => {
       // text/query filter
       if (q) {
         if (pairs.length > 0) {
@@ -180,16 +223,15 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
         }
       }
 
-      // players filter
+      // players filter (based on numeric-leading chunks, not raw underscores)
       if (playersFilter !== null) {
-        const count = f.split("_").length;
-        if (count !== playersFilter) return false;
+        if (countNumericChunks(f) !== playersFilter) return false;
       }
 
       // Final Table tri-state filter
       if (ftFilter !== "any") {
         const meta = metaByFolder?.[f] ?? null;
-        const isFT = !!meta?.name && meta.name.toUpperCase().includes("FT");
+        const isFT = !!(meta as any)?.name && String((meta as any).name).toUpperCase().includes("FT");
         if (ftFilter === "only" && !isFT) return false;
         if (ftFilter === "exclude" && isFT) return false;
       }
@@ -197,10 +239,18 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
       return true;
     });
 
-    const list = sortFoldersLikeSelector(filtered);
+    // Safe sort with fallback (no console spam)
+    let list: string[] = [];
+    try {
+      list = sortFoldersLikeSelector(filtered);
+    } catch {
+      list = filtered.slice().sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: "base" })
+      );
+    }
     setItems(list);
     setHi(list.length ? 0 : -1);
-  }, [input, folders, playersFilter, ftFilter, metaByFolder]);
+  }, [input, sourceFolders, playersFilter, ftFilter, metaByFolder]);
 
   /* -------- safe select ------------------------------------------ */
   const choose = (folder: string) => {
@@ -243,8 +293,8 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
 
   const cols = header.length + 2;
 
-  // derived count for placeholder
-  const numSims = items.length;
+  // derived count for placeholder — show total available solutions, not current filtered list
+  const numSims = sourceFolders.length;
 
   return (
     <div data-intro-target="folder-selector" className="flex justify-center">
@@ -331,9 +381,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
                             ? "bg-blue-600 text-white border-blue-600"
                             : "bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
                         }`}
-                        onClick={() =>
-                          setPlayersFilter((prev) => (prev === n ? null : n))
-                        }
+                        onClick={() => setPlayersFilter((prev) => (prev === n ? null : n))}
                       >
                         {n}
                       </button>
@@ -430,7 +478,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
               if (Object.keys(stacks).length === 0) return null;
 
               const meta = metaByFolder?.[folder] ?? null;
-              const isFT = !!meta?.name && meta.name.toUpperCase().includes("FT");
+              const isFT = !!(meta as any)?.name && String((meta as any).name).toUpperCase().includes("FT");
 
               return (
                 <div

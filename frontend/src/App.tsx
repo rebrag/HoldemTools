@@ -4,20 +4,30 @@ import { auth } from "./firebase";
 import LoadingIndicator from "./components/LoadingIndicator";
 import { AppProvider } from "./components/AppContext";
 import AppShell from "./components/AppShell";
-import './index.css';
+import "./index.css";
 
 type Section = "solver" | "equity";
 
-/** Read the current section from the URL path (e.g., /solver, /equity). Default: solver. */
+/** Map the first path segment to a Section. Default: solver. */
 const readPath = (): Section => {
   if (typeof window === "undefined") return "solver";
-  // Grab first non-empty segment
   const seg = window.location.pathname.replace(/^\/+/, "").split("/")[0]?.toLowerCase();
-  return seg === "equity" ? "equity" : "solver";
+
+  // accept either /solutions (new) or /solver (legacy) for the solver section
+  if (seg === "equity") return "equity";
+  return "solver";
 };
 
-/** Build a URL path for a section. If you deploy under a subpath, prepend it here. */
-const pathFor = (section: Section) => `/${section}`;
+/** Build a URL path for a section (canonical paths). */
+const pathFor = (section: Section) => {
+  switch (section) {
+    case "equity":
+      return "/equity";
+    case "solver":
+    default:
+      return "/solutions"; // NEW canonical route
+  }
+};
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -34,14 +44,31 @@ function App() {
     return () => unsub();
   }, []);
 
-  // On first mount, ensure the URL is a clean section path. If at root "/", rewrite to default.
+  // Helper: replace the path but keep query & hash
+  const replacePathKeepSuffix = (newPath: string) => {
+    const { search, hash } = window.location;
+    window.history.replaceState({}, "", `${newPath}${search}${hash}`);
+  };
+
+  // On first mount:
+  // 1) normalize root → canonical path ("/" → "/solutions")
+  // 2) redirect legacy "/solver" → "/solutions" (keep search/hash)
   useEffect(() => {
-    const current = readPath();
-    setSection(current);
-    const isRoot = window.location.pathname === "/" || window.location.pathname === "";
-    if (isRoot) {
-      // Put /solver (or /equity) in the URL without adding a history entry
-      window.history.replaceState({}, "", pathFor(current));
+    const currentSection = readPath();
+    setSection(currentSection);
+
+    const path = window.location.pathname;
+    const firstSeg = path.replace(/^\/+/, "").split("/")[0]?.toLowerCase() || "";
+
+    if (path === "/" || path === "") {
+      // Put canonical section path in URL without adding history
+      replacePathKeepSuffix(pathFor(currentSection));
+      return;
+    }
+
+    // Legacy redirect: /solver -> /solutions
+    if (firstSeg === "solver") {
+      replacePathKeepSuffix("/solutions");
     }
   }, []);
 
@@ -60,10 +87,13 @@ function App() {
     setSection(next);
   };
 
-  const goToEquity = () => { console.log("goToEquity"); navigate("equity"); };
-  const goToSolver = () => { console.log("goToSolver"); navigate("solver"); };
-  
-
+  const goToEquity = () => {
+    navigate("equity");
+  };
+  // keep the prop name but point to /solutions
+  const goToSolver = () => {
+    navigate("solver");
+  };
 
   if (loading) {
     return (

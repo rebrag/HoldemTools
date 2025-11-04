@@ -7,19 +7,16 @@ interface AppShellProps {
   user: User | null;
   section: "solver" | "equity";
   goToEquity: () => void;
-  goToSolver: () => void;
+  goToSolver: () => void; // now navigates to /solutions
 }
 
 const AppShell: React.FC<AppShellProps> = ({ user, section, goToEquity, goToSolver }) => {
-
-  // const startWalkthrough = () => console.log("start walkthrough");
-
   return (
     <div className="min-h-screen">
       <NavBar
         section={section}
         goToEquity={goToEquity}
-        goToSolver={goToSolver}
+        goToSolver={goToSolver} // shows as “Solutions” in menu
       />
       <div className="pt-12">
         {section === "solver" ? <Solver user={user} /> : <EquityCalc />}

@@ -1,9 +1,7 @@
-// src/components/NavBar.tsx
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import AccountMenu from "./AccountMenu";
 
-/* Firebase Auth (assumes you have Firebase initialized elsewhere) */
 import {
   getAuth,
   onAuthStateChanged,
@@ -15,14 +13,14 @@ import {
 
 export interface NavBarProps {
   section: "solver" | "equity";
-  goToEquity: () => void;   // should push "/equity" and set state
-  goToSolver: () => void;   // should push "/solver" and set state
+  goToEquity: () => void;   // pushes "/equity" and sets state
+  goToSolver: () => void;   // pushes "/solutions" and sets state
   toggleViewMode?: () => void;
   isSpiralView?: boolean;
-  tier?: "free" | "plus" | "pro"; // NEW
+  tier?: "free" | "plus" | "pro";
 }
 
-const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => { //, tier
+const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -30,7 +28,6 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
   const toolsBtnRef = useRef<HTMLButtonElement>(null);
   const toolsMenuRef = useRef<HTMLDivElement>(null);
 
-  // ---- Auth state ----
   const [user, setUser] = useState<User | null>(null);
   useEffect(() => {
     const auth = getAuth();
@@ -86,7 +83,7 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
   }, [toolsOpen]);
 
   // Safety net: ensure URL has the correct path even if parent handler forgot
-  const pushPathIfNeeded = (path: "/solver" | "/equity") => {
+  const pushPathIfNeeded = (path: "/solutions" | "/equity") => {
     if (typeof window === "undefined") return;
     if (window.location.pathname !== path) {
       window.history.pushState({}, "", path);
@@ -94,7 +91,7 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
   };
 
   const goEquity = () => { goToEquity(); pushPathIfNeeded("/equity"); setToolsOpen(false); };
-  const goSolver = () => { goToSolver(); pushPathIfNeeded("/solver"); setToolsOpen(false); };
+  const goSolutions = () => { goToSolver(); pushPathIfNeeded("/solutions"); setToolsOpen(false); };
 
   return (
     <nav className="fixed top-0 left-0 right-0 bg-white shadow-md z-80">
@@ -111,26 +108,19 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
           </svg>
         </button>
 
-
-        {/* center brand (replaces the center spacer) */}
+        {/* center brand */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <a
             href="/"
             className="pointer-events-auto inline-flex items-center gap-2 select-none"
             aria-label="HoldemTools Home"
           >
-            <img
-              src="/vite5.svg"
-              alt=""
-              className="h-6 w-6"
-              draggable="false"
-            />
+            <img src="/vite5.svg" alt="" className="h-6 w-6" draggable="false" />
             <span className="text-sm sm:text-base font-semibold tracking-wide text-gray-900">
               HoldemTools
             </span>
           </a>
         </div>
-
 
         {/* right: Tools dropdown */}
         <div className="relative">
@@ -154,7 +144,7 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
             >
               <div className="py-1">
                 <button
-                  onPointerDown={(e) => { e.preventDefault(); goSolver(); }}
+                  onPointerDown={(e) => { e.preventDefault(); goSolutions(); }}
                   className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
                   aria-current={section === "solver" ? "page" : undefined}
                 >
@@ -173,18 +163,16 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
         </div>
       </div>
 
-      {/* Modal rendered via portal so it always overlays everything */}
+      {/* Modal */}
       {menuOpen &&
         typeof document !== "undefined" &&
         createPortal(
           <div className="fixed inset-0 z-[1200]">
-            {/* Backdrop */}
             <div
               className="absolute inset-0 bg-black/50"
               onPointerDown={() => closeMenu()}
               aria-hidden="true"
             />
-            {/* Panel */}
             <div
               role="dialog"
               aria-modal="true"
@@ -214,25 +202,11 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
                 <div className="pt-2">
                   <AccountMenu
                     isLoggedIn={!!user}
-                    displayLabel={!!user}                 // show "Account:" only if logged in
+                    displayLabel={!!user}
                     userEmail={user?.email ?? null}
                     onLogin={handleLogin}
                     onLogout={handleLogout}
                   />
-                
-                {/* {user && (
-                  <span
-                    className={[
-                      "ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
-                      tier === "pro" ? "bg-emerald-100 text-emerald-700" :
-                      tier === "plus" ? "bg-indigo-100 text-indigo-700" :
-                                        "bg-gray-100 text-gray-700"
-                    ].join(" ")}
-                    title={`Your plan: ${tier ?? "free"}`}
-                  >
-                    {tier === "pro" ? "Pro" : tier === "plus" ? "Plus" : "Free"}
-                  </span>
-                )} */}
                 </div>
               </div>
             </div>

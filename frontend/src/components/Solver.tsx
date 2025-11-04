@@ -27,6 +27,7 @@ import {
   type FolderMetaLike,
 } from "../lib/stripeTiers";
 import { startSubscriptionCheckout } from "../lib/checkout";
+import { uploadGameTree } from "../lib/uploadGameTree";
 
 const tourSteps = [
   { element: '[data-intro-target="folder-selector"]', intro: "Choose a pre-flop sim here.", position: "bottom" },
@@ -560,6 +561,27 @@ const Solver = ({ user }: { user: User | null }) => {
           .replace(/#Pot#\d+/, `#Pot#${(newPotSize * 100).toFixed(0)}`)
           .replace(/#EffectiveStacks#\d+/, `#EffectiveStacks#${Math.round(effStack * 100)}`);
         navigator.clipboard.writeText(adjustedText);
+
+        (async () => {
+          try {
+            const result = await uploadGameTree(API_BASE_URL, {
+              folder,
+              line: preflopLine,
+              actingPos: actingPosition ?? "",
+              isICM: isICMSim,
+              text: adjustedText,
+              uid,
+            });
+            // Success logging with returned path
+            console.log("✅ Game tree uploaded:", result?.path ?? "(no path returned)");
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          } catch (err: any) {
+            // Try to unwrap a bit if it's a Fetch error vs server error
+            console.warn("⚠️ Failed to upload game tree:", err?.message ?? err);
+          }
+        })();
+
+
       } else if (action !== "ALLIN") {
         const data = plateData[fileName];
         const currentRange = convertRangeText(data, action);
@@ -576,6 +598,7 @@ const Solver = ({ user }: { user: User | null }) => {
       setPlateMapping((prev) => ({ ...prev }));
       lastClickRef.current = { plate: fileName, action };
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       loadedPlates,
       appendPlateNames,
