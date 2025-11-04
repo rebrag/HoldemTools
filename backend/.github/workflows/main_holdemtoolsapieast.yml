@@ -1,7 +1,7 @@
 # Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 
-name: Build and deploy ASP.Net Core app to Azure Web App - holdemtoolsapi
+name: Build and deploy ASP.Net Core app to Azure Web App - holdemtoolsapieast
 
 on:
   push:
@@ -38,28 +38,18 @@ jobs:
   deploy:
     runs-on: windows-latest
     needs: build
-    permissions:
-      id-token: write #This is required for requesting the JWT
-      contents: read #This is required for actions/checkout
-
+    
     steps:
       - name: Download artifact from build job
         uses: actions/download-artifact@v4
         with:
           name: .net-app
       
-      - name: Login to Azure
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_27A95242B47644D89EAB3F055CFCCE78 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_F33A414CCEBA498E8F7AE9F2DB29D857 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_B280B3D1D5934F349349490E1454F4CF }}
-
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'holdemtoolsapi'
+          app-name: 'holdemtoolsapieast'
           slot-name: 'Production'
           package: .
-          
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_16EE8B24A7CB4335B4AAE8FDF98E22BD }}
