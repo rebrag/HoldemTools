@@ -416,13 +416,31 @@ const Solver = ({ user }: { user: User | null }) => {
     (action: string, fileName: string) => {
       const plateName = loadedPlates.find((name) => name === fileName);
       if (!plateName) return;
-      if (lastClickRef.current && lastClickRef.current.plate === fileName && lastClickRef.current.action === action) {
+      if (
+        lastClickRef.current &&
+        lastClickRef.current.plate === fileName &&
+        lastClickRef.current.action === action
+      ) {
         return;
       }
 
+      // ───────────────── helpers ─────────────────
+      const toLiteralLines = (vals: (string | number)[]) =>
+        vals.map(v => String(v).trim()).join("\\n");
+
+      // If you track board somewhere, provide it here as a string like "5d Tc Js"
+      // Otherwise leave boardStr = undefined to omit the line.
+      const boardStr: string | undefined = "5d Tc Js";
+
+      // ─────────────── existing flow (unchanged) ───────────────
       const actionNumber = getActionNumber(action) ?? "";
       const clickedIndex = loadedPlates.findIndex((name) => name === plateName);
-      const newLoadedPlates = appendPlateNames(loadedPlates, clickedIndex, actionNumber, availableJsonFiles);
+      const newLoadedPlates = appendPlateNames(
+        loadedPlates,
+        clickedIndex,
+        actionNumber,
+        availableJsonFiles
+      );
       setLoadedPlates((prev) => [...new Set([...prev, ...newLoadedPlates])]);
 
       const parts = fileName.replace(".json", "").split(".");
@@ -442,7 +460,9 @@ const Solver = ({ user }: { user: User | null }) => {
         }
       }
 
-      const newAliveMap = Object.fromEntries(positionOrder.map((pos) => [pos, aliveList.includes(pos)]));
+      const newAliveMap = Object.fromEntries(
+        positionOrder.map((pos) => [pos, aliveList.includes(pos)])
+      ) as Record<string, boolean>;
       setAlivePlayers(newAliveMap);
       setActivePlayer(aliveList[(activeIndex + 1) % aliveList.length]);
 
@@ -472,16 +492,17 @@ const Solver = ({ user }: { user: User | null }) => {
       setPotSize(newPotSize);
       setPlayerBets((prev) => ({ ...prev, [actingPosition]: newBetAmount }));
 
-      let fullText = "";
       if (action === "Call") {
         const callData = plateData[fileName];
         const callingPos = callData?.Position;
+
         const [range0, range1] =
           positionOrder.indexOf(callingPos ?? "") < positionOrder.indexOf(lastRangePos)
             ? [convertRangeText(callData, action), lastRange]
             : [lastRange, convertRangeText(callData, action)];
 
-        const stackMap = Object.fromEntries(
+        // Build stacks in chips*100 (your prior convention) for *literal* \n
+        const stackMap: Record<string, number> = Object.fromEntries(
           positionOrder.map((pos) => {
             const plate = plateMapping[pos];
             const bb = plateData[plate]?.bb ?? 0;
@@ -493,61 +514,31 @@ const Solver = ({ user }: { user: User | null }) => {
         let firstPos = lastRangePos;
         let secondPos = actingPosition;
         if (!firstPos) firstPos = secondPos;
-        if (firstPos && secondPos && positionOrder.indexOf(firstPos) < positionOrder.indexOf(secondPos)) {
+        if (
+          firstPos &&
+          secondPos &&
+          positionOrder.indexOf(firstPos) < positionOrder.indexOf(secondPos)
+        ) {
           [firstPos, secondPos] = [secondPos, firstPos];
         }
 
         const stackEntries = new Set([firstPos, secondPos]);
-        const otherStacks = positionOrder.filter((pos) => !stackEntries.has(pos)).map((pos) => stackMap[pos] ?? 0);
-        const stacksStr = [stackMap[firstPos], stackMap[secondPos], ...otherStacks].join("\n");
+        const otherStacks = positionOrder
+          .filter((pos) => !stackEntries.has(pos))
+          .map((pos) => stackMap[pos] ?? 0);
 
-        const payoutsStr = Array.isArray(metadata.icm)
-          ? metadata.icm.map((v) => Math.round(v * 10)).join("\n")
-          : "0\n0\n0\n0";
+        const stacksLiteral = toLiteralLines([
+          stackMap[firstPos!],
+          stackMap[secondPos!],
+          ...otherStacks,
+        ]);
 
-        fullText = `#Type#NoLimit
-        #Range0#${range0}
-        #Range1#${range1}
-        #ICM.ICMFormat#Pio ICM structure
-        #ICM.Payouts#${payoutsStr}
-        #ICM.Stacks#${stacksStr}
-        #Pot#${(newPotSize * 100).toFixed(0)}
-        #EffectiveStacks#1800
-        #AllinThreshold#60
-        #AddAllinOnlyIfLessThanThisTimesThePot#250
-        #MergeSimilarBets#True
-        #MergeSimilarBetsThreshold#12
-        #CapEnabled#True
-        #CapPerStreet#3
-        3
-        3
-        #CapMode#NoLimit
-        #FlopConfig.RaiseSize#33
-        #FlopConfig.AddAllin#True
-        #TurnConfig.BetSize#50
-        #TurnConfig.RaiseSize#a
-        #TurnConfig.AddAllin#True
-        #RiverConfig.BetSize#30 66
-        #RiverConfig.RaiseSize#a
-        #RiverConfig.AddAllin#True
-        #RiverConfig.DonkBetSize#30
-        #FlopConfigIP.BetSize#25
-        #FlopConfigIP.RaiseSize#a
-        #FlopConfigIP.AddAllin#True
-        #TurnConfigIP.BetSize#50
-        #TurnConfigIP.RaiseSize#a
-        #TurnConfigIP.AddAllin#True
-        #RiverConfigIP.BetSize#30 66
-        #RiverConfigIP.RaiseSize#a
-        #RiverConfigIP.AddAllin#True`;
+        // Payouts as *literal* \n as well
+        const payoutsLiteral = Array.isArray(metadata.icm)
+          ? toLiteralLines(metadata.icm.map((v: number) => Math.round(Number(v) * 10)))
+          : "0\\n0\\n0";
 
-        if (isICMSim) {
-          fullText = fullText.replace(
-            "#ICM.ICMFormat#Pio ICM structure",
-            "#ICM.ICMFormat#Pio ICM structure\n#ICM.Enabled#True"
-          );
-        }
-
+        // Effective stack (in chips*100 like you had)
         const effStack = Math.min(
           ...positionOrder
             .filter((pos) => newAliveMap[pos])
@@ -557,10 +548,55 @@ const Solver = ({ user }: { user: User | null }) => {
               return stack - bet;
             })
         );
-        const adjustedText = fullText
-          .replace(/#Pot#\d+/, `#Pot#${(newPotSize * 100).toFixed(0)}`)
-          .replace(/#EffectiveStacks#\d+/, `#EffectiveStacks#${Math.round(effStack * 100)}`);
-        navigator.clipboard.writeText(adjustedText);
+        const effStackChips = Math.round(effStack * 100);
+        const potChips = Math.round(newPotSize * 100);
+
+        // Cap per street must be *literal* \n inside the same value:
+        const capPerStreetLiteral = toLiteralLines([3, 0, 0]);
+
+        // Build the Pio text block with correct escaping and no leading spaces
+        const lines: string[] = [
+          "#Type#NoLimit",
+          `#Range0#${range0}`,
+          `#Range1#${range1}`,
+          "#ICM.ICMFormat#Pio ICM structure",
+          isICMSim ? "#ICM.Enabled#True" : undefined,
+          `#ICM.Payouts#${payoutsLiteral}`,
+          `#ICM.Stacks#${stacksLiteral}`,
+          boardStr ? `#Board#${boardStr}` : undefined,
+          `#Pot#${potChips}`,
+          `#EffectiveStacks#${effStackChips}`,
+          "#AllinThreshold#60",
+          "#AddAllinOnlyIfLessThanThisTimesThePot#250",
+          "#MergeSimilarBets#True",
+          "#MergeSimilarBetsThreshold#12",
+          "#CapEnabled#True",
+          `#CapPerStreet#${capPerStreetLiteral}`,
+          "#CapMode#NoLimit",
+          "#FlopConfig.RaiseSize#33",
+          "#FlopConfig.AddAllin#True",
+          "#TurnConfig.BetSize#50",
+          "#TurnConfig.RaiseSize#a",
+          "#TurnConfig.AddAllin#True",
+          "#RiverConfig.BetSize#30 66",
+          "#RiverConfig.RaiseSize#a",
+          "#RiverConfig.AddAllin#True",
+          "#RiverConfig.DonkBetSize#30",
+          "#FlopConfigIP.BetSize#25",
+          "#FlopConfigIP.RaiseSize#a",
+          "#FlopConfigIP.AddAllin#True",
+          "#TurnConfigIP.BetSize#50",
+          "#TurnConfigIP.RaiseSize#a",
+          "#TurnConfigIP.AddAllin#True",
+          "#RiverConfigIP.BetSize#30 66",
+          "#RiverConfigIP.RaiseSize#a",
+          "#RiverConfigIP.AddAllin#True",
+        ].filter(Boolean) as string[];
+
+        const adjustedText = lines.join("\n");
+
+        // Copy to clipboard and upload
+        // navigator.clipboard.writeText(adjustedText);
 
         (async () => {
           try {
@@ -572,15 +608,12 @@ const Solver = ({ user }: { user: User | null }) => {
               text: adjustedText,
               uid,
             });
-            // Success logging with returned path
             console.log("✅ Game tree uploaded:", result?.path ?? "(no path returned)");
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           } catch (err: any) {
-            // Try to unwrap a bit if it's a Fetch error vs server error
             console.warn("⚠️ Failed to upload game tree:", err?.message ?? err);
           }
         })();
-
 
       } else if (action !== "ALLIN") {
         const data = plateData[fileName];
@@ -590,8 +623,17 @@ const Solver = ({ user }: { user: User | null }) => {
           setLastRangePos(data.Position);
         }
       }
-      setPreflopLine(["Root", ...parts.filter((p) => p !== "root").map((p) => numberToActionMap[p]), action]);
-      if (newLoadedPlates.length !== loadedPlates.length || !newLoadedPlates.every((v, i) => v === loadedPlates[i])) {
+
+      setPreflopLine([
+        "Root",
+        ...parts.filter((p) => p !== "root").map((p) => numberToActionMap[p]),
+        action,
+      ]);
+
+      if (
+        newLoadedPlates.length !== loadedPlates.length ||
+        !newLoadedPlates.every((v, i) => v === loadedPlates[i])
+      ) {
         setLoadedPlates(newLoadedPlates);
       }
       setRandomFillEnabled(false);
@@ -615,6 +657,7 @@ const Solver = ({ user }: { user: User | null }) => {
       isICMSim,
     ]
   );
+
 
   const handleLineClick = useCallback(
     (clickedIndex: number) => {
