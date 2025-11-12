@@ -14,7 +14,6 @@ type PlateGridProps = {
   randomFillEnabled: boolean;
   onActionClick: (action: string, file: string) => void;
 
-  // Viewport dimensions still come from Solver (fallback and for height decisions)
   windowWidth: number;
   windowHeight: number;
 
@@ -26,21 +25,22 @@ type PlateGridProps = {
   ante?: number;
   pot?: number;
   activePlayer?: string;
+
+  /** NEW: show ranges only for active player */
+  singleRangeView?: boolean;
 };
 
 /** ─── Narrow-only sizing constants ─── */
-const TOP_RESERVED_FRACTION = 0.20; // navbar + folder + line
+const TOP_RESERVED_FRACTION = 0.20;
 const GRID_PAD_Y_PX = 0;
 const ROW_GAP_Y_PX = 4;
 const COL_GAP_X_PX = 12;
 const SIDE_PAD_X_PX = 8;
 
-/** Compact geometry (must match Plate.tsx behavior) */
-const DM_ASPECT_H_OVER_W = 1.0; // DecisionMatrix is square
-const LR_GAP_PX = 4;            // gap between DM and sidebar
+const DM_ASPECT_H_OVER_W = 1.0;
+const LR_GAP_PX = 4;
 
-/** Guards */
-const EXTRA_PLATE_V_PX = 2;     // minor chrome per plate
+const EXTRA_PLATE_V_PX = 2;
 const MIN_DM_W = 80;
 const MIN_SIDEBAR_W = 40;
 const MAX_PLATE_W = 640;
@@ -51,7 +51,6 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   randomFillEnabled,
   onActionClick,
 
-  // viewport (from Solver)
   windowWidth,
   windowHeight,
 
@@ -63,39 +62,25 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   ante,
   pot,
   activePlayer = "UTG",
+
+  singleRangeView = false, // NEW default
 }) => {
   const [zoom, setZoom] = useState<PlateZoomPayload | null>(null);
 
-  /**
-   * Measure the grid container. Use its WIDTH for layout.
-   * For HEIGHT decisions (fit & isNarrow), prefer the viewport height
-   * to avoid the "0px container height" chicken/egg.
-   */
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
 
-  // Width basis: container width if available, else viewport width
   const baseW = container.width || windowWidth;
+  const baseHForFit = windowHeight > 0 ? windowHeight : (container.height || windowHeight);
 
-  // Height basis for fitting math: viewport height (fallback to container if it’s clearly valid)
-  const baseHForFit = windowHeight > 0
-    ? windowHeight
-    : (container.height || windowHeight);
-
-  // Height basis for narrow/landscape heuristic: use viewport (mobile-friendly)
   const viewW = windowWidth;
   const viewH = windowHeight;
 
-  // Heuristic unchanged, but based on viewport to avoid container=0 issues
   const baseNarrow = files.length === 2 ? !(viewW * 1.3 < viewH) : (viewW * 1.3 < viewH);
-
-  // keep your rule: only narrow if playercount > 4
   const isNarrow = baseNarrow && files.length > 4;
 
-  // grid geometry
   const gridRows = isNarrow ? Math.ceil(files.length / 2) : 2;
   const gridCols = isNarrow ? 2 : Math.ceil(files.length / 2);
   const totalCells = gridRows * gridCols;
-  const railPortrait = gridRows > gridCols;
   const maxBet = Math.max(...Object.values(playerBets));
 
   const orderedEntries = useMemo(() => {
@@ -120,79 +105,57 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   }, [orderedEntries]);
 
   const rows: (readonly [string, string])[][] = [];
-  for (let i = 0; i < orderedEntries.length; i += gridCols) {
-    rows.push(orderedEntries.slice(i, i + gridCols));
-  }
+  for (let i = 0; i < orderedEntries.length; i += gridCols) rows.push(orderedEntries.slice(i, i + gridCols));
 
-  const gapPx = 15; // landscape only
+  const gapPx = 15;
 
-  /** Smart numeric formatter: show decimals only when needed */
   const fmt = (n: number, decimals = 1) =>
     Math.abs(n % 1) > 1e-9 ? n.toFixed(decimals) : n.toFixed(0);
 
-  /** Landscape sizing — use container width + viewport height */
   const canonicalPlateWidth = !isNarrow
     ? (() => {
-        // subtract inter-plate gaps within the container
         const wAvail = Math.max(0, baseW - (gridCols - 1) * gapPx);
-
-        // use viewport height so "container height = 0" doesn’t shrink plates
         const hAvail = Math.max(0, baseHForFit - (gridRows - 1) * gapPx);
-
         const fitByW = wAvail / gridCols;
-        // +2 keeps some vertical headroom as in your original code
         const fitByH = hAvail / (gridRows + 2);
-
         return Math.max(170, Math.min(fitByW, fitByH));
       })()
     : undefined;
 
-  /** Narrow: compute HALF width from container width (not viewport) */
   const halfPlateWidth = useMemo(() => {
     if (!isNarrow) return undefined;
     const containerW = Math.max(200, baseW - SIDE_PAD_X_PX * 2);
     return Math.round((containerW - COL_GAP_X_PX) / 2);
   }, [isNarrow, baseW]);
 
-  /** Remaining height for narrow layout — use viewport height */
   const remainingViewportH = Math.floor(viewH * (1 - TOP_RESERVED_FRACTION));
 
-  /** Compute a required container height in narrow */
   const gridContainerHeight = useMemo(() => {
     if (!isNarrow || !halfPlateWidth) return undefined;
-
     const dmW_byWidth = Math.max(MIN_DM_W, halfPlateWidth - LR_GAP_PX - MIN_SIDEBAR_W);
     const rowH_required = dmW_byWidth * DM_ASPECT_H_OVER_W + EXTRA_PLATE_V_PX;
-
     const requiredContainer =
       GRID_PAD_Y_PX * 2 + (gridRows - 1) * ROW_GAP_Y_PX + gridRows * rowH_required;
-
     return Math.max(240, Math.min(requiredContainer, remainingViewportH));
   }, [isNarrow, halfPlateWidth, gridRows, remainingViewportH]);
 
-  /** Narrow dims (unchanged math) */
   const narrowDims = useMemo(() => {
     if (!isNarrow || !halfPlateWidth)
       return { plateW: undefined as number | undefined, dmW: undefined as number | undefined, sbW: undefined as number | undefined };
-
     const availableH =
       (gridContainerHeight ?? remainingViewportH)
       - GRID_PAD_Y_PX * 2
       - (gridRows - 1) * ROW_GAP_Y_PX
       - gridRows * EXTRA_PLATE_V_PX;
-
     const perRowH = availableH / gridRows;
     const dmLimitByHeight = perRowH / DM_ASPECT_H_OVER_W;
     const dmLimitByHalfWidth = halfPlateWidth - LR_GAP_PX - MIN_SIDEBAR_W;
-
     const dmW = Math.max(MIN_DM_W, Math.min(dmLimitByHeight, dmLimitByHalfWidth));
     const sbW = Math.max(MIN_SIDEBAR_W, halfPlateWidth - LR_GAP_PX - dmW);
     const plateW = Math.min(MAX_PLATE_W, halfPlateWidth);
-
     return { plateW, dmW: Math.round(dmW), sbW: Math.round(sbW) };
   }, [isNarrow, halfPlateWidth, gridRows, gridContainerHeight, remainingViewportH]);
 
-  // Zoom width uses whichever branch is active, capped sensibly
   const getZoomWidth = () => {
     const base = isNarrow ? (narrowDims.plateW ?? 220) : (canonicalPlateWidth ?? 220);
     const scaled = Math.round(base * 1.8);
@@ -200,12 +163,9 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     return Math.min(scaled, maxByContainer, 900);
   };
 
-  // === Badge classes: smaller when isNarrow ===
   const badgeClass =
     "backdrop-blur-sm rounded-md shadow text-center " +
-    (isNarrow
-      ? "bg-white/60 px-0.5 py-0.5 text-[8px]"   // smaller on narrow
-      : "bg-white/60 px-2 py-0 text-xs");          // default on landscape
+    (isNarrow ? "bg-white/60 px-0.5 py-0.5 text-[8px]" : "bg-white/60 px-2 py-0 text-xs");
 
   return (
     <div
@@ -214,7 +174,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
       } overflow-visible`}
     >
       <div className="poker-table-bg pointer-events-none absolute inset-0 flex justify-center items-center z-10">
-        <div className={`poker-rail ${railPortrait ? "portrait" : ""} overflow-visible relative`}>
+        <div className={`poker-rail ${gridRows > gridCols ? "portrait" : ""} overflow-visible relative`}>
           <div className="poker-felt overflow-hidden" />
         </div>
       </div>
@@ -223,11 +183,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
         <div
           ref={container.ref}
           className={`relative z-10 w-full select-none ${isNarrow ? "" : "min-h-[300px]"}`}
-          style={
-            isNarrow
-              ? { height: gridContainerHeight, paddingTop: GRID_PAD_Y_PX, paddingBottom: GRID_PAD_Y_PX }
-              : undefined
-          }
+          style={isNarrow ? { height: gridContainerHeight, paddingTop: GRID_PAD_Y_PX, paddingBottom: GRID_PAD_Y_PX } : undefined}
         >
           {/* Zoom overlay */}
           {zoom && <div className="fixed inset-0 bg-black/40 z-[55]" onClick={() => setZoom(null)} />}
@@ -248,6 +204,8 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                   pot={pot}
                   maxBet={undefined}
                   onPlateZoom={undefined}
+                  /* NEW: show full content in zoom even if singleRangeView */
+                  singleRangeView={false}
                 />
               </div>
             </div>
@@ -262,7 +220,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
             <LoadingIndicator />
           </div>
 
-          {/* Pot/ante badge (smaller in narrow) */}
+          {/* Pot/ante badge */}
           {ante !== undefined && pot !== undefined && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
               <div className={`${badgeClass}`}>
@@ -289,7 +247,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                     <div
                       key={`col-${idx}`}
                       className="flex flex-col gap-y-1 justify-center items-center grow-0 shrink-0 basis-1/2"
-                      style={{ height: "100%", width: "50%" }} // EXACT half width
+                      style={{ height: "100%", width: "50%" }}
                     >
                       {col.map(([posKey, file]) => (
                         <Plate
@@ -310,6 +268,8 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                           sidebarWidthPx={narrowDims.sbW}
                           compact
                           onPlateZoom={(payload) => setZoom(payload)}
+                          /* NEW */
+                          singleRangeView={singleRangeView}
                         />
                       ))}
                     </div>
@@ -341,6 +301,8 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                         pot={pot}
                         maxBet={maxBet}
                         onPlateZoom={(payload) => setZoom(payload)}
+                        /* NEW */
+                        singleRangeView={singleRangeView}
                       />
                     ))}
                   </div>

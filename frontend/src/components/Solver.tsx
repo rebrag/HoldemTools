@@ -65,6 +65,16 @@ const Solver = ({ user }: { user: User | null }) => {
   const [showProModal, setShowProModal] = useState(false);
   const [upsellBusy, setUpsellBusy] = useState(false);
 
+  // NEW: singleRangeView toggle (persist)
+  const [singleRangeView, setSingleRangeView] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem("singleRangeView");
+      return raw === "1";
+    } catch {
+      return false;
+    }
+  });
+
   const tourBooted = useRef(localStorage.getItem("tourSeen") === "1");
   const lastClickRef = useRef<{ plate: string; action: string } | null>(null);
 
@@ -165,7 +175,7 @@ const Solver = ({ user }: { user: User | null }) => {
     }
   }, [tourReady]);
 
-  // Open folder util (wrapped so we can safely depend on it)
+  // Open folder util
   const actuallyOpenFolder = useCallback((selectedFolder: string) => {
     const newPlayerCount = selectedFolder.split("_").length;
     const freshPlates = defaultPlateNames;
@@ -185,31 +195,30 @@ const Solver = ({ user }: { user: User | null }) => {
   }, [defaultPlateNames]);
 
   useEffect(() => {
-  if (!uid || !pendingFolder || tierLoading) return;
+    if (!uid || !pendingFolder || tierLoading) return;
 
-  (async () => {
-    let meta: FolderMetaLike | undefined;
-    try {
-      const r = await axios.get<FolderMetaLike>(
-        `${API_BASE_URL}/api/Files/${pendingFolder}/metadata.json`,
-        { timeout: 3000 }
-      );
-      meta = r.data;
-    } catch {
-      // no metadata; fall back to filename-only rules
-    }
+    (async () => {
+      let meta: FolderMetaLike | undefined;
+      try {
+        const r = await axios.get<FolderMetaLike>(
+          `${API_BASE_URL}/api/Files/${pendingFolder}/metadata.json`,
+          { timeout: 3000 }
+        );
+        meta = r.data;
+      } catch {
+        // no metadata; fall back to filename-only rules
+      }
 
-    const need = requiredTierForFolder(pendingFolder, meta);
-    if (isTierSufficient(tier ?? "free", need)) {
-      actuallyOpenFolder(pendingFolder);
-      setPendingFolder(null);
-      setPendingTier(null);
-      setShowProModal(false);
-      setUpsellBusy(false);
-    }
-  })();
-}, [uid, pendingFolder, tier, tierLoading, API_BASE_URL, actuallyOpenFolder]);
-
+      const need = requiredTierForFolder(pendingFolder, meta);
+      if (isTierSufficient(tier ?? "free", need)) {
+        actuallyOpenFolder(pendingFolder);
+        setPendingFolder(null);
+        setPendingTier(null);
+        setShowProModal(false);
+        setUpsellBusy(false);
+      }
+    })();
+  }, [uid, pendingFolder, tier, tierLoading, API_BASE_URL, actuallyOpenFolder]);
 
   useLayoutEffect(() => {
     setLoadedPlates(defaultPlateNames);
@@ -310,10 +319,7 @@ const Solver = ({ user }: { user: User | null }) => {
     [uid, folder, API_BASE_URL, tier, tierLoading, actuallyOpenFolder]
   );
 
-
-
-
-  // Start checkout for the required tier (Plus or Pro)
+  // Start checkout
   const beginUpgrade = useCallback(async () => {
     if (!uid) {
       setShowProModal(false);
@@ -428,11 +434,10 @@ const Solver = ({ user }: { user: User | null }) => {
       const toLiteralLines = (vals: (string | number)[]) =>
         vals.map(v => String(v).trim()).join("\\n");
 
-      // If you track board somewhere, provide it here as a string like "5d Tc Js"
-      // Otherwise leave boardStr = undefined to omit the line.
+      // If you track board somewhere, provide it here
       const boardStr: string | undefined = "5d Tc Js";
 
-      // ─────────────── existing flow (unchanged) ───────────────
+      // ─────────────── existing flow ───────────────
       const actionNumber = getActionNumber(action) ?? "";
       const clickedIndex = loadedPlates.findIndex((name) => name === plateName);
       const newLoadedPlates = appendPlateNames(
@@ -501,7 +506,7 @@ const Solver = ({ user }: { user: User | null }) => {
             ? [convertRangeText(callData, action), lastRange]
             : [lastRange, convertRangeText(callData, action)];
 
-        // Build stacks in chips*100 (your prior convention) for *literal* \n
+        // Build stacks in chips*100 (\n as literal backslashes)
         const stackMap: Record<string, number> = Object.fromEntries(
           positionOrder.map((pos) => {
             const plate = plateMapping[pos];
@@ -533,12 +538,10 @@ const Solver = ({ user }: { user: User | null }) => {
           ...otherStacks,
         ]);
 
-        // Payouts as *literal* \n as well
         const payoutsLiteral = Array.isArray(metadata.icm)
           ? toLiteralLines(metadata.icm.map((v: number) => Math.round(Number(v) * 10)))
           : "0\\n0\\n0";
 
-        // Effective stack (in chips*100 like you had)
         const effStack = Math.min(
           ...positionOrder
             .filter((pos) => newAliveMap[pos])
@@ -551,10 +554,8 @@ const Solver = ({ user }: { user: User | null }) => {
         const effStackChips = Math.round(effStack * 100);
         const potChips = Math.round(newPotSize * 100);
 
-        // Cap per street must be *literal* \n inside the same value:
         const capPerStreetLiteral = toLiteralLines([3, 0, 0]);
 
-        // Build the Pio text block with correct escaping and no leading spaces
         const lines: string[] = [
           "#Type#NoLimit",
           `#Range0#${range0}`,
@@ -594,9 +595,6 @@ const Solver = ({ user }: { user: User | null }) => {
         ].filter(Boolean) as string[];
 
         const adjustedText = lines.join("\n");
-
-        // Copy to clipboard and upload
-        // navigator.clipboard.writeText(adjustedText);
 
         (async () => {
           try {
@@ -657,7 +655,6 @@ const Solver = ({ user }: { user: User | null }) => {
       isICMSim,
     ]
   );
-
 
   const handleLineClick = useCallback(
     (clickedIndex: number) => {
@@ -787,6 +784,21 @@ const Solver = ({ user }: { user: User | null }) => {
 
   const [randomFillEnabled, setRandomFillEnabled] = useState(false);
 
+  // NEW: persist toggle
+  useEffect(() => {
+    try {
+      localStorage.setItem("singleRangeView", singleRangeView ? "1" : "0");
+    } catch { /* empty */ }
+  }, [singleRangeView]);
+
+  // NEW: emulate your Up/Down keybinds from buttons
+  const triggerPrevSolution = useCallback(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+  }, []);
+  const triggerNextSolution = useCallback(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
+  }, []);
+
   return (
     <>
       <Steps enabled={tourRun} steps={tourSteps} initialStep={0} onExit={() => setTourRun(false)} />
@@ -796,7 +808,7 @@ const Solver = ({ user }: { user: User | null }) => {
           {(folderError || filesError) && <div className="text-red-500">{folderError || filesError}</div>}
 
           {/* Folder selector row */}
-          <div className="px-2 sm:px-4 mt-1 mb-3">
+          <div className="px-2 sm:px-4 mt-1">
             <div className="mx-auto w-full max-w-5xl">
               <div className="relative z-50">
                 <div data-intro-target="folder-selector" className="w-auto">
@@ -811,16 +823,66 @@ const Solver = ({ user }: { user: User | null }) => {
             </div>
           </div>
 
+          {/* Sim badge row with right-aligned Single Range toggle */}
+          {metadata?.name && (
+            <div className="px-2 sm:px-4 mt-2 mb-1">
+              <div className="mx-auto w-full max-w-5xl">
+                {/* 3-col grid: [spacer | center badge | right controls] */}
+                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                  {/* left spacer (keeps badge centered even with right controls) */}
+                  <div />
+
+                  {/* center: Sim badge */}
+                  <div className="justify-self-center">
+                    <span
+                      className="inline-flex items-center gap-2 rounded-md bg-white/70 backdrop-blur px-3 py-1 text-xs font-medium text-gray-800 shadow ring-1 ring-black/5"
+                      aria-label="Active Simulation Name"
+                      title="Active Simulation"
+                    >
+                      <strong className="tracking-wide">Sim:</strong>
+                      <span className="truncate max-w-[58vw] sm:max-w-[42vw]">{metadata.name}</span>
+                    </span>
+                  </div>
+
+                  {/* right: Single Range toggle */}
+                  <div className="justify-self-end">
+                    <button
+                      type="button"
+                      onClick={() => setSingleRangeView(v => !v)}
+                      aria-pressed={singleRangeView}
+                      className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium shadow
+                                  ring-1 ring-black/5 transition
+                                  ${singleRangeView
+                                    ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                                    : "bg-white/70 text-gray-800 hover:bg-white"}`}
+                      title="Show ranges only for the active player"
+                    >
+                      {/* subtle status dot */}
+                      <span className={`h-2 w-2 rounded-full ${singleRangeView ? "bg-white" : "bg-emerald-500/70"}`} />
+                      {singleRangeView ? "Single Range: On" : "Single Range: Off"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+
+          {/* Line + right controls */}
           <div className="relative flex items-center mt-1 mb-2">
             <Line line={preflopLine} onLineClick={handleLineClick} />
-            <div className="absolute right-0 mr-2 z-20 scale-90">
-              <RandomizeButton
-                randomFillEnabled={randomFillEnabled}
-                setRandomFillEnabled={() => setRandomFillEnabled((prev) => !prev)}
-              />
+            <div className="absolute right-0 mr-2 z-20 flex items-center gap-2">
+
+              <div className="scale-90">
+                <RandomizeButton
+                  randomFillEnabled={randomFillEnabled}
+                  setRandomFillEnabled={() => setRandomFillEnabled((prev) => !prev)}
+                />
+              </div>
             </div>
           </div>
 
+          {/* PlateGrid */}
           <div className="relative z-0">
             <PlateGrid
               files={displayPlates}
@@ -838,43 +900,60 @@ const Solver = ({ user }: { user: User | null }) => {
               ante={metadata.ante}
               pot={potSize}
               activePlayer={activePlayer}
+              singleRangeView={singleRangeView} // NEW
             />
           </div>
 
-          {metadata && (
-            <div className="flex justify-center mt-1 mb-2 pointer-events-none select-none">
-              <div className="bg-white/60 backdrop-blur-sm rounded-md px-2 py-1 text-xs shadow text-center text-gray-800">
-                {metadata.name && (
-                  <>
-                    <strong>Sim:</strong>&nbsp;{metadata.name}
-                    {Array.isArray(metadata.icm) && metadata.icm.length > 0 && <br />}
-                  </>
-                )}
-                {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
-                  <>
-                    <strong>ICM&nbsp;Structure:</strong>
-                    <br />
-                    {metadata.icm.map((value, idx) => {
-                      const rank = idx + 1;
-                      const suffix = rank === 1 ? "st" : rank === 2 ? "nd" : rank === 3 ? "rd" : "th";
-                      return (
-                        <div key={idx}>
-                          {rank}
-                          <sup>{suffix}</sup>: ${value.toLocaleString()}
-                        </div>
-                      );
-                    })}
-                  </>
-                ) : (
-                  !metadata.name && (
-                    <>
-                      <strong>ICM:</strong>&nbsp;None
-                    </>
-                  )
-                )}
-              </div>
+          {/* NEW: Prev/Next solution buttons below grid (left/right) */}
+          <div className="mx-auto w-full max-w-5xl mt-3 mb-2 px-2 sm:px-4">
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                onClick={triggerNextSolution}
+                className="inline-flex items-center gap-2 rounded-md bg-white/70 hover:bg-white/90 active:bg-white text-gray-800 px-3 py-1.5 text-xs font-medium shadow transition pointer-events-auto"
+                aria-label="Previous solution (Arrow Down)"
+                title="Previous solution (Arrow Down)"
+              >
+                <span className="material-icons-outlined text-base leading-none"></span>
+                Previous solution
+              </button>
+
+              <button
+                type="button"
+                onClick={triggerPrevSolution}
+                className="inline-flex items-center gap-2 rounded-md bg-white/70 hover:bg-white/90 active:bg-white text-gray-800 px-3 py-1.5 text-xs font-medium shadow transition pointer-events-auto"
+                aria-label="Next solution (Arrow Up)"
+                title="Next solution (Arrow Up)"
+              >
+                Next solution
+                <span className="material-icons-outlined text-base leading-none"></span>
+              </button>
             </div>
-          )}
+          </div>
+
+          {/* ICM metadata ONLY (kept below PlateGrid) */}
+          <div className="flex justify-center mt-1 mb-2 pointer-events-none select-none">
+            <div className="bg-white/60 backdrop-blur-sm rounded-md px-2 py-1 text-xs shadow text-center text-gray-800">
+              {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
+                <>
+                  <strong>ICM&nbsp;Structure:</strong>
+                  <br />
+                  {metadata.icm.map((value, idx) => {
+                    const rank = idx + 1;
+                    const suffix = rank === 1 ? "st" : rank === 2 ? "nd" : rank === 3 ? "rd" : "th";
+                    return (
+                      <div key={idx}>
+                        {rank}
+                        <sup>{suffix}</sup>: ${value.toLocaleString()}
+                      </div>
+                    );
+                  })}
+                </>
+              ) : (
+                <><strong>ICM:</strong>&nbsp;None</>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="text-center select-none pt-5 text-white/70">© HoldemTools 2025</div>

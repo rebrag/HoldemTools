@@ -28,9 +28,6 @@ body {
   }
 }
 
-/* === Container-scoped background wrapper =========================
-   Mount <PokerBackground/> inside a relative parent; this layer will
-   fill *that* parent only (not the viewport). */
 .poker-table-bg {
   position: absolute;
   inset: 0;
@@ -39,20 +36,8 @@ body {
   align-items: center;
   z-index: 0;
   pointer-events: none;
-  overflow: hidden;               /* clip rail to the parent box */
+  overflow: hidden;
 }
-/* .poker-table-bg::before {
-  opacity: 0.2;
-  content: '';
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(1200px 600px at 50% -10%, rgba(255,255,255,0.06), transparent 60%),
-    radial-gradient(700px 400px at 10% 90%, rgba(40,232,169,0.06), transparent 70%),
-    radial-gradient(600px 500px at 90% 85%, rgba(255,255,255,0.05), transparent 70%);
-  mix-blend-mode: soft-light;
-  filter: blur(3px);
-} */
 
 /* === TABLE RAIL (container-sized; no vw/vh) ===================== */
 .poker-rail {

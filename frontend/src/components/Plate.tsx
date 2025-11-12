@@ -13,7 +13,7 @@ import DecisionMatrix from "./DecisionMatrix";
 import DealerButton from "./DealerButton";
 import { motion } from "framer-motion";
 
-/* ── helpers (keep your existing HAND_ORDER / EMPTY_GRID / AutoFitText) ── */
+/* ── helpers ── */
 const HAND_ORDER = [ "AA","AKs","AQs","AJs","ATs","A9s","A8s","A7s","A6s","A5s","A4s","A3s","A2s", "AKo","KK","KQs","KJs","KTs","K9s","K8s","K7s","K6s","K5s","K4s","K3s","K2s", "AQo","KQo","QQ","QJs","QTs","Q9s","Q8s","Q7s","Q6s","Q5s","Q4s","Q3s","Q2s", "AJo","KJo","QJo","JJ","JTs","J9s","J8s","J7s","J6s","J5s","J4s","J3s","J2s", "ATo","KTo","QTo","JTo","TT","T9s","T8s","T7s","T6s","T5s","T4s","T3s","T2s", "A9o","K9o","Q9o","J9o","T9o","99","98s","97s","96s","95s","94s","93s","92s", "A8o","K8o","Q8o","J8o","T8o","98o","88","87s","86s","85s","84s","83s","82s", "A7o","K7o","Q7o","J7o","T7o","97o","87o","77","76s","75s","74s","73s","72s", "A6o","K6o","Q6o","J6o","T6o","96o","86o","76o","66","65s","64s","63s","62s", "A5o","K5o","Q5o","J5o","T5o","95o","85o","75o","65o","55","54s","53s","52s", "A4o","K4o","Q4o","J4o","T4o","94o","84o","74o","64o","54o","44","43s","42s", "A3o","K3o","Q3o","J3o","T3o","93o","83o","73o","63o","53o","43o","33","32s", "A2o","K2o","Q2o","J2o","T2o","92o","82o","72o","62o","52o","42o","32o","22" ];
 const EMPTY_GRID: HandCellData[] = HAND_ORDER.map((hand) => ({
   hand,
@@ -21,7 +21,6 @@ const EMPTY_GRID: HandCellData[] = HAND_ORDER.map((hand) => ({
   evs: {} as Record<string, number>
 }));
 
-/** Smart numeric formatter: show decimals only when needed */
 const fmt = (n: number, decimals = 1) =>
   Math.abs(n % 1) > 1e-9 ? n.toFixed(decimals) : n.toFixed(0);
 
@@ -94,9 +93,7 @@ interface PlateProps {
   alive: boolean;
   playerBet?: number;
   isICMSim?: boolean;
-  /** Total plate width (from PlateGrid) */
   plateWidth?: number;
-  /** Precise split passed from PlateGrid in narrow mode */
   dmWidthPx?: number;
   sidebarWidthPx?: number;
   isActive?: boolean;
@@ -104,6 +101,9 @@ interface PlateProps {
   maxBet?: number;
   onPlateZoom?: (payload: PlateZoomPayload) => void;
   compact?: boolean;
+
+  /** NEW: when true, only active seat shows ranges; others render placeholder */
+  singleRangeView?: boolean;
 }
 
 /* ──────────────────── component ──────────────────── */
@@ -124,6 +124,7 @@ const Plate: React.FC<PlateProps> = ({
   maxBet,
   onPlateZoom,
   compact = false,
+  singleRangeView = false, // NEW default
 }) => {
   const [displayData, setDisplayData] = useState<JsonData | undefined>(data);
   useEffect(() => { if (data) setDisplayData(data); }, [data]);
@@ -151,16 +152,70 @@ const Plate: React.FC<PlateProps> = ({
     `relative ${compact ? "mb-0" : "mb-7"} justify-self-center ${compact ? "max-w-none" : "max-w-[400px]"} w-full text-base`;
 
   const sizeStyle: CSSProperties | undefined =
-    plateWidth != null
-      ? { width: plateWidth, maxWidth: plateWidth, minWidth: plateWidth }
-      : undefined;
+    plateWidth != null ? { width: plateWidth, maxWidth: plateWidth, minWidth: plateWidth } : undefined;
 
   const dmWidth = compact && dmWidthPx ? dmWidthPx : undefined;
   const sidebarWidth = compact && sidebarWidthPx ? sidebarWidthPx : undefined;
 
-  // convenience numbers used in UI
   const stackBB = ((displayData?.bb ?? 0) - playerBet);
   const betBB = playerBet;
+
+  // NEW: Show full range content only if not singleRangeView OR this is the active seat.
+  const showRanges = !singleRangeView || isActive;
+
+  // Small, reusable card placeholder (two overlapping “backs”)
+  const CardsPlaceholder: React.FC<{ size: number }> = ({ size }) => {
+    const w = size;
+    const h = Math.round(size * 1.4);
+    return (
+      <div className="relative mx-auto" style={{ width: w * 1.8, height: h }}>
+        <div
+          className="absolute rounded-md border border-white/60 bg-gradient-to-br from-slate-200 to-slate-50 shadow"
+          style={{ width: w, height: h, left: 0, top: 0, transform: "rotate(-6deg)" }}
+        />
+        <div
+          className="absolute rounded-md border border-white/60 bg-gradient-to-br from-slate-200 to-slate-50 shadow"
+          style={{ width: w, height: h, left: w * 0.45, top: 0, transform: "rotate(6deg)" }}
+        />
+      </div>
+    );
+  };
+
+  const TopBadges = (
+    <div className="mt-1 w-full space-y-1">
+      <div className="grid gap-1 w-full" style={{ gridTemplateColumns: "30% 1fr" }}>
+        <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
+          <AutoFitText title="Position">
+            <strong>{displayData?.Position ?? ""}</strong>
+          </AutoFitText>
+        </div>
+        <div className="min-w-0  bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
+          <AutoFitText title="Stack">
+            <strong>Stack:</strong>&nbsp;{fmt(stackBB, 1)}&nbsp;bb
+          </AutoFitText>
+        </div>
+      </div>
+
+      {(betBB !== 0 || (isActive && hasCallAction)) && (
+        <div className={`grid gap-1 w-full ${betBB !== 0 && (isActive && hasCallAction) ? "grid-cols-2" : "grid-cols-1"}`}>
+          {(isActive && hasCallAction) && (
+            <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
+              <AutoFitText title="Pot Odds">
+                <strong>Pot&nbsp;Odds:</strong>&nbsp;{fmt(Math.max(0, potOdds), 1)}%
+              </AutoFitText>
+            </div>
+          )}
+          {betBB !== 0 && (
+            <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
+              <AutoFitText title="Bet">
+                <strong>Bet:</strong>&nbsp;{fmt(betBB, 1)}&nbsp;bb
+              </AutoFitText>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className={outerCls} style={sizeStyle}>
@@ -186,13 +241,8 @@ const Plate: React.FC<PlateProps> = ({
           justify-content: flex-end; 
           overflow: visible;
         }
-        .ck-vertical .ck-bottom .flex {
-          flex-direction: column !important;
-          flex-wrap: nowrap !important;
-        }
-        .ck-vertical .ck-bottom button {
-          width: 100% !important;
-        }
+        .ck-vertical .ck-bottom .flex { flex-direction: column !important; flex-wrap: nowrap !important; }
+        .ck-vertical .ck-bottom button { width: 100% !important; }
       `}</style>
 
       <motion.div
@@ -207,25 +257,88 @@ const Plate: React.FC<PlateProps> = ({
           </div>
         )}
 
-        {/* {alive && !compact && (
-          <div className="absolute inset-x-0 -bottom-8 flex justify-center z-0 pointer-events-none">
-            <div className="relative w-32 h-32">
-              <img src="/playing-cards.svg" alt="cards" className="absolute left-1/2 top-1/2 -translate-x-8/16 -translate-y-1/2 block w-full h-full origin-bottom rotate-[-0deg]" />
-              <img src="/playing-cards.svg" alt="cards" className="absolute left-1/2 top-1/2 -translate-x-2/16 -translate-y-1/2 block w-full h-full origin-bottom rotate-[0deg]" />
-            </div>
-          </div>
-        )} */}
-
         <div className={`relative z-10 border rounded-[7px] shadow-md p-0 bg-white/20 ${isActive ? "border-emerald-400" : "border-gray-200"}`}>
           <div className="relative">
             {compact ? (
-              // ── COMPACT (mobile): LEFT DM (square), RIGHT sidebar fills the remainder
+              // ── COMPACT/NARROW LAYOUT ──
               <div className="flex gap-1 items-stretch">
-                {/* LEFT: exact DM width; height = width (square) */}
+                {/* LEFT square: DM or Placeholder to keep layout stable */}
                 <div className="relative" style={{ width: dmWidth }}>
                   <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
                     <div
                       className="absolute inset-0 cursor-pointer"
+                      onClick={() => {
+                        if (!displayData) return;
+                        onPlateZoom?.({
+                          id: plateId ?? file,
+                          position: displayData.Position,
+                          grid: gridData,
+                          isICMSim,
+                          stackBB,
+                          playerBet,
+                          pot,
+                          maxBet,
+                          potOddsPct: Math.max(0, potOdds),
+                          isActive,
+                          alive,
+                          file
+                        });
+                      }}
+                    >
+                      {showRanges ? (
+                        <DecisionMatrix
+                          gridData={gridData}
+                          randomFillEnabled={randomFillEnabled && !!displayData}
+                          isICMSim={isICMSim}
+                        />
+                      ) : (
+                        // Placeholder cards (alive only)
+                        <div className="w-full h-full flex items-center justify-center">
+                          {alive ? <CardsPlaceholder size={Math.max(28, (dmWidth ?? 120) * 0.35)} /> : null}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* RIGHT: Sidebar — badges always visible; ColorKey only when showRanges */}
+                <div className="shrink-0 pt-1.5" style={{ width: sidebarWidth, height: dmWidth, minHeight: 0 }}>
+                  <div className="ck-vertical">
+                    <div className="ck-top">
+                      <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0 pt-0 pb-0 shadow text-center overflow-hidden">
+                        <AutoFitText title="Position and Stack">
+                          <strong>{displayData?.Position ?? ""}</strong>&nbsp;{fmt(stackBB, 1)}bb
+                        </AutoFitText>
+                        {betBB !== 0 && (
+                          <AutoFitText title="Bet">
+                            <strong>Bet:</strong>&nbsp;{fmt(betBB, 1)}&nbsp;bb
+                          </AutoFitText>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="ck-bottom">
+                      {showRanges ? (
+                        <ColorKey
+                          data={gridData}
+                          loading={keyLoading}
+                          onActionClick={(action) => onActionClick(action, file)}
+                        />
+                      ) : (
+                        // keep spacing pleasant when hidden
+                        <div className="flex-1" />
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              // ── LANDSCAPE/WIDE LAYOUT ──
+              <>
+                {showRanges ? (
+                  <>
+                    <div
+                      className="cursor-pointer"
                       onClick={() => {
                         if (!displayData) return;
                         onPlateZoom?.({
@@ -250,113 +363,25 @@ const Plate: React.FC<PlateProps> = ({
                         isICMSim={isICMSim}
                       />
                     </div>
-                  </div>
-                </div>
 
-                {/* RIGHT: takes the rest so plate = (half) exactly */}
-                <div className="shrink-0 pt-1.5" style={{ width: sidebarWidth, height: dmWidth, minHeight: 0 }}>
-                  <div className="ck-vertical">
-                    {/* top 50%: info */}
-                    {/* top 50%: one shared badge for Position + Stack (+ Bet if present) */}
-                    <div className="ck-top">
-                      <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0 pt-0 pb-0 shadow text-center overflow-hidden">
-                        <AutoFitText title="Position and Stack">
-                          <strong>{displayData?.Position ?? ""}</strong>&nbsp;{fmt(stackBB, 1)}bb
-                        </AutoFitText>
-
-                        {betBB !== 0 && (
-                          <AutoFitText title="Bet">
-                            <strong>Bet:</strong>&nbsp;{fmt(betBB, 1)}&nbsp;bb
-                          </AutoFitText>
-                        )}
-                      </div>
-                      {/* Pot Odds intentionally hidden in compact mode */}
-                    </div>
-
-
-                    {/* bottom 50%: ColorKey (vertical stack; scroll if overflow) */}
-                    <div className="ck-bottom">
+                    <div className="select-none flex w-full items-center justify-end mt-0.5">
                       <ColorKey
                         data={gridData}
                         loading={keyLoading}
                         onActionClick={(action) => onActionClick(action, file)}
                       />
                     </div>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              // ── NON-COMPACT: original stack
-              <>
-                <div
-                  className="cursor-pointer"
-                  onClick={() => {
-                    if (!displayData) return;
-                    onPlateZoom?.({
-                      id: plateId ?? file,
-                      position: displayData.Position,
-                      grid: gridData,
-                      isICMSim,
-                      stackBB,
-                      playerBet,
-                      pot,
-                      maxBet,
-                      potOddsPct: Math.max(0, potOdds),
-                      isActive,
-                      alive,
-                      file
-                    });
-                  }}
-                >
-                  <DecisionMatrix
-                    gridData={gridData}
-                    randomFillEnabled={randomFillEnabled && !!displayData}
-                    isICMSim={isICMSim}
-                  />
-                </div>
 
-                <div className="select-none flex w-full items-center justify-end mt-0.5">
-                  <ColorKey
-                    data={gridData}
-                    loading={keyLoading}
-                    onActionClick={(action) => onActionClick(action, file)}
-                  />
-                </div>
-
-                {displayData && (
-                  <div className="mt-1 w-full space-y-1">
-                    <div className="grid gap-1 w-full" style={{ gridTemplateColumns: "30% 1fr" }}>
-                      <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
-                        <AutoFitText title="Position">
-                          <strong>{displayData.Position}</strong> 
-                        </AutoFitText>
-                      </div>
-                      <div className="min-w-0  bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
-                        <AutoFitText title="Stack">
-                          <strong>Stack:</strong>&nbsp;{fmt(stackBB, 1)}&nbsp;bb
-                        </AutoFitText>
-                      </div>
+                    {displayData && TopBadges}
+                  </>
+                ) : (
+                  <>
+                    {/* Clean placeholder with badges */}
+                    <div className="w-full flex items-center justify-center py-3">
+                      {alive ? <CardsPlaceholder size={Math.min(48, (plateWidth ?? 220) * 0.22)} /> : null}
                     </div>
-
-                    {(playerBet !== 0 || (isActive && hasCallAction)) && (
-                      <div className={`grid gap-1 w-full ${playerBet !== 0 && (isActive && hasCallAction) ? "grid-cols-2" : "grid-cols-1"}`}>
-                        {(isActive && hasCallAction) && (
-                          <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
-                            <AutoFitText title="Pot Odds">
-                              <strong>Pot&nbsp;Odds:</strong>&nbsp;{fmt(Math.max(0, potOdds), 1)}%
-                            </AutoFitText>
-                          </div>
-                        )}
-                        {playerBet !== 0 && (
-                          <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
-                            <AutoFitText title="Bet">
-                              <strong>Bet:</strong>&nbsp;{fmt(betBB, 1)}&nbsp;bb
-                            </AutoFitText>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                    {displayData && TopBadges}
+                  </>
                 )}
               </>
             )}
