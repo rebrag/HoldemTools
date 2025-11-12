@@ -17,7 +17,7 @@ import LoginSignupModal from "./LoginSignupModal";
 import RandomizeButton from "./RandomizeButton";
 import FolderSelector from "./FolderSelector";
 import ProUpsell from "./ProUpsell";
-import { useTier } from "../hooks/useTier";
+// import { useTier } from "../hooks/useTier";
 import {
   requiredTierForFolder,
   getPriceIdForTier,
@@ -28,6 +28,7 @@ import {
 } from "../lib/stripeTiers";
 import { startSubscriptionCheckout } from "../lib/checkout";
 import { uploadGameTree } from "../lib/uploadGameTree";
+import { useCurrentTier } from "../context/TierContext";
 
 const tourSteps = [
   { element: '[data-intro-target="folder-selector"]', intro: "Choose a pre-flop sim here.", position: "bottom" },
@@ -38,7 +39,8 @@ const Solver = ({ user }: { user: User | null }) => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
   const { windowWidth, windowHeight } = useWindowDimensions();
   const uid = user?.uid ?? null;
-  const { tier, loading: tierLoading } = useTier(uid);
+  // const { tier, loading: tierLoading } = useTier(uid);
+  const { tier, loading: tierLoading } = useCurrentTier();
   const [folder, setFolder] = useState<string>("23UTG_23UTG1_23LJ_23HJ_23CO_23BTN_23SB_23BB");
   const [plateData, setPlateData] = useState<Record<string, JsonData>>({});
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>({});
@@ -817,6 +819,7 @@ const Solver = ({ user }: { user: User | null }) => {
                     currentFolder={folder}
                     onFolderSelect={handleFolderSelect}
                     metaByFolder={folderMetaMap}
+                    userTier={tier ?? "free"}   // ← NEW
                   />
                 </div>
               </div>
@@ -914,7 +917,6 @@ const Solver = ({ user }: { user: User | null }) => {
                 aria-label="Previous solution (Arrow Down)"
                 title="Previous solution (Arrow Down)"
               >
-                <span className="material-icons-outlined text-base leading-none"></span>
                 Previous solution
               </button>
 
@@ -926,7 +928,6 @@ const Solver = ({ user }: { user: User | null }) => {
                 title="Next solution (Arrow Up)"
               >
                 Next solution
-                <span className="material-icons-outlined text-base leading-none"></span>
               </button>
             </div>
           </div>

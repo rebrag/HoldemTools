@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import AccountMenu from "./AccountMenu";
+import { useCurrentTier } from "../context/TierContext";
 
 import {
   getAuth,
@@ -20,9 +21,43 @@ export interface NavBarProps {
   tier?: "free" | "plus" | "pro";
 }
 
+/* ───────────────────────── Tier pill ───────────────────────── */
+const TierPill: React.FC<{ tier: "free" | "plus" | "pro"; loading?: boolean }> = ({
+  tier,
+  loading = false,
+}) => {
+  if (loading) {
+    return (
+      <span
+        className="inline-block h-5 w-16 rounded-full bg-gray-200 animate-pulse"
+        aria-hidden="true"
+      />
+    );
+  }
+
+  const label = tier === "pro" ? "Pro" : tier === "plus" ? "Plus" : "Free";
+  const cls =
+    tier === "pro"
+      ? "bg-emerald-100 text-emerald-800 ring-emerald-200"
+      : tier === "plus"
+      ? "bg-amber-100 text-amber-800 ring-amber-200"
+      : "bg-gray-100 text-gray-800 ring-gray-200";
+
+  return (
+    <span
+      className={`shrink-0 inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ring-1 ${cls}`}
+      title={`Current tier: ${label}`}
+      data-tier={tier}
+    >
+      {label}
+    </span>
+  );
+};
+
 const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
+  const { tier, loading } = useCurrentTier();
 
   const [toolsOpen, setToolsOpen] = useState(false);
   const toolsBtnRef = useRef<HTMLButtonElement>(null);
@@ -93,8 +128,14 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
   const goEquity = () => { goToEquity(); pushPathIfNeeded("/equity"); setToolsOpen(false); };
   const goSolutions = () => { goToSolver(); pushPathIfNeeded("/solutions"); setToolsOpen(false); };
 
+  // Optional: ring color on navbar based on tier (keeps tier/loading "used")
+  const tierRing =
+    tier === "pro" ? "ring-emerald-500/40" :
+    tier === "plus" ? "ring-amber-500/40" :
+    "ring-gray-300/60";
+
   return (
-    <nav className="fixed top-0 left-0 right-0 bg-white shadow-md z-80">
+    <nav className={`fixed top-0 left-0 right-0 bg-white shadow-md z-80 ring-1 ${tierRing}`} aria-busy={loading || undefined}>
       <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 flex items-center justify-between h-12">
         {/* left: hamburger */}
         <button
@@ -124,10 +165,9 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
                 WebkitTransform: 'translateZ(0)',
                 backfaceVisibility: 'hidden',
                 WebkitBackfaceVisibility: 'hidden',
-                WebkitMaskImage: '-webkit-radial-gradient(white, black)', // iOS seam fix trick
+                WebkitMaskImage: '-webkit-radial-gradient(white, black)',
               }}
             />
-
             <span className="text-sm sm:text-base font-semibold tracking-wide text-gray-900">
               HoldemTools
             </span>
@@ -211,15 +251,21 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
               </div>
 
               <div className="px-4 py-3 space-y-2">
+                {/* Account row with tier on the right */}
                 <div className="pt-2">
-                  <AccountMenu
-                    isLoggedIn={!!user}
-                    displayLabel={!!user}
-                    userEmail={user?.email ?? null}
-                    onLogin={handleLogin}
-                    onLogout={handleLogout}
-                  />
+                  <div className="flex items-center justify-between gap-3">
+                    <AccountMenu
+                      isLoggedIn={!!user}
+                      displayLabel={!!user}
+                      userEmail={user?.email ?? null}
+                      onLogin={handleLogin}
+                      onLogout={handleLogout}
+                    />
+                    <TierPill tier={tier} loading={loading} />
+                  </div>
                 </div>
+
+                {/* (add other menu content here if needed) */}
               </div>
             </div>
           </div>,

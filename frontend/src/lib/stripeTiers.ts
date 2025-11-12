@@ -65,11 +65,14 @@ function isDemoFolder(folderId: string): boolean {
  *  - FT (from metadata name) OR ICM present → pro
  *  - Otherwise → plus
  */
+// src/lib/stripeTiers.ts
 export function requiredTierForFolder(folderId: string, meta?: FolderMetaLike): Tier {
-  if (isDemoFolder(folderId)) return "free";
-  if (hasFTFlag(meta, folderId) || looksICM(meta)) return "pro";
-  return "plus";
+  if (isDemoFolder(folderId)) return "free";     // only 23bb demo stays free
+  if (hasFTFlag(meta, folderId)) return "pro";   // FT → Pro
+  if (looksICM(meta)) return "plus";             // ICM (non-FT) → Plus
+  return "plus";                                 // non-ICM regular → Plus
 }
+
 
 // Optional filename-only gate if you ever need it (kept for compat)
 export function isFolderAllowed(userTier: Tier, folderId: string): boolean {

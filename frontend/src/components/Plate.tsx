@@ -102,7 +102,7 @@ interface PlateProps {
   onPlateZoom?: (payload: PlateZoomPayload) => void;
   compact?: boolean;
 
-  /** NEW: when true, only active seat shows ranges; others render placeholder */
+  /** when true, only active seat shows ranges; others render placeholder */
   singleRangeView?: boolean;
 }
 
@@ -124,7 +124,7 @@ const Plate: React.FC<PlateProps> = ({
   maxBet,
   onPlateZoom,
   compact = false,
-  singleRangeView = false, // NEW default
+  singleRangeView = false,
 }) => {
   const [displayData, setDisplayData] = useState<JsonData | undefined>(data);
   useEffect(() => { if (data) setDisplayData(data); }, [data]);
@@ -160,26 +160,52 @@ const Plate: React.FC<PlateProps> = ({
   const stackBB = ((displayData?.bb ?? 0) - playerBet);
   const betBB = playerBet;
 
-  // NEW: Show full range content only if not singleRangeView OR this is the active seat.
-  const showRanges = !singleRangeView || isActive;
-
-  // Small, reusable card placeholder (two overlapping “backs”)
+  // Only the grid image swaps; ColorKey stays.
+  const shouldShowGrid = !singleRangeView || isActive;
   const CardsPlaceholder: React.FC<{ size: number }> = ({ size }) => {
     const w = size;
     const h = Math.round(size * 1.4);
+    const logoScale = 0.45; // ← adjust (0.35–0.55 works well)
+
+    const baseCardClass =
+      "absolute rounded-md border border-white/70 bg-white shadow";
+
     return (
       <div className="relative mx-auto" style={{ width: w * 1.8, height: h }}>
+        {/* back card (left) */}
         <div
-          className="absolute rounded-md border border-white/60 bg-gradient-to-br from-slate-200 to-slate-50 shadow"
+          className={baseCardClass}
           style={{ width: w, height: h, left: 0, top: 0, transform: "rotate(-6deg)" }}
-        />
+        >
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <img
+              src="/vite5.svg"
+              alt=""
+              draggable="false"
+              style={{ width: w * logoScale, height: "auto", opacity: 0.9 }}
+            />
+          </div>
+        </div>
+
+        {/* front card (right) */}
         <div
-          className="absolute rounded-md border border-white/60 bg-gradient-to-br from-slate-200 to-slate-50 shadow"
+          className={baseCardClass}
           style={{ width: w, height: h, left: w * 0.45, top: 0, transform: "rotate(6deg)" }}
-        />
+        >
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <img
+              src="/vite5.svg"
+              alt=""
+              draggable="false"
+              style={{ width: w * logoScale, height: "auto", opacity: 0.9 }}
+            />
+          </div>
+        </div>
       </div>
     );
   };
+
+
 
   const TopBadges = (
     <div className="mt-1 w-full space-y-1">
@@ -201,14 +227,14 @@ const Plate: React.FC<PlateProps> = ({
           {(isActive && hasCallAction) && (
             <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
               <AutoFitText title="Pot Odds">
-                <strong>Pot&nbsp;Odds:</strong>&nbsp;{fmt(Math.max(0, potOdds), 1)}%
+                <strong>Pot Odds:</strong>&nbsp;{fmt(Math.max(0, potOdds), 1)}%
               </AutoFitText>
             </div>
           )}
           {betBB !== 0 && (
             <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
               <AutoFitText title="Bet">
-                <strong>Bet:</strong>&nbsp;{fmt(betBB, 1)}&nbsp;bb
+                <strong>Bet:</strong> {fmt(betBB, 1)} bb
               </AutoFitText>
             </div>
           )}
@@ -262,7 +288,7 @@ const Plate: React.FC<PlateProps> = ({
             {compact ? (
               // ── COMPACT/NARROW LAYOUT ──
               <div className="flex gap-1 items-stretch">
-                {/* LEFT square: DM or Placeholder to keep layout stable */}
+                {/* LEFT square: keeps exact DM footprint via aspect-ratio */}
                 <div className="relative" style={{ width: dmWidth }}>
                   <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
                     <div
@@ -285,14 +311,14 @@ const Plate: React.FC<PlateProps> = ({
                         });
                       }}
                     >
-                      {showRanges ? (
+                      {shouldShowGrid ? (
                         <DecisionMatrix
                           gridData={gridData}
                           randomFillEnabled={randomFillEnabled && !!displayData}
                           isICMSim={isICMSim}
                         />
                       ) : (
-                        // Placeholder cards (alive only)
+                        // placeholder fills the same square
                         <div className="w-full h-full flex items-center justify-center">
                           {alive ? <CardsPlaceholder size={Math.max(28, (dmWidth ?? 120) * 0.35)} /> : null}
                         </div>
@@ -301,7 +327,7 @@ const Plate: React.FC<PlateProps> = ({
                   </div>
                 </div>
 
-                {/* RIGHT: Sidebar — badges always visible; ColorKey only when showRanges */}
+                {/* RIGHT: Sidebar — ColorKey ALWAYS visible now */}
                 <div className="shrink-0 pt-1.5" style={{ width: sidebarWidth, height: dmWidth, minHeight: 0 }}>
                   <div className="ck-vertical">
                     <div className="ck-top">
@@ -318,16 +344,11 @@ const Plate: React.FC<PlateProps> = ({
                     </div>
 
                     <div className="ck-bottom">
-                      {showRanges ? (
-                        <ColorKey
-                          data={gridData}
-                          loading={keyLoading}
-                          onActionClick={(action) => onActionClick(action, file)}
-                        />
-                      ) : (
-                        // keep spacing pleasant when hidden
-                        <div className="flex-1" />
-                      )}
+                      <ColorKey
+                        data={gridData}
+                        loading={keyLoading}
+                        onActionClick={(action) => onActionClick(action, file)}
+                      />
                     </div>
                   </div>
                 </div>
@@ -335,54 +356,52 @@ const Plate: React.FC<PlateProps> = ({
             ) : (
               // ── LANDSCAPE/WIDE LAYOUT ──
               <>
-                {showRanges ? (
-                  <>
-                    <div
-                      className="cursor-pointer"
-                      onClick={() => {
-                        if (!displayData) return;
-                        onPlateZoom?.({
-                          id: plateId ?? file,
-                          position: displayData.Position,
-                          grid: gridData,
-                          isICMSim,
-                          stackBB,
-                          playerBet,
-                          pot,
-                          maxBet,
-                          potOddsPct: Math.max(0, potOdds),
-                          isActive,
-                          alive,
-                          file
-                        });
-                      }}
-                    >
+                <div
+                  className="cursor-pointer"
+                  onClick={() => {
+                    if (!displayData) return;
+                    onPlateZoom?.({
+                      id: plateId ?? file,
+                      position: displayData.Position,
+                      grid: gridData,
+                      isICMSim,
+                      stackBB,
+                      playerBet,
+                      pot,
+                      maxBet,
+                      potOddsPct: Math.max(0, potOdds),
+                      isActive,
+                      alive,
+                      file
+                    });
+                  }}
+                >
+                  {/* force same footprint as DecisionMatrix via 1:1 box */}
+                  <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
+                    {shouldShowGrid ? (
                       <DecisionMatrix
                         gridData={gridData}
                         randomFillEnabled={randomFillEnabled && !!displayData}
                         isICMSim={isICMSim}
                       />
-                    </div>
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        {alive ? <CardsPlaceholder size={Math.min(72, (plateWidth ?? 220) * 0.22)} /> : null}
+                      </div>
+                    )}
+                  </div>
+                </div>
 
-                    <div className="select-none flex w-full items-center justify-end mt-0.5">
-                      <ColorKey
-                        data={gridData}
-                        loading={keyLoading}
-                        onActionClick={(action) => onActionClick(action, file)}
-                      />
-                    </div>
+                {/* ColorKey ALWAYS visible below the grid */}
+                <div className="select-none flex w-full items-center justify-end mt-0.5">
+                  <ColorKey
+                    data={gridData}
+                    loading={keyLoading}
+                    onActionClick={(action) => onActionClick(action, file)}
+                  />
+                </div>
 
-                    {displayData && TopBadges}
-                  </>
-                ) : (
-                  <>
-                    {/* Clean placeholder with badges */}
-                    <div className="w-full flex items-center justify-center py-3">
-                      {alive ? <CardsPlaceholder size={Math.min(48, (plateWidth ?? 220) * 0.22)} /> : null}
-                    </div>
-                    {displayData && TopBadges}
-                  </>
-                )}
+                {displayData && TopBadges}
               </>
             )}
           </div>

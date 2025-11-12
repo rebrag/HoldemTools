@@ -279,7 +279,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
             </div>
           ) : (
             /* Landscape */
-            <div className="flex flex-col gap-8">
+            <div className="flex flex-col gap-4">
               {rows.map((row, rowIdx) => {
                 const plates = row.filter(([posKey]) => posKey) as (readonly [string, string])[];
                 if (!plates.length) return null;

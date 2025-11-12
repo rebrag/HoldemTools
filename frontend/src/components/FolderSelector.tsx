@@ -6,6 +6,12 @@ import { logUserAction } from "../logEvent";
 import { sortFoldersLikeSelector } from "../utils/folderSort";
 import type { FolderMetadata } from "../hooks/useFolders";
 import FolderSelectorDropdown from "./FolderSelectorDropdown";
+import {
+  requiredTierForFolder,
+  isTierSufficient,
+  type Tier,
+  type FolderMetaLike,
+} from "../lib/stripeTiers";
 
 /* ────────────────────────────────────────────────────────────────── */
 /*  Types                                                             */
@@ -16,6 +22,9 @@ export interface FolderSelectorProps {
   onFolderSelect: (folder: string) => void;
   /** metadata for each folder (from useFolders) */
   metaByFolder?: Record<string, FolderMetadata | null>;
+
+  /** NEW: current user tier used to pre-mark locked folders; defaults to "free" */
+  userTier?: Tier;
 }
 
 type FTFilter = "any" | "only" | "exclude";
@@ -122,6 +131,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   currentFolder,
   onFolderSelect,
   metaByFolder,
+  userTier = "free",
 }) => {
   const [user] = useAuthState(auth);
 
@@ -245,6 +255,18 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
     const ordered = DESIRED_HEADER_ORDER.filter((pos) => present.has(pos));
     return ordered.length ? ordered : DESIRED_HEADER_ORDER;
   }, [items]);
+
+  // NEW: compute which of the *visible* items are locked for this userTier
+  const lockedSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const f of items) {
+      const meta = (metaByFolder?.[f] ?? undefined) as FolderMetaLike | undefined;
+      const need = requiredTierForFolder(f, meta);
+      const ok = isTierSufficient(userTier ?? "free", need);
+      if (!ok) s.add(f);
+    }
+    return s;
+  }, [items, metaByFolder, userTier]);
 
   const numSims = items.length;
 
@@ -411,6 +433,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
           onChoose={choose}
           metaByFolder={metaByFolder}
           parseFolderSafe={parseFolderSafe}
+          lockedSet={lockedSet}
         />
       </div>
     </div>
