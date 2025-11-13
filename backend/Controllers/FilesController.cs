@@ -134,12 +134,12 @@ namespace PokerRangeAPI2.Controllers
         // --------------------------------------------------------------------
         [HttpGet("foldersWithMetadata")]
         public async Task<ActionResult<List<FolderWithMetadataDto>>> GetFoldersWithMetadata(
-            [FromQuery] bool includeMissing = false)
+    [FromQuery] bool includeMissing = false)
         {
-            var results = new List<FolderWithMetadataDto>();
             var folders = await GetFolderListInternal();
 
-            foreach (var folder in folders)
+            // Create tasks for all folders at once
+            var tasks = folders.Select(async folder =>
             {
                 var meta = await TryReadFolderMetadata(folder);
                 int seats = CountNumericChunks(folder);
@@ -160,26 +160,35 @@ namespace PokerRangeAPI2.Controllers
                     meta.Seats = seats;
                     meta.Tags = tags.ToArray();
 
-                    results.Add(new FolderWithMetadataDto
+                    return new FolderWithMetadataDto
                     {
                         Folder = folder,
                         Metadata = meta,
                         HasMetadata = true
-                    });
+                    };
                 }
-                else if (includeMissing)
+
+                if (!includeMissing)
                 {
-                    results.Add(new FolderWithMetadataDto
-                    {
-                        Folder = folder,
-                        Metadata = null,
-                        HasMetadata = false
-                    });
+                    // Skip this folder entirely
+                    return null;
                 }
-            }
+
+                return new FolderWithMetadataDto
+                {
+                    Folder = folder,
+                    Metadata = null,
+                    HasMetadata = false
+                };
+            });
+
+            var results = (await Task.WhenAll(tasks))
+                .Where(r => r != null)!
+                .ToList();
 
             return Ok(results.OrderBy(r => r.Folder).ToList());
         }
+
 
         // ========= Helpers =========
 
