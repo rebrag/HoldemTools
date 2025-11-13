@@ -99,8 +99,8 @@ namespace PokerRangeAPI2.Controllers
         }
 
         // --------------------------------------------------------------------
-        // NEW: GET api/files/{folder}/metadata – parsed, typed metadata summary
-        // Returns: { name, ante, isIcm, icmCount }
+        // GET api/files/{folder}/metadata – parsed, typed metadata summary
+        // Returns: { name, ante, isIcm, icmCount, seats, tags, icmPayouts }
         // --------------------------------------------------------------------
         [HttpGet("{folderName}/metadata")]
         public async Task<ActionResult<FolderMetadataDto>> GetFolderMetadata(string folderName)
@@ -109,12 +109,28 @@ namespace PokerRangeAPI2.Controllers
             if (meta == null)
                 return NotFound($"metadata.json not found in folder '{folderName}'.");
 
+            // Enrich with seats + tags here as well, so this endpoint stays useful.
+            int seats = CountNumericChunks(folderName);
+            var tags = new List<string>();
+
+            if (seats == 2)
+                tags.Add("HU");
+
+            if (IsFinalTable(meta, seats))
+                tags.Add("FT");
+
+            if (meta.IsIcm)
+                tags.Add("ICM");
+
+            meta.Seats = seats;
+            meta.Tags = tags.ToArray();
+
             return Ok(meta);
         }
 
         // --------------------------------------------------------------------
-        // NEW: GET api/files/foldersWithMetadata – list of folders with metadata summary
-        // Skips folders that do not contain metadata.json unless includeMissing=true
+        // GET api/files/foldersWithMetadata – list of folders with metadata summary
+        // Includes tags + seats so frontend can sort & badge instantly.
         // --------------------------------------------------------------------
         [HttpGet("foldersWithMetadata")]
         public async Task<ActionResult<List<FolderWithMetadataDto>>> GetFoldersWithMetadata(
@@ -126,8 +142,24 @@ namespace PokerRangeAPI2.Controllers
             foreach (var folder in folders)
             {
                 var meta = await TryReadFolderMetadata(folder);
+                int seats = CountNumericChunks(folder);
+
                 if (meta != null)
                 {
+                    var tags = new List<string>();
+
+                    if (seats == 2)
+                        tags.Add("HU");
+
+                    if (IsFinalTable(meta, seats))
+                        tags.Add("FT");
+
+                    if (meta.IsIcm)
+                        tags.Add("ICM");
+
+                    meta.Seats = seats;
+                    meta.Tags = tags.ToArray();
+
                     results.Add(new FolderWithMetadataDto
                     {
                         Folder = folder,
@@ -188,6 +220,7 @@ namespace PokerRangeAPI2.Controllers
             double? ante = null;
             bool isIcm = false;
             int icmCount = 0;
+            double[]? icmPayouts = null;
 
             JsonElement root = doc.RootElement;
 
@@ -212,6 +245,16 @@ namespace PokerRangeAPI2.Controllers
                 {
                     icmCount = icmProp.GetArrayLength();
                     isIcm = icmCount > 0;
+
+                    var list = new List<double>(icmCount);
+                    foreach (var el in icmProp.EnumerateArray())
+                    {
+                        if (el.ValueKind == JsonValueKind.Number && el.TryGetDouble(out var val))
+                        {
+                            list.Add(val);
+                        }
+                    }
+                    icmPayouts = list.ToArray();
                 }
                 else if (icmProp.ValueKind == JsonValueKind.String &&
                          string.Equals(icmProp.GetString(), "none", StringComparison.OrdinalIgnoreCase))
@@ -238,8 +281,48 @@ namespace PokerRangeAPI2.Controllers
                 Name = name ?? folderName,
                 Ante = ante ?? 0,
                 IsIcm = isIcm,
-                IcmCount = icmCount
+                IcmCount = icmCount,
+                IcmPayouts = icmPayouts,
+                Seats = 0,             // filled later
+                Tags = Array.Empty<string>() // filled later
             };
+        }
+
+        private static int CountNumericChunks(string folderName)
+        {
+            if (string.IsNullOrWhiteSpace(folderName)) return 0;
+
+            var parts = folderName.Split('_', StringSplitOptions.RemoveEmptyEntries);
+            int count = 0;
+
+            foreach (var part in parts)
+            {
+                var digits = new string(part.TakeWhile(char.IsDigit).ToArray());
+                if (digits.Length == 0) continue;
+                if (int.TryParse(digits, out _))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static bool IsFinalTable(FolderMetadataDto meta, int seats)
+        {
+            if (!string.IsNullOrWhiteSpace(meta.Name) &&
+                meta.Name.IndexOf("FT", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            // Heuristic: many seats + many payouts
+            if (meta.IsIcm && meta.IcmCount >= 6 && seats >= 6)
+            {
+                return true;
+            }
+
+            return false;
         }
     }
 
@@ -251,6 +334,13 @@ namespace PokerRangeAPI2.Controllers
         public double Ante { get; set; }
         public bool IsIcm { get; set; }
         public int IcmCount { get; set; }
+
+        // NEW: derived info
+        public int Seats { get; set; }
+        public string[] Tags { get; set; } = Array.Empty<string>();
+
+        // Optional: full payout structure for ICM sims
+        public double[]? IcmPayouts { get; set; }
     }
 
     public sealed class FolderWithMetadataDto
