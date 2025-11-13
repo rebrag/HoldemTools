@@ -3,6 +3,7 @@ using Azure.Storage.Blobs.Models;
 using Azure.Storage.Files.DataLake;
 using Azure.Storage.Files.DataLake.Models;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using System;
 using System.Collections.Generic;
@@ -20,9 +21,12 @@ namespace PokerRangeAPI2.Controllers
         private readonly DataLakeServiceClient _dataLakeServiceClient;
         private readonly BlobServiceClient _blobServiceClient;
         private readonly string _containerName;
+        private readonly IMemoryCache _cache;
 
-        public FilesController(IConfiguration configuration)
+        public FilesController(IConfiguration configuration, IMemoryCache cache)
         {
+            _cache = cache;
+
             // 1) Read configuration (user-secrets / env vars / appsettings.*.json)
             string? connectionString = configuration["AzureStorage:ConnectionString"];
             _containerName = configuration["AzureStorage:ContainerName"] ?? "onlinerangedata";
@@ -109,14 +113,13 @@ namespace PokerRangeAPI2.Controllers
             if (meta == null)
                 return NotFound($"metadata.json not found in folder '{folderName}'.");
 
-            // Enrich with seats + tags here as well, so this endpoint stays useful.
             int seats = CountNumericChunks(folderName);
             var tags = new List<string>();
 
             if (seats == 2)
                 tags.Add("HU");
 
-            if (IsFinalTable(meta, seats))
+            if (IsFinalTable(meta))
                 tags.Add("FT");
 
             if (meta.IsIcm)
@@ -131,14 +134,21 @@ namespace PokerRangeAPI2.Controllers
         // --------------------------------------------------------------------
         // GET api/files/foldersWithMetadata – list of folders with metadata summary
         // Includes tags + seats so frontend can sort & badge instantly.
+        // Uses parallel fetch + in-memory cache for speed.
         // --------------------------------------------------------------------
         [HttpGet("foldersWithMetadata")]
         public async Task<ActionResult<List<FolderWithMetadataDto>>> GetFoldersWithMetadata(
-    [FromQuery] bool includeMissing = false)
+            [FromQuery] bool includeMissing = false)
         {
+            var cacheKey = $"foldersWithMetadata:{includeMissing}";
+
+            if (_cache.TryGetValue(cacheKey, out List<FolderWithMetadataDto>? cached) && cached != null)
+            {
+                return Ok(cached);
+            }
+
             var folders = await GetFolderListInternal();
 
-            // Create tasks for all folders at once
             var tasks = folders.Select(async folder =>
             {
                 var meta = await TryReadFolderMetadata(folder);
@@ -151,7 +161,7 @@ namespace PokerRangeAPI2.Controllers
                     if (seats == 2)
                         tags.Add("HU");
 
-                    if (IsFinalTable(meta, seats))
+                    if (IsFinalTable(meta))
                         tags.Add("FT");
 
                     if (meta.IsIcm)
@@ -170,7 +180,6 @@ namespace PokerRangeAPI2.Controllers
 
                 if (!includeMissing)
                 {
-                    // Skip this folder entirely
                     return null;
                 }
 
@@ -184,11 +193,16 @@ namespace PokerRangeAPI2.Controllers
 
             var results = (await Task.WhenAll(tasks))
                 .Where(r => r != null)!
-                .ToList();
+                .OrderBy(r => r!.Folder)
+                .ToList()!;
 
-            return Ok(results.OrderBy(r => r.Folder).ToList());
+            _cache.Set(cacheKey, results, new MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10)
+            });
+
+            return Ok(results);
         }
-
 
         // ========= Helpers =========
 
@@ -292,7 +306,7 @@ namespace PokerRangeAPI2.Controllers
                 IsIcm = isIcm,
                 IcmCount = icmCount,
                 IcmPayouts = icmPayouts,
-                Seats = 0,             // filled later
+                Seats = 0,                  // filled later
                 Tags = Array.Empty<string>() // filled later
             };
         }
@@ -317,21 +331,16 @@ namespace PokerRangeAPI2.Controllers
             return count;
         }
 
-        private static bool IsFinalTable(FolderMetadataDto meta, int seats)
+        /// <summary>
+        /// A sim/solution is FT-only if metadata.Name contains "FT" (case-insensitive).
+        /// ICM-only sims are NOT considered FT.
+        /// </summary>
+        private static bool IsFinalTable(FolderMetadataDto? meta)
         {
-            if (!string.IsNullOrWhiteSpace(meta.Name) &&
-                meta.Name.IndexOf("FT", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                return true;
-            }
+            if (meta is null) return false;
 
-            // Heuristic: many seats + many payouts
-            if (meta.IsIcm && meta.IcmCount >= 6 && seats >= 6)
-            {
-                return true;
-            }
-
-            return false;
+            var name = meta.Name ?? string.Empty;
+            return name.IndexOf("FT", StringComparison.OrdinalIgnoreCase) >= 0;
         }
     }
 
