@@ -209,7 +209,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
 
     let list: string[] = [];
     try {
-      list = sortFoldersLikeSelector(filtered);
+      list = sortFoldersLikeSelector(filtered, metaByFolder);
     } catch {
       list = filtered.slice().sort((a, b) =>
         a.localeCompare(b, undefined, { sensitivity: "base" })

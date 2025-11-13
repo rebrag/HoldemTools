@@ -57,6 +57,24 @@ const compareNumArraysLex = (a: number[], b: number[]) => {
   return a.length - b.length;
 };
 
+/* Tag helpers – we only care about FT / HU for sorting */
+type MetaLite = { tags?: string[]; seats?: number } | null | undefined;
+
+const hasTag = (meta: MetaLite, tag: string): boolean => {
+  const tags = meta?.tags;
+  if (!tags) return false;
+  const u = tag.toUpperCase();
+  return tags.some((t) => t.toUpperCase() === u);
+};
+
+const isFTMeta = (meta: MetaLite): boolean => hasTag(meta, "FT");
+
+const isHUMeta = (meta: MetaLite): boolean => {
+  if (hasTag(meta, "HU")) return true;
+  if (meta?.seats === 2) return true;
+  return false;
+};
+
 /* -------------------------------------------------- */
 /*  Emit *all* matches for a rotation (stable)        */
 /* -------------------------------------------------- */
@@ -131,12 +149,20 @@ const orderGroupByRotation = (group: string[]): string[] => {
 /* --------------------------------------------------------------- */
 /**
  * Global ordering:
- *   A) All-Same constellations with seats >= 3: by seats DESC, then constellation ASC
- *   B) Remaining constellations (mixed + any HU/all-same): by seats DESC, then constellation ASC
- *   - Within each constellation bucket: rotation ordering
+ *   1) Non-FT multiway constellations
+ *   2) FT multiway constellations
+ *   3) HU constellations (2-handed)
+ *
+ * Within each bucket:
+ *   - Seats DESC, then constellation ASC.
+ *   - Within each constellation: rotation ordering.
+ *
  * Malformed folders (with <2 numeric chunks) are pushed to the end alphabetically.
  */
-export const sortFoldersLikeSelector = (folders: string[]): string[] => {
+export const sortFoldersLikeSelector = (
+  folders: string[],
+  metaByFolder?: Record<string, MetaLite>
+): string[] => {
   // Split into valid vs invalid first to avoid crashes.
   const valid: string[] = [];
   const invalid: string[] = [];
@@ -160,6 +186,7 @@ export const sortFoldersLikeSelector = (folders: string[]): string[] => {
     allSame: boolean;
     seats: number;
     constellation: number[]; // sorted asc
+    kind: "nonFT" | "FT" | "HU";
   };
 
   // Bucketize valid only
@@ -167,14 +194,23 @@ export const sortFoldersLikeSelector = (folders: string[]): string[] => {
   for (const f of valid) {
     const key = constellationKey(f);
     const sortedStacks = getStacksLoose(f).slice().sort((a, b) => a - b);
+    const seats = sortedStacks.length;
+
+    const meta = metaByFolder?.[f];
+    const isHU = isHUMeta(meta) || isHUSimFolder(f);
+    const isFT = isFTMeta(meta);
+
+    const kind: Bucket["kind"] = isHU ? "HU" : isFT ? "FT" : "nonFT";
+
     let b = byKey.get(key);
     if (!b) {
       b = {
         key,
         group: [],
         allSame: isAllSameFolder(f),
-        seats: sortedStacks.length,
+        seats,
         constellation: sortedStacks,
+        kind,
       };
       byKey.set(key, b);
     }
@@ -184,22 +220,31 @@ export const sortFoldersLikeSelector = (folders: string[]): string[] => {
 
   const allBuckets = Array.from(byKey.values());
 
+  const bucketRank = (b: Bucket): number => {
+    // nonFT (0) -> FT (1) -> HU (2)
+    if (b.kind === "HU") return 2;
+    if (b.kind === "FT") return 1;
+    return 0; // nonFT
+  };
+
+  const cmpBuckets = (a: Bucket, b: Bucket) => {
+    const br = bucketRank(a) - bucketRank(b);
+    if (br !== 0) return br;
+
+    if (a.seats !== b.seats) return b.seats - a.seats; // seats DESC
+    return compareNumArraysLex(a.constellation, b.constellation);
+  };
+
   // Phase A: All-Same with seats >= 3
   const phaseA = allBuckets
     .filter((b) => b.allSame && b.seats >= 3)
-    .sort((a, b) => {
-      if (a.seats !== b.seats) return b.seats - a.seats; // seats DESC
-      return compareNumArraysLex(a.constellation, b.constellation);
-    });
+    .sort(cmpBuckets);
 
   // Phase B: everything else
   const usedKeys = new Set(phaseA.map((b) => b.key));
   const phaseB = allBuckets
     .filter((b) => !usedKeys.has(b.key))
-    .sort((a, b) => {
-      if (a.seats !== b.seats) return b.seats - a.seats; // seats DESC
-      return compareNumArraysLex(a.constellation, b.constellation);
-    });
+    .sort(cmpBuckets);
 
   // Flatten with rotation ordering
   const out: string[] = [];

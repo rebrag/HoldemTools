@@ -1,7 +1,8 @@
 // src/components/Solver.tsx
 import { useState, useCallback, useLayoutEffect, useEffect, useMemo, useRef } from "react";
+import type { ChangeEvent } from "react";
 import PlateGrid from "./PlateGrid";
-import { actionToNumberMap, numberToActionMap, getActionNumber } from "../utils/constants";
+import { actionToNumberMap } from "../utils/constants";
 import { getInitialMapping } from "../utils/getInitialMapping";
 import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import useWindowDimensions from "../hooks/useWindowDimensions";
@@ -17,7 +18,6 @@ import LoginSignupModal from "./LoginSignupModal";
 import RandomizeButton from "./RandomizeButton";
 import FolderSelector from "./FolderSelector";
 import ProUpsell from "./ProUpsell";
-// import { useTier } from "../hooks/useTier";
 import {
   requiredTierForFolder,
   getPriceIdForTier,
@@ -29,18 +29,91 @@ import {
 import { startSubscriptionCheckout } from "../lib/checkout";
 import { uploadGameTree } from "../lib/uploadGameTree";
 import { useCurrentTier } from "../context/TierContext";
+import CardPicker from "./CardPicker";
+import PlayingCard from "./PlayingCard";
+import { handleActionClickImpl, type PendingFlopUpload } from "../lib/handleActionClick";
+
+/* ────────────────────────────────────────────────────────────── */
+/*  Card constants + flop input parsing                          */
+/* ────────────────────────────────────────────────────────────── */
+
+const RANKS = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"] as const;
+const SUITS = ["h", "d", "c", "s"] as const;
+const ALL_CARDS: string[] = RANKS.flatMap((r) => SUITS.map((s) => `${r}${s}`));
+
+function parseFlopInputString(raw: string): { cards: string[]; error: string | null } {
+  // Strip spaces, commas and other separators, keep only letters/numbers
+  const stripped = raw.replace(/[^a-zA-Z0-9]/g, "").trim();
+
+  if (!stripped) return { cards: [], error: null };
+
+  const upper = stripped.toUpperCase();
+
+  // Each card is 2 chars: rank + suit, max 3 cards => 6 chars
+  if (upper.length > 6) {
+    return {
+      cards: [],
+      error: 'Please enter at most 3 cards, e.g. "AhKd9c" or "Ah Kd 9c".',
+    };
+  }
+
+  if (upper.length % 2 !== 0) {
+    return {
+      cards: [],
+      error: 'Finish the card you\'re typing, e.g. "9c".',
+    };
+  }
+
+  const parsed: string[] = [];
+
+  for (let i = 0; i < upper.length; i += 2) {
+    const rank = upper[i];
+    const suitChar = upper[i + 1];
+
+    if (!RANKS.includes(rank as (typeof RANKS)[number])) {
+      return {
+        cards: [],
+        error: `Unknown rank "${rank}". Use A,K,Q,J,T,9..2.`,
+      };
+    }
+
+    const suitLower = suitChar.toLowerCase();
+    if (!SUITS.includes(suitLower as (typeof SUITS)[number])) {
+      return {
+        cards: [],
+        error: `Unknown suit "${suitChar}". Use h,d,c,s.`,
+      };
+    }
+
+    const code = `${rank}${suitLower}`;
+    if (parsed.includes(code)) {
+      return {
+        cards: [],
+        error: "Cards must be unique.",
+      };
+    }
+
+    parsed.push(code);
+  }
+
+  return { cards: parsed, error: null };
+}
+
+
 
 const tourSteps = [
   { element: '[data-intro-target="folder-selector"]', intro: "Choose a pre-flop sim here.", position: "bottom" },
   { element: '[data-intro-target="color-key-btn"]', intro: "Click on an action to see how other players should react.", position: "bottom" },
 ];
 
-const Solver = ({ user }: { user: User | null }) => {
+type SolverProps = { user: User | null };
+
+const Solver = ({ user }: SolverProps) => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
   const { windowWidth, windowHeight } = useWindowDimensions();
   const uid = user?.uid ?? null;
-  // const { tier, loading: tierLoading } = useTier(uid);
   const { tier, loading: tierLoading } = useCurrentTier();
+
   const [folder, setFolder] = useState<string>("23UTG_23UTG1_23LJ_23HJ_23CO_23BTN_23SB_23BB");
   const [plateData, setPlateData] = useState<Record<string, JsonData>>({});
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>({});
@@ -48,9 +121,11 @@ const Solver = ({ user }: { user: User | null }) => {
   const [lastRangePos, setLastRangePos] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [preflopLine, setPreflopLine] = useState<string[]>(["Root"]);
+
   const playerCount = useMemo(() => (folder ? folder.split("_").length : 1), [folder]);
   const [alivePlayers, setAlivePlayers] = useState<Record<string, boolean>>({});
   const [activePlayer, setActivePlayer] = useState<string>("");
+
   const [metadata, setMetadata] = useState<{ name: string; ante: number; icm: number[] }>({
     name: "",
     ante: 0,
@@ -59,6 +134,7 @@ const Solver = ({ user }: { user: User | null }) => {
   const isICMSim = Array.isArray(metadata.icm) && metadata.icm.length > 0;
   const [potSize, setPotSize] = useState<number>(0);
   const [playerBets, setPlayerBets] = useState<Record<string, number>>({});
+
   const [tourRun, setTourRun] = useState(false);
   const [tourReady, setTourReady] = useState(false);
   const [pendingFolder, setPendingFolder] = useState<string | null>(null);
@@ -66,6 +142,13 @@ const Solver = ({ user }: { user: User | null }) => {
   const [showLoginOverlay, setShowLoginOverlay] = useState(false);
   const [showProModal, setShowProModal] = useState(false);
   const [upsellBusy, setUpsellBusy] = useState(false);
+
+  // NEW: pending flop upload + flop modal state
+  const [pendingFlopUpload, setPendingFlopUpload] = useState<PendingFlopUpload | null>(null);
+  const [showFlopModal, setShowFlopModal] = useState(false);
+  const [flopCards, setFlopCards] = useState<string[]>([]); // exact user-picked order
+  const [flopInput, setFlopInput] = useState<string>(""); // NEW: text input for flop
+  const [flopInputError, setFlopInputError] = useState<string | null>(null); // NEW: error text
 
   // NEW: singleRangeView toggle (persist)
   const [singleRangeView, setSingleRangeView] = useState<boolean>(() => {
@@ -178,23 +261,26 @@ const Solver = ({ user }: { user: User | null }) => {
   }, [tourReady]);
 
   // Open folder util
-  const actuallyOpenFolder = useCallback((selectedFolder: string) => {
-    const newPlayerCount = selectedFolder.split("_").length;
-    const freshPlates = defaultPlateNames;
-    const freshMapping = getInitialMapping(newPlayerCount);
-    setLoadedPlates(freshPlates);
-    setPlateMapping(freshMapping);
-    setPlateData({});
-    setFolder(selectedFolder);
-    setPreflopLine(["Root"]);
-    setRandomFillEnabled(false);
-    const initialAlive: Record<string, boolean> = {};
-    Object.keys(freshMapping).forEach((pos) => (initialAlive[pos] = true));
-    setAlivePlayers(initialAlive);
-    const bbIdx = Object.keys(freshMapping).indexOf("BB");
-    const nextIdx = (bbIdx + 1) % Object.keys(freshMapping).length;
-    setActivePlayer(Object.keys(freshMapping)[nextIdx]);
-  }, [defaultPlateNames]);
+  const actuallyOpenFolder = useCallback(
+    (selectedFolder: string) => {
+      const newPlayerCount = selectedFolder.split("_").length;
+      const freshPlates = defaultPlateNames;
+      const freshMapping = getInitialMapping(newPlayerCount);
+      setLoadedPlates(freshPlates);
+      setPlateMapping(freshMapping);
+      setPlateData({});
+      setFolder(selectedFolder);
+      setPreflopLine(["Root"]);
+      setRandomFillEnabled(false);
+      const initialAlive: Record<string, boolean> = {};
+      Object.keys(freshMapping).forEach((pos) => (initialAlive[pos] = true));
+      setAlivePlayers(initialAlive);
+      const bbIdx = Object.keys(freshMapping).indexOf("BB");
+      const nextIdx = (bbIdx + 1) % Object.keys(freshMapping).length;
+      setActivePlayer(Object.keys(freshMapping)[nextIdx]);
+    },
+    [defaultPlateNames]
+  );
 
   useEffect(() => {
     if (!uid || !pendingFolder || tierLoading) return;
@@ -283,7 +369,6 @@ const Solver = ({ user }: { user: User | null }) => {
     async (selectedFolder: string) => {
       if (!selectedFolder || selectedFolder === folder) return;
 
-      // Not logged in → ask to log in
       if (!uid) {
         setPendingFolder(selectedFolder);
         setPendingTier(requiredTierForFolder(selectedFolder)); // rough guess
@@ -291,7 +376,6 @@ const Solver = ({ user }: { user: User | null }) => {
         return;
       }
 
-      // Try to load metadata to classify FT/ICM correctly before showing upsell
       let meta: FolderMetaLike | null = null;
       try {
         const res = await axios.get<FolderMetaLike>(
@@ -315,13 +399,11 @@ const Solver = ({ user }: { user: User | null }) => {
         }
       }
 
-      // Allowed → open
       actuallyOpenFolder(selectedFolder);
     },
     [uid, folder, API_BASE_URL, tier, tierLoading, actuallyOpenFolder]
   );
 
-  // Start checkout
   const beginUpgrade = useCallback(async () => {
     if (!uid) {
       setShowProModal(false);
@@ -343,7 +425,6 @@ const Solver = ({ user }: { user: User | null }) => {
         cancelUrl: `${window.location.origin}/billing`,
         allowPromotionCodes: true,
       });
-      // redirect handled by the extension
     } catch (err) {
       console.error("Checkout failed:", err);
       setUpsellBusy(false);
@@ -378,283 +459,60 @@ const Solver = ({ user }: { user: User | null }) => {
       });
   }, [folder, API_BASE_URL, playerCount]);
 
-  const convertRangeText = (data: JsonData | undefined, action: string): string => {
-    if (!data) return "";
-    const key = getActionNumber(action) ?? action;
-    const alt = action;
-    const bucket = data[key] || data[alt];
-    if (!bucket) return "";
-    return Object.entries(bucket)
-      .filter(([, vals]) => vals[0] > 0)
-      .map(([hand, vals]) => `${hand}:${vals[0]}`)
-      .join(",");
-  };
-
-  const appendPlateNames = useCallback(
-    (currentFiles: string[], clickedIndex: number, actionNumber: string, availableFiles: string[]): string[] => {
-      const clickedFile = currentFiles[clickedIndex];
-      if (!clickedFile) return currentFiles;
-      const prefix = clickedFile.replace(".json", "");
-      const baseName = prefix === "root" ? actionNumber : `${prefix}.${actionNumber}`;
-      const newFiles: string[] = [];
-      const newFilesWider: string[] = [];
-      const baseFileName = `${baseName}.json`;
-      availableFiles.forEach((file) => {
-        if (file === baseFileName && !currentFiles.includes(file)) newFiles.push(file);
-      });
-      const regex = new RegExp(`^${baseName}(?:\\.0)+\\.json$`);
-      availableFiles.forEach((file) => {
-        if (regex.test(file) && !currentFiles.includes(file)) newFiles.push(file);
-      });
-      availableFiles.forEach((file) => {
-        if (file === baseFileName) newFilesWider.push(file);
-      });
-      availableFiles.forEach((file) => {
-        if (regex.test(file)) newFilesWider.push(file);
-      });
-      newFilesWider.forEach((file) => {
-        setPlateMapping((prev) => ({ ...prev, [plateData[file]?.Position]: file }));
-      });
-      return [...currentFiles, ...newFiles];
-    },
-    [plateData]
-  );
-
   const handleActionClick = useCallback(
     (action: string, fileName: string) => {
-      const plateName = loadedPlates.find((name) => name === fileName);
-      if (!plateName) return;
-      if (
-        lastClickRef.current &&
-        lastClickRef.current.plate === fileName &&
-        lastClickRef.current.action === action
-      ) {
-        return;
-      }
-
-      // ───────────────── helpers ─────────────────
-      const toLiteralLines = (vals: (string | number)[]) =>
-        vals.map(v => String(v).trim()).join("\\n");
-
-      // If you track board somewhere, provide it here
-      const boardStr: string | undefined = "5d Tc Js";
-
-      // ─────────────── existing flow ───────────────
-      const actionNumber = getActionNumber(action) ?? "";
-      const clickedIndex = loadedPlates.findIndex((name) => name === plateName);
-      const newLoadedPlates = appendPlateNames(
-        loadedPlates,
-        clickedIndex,
-        actionNumber,
-        availableJsonFiles
-      );
-      setLoadedPlates((prev) => [...new Set([...prev, ...newLoadedPlates])]);
-
-      const parts = fileName.replace(".json", "").split(".");
-      const aliveList = [...positionOrder];
-      let activeIndex = playerCount === 2 ? 0 : 2;
-
-      for (const part of parts) {
-        if (part === "root") continue;
-        const n = parseInt(part, 10);
-        if (n === 0) {
-          aliveList.splice(activeIndex, 1);
-          if (aliveList.length > 0 && activeIndex >= aliveList.length) {
-            activeIndex = 0;
-          }
-        } else {
-          activeIndex = (activeIndex + 1) % aliveList.length;
-        }
-      }
-
-      const newAliveMap = Object.fromEntries(
-        positionOrder.map((pos) => [pos, aliveList.includes(pos)])
-      ) as Record<string, boolean>;
-      setAlivePlayers(newAliveMap);
-      setActivePlayer(aliveList[(activeIndex + 1) % aliveList.length]);
-
-      const actingPosition = plateData[fileName]?.Position;
-      const currentBet = playerBets[actingPosition] || 0;
-      const stackSize = plateData[fileName]?.bb || 0;
-
-      if (action === "Fold") {
-        setAlivePlayers((prev) => ({ ...prev, [actingPosition]: false }));
-      }
-
-      let newBetAmount = currentBet;
-      if (action === "Min") newBetAmount = 2;
-      else if (action === "ALLIN") newBetAmount = stackSize;
-      else if (action.startsWith("Raise ")) {
-        const val = action.split(" ")[1];
-        const maxBet = Math.max(...Object.values(playerBets));
-        newBetAmount = val.endsWith("bb")
-          ? maxBet + parseFloat(val)
-          : maxBet + (parseFloat(val) / 100) * (potSize + maxBet);
-      } else if (action === "Call") {
-        const amountToCall = Math.max(...Object.values(playerBets));
-        newBetAmount = Math.min(amountToCall, stackSize);
-      }
-
-      const newPotSize = potSize + Math.max(0, newBetAmount - currentBet);
-      setPotSize(newPotSize);
-      setPlayerBets((prev) => ({ ...prev, [actingPosition]: newBetAmount }));
-
-      if (action === "Call") {
-        const callData = plateData[fileName];
-        const callingPos = callData?.Position;
-
-        const [range0, range1] =
-          positionOrder.indexOf(callingPos ?? "") < positionOrder.indexOf(lastRangePos)
-            ? [convertRangeText(callData, action), lastRange]
-            : [lastRange, convertRangeText(callData, action)];
-
-        // Build stacks in chips*100 (\n as literal backslashes)
-        const stackMap: Record<string, number> = Object.fromEntries(
-          positionOrder.map((pos) => {
-            const plate = plateMapping[pos];
-            const bb = plateData[plate]?.bb ?? 0;
-            const bet = pos === actingPosition ? newBetAmount : playerBets[pos] ?? 0;
-            return [pos, Math.round((bb - bet) * 100)];
-          })
-        );
-
-        let firstPos = lastRangePos;
-        let secondPos = actingPosition;
-        if (!firstPos) firstPos = secondPos;
-        if (
-          firstPos &&
-          secondPos &&
-          positionOrder.indexOf(firstPos) < positionOrder.indexOf(secondPos)
-        ) {
-          [firstPos, secondPos] = [secondPos, firstPos];
-        }
-
-        const stackEntries = new Set([firstPos, secondPos]);
-        const otherStacks = positionOrder
-          .filter((pos) => !stackEntries.has(pos))
-          .map((pos) => stackMap[pos] ?? 0);
-
-        const stacksLiteral = toLiteralLines([
-          stackMap[firstPos!],
-          stackMap[secondPos!],
-          ...otherStacks,
-        ]);
-
-        const payoutsLiteral = Array.isArray(metadata.icm)
-          ? toLiteralLines(metadata.icm.map((v: number) => Math.round(Number(v) * 10)))
-          : "0\\n0\\n0";
-
-        const effStack = Math.min(
-          ...positionOrder
-            .filter((pos) => newAliveMap[pos])
-            .map((pos) => {
-              const stack = plateData[plateMapping[pos]]?.bb ?? 0;
-              const bet = pos === actingPosition ? newBetAmount : playerBets[pos] ?? 0;
-              return stack - bet;
-            })
-        );
-        const effStackChips = Math.round(effStack * 100);
-        const potChips = Math.round(newPotSize * 100);
-
-        const capPerStreetLiteral = toLiteralLines([3, 0, 0]);
-
-        const lines: string[] = [
-          "#Type#NoLimit",
-          `#Range0#${range0}`,
-          `#Range1#${range1}`,
-          "#ICM.ICMFormat#Pio ICM structure",
-          isICMSim ? "#ICM.Enabled#True" : undefined,
-          `#ICM.Payouts#${payoutsLiteral}`,
-          `#ICM.Stacks#${stacksLiteral}`,
-          boardStr ? `#Board#${boardStr}` : undefined,
-          `#Pot#${potChips}`,
-          `#EffectiveStacks#${effStackChips}`,
-          "#AllinThreshold#60",
-          "#AddAllinOnlyIfLessThanThisTimesThePot#250",
-          "#MergeSimilarBets#True",
-          "#MergeSimilarBetsThreshold#12",
-          "#CapEnabled#True",
-          `#CapPerStreet#${capPerStreetLiteral}`,
-          "#CapMode#NoLimit",
-          "#FlopConfig.RaiseSize#33",
-          "#FlopConfig.AddAllin#True",
-          "#TurnConfig.BetSize#50",
-          "#TurnConfig.RaiseSize#a",
-          "#TurnConfig.AddAllin#True",
-          "#RiverConfig.BetSize#30 66",
-          "#RiverConfig.RaiseSize#a",
-          "#RiverConfig.AddAllin#True",
-          "#RiverConfig.DonkBetSize#30",
-          "#FlopConfigIP.BetSize#25",
-          "#FlopConfigIP.RaiseSize#a",
-          "#FlopConfigIP.AddAllin#True",
-          "#TurnConfigIP.BetSize#50",
-          "#TurnConfigIP.RaiseSize#a",
-          "#TurnConfigIP.AddAllin#True",
-          "#RiverConfigIP.BetSize#30 66",
-          "#RiverConfigIP.RaiseSize#a",
-          "#RiverConfigIP.AddAllin#True",
-        ].filter(Boolean) as string[];
-
-        const adjustedText = lines.join("\n");
-
-        (async () => {
-          try {
-            const result = await uploadGameTree(API_BASE_URL, {
-              folder,
-              line: preflopLine,
-              actingPos: actingPosition ?? "",
-              isICM: isICMSim,
-              text: adjustedText,
-              uid,
-            });
-            console.log("✅ Game tree uploaded:", result?.path ?? "(no path returned)");
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          } catch (err: any) {
-            console.warn("⚠️ Failed to upload game tree:", err?.message ?? err);
-          }
-        })();
-
-      } else if (action !== "ALLIN") {
-        const data = plateData[fileName];
-        const currentRange = convertRangeText(data, action);
-        if (currentRange) {
-          setLastRange(currentRange);
-          setLastRangePos(data.Position);
-        }
-      }
-
-      setPreflopLine([
-        "Root",
-        ...parts.filter((p) => p !== "root").map((p) => numberToActionMap[p]),
+      handleActionClickImpl(
+        {
+          API_BASE_URL,
+          folder,
+          uid,
+          isICMSim,
+          metadata,
+          positionOrder,
+          playerCount,
+          plateData,
+          plateMapping,
+          playerBets,
+          potSize,
+          preflopLine,
+          lastRange,
+          lastRangePos,
+          loadedPlates,
+          availableJsonFiles,
+          setAlivePlayers,
+          setActivePlayer,
+          setLoadedPlates,
+          setPlayerBets,
+          setPotSize,
+          setPreflopLine,
+          setRandomFillEnabled,
+          setLastRange,
+          setLastRangePos,
+          setPlateMapping,
+          lastClickRef,
+          setPendingFlopUpload,
+        },
         action,
-      ]);
-
-      if (
-        newLoadedPlates.length !== loadedPlates.length ||
-        !newLoadedPlates.every((v, i) => v === loadedPlates[i])
-      ) {
-        setLoadedPlates(newLoadedPlates);
-      }
-      setRandomFillEnabled(false);
-      setPlateMapping((prev) => ({ ...prev }));
-      lastClickRef.current = { plate: fileName, action };
+        fileName
+      );
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
-      loadedPlates,
-      appendPlateNames,
-      availableJsonFiles,
-      playerCount,
-      playerBets,
-      plateData,
-      potSize,
-      positionOrder,
-      lastRangePos,
-      lastRange,
-      metadata,
-      plateMapping,
+      API_BASE_URL,
+      folder,
+      uid,
       isICMSim,
+      metadata,
+      positionOrder,
+      playerCount,
+      plateData,
+      plateMapping,
+      playerBets,
+      potSize,
+      preflopLine,
+      lastRange,
+      lastRangePos,
+      loadedPlates,
+      availableJsonFiles,
     ]
   );
 
@@ -786,14 +644,14 @@ const Solver = ({ user }: { user: User | null }) => {
 
   const [randomFillEnabled, setRandomFillEnabled] = useState(false);
 
-  // NEW: persist toggle
   useEffect(() => {
     try {
       localStorage.setItem("singleRangeView", singleRangeView ? "1" : "0");
-    } catch { /* empty */ }
+    } catch {
+      /* ignore */
+    }
   }, [singleRangeView]);
 
-  // NEW: emulate your Up/Down keybinds from buttons
   const triggerPrevSolution = useCallback(() => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
   }, []);
@@ -801,9 +659,243 @@ const Solver = ({ user }: { user: User | null }) => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
   }, []);
 
+  // --- flop modal side-effects ---
+  useEffect(() => {
+    if (pendingFlopUpload) {
+      setFlopCards([]);
+      setFlopInput("");
+      setFlopInputError(null);
+      setShowFlopModal(true);
+    }
+  }, [pendingFlopUpload]);
+
+  // keep text input in sync with flopCards when they change via clicks/random
+  useEffect(() => {
+    if (!showFlopModal) return;
+    if (flopCards.length === 0) {
+      setFlopInput("");
+    } else {
+      setFlopInput(flopCards.join(" "));
+    }
+  }, [flopCards, showFlopModal]);
+
+  const closeFlopModal = () => {
+    setShowFlopModal(false);
+    setPendingFlopUpload(null);
+    setFlopCards([]);
+    setFlopInput("");
+    setFlopInputError(null);
+  };
+
+  const onPickFlopCard = (code: string) => {
+    setFlopCards((prev) => {
+      if (prev.includes(code)) {
+        return prev.filter((c) => c !== code);
+      }
+      if (prev.length >= 3) return prev; // ignore extra
+      return [...prev, code];
+    });
+  };
+
+  const handleFlopInputChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setFlopInput(value);
+
+    const { cards, error } = parseFlopInputString(value);
+    setFlopInputError(error);
+    if (!error) {
+      setFlopCards(cards);
+    }
+  };
+
+  const randomizeFlop = useCallback(() => {
+    const deck = [...ALL_CARDS];
+    // simple Fisher–Yates shuffle
+    for (let i = deck.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [deck[i], deck[j]] = [deck[j], deck[i]];
+    }
+    const next = deck.slice(0, 3);
+    setFlopCards(next);
+    setFlopInputError(null);
+  }, []);
+
+  const confirmFlopAndUpload = async () => {
+    if (!pendingFlopUpload || flopCards.length !== 3) return;
+    const boardStr = flopCards.join(" ");
+    const { folder: pfFolder, actingPosition, preflopLine: pfLine, isICMSim: pfICM, linesBeforeBoard, linesAfterBoard } =
+      pendingFlopUpload;
+
+    const allLines = [
+      ...linesBeforeBoard,
+      `#Board#${boardStr}`,
+      ...linesAfterBoard,
+    ];
+
+    const adjustedText = allLines.join("\n");
+
+    try {
+      const result = await uploadGameTree(API_BASE_URL, {
+        folder: pfFolder,
+        line: pfLine,
+        actingPos: actingPosition ?? "",
+        isICM: pfICM,
+        text: adjustedText,
+        uid,
+      });
+      console.log("✅ Game tree uploaded:", result?.path ?? "(no path returned)");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (err: any) {
+      console.warn("⚠️ Failed to upload game tree:", err?.message ?? err);
+    } finally {
+      closeFlopModal();
+    }
+  };
+
+  const usedSetForFlop = useMemo(() => new Set<string>(flopCards), [flopCards]);
+
   return (
     <>
       <Steps enabled={tourRun} steps={tourSteps} initialStep={0} onExit={() => setTourRun(false)} />
+
+      {/* FLOP PICKER MODAL */}
+      {showFlopModal && pendingFlopUpload && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60"
+          onMouseDown={closeFlopModal}
+        >
+          <div
+            className="relative w-full max-w-md mx-3 rounded-2xl bg-slate-900/95 border border-emerald-500/40 shadow-2xl p-4 text-gray-100"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            {/* close button */}
+            <button
+              type="button"
+              onClick={closeFlopModal}
+              className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 text-gray-300 hover:text-white border border-white/10 shadow-sm"
+              aria-label="Close"
+            >
+              ×
+            </button>
+
+            <h2 className="text-base font-semibold mb-1">Choose flop cards</h2>
+            <p className="text-xs text-gray-300 mb-3">
+              Pick exactly three cards for the flop. This board will be sent with the game tree to be saved for later.
+            </p>
+
+            {/* flop display: 3 slots + randomize button */}
+            <div className="flex items-center justify-center gap-3 mb-2">
+              <div className="flex items-center justify-center gap-2">
+                {Array.from({ length: 3 }).map((_, idx) => {
+                  const code = flopCards[idx];
+                  if (code) {
+                    return (
+                      <button
+                        key={`flop-${idx}-${code}`}
+                        type="button"
+                        onClick={() =>
+                          setFlopCards((prev) => prev.filter((_c, i) => i !== idx))
+                        }
+                        className="rounded-xl focus:outline-none"
+                        title={`Remove ${code}`}
+                      >
+                        <PlayingCard code={code} width="clamp(40px, 8vw, 64px)" />
+                      </button>
+                    );
+                  }
+                  const isNext = idx === flopCards.length;
+                  return (
+                    <div
+                      key={`flop-slot-${idx}`}
+                      className={`relative inline-flex aspect-[3/4] items-center justify-center rounded-xl border border-dashed bg-white/10
+                      ${isNext ? "border-emerald-400 ring-2 ring-emerald-400/70 animate-pulse" : "border-gray-500"}`}
+                      style={{ width: "clamp(40px, 8vw, 64px)" }}
+                      title={isNext ? "Next flop card will go here" : "Empty flop slot"}
+                    >
+                      <span className={`text-sm ${isNext ? "text-emerald-300" : "text-gray-300"}`}>+</span>
+                      {isNext && (
+                        <span className="absolute -top-1 -right-1 text-[9px] bg-emerald-600 text-white rounded px-1 shadow">
+                          NEXT
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                onClick={randomizeFlop}
+                className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-1.5 shadow"
+                title="Generate a random flop"
+              >
+                <span>Random flop</span>
+                <span aria-hidden="true">🎲</span>
+              </button>
+            </div>
+
+            {/* typed flop input */}
+            <div className="mb-3 px-1">
+              <div className="flex items-baseline justify-between mb-1 gap-2">
+                <label className="text-[11px] font-medium text-gray-200">
+                  Or type flop (e.g. &quot;Ah Kd 9c&quot;):
+                </label>
+                {flopInputError && (
+                  <p className="text-[10px] text-red-400 text-right">
+                    {flopInputError}
+                  </p>
+                )}
+              </div>
+
+              <input
+                type="text"
+                value={flopInput}
+                onChange={handleFlopInputChange}
+                placeholder="Ah Kd 9c"
+                className="w-full rounded-md bg-slate-800 border border-slate-600 px-2 py-1 text-xs text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/80"
+              />
+            </div>
+
+            {/* Card picker */}
+            <div className="mt-2 max-h=[320px] overflow-y-auto pb-1">
+              <CardPicker
+                used={usedSetForFlop}
+                onPick={onPickFlopCard}
+                size="sm"
+                fitToWidth
+                cardWidth="100%"          // not strictly required now, but fine
+                gapPx={4}
+                className="w-full inline-grid mx-auto rounded-xl border border-gray-300 bg-slate-700/80 p-2"
+              />
+            </div>
+
+            {/* actions */}
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeFlopModal}
+                className="rounded-lg px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-gray-200 border border-white/10 shadow-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmFlopAndUpload}
+                disabled={flopCards.length !== 3}
+                className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold shadow
+                  ${
+                    flopCards.length === 3
+                      ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                      : "bg-emerald-600/50 text-white/70 cursor-not-allowed"
+                  }`}
+              >
+                <span>Confirm flop</span>
+                <span aria-hidden="true">✓</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="h-auto flex flex-col">
         <div className="pt-1 p-1 flex-grow">
@@ -819,7 +911,7 @@ const Solver = ({ user }: { user: User | null }) => {
                     currentFolder={folder}
                     onFolderSelect={handleFolderSelect}
                     metaByFolder={folderMetaMap}
-                    userTier={tier ?? "free"}   // ← NEW
+                    userTier={tier ?? "free"}
                   />
                 </div>
               </div>
@@ -830,12 +922,8 @@ const Solver = ({ user }: { user: User | null }) => {
           {metadata?.name && (
             <div className="px-2 sm:px-4 mt-2 mb-1">
               <div className="mx-auto w-full max-w-5xl">
-                {/* 3-col grid: [spacer | center badge | right controls] */}
                 <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-                  {/* left spacer (keeps badge centered even with right controls) */}
                   <div />
-
-                  {/* center: Sim badge */}
                   <div className="justify-self-center">
                     <span
                       className="inline-flex items-center gap-2 rounded-md bg-white/70 backdrop-blur px-3 py-1 text-xs font-medium text-gray-800 shadow ring-1 ring-black/5"
@@ -846,12 +934,10 @@ const Solver = ({ user }: { user: User | null }) => {
                       <span className="truncate max-w-[58vw] sm:max-w-[42vw]">{metadata.name}</span>
                     </span>
                   </div>
-
-                  {/* right: Single Range toggle */}
                   <div className="justify-self-end">
                     <button
                       type="button"
-                      onClick={() => setSingleRangeView(v => !v)}
+                      onClick={() => setSingleRangeView((v) => !v)}
                       aria-pressed={singleRangeView}
                       className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium shadow
                                   ring-1 ring-black/5 transition
@@ -860,7 +946,6 @@ const Solver = ({ user }: { user: User | null }) => {
                                     : "bg-white/70 text-gray-800 hover:bg-white"}`}
                       title="Show ranges only for the active player"
                     >
-                      {/* subtle status dot */}
                       <span className={`h-2 w-2 rounded-full ${singleRangeView ? "bg-white" : "bg-emerald-500/70"}`} />
                       {singleRangeView ? "Single Range: On" : "Single Range: Off"}
                     </button>
@@ -870,12 +955,10 @@ const Solver = ({ user }: { user: User | null }) => {
             </div>
           )}
 
-
           {/* Line + right controls */}
           <div className="relative flex items-center mt-1 mb-2">
             <Line line={preflopLine} onLineClick={handleLineClick} />
             <div className="absolute right-0 mr-2 z-20 flex items-center gap-2">
-
               <div className="scale-90">
                 <RandomizeButton
                   randomFillEnabled={randomFillEnabled}
@@ -903,11 +986,11 @@ const Solver = ({ user }: { user: User | null }) => {
               ante={metadata.ante}
               pot={potSize}
               activePlayer={activePlayer}
-              singleRangeView={singleRangeView} // NEW
+              singleRangeView={singleRangeView}
             />
           </div>
 
-          {/* NEW: Prev/Next solution buttons below grid (left/right) */}
+          {/* Prev/Next solution buttons */}
           <div className="mx-auto w-full max-w-5xl mt-3 mb-2 px-2 sm:px-4">
             <div className="flex items-center justify-between">
               <button
@@ -932,7 +1015,7 @@ const Solver = ({ user }: { user: User | null }) => {
             </div>
           </div>
 
-          {/* ICM metadata ONLY (kept below PlateGrid) */}
+          {/* ICM metadata */}
           <div className="flex justify-center mt-1 mb-2 pointer-events-none select-none">
             <div className="bg-white/60 backdrop-blur-sm rounded-md px-2 py-1 text-xs shadow text-center text-gray-800">
               {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
@@ -951,7 +1034,9 @@ const Solver = ({ user }: { user: User | null }) => {
                   })}
                 </>
               ) : (
-                <><strong>ICM:</strong>&nbsp;None</>
+                <>
+                  <strong>ICM:</strong>&nbsp;None
+                </>
               )}
             </div>
           </div>

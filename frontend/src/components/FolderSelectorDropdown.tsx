@@ -1,5 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import React from "react";
+ import React from "react";
 import type { FolderMetadata } from "../hooks/useFolders";
 
 type Props = {
@@ -61,8 +60,8 @@ const FolderSelectorDropdown: React.FC<Props> = ({
   if (!open) return null;
 
   // Fixed column widths to keep the right border of Avg. aligned.
-  // Tags: 2.5rem | Avg: 4.5rem | Seats: equal flexible columns.
-  const GRID_TEMPLATE_COLUMNS = `3.5rem 4rem repeat(${header.length}, minmax(0, 1fr))`;
+  // Tags: 3rem | Avg: 3rem | Seats: equal flexible columns.
+  const GRID_TEMPLATE_COLUMNS = `3rem 3rem repeat(${header.length}, minmax(0, 1fr))`;
 
   // Shared cell metrics (header + rows) so row height == header height.
   const CELL_TEXT = "text-[11px] leading-4";
@@ -75,8 +74,10 @@ const FolderSelectorDropdown: React.FC<Props> = ({
 
   const isFinalTable = (folder: string): boolean => {
     const meta = metaByFolder?.[folder] ?? null;
-    const name = (meta as any)?.name as string | undefined;
-    if (name && name.toUpperCase().includes("FT")) return true;
+    const tags = meta?.tags;
+    if (tags && tags.some((t) => t.toUpperCase() === "FT")) return true;
+
+    // Fallback if metadata missing:
     return folder.toUpperCase().includes("FT");
   };
 
@@ -137,7 +138,9 @@ const FolderSelectorDropdown: React.FC<Props> = ({
                 <React.Fragment key={folder}>
                   {/* TAGS */}
                   <div
-                    className={`${CELL_TEXT} ${CELL_PY} ${CELL_TAGS_PX} border-t border-gray-200 ${cellBorderR(0)} ${rowBg} cursor-pointer flex items-center justify-center`}
+                    className={`${CELL_TEXT} ${CELL_PY} ${CELL_TAGS_PX} border-t border-gray-200 ${cellBorderR(
+                      0
+                    )} ${rowBg} cursor-pointer flex items-center justify-center`}
                     onMouseDown={choose}
                     onMouseEnter={enter}
                     title={isLocked ? "Locked — Subscribe!" : undefined}
@@ -158,7 +161,9 @@ const FolderSelectorDropdown: React.FC<Props> = ({
 
                   {/* AVG (fixed-width col) */}
                   <div
-                    className={`${CELL_TEXT} ${CELL_PY} ${CELL_STD_PX} border-t border-gray-200 ${cellBorderR(1)} ${rowBg} cursor-pointer text-center tabular-nums`}
+                    className={`${CELL_TEXT} ${CELL_PY} ${CELL_STD_PX} border-t border-gray-200 ${cellBorderR(
+                      1
+                    )} ${rowBg} cursor-pointer text-center tabular-nums`}
                     onMouseDown={choose}
                     onMouseEnter={enter}
                   >
@@ -169,7 +174,9 @@ const FolderSelectorDropdown: React.FC<Props> = ({
                   {header.map((pos, i) => (
                     <div
                       key={`${folder}-${pos}`}
-                      className={`${CELL_TEXT} ${CELL_PY} ${CELL_STD_PX} border-t border-gray-200 ${i < header.length - 1 ? "border-r" : ""} ${rowBg} cursor-pointer text-center`}
+                      className={`${CELL_TEXT} ${CELL_PY} ${CELL_STD_PX} border-t border-gray-200 ${
+                        i < header.length - 1 ? "border-r" : ""
+                      } ${rowBg} cursor-pointer text-center`}
                       onMouseDown={choose}
                       onMouseEnter={enter}
                     >

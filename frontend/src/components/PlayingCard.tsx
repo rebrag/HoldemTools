@@ -34,7 +34,7 @@ const SIZE_WIDTH: Record<Size, number> = { sm: 40, md: 48, lg: 64 };
 
 // Font-size ratios relative to --card-w (card width)
 const RATIOS: Record<Size, { center: number; cornerRank: number; cornerSuit: number }> = {
-  sm: { center: 0.42, cornerRank: 0.28, cornerSuit: 0.22 }, // smaller center on small
+  sm: { center: 0.56, cornerRank: 0.34, cornerSuit: 0.26 }, // smaller center on small
   md: { center: 0.50, cornerRank: 0.30, cornerSuit: 0.24 },
   lg: { center: 0.56, cornerRank: 0.34, cornerSuit: 0.26 },
 };

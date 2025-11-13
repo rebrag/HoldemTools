@@ -331,7 +331,7 @@ const Plate: React.FC<PlateProps> = ({
                 <div className="shrink-0 pt-1.5" style={{ width: sidebarWidth, height: dmWidth, minHeight: 0 }}>
                   <div className="ck-vertical">
                     <div className="ck-top">
-                      <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0 pt-0 pb-0 shadow text-center overflow-hidden">
+                      <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0.5 pt-0 pb-0 shadow text-center overflow-hidden">
                         <AutoFitText title="Position and Stack">
                           <strong>{displayData?.Position ?? ""}</strong>&nbsp;{fmt(stackBB, 1)}bb
                         </AutoFitText>

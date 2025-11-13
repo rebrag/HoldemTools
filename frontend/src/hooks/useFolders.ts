@@ -7,6 +7,11 @@ export type FolderMetadata = {
   ante: number;
   isIcm: boolean;
   icmCount: number;
+
+  // NEW: derived info from server
+  seats?: number;
+  tags?: string[];        // e.g. ["FT", "HU", "ICM"]
+  icmPayouts?: number[];  // optional full payout structure
 };
 
 type FolderWithMetadata = {
@@ -26,26 +31,26 @@ const useFolders = (API_BASE_URL: string) => {
 
     async function load() {
       try {
-        // 1) FAST: get folder names only
-        const { data: names } = await axios.get<string[]>(`${API_BASE_URL}/api/Files/folders`);
+        const { data } = await axios.get<FolderWithMetadata[]>(
+          `${API_BASE_URL}/api/Files/foldersWithMetadata?includeMissing=true`
+        );
         if (cancelled) return;
-        setFolders(names);
-        if (names.length > 0 && !selectedFolder) setSelectedFolder(names[0]);
 
-        // 2) BACKGROUND: hydrate metadata (don’t block UI)
-        axios
-          .get<FolderWithMetadata[]>(
-            `${API_BASE_URL}/api/Files/foldersWithMetadata?includeMissing=true`
-          )
-          .then(({ data }) => {
-            if (cancelled) return;
-            const byFolder: Record<string, FolderMetadata | null> = {};
-            data.forEach((x) => (byFolder[x.folder] = x.metadata ?? null));
-            setFolderMetaMap(byFolder);
-          })
-          .catch((err) => {
-            console.warn("metadata load failed", err);
-          });
+        const names: string[] = [];
+        const byFolder: Record<string, FolderMetadata | null> = {};
+
+        data.forEach((x) => {
+          names.push(x.folder);
+          byFolder[x.folder] = x.metadata ?? null;
+        });
+
+        names.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
+        setFolders(names);
+        if (names.length > 0 && !selectedFolder) {
+          setSelectedFolder(names[0]);
+        }
+        setFolderMetaMap(byFolder);
       } catch (err) {
         console.error(err);
         if (!cancelled) setError("Error fetching folders");
