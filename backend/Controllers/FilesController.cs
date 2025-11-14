@@ -40,7 +40,7 @@ namespace PokerRangeAPI2.Controllers
         }
 
         // --------------------------------------------------------------------
-        // GET api/files/folders – top-level folders
+        // GET api/files/folders – top-level folders (from Data Lake)
         // --------------------------------------------------------------------
         [HttpGet("folders")]
         public async Task<ActionResult<List<string>>> GetFolderList()
@@ -105,6 +105,7 @@ namespace PokerRangeAPI2.Controllers
         // --------------------------------------------------------------------
         // GET api/files/{folder}/metadata – parsed, typed metadata summary
         // Returns: { name, ante, isIcm, icmCount, seats, tags, icmPayouts }
+        // (still reads that folder's metadata.json directly)
         // --------------------------------------------------------------------
         [HttpGet("{folderName}/metadata")]
         public async Task<ActionResult<FolderMetadataDto>> GetFolderMetadata(string folderName)
@@ -132,96 +133,65 @@ namespace PokerRangeAPI2.Controllers
         }
 
         // --------------------------------------------------------------------
-        // GET api/files/foldersWithMetadata – list of folders with metadata summary
-        // Includes tags + seats so frontend can sort & badge instantly.
-        // Uses parallel fetch + in-memory cache for speed.
+        // GET api/files/foldersWithMetadata
+        // NOW: single source of truth from sim-index.json
+        // - Reads sim-index.json from Blob Storage
+        // - Deserializes to List<FolderWithMetadataDto>
+        // - Caches in IMemoryCache for faster subsequent calls
         // --------------------------------------------------------------------
         [HttpGet("foldersWithMetadata")]
         public async Task<ActionResult<List<FolderWithMetadataDto>>> GetFoldersWithMetadata(
-            [FromQuery] bool includeMissing = false)
+            [FromQuery] bool includeMissing = false) // kept for compatibility, but ignored
         {
-            var cacheKey = $"foldersWithMetadata:{includeMissing}";
+            const string cacheKey = "foldersWithMetadata:index";
 
             if (_cache.TryGetValue(cacheKey, out List<FolderWithMetadataDto>? cached) && cached != null)
             {
                 return Ok(cached);
             }
 
-            var folders = await GetFolderListInternal();
+            var container = _blobServiceClient.GetBlobContainerClient(_containerName);
+            var indexBlob = container.GetBlobClient("sim-index.json");
 
-            var tasks = folders.Select(async folder =>
+            if (!await indexBlob.ExistsAsync())
             {
-                var meta = await TryReadFolderMetadata(folder);
-                int seats = CountNumericChunks(folder);
+                return NotFound("sim-index.json not found in storage. Please run the SimIndexBuilder tool.");
+            }
 
-                if (meta != null)
-                {
-                    var tags = new List<string>();
+            BlobDownloadResult result = await indexBlob.DownloadContentAsync();
+            string json = result.Content.ToString();
 
-                    if (seats == 2)
-                        tags.Add("HU");
-
-                    if (IsFinalTable(meta))
-                        tags.Add("FT");
-
-                    if (meta.IsIcm)
-                        tags.Add("ICM");
-
-                    meta.Seats = seats;
-                    meta.Tags = tags.ToArray();
-
-                    return new FolderWithMetadataDto
+            List<FolderWithMetadataDto>? entries;
+            try
+            {
+                entries = JsonSerializer.Deserialize<List<FolderWithMetadataDto>>(
+                    json,
+                    new JsonSerializerOptions
                     {
-                        Folder = folder,
-                        Metadata = meta,
-                        HasMetadata = true
-                    };
-                }
+                        PropertyNameCaseInsensitive = true
+                    });
+            }
+            catch (JsonException ex)
+            {
+                return BadRequest($"Failed to parse sim-index.json: {ex.Message}");
+            }
 
-                if (!includeMissing)
-                {
-                    return null;
-                }
+            entries ??= new List<FolderWithMetadataDto>();
 
-                return new FolderWithMetadataDto
-                {
-                    Folder = folder,
-                    Metadata = null,
-                    HasMetadata = false
-                };
-            });
+            // Normalize ordering (just in case)
+            var ordered = entries
+                .OrderBy(e => e.Folder, StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
-            var results = (await Task.WhenAll(tasks))
-                .Where(r => r != null)!
-                .OrderBy(r => r!.Folder)
-                .ToList()!;
-
-            _cache.Set(cacheKey, results, new MemoryCacheEntryOptions
+            _cache.Set(cacheKey, ordered, new MemoryCacheEntryOptions
             {
                 AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10)
             });
 
-            return Ok(results);
+            return Ok(ordered);
         }
 
         // ========= Helpers =========
-
-        private async Task<List<string>> GetFolderListInternal()
-        {
-            var list = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var fs = _dataLakeServiceClient.GetFileSystemClient(_containerName);
-
-            await foreach (PathItem item in fs.GetPathsAsync())
-            {
-                if (item.IsDirectory == true)
-                {
-                    string first = item.Name.Split('/')[0];
-                    list.Add(first);
-                }
-            }
-
-            return list.ToList();
-        }
 
         /// <summary>
         /// Reads and parses {folder}/metadata.json and returns a normalized DTO, or null if not found.
@@ -306,8 +276,8 @@ namespace PokerRangeAPI2.Controllers
                 IsIcm = isIcm,
                 IcmCount = icmCount,
                 IcmPayouts = icmPayouts,
-                Seats = 0,                  // filled later
-                Tags = Array.Empty<string>() // filled later
+                Seats = 0,                   // filled by callers when needed
+                Tags = Array.Empty<string>() // filled by callers when needed
             };
         }
 
@@ -353,7 +323,7 @@ namespace PokerRangeAPI2.Controllers
         public bool IsIcm { get; set; }
         public int IcmCount { get; set; }
 
-        // NEW: derived info
+        // Derived info
         public int Seats { get; set; }
         public string[] Tags { get; set; } = Array.Empty<string>();
 
