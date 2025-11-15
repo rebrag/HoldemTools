@@ -939,16 +939,23 @@ const Solver = ({ user }: SolverProps) => {
                       type="button"
                       onClick={() => setSingleRangeView((v) => !v)}
                       aria-pressed={singleRangeView}
-                      className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium shadow
-                                  ring-1 ring-black/5 transition
+                      className={`inline-flex items-center gap-2 rounded-md px-3 py-1 text-xs font-medium shadow
+                                  ring-1 ring-black/5 transition whitespace-nowrap max-w-[180px] overflow-hidden
                                   ${singleRangeView
                                     ? "bg-emerald-600 text-white hover:bg-emerald-700"
                                     : "bg-white/70 text-gray-800 hover:bg-white"}`}
                       title="Show ranges only for the active player"
                     >
-                      <span className={`h-2 w-2 rounded-full ${singleRangeView ? "bg-white" : "bg-emerald-500/70"}`} />
-                      {singleRangeView ? "Single Range: On" : "Single Range: Off"}
+                      <span
+                        className={`h-2 w-2 rounded-full ${
+                          singleRangeView ? "bg-white" : "bg-emerald-500/70"
+                        }`}
+                      />
+                      <span className="ml-0.5">
+                        {singleRangeView ? "Single Range: On" : "Single Range: Off"}
+                      </span>
                     </button>
+
                   </div>
                 </div>
               </div>

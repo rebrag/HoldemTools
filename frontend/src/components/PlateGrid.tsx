@@ -6,6 +6,7 @@ import { generateSpiralOrder } from "../utils/gridUtils";
 import { JsonData } from "../utils/utils";
 import { LayoutGroup } from "framer-motion";
 import useElementSize from "../hooks/useElementSize";
+import DecisionMatrix from "./DecisionMatrix";
 
 type PlateGridProps = {
   files: string[];
@@ -48,6 +49,7 @@ const MAX_PLATE_W = 640;
 const PlateGrid: React.FC<PlateGridProps> = ({
   files,
   positions,
+  // selectedFolder, // currently unused but kept for API stability
   randomFillEnabled,
   onActionClick,
 
@@ -63,19 +65,21 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   pot,
   activePlayer = "UTG",
 
-  singleRangeView = false, // NEW default
+  singleRangeView = false,
 }) => {
   const [zoom, setZoom] = useState<PlateZoomPayload | null>(null);
 
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
 
   const baseW = container.width || windowWidth;
-  const baseHForFit = windowHeight > 0 ? windowHeight : (container.height || windowHeight);
+  const baseHForFit =
+    windowHeight > 0 ? windowHeight : container.height || windowHeight;
 
   const viewW = windowWidth;
   const viewH = windowHeight;
 
-  const baseNarrow = files.length === 2 ? !(viewW * 1.3 < viewH) : (viewW * 1.3 < viewH);
+  const baseNarrow =
+    files.length === 2 ? !(viewW * 1.3 < viewH) : viewW * 1.3 < viewH;
   const isNarrow = baseNarrow && files.length > 4;
 
   const gridRows = isNarrow ? Math.ceil(files.length / 2) : 2;
@@ -87,7 +91,10 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     const base = positions.map((p, i) => [p, files[i]] as const);
     const padded = [...base];
     while (padded.length < totalCells) padded.push(["", ""]);
-    const grid: (readonly [string, string])[] = new Array(totalCells).fill(["", ""]);
+    const grid: (readonly [string, string])[] = new Array(totalCells).fill([
+      "",
+      "",
+    ]);
     generateSpiralOrder(gridRows, gridCols).forEach(([r, c], i) => {
       grid[r * gridCols + c] = padded[i];
     });
@@ -105,7 +112,8 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   }, [orderedEntries]);
 
   const rows: (readonly [string, string])[][] = [];
-  for (let i = 0; i < orderedEntries.length; i += gridCols) rows.push(orderedEntries.slice(i, i + gridCols));
+  for (let i = 0; i < orderedEntries.length; i += gridCols)
+    rows.push(orderedEntries.slice(i, i + gridCols));
 
   const gapPx = 15;
 
@@ -132,32 +140,48 @@ const PlateGrid: React.FC<PlateGridProps> = ({
 
   const gridContainerHeight = useMemo(() => {
     if (!isNarrow || !halfPlateWidth) return undefined;
-    const dmW_byWidth = Math.max(MIN_DM_W, halfPlateWidth - LR_GAP_PX - MIN_SIDEBAR_W);
+    const dmW_byWidth = Math.max(
+      MIN_DM_W,
+      halfPlateWidth - LR_GAP_PX - MIN_SIDEBAR_W
+    );
     const rowH_required = dmW_byWidth * DM_ASPECT_H_OVER_W + EXTRA_PLATE_V_PX;
     const requiredContainer =
-      GRID_PAD_Y_PX * 2 + (gridRows - 1) * ROW_GAP_Y_PX + gridRows * rowH_required;
+      GRID_PAD_Y_PX * 2 +
+      (gridRows - 1) * ROW_GAP_Y_PX +
+      gridRows * rowH_required;
     return Math.max(240, Math.min(requiredContainer, remainingViewportH));
   }, [isNarrow, halfPlateWidth, gridRows, remainingViewportH]);
 
   const narrowDims = useMemo(() => {
     if (!isNarrow || !halfPlateWidth)
-      return { plateW: undefined as number | undefined, dmW: undefined as number | undefined, sbW: undefined as number | undefined };
+      return {
+        plateW: undefined as number | undefined,
+        dmW: undefined as number | undefined,
+        sbW: undefined as number | undefined,
+      };
+
     const availableH =
-      (gridContainerHeight ?? remainingViewportH)
-      - GRID_PAD_Y_PX * 2
-      - (gridRows - 1) * ROW_GAP_Y_PX
-      - gridRows * EXTRA_PLATE_V_PX;
+      (gridContainerHeight ?? remainingViewportH) -
+      GRID_PAD_Y_PX * 2 -
+      (gridRows - 1) * ROW_GAP_Y_PX -
+      gridRows * EXTRA_PLATE_V_PX;
+
     const perRowH = availableH / gridRows;
     const dmLimitByHeight = perRowH / DM_ASPECT_H_OVER_W;
     const dmLimitByHalfWidth = halfPlateWidth - LR_GAP_PX - MIN_SIDEBAR_W;
-    const dmW = Math.max(MIN_DM_W, Math.min(dmLimitByHeight, dmLimitByHalfWidth));
+    const dmW = Math.max(
+      MIN_DM_W,
+      Math.min(dmLimitByHeight, dmLimitByHalfWidth)
+    );
     const sbW = Math.max(MIN_SIDEBAR_W, halfPlateWidth - LR_GAP_PX - dmW);
     const plateW = Math.min(MAX_PLATE_W, halfPlateWidth);
     return { plateW, dmW: Math.round(dmW), sbW: Math.round(sbW) };
   }, [isNarrow, halfPlateWidth, gridRows, gridContainerHeight, remainingViewportH]);
 
   const getZoomWidth = () => {
-    const base = isNarrow ? (narrowDims.plateW ?? 220) : (canonicalPlateWidth ?? 220);
+    const base = isNarrow
+      ? narrowDims.plateW ?? 220
+      : canonicalPlateWidth ?? 220;
     const scaled = Math.round(base * 1.8);
     const maxByContainer = Math.floor(baseW * 0.92);
     return Math.min(scaled, maxByContainer, 900);
@@ -165,7 +189,9 @@ const PlateGrid: React.FC<PlateGridProps> = ({
 
   const badgeClass =
     "backdrop-blur-sm rounded-md shadow text-center " +
-    (isNarrow ? "bg-white/60 px-0.5 py-0.5 text-[8px]" : "bg-white/60 px-2 py-0 text-xs");
+    (isNarrow
+      ? "bg-white/60 px-0.5 py-0.5 text-[8px]"
+      : "bg-white/60 px-2 py-0 text-xs");
 
   return (
     <div
@@ -174,7 +200,11 @@ const PlateGrid: React.FC<PlateGridProps> = ({
       } overflow-visible`}
     >
       <div className="poker-table-bg pointer-events-none absolute inset-0 flex justify-center items-center z-10">
-        <div className={`poker-rail ${gridRows > gridCols ? "portrait" : ""} overflow-visible relative`}>
+        <div
+          className={`poker-rail ${
+            gridRows > gridCols ? "portrait" : ""
+          } overflow-visible relative`}
+        >
           <div className="poker-felt overflow-hidden" />
         </div>
       </div>
@@ -182,31 +212,50 @@ const PlateGrid: React.FC<PlateGridProps> = ({
       <LayoutGroup id="plate-zoom">
         <div
           ref={container.ref}
-          className={`relative z-10 w-full select-none ${isNarrow ? "" : "min-h-[300px]"}`}
-          style={isNarrow ? { height: gridContainerHeight, paddingTop: GRID_PAD_Y_PX, paddingBottom: GRID_PAD_Y_PX } : undefined}
+          className={`relative z-10 w-full select-none ${
+            isNarrow ? "" : "min-h-[300px]"
+          }`}
+          style={
+            isNarrow
+              ? {
+                  height: gridContainerHeight,
+                  paddingTop: GRID_PAD_Y_PX,
+                  paddingBottom: GRID_PAD_Y_PX,
+                }
+              : undefined
+          }
         >
-          {/* Zoom overlay */}
-          {zoom && <div className="fixed inset-0 bg-black/40 z-[55]" onClick={() => setZoom(null)} />}
+          {/* Zoom overlay backdrop */}
           {zoom && (
-            <div className="fixed inset-0 z-[60] flex items-center justify-center" onClick={() => setZoom(null)}>
-              <div onClick={(e) => e.stopPropagation()}>
-                <Plate
-                  plateId={zoom.file}
-                  file={zoom.file}
-                  data={plateData[zoom.file]}
-                  onActionClick={onActionClick}
-                  randomFillEnabled={false}
-                  alive={true}
-                  playerBet={0}
-                  isICMSim={isICMSim}
-                  plateWidth={getZoomWidth()}
-                  isActive={true}
-                  pot={pot}
-                  maxBet={undefined}
-                  onPlateZoom={undefined}
-                  /* NEW: show full content in zoom even if singleRangeView */
-                  singleRangeView={false}
-                />
+            <div
+              className="fixed inset-0 bg-black/40 z-[55]"
+              onClick={() => setZoom(null)}
+            />
+          )}
+
+          {/* Zoom overlay: ONLY DecisionMatrix */}
+          {zoom && (
+            <div
+              className="fixed inset-0 z-[60] flex items-center justify-center"
+              onClick={() => setZoom(null)}
+            >
+              <div
+                className="relative"
+                style={{ width: getZoomWidth(), maxWidth: "95vw" }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="bg-black/60 rounded-xl shadow-xl p-2 sm:p-3">
+                  <div
+                    className="relative w-full"
+                    style={{ aspectRatio: "1 / 1" }}
+                  >
+                    <DecisionMatrix
+                      gridData={zoom.grid}
+                      randomFillEnabled={false}
+                      isICMSim={zoom.isICMSim}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -220,10 +269,10 @@ const PlateGrid: React.FC<PlateGridProps> = ({
             <LoadingIndicator />
           </div>
 
-          {/* Pot/ante badge */}
+          {/* Pot/ante badge (center of table) */}
           {ante !== undefined && pot !== undefined && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
-              <div className={`${badgeClass}`}>
+              <div className={badgeClass}>
                 <strong>Total:</strong> {fmt(Math.max(0, pot), 1)} bb
                 {ante !== 0 && (
                   <>
@@ -239,9 +288,16 @@ const PlateGrid: React.FC<PlateGridProps> = ({
           {isNarrow ? (
             <div
               className="flex justify-center w-full overflow-visible"
-              style={{ height: "100%", paddingLeft: SIDE_PAD_X_PX, paddingRight: SIDE_PAD_X_PX }}
+              style={{
+                height: "100%",
+                paddingLeft: SIDE_PAD_X_PX,
+                paddingRight: SIDE_PAD_X_PX,
+              }}
             >
-              <div className="flex justify-center gap-3 w-full" style={{ height: "100%" }}>
+              <div
+                className="flex justify-center gap-3 w-full"
+                style={{ height: "100%" }}
+              >
                 {[col0, col1].map((col, idx) =>
                   col.length ? (
                     <div
@@ -268,7 +324,6 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                           sidebarWidthPx={narrowDims.sbW}
                           compact
                           onPlateZoom={(payload) => setZoom(payload)}
-                          /* NEW */
                           singleRangeView={singleRangeView}
                         />
                       ))}
@@ -278,13 +333,18 @@ const PlateGrid: React.FC<PlateGridProps> = ({
               </div>
             </div>
           ) : (
-            /* Landscape */
+            /* Landscape layout */
             <div className="flex flex-col gap-4">
               {rows.map((row, rowIdx) => {
-                const plates = row.filter(([posKey]) => posKey) as (readonly [string, string])[];
+                const plates = row.filter(
+                  ([posKey]) => posKey
+                ) as (readonly [string, string])[];
                 if (!plates.length) return null;
                 return (
-                  <div key={`row-${rowIdx}`} className="flex justify-center gap-2 flex-nowrap">
+                  <div
+                    key={`row-${rowIdx}`}
+                    className="flex justify-center gap-2 flex-nowrap"
+                  >
                     {plates.map(([posKey, file]) => (
                       <Plate
                         key={posKey}
@@ -301,7 +361,6 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                         pot={pot}
                         maxBet={maxBet}
                         onPlateZoom={(payload) => setZoom(payload)}
-                        /* NEW */
                         singleRangeView={singleRangeView}
                       />
                     ))}
