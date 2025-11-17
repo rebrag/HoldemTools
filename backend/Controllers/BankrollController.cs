@@ -185,7 +185,7 @@ namespace PokerRangeAPI2.Controllers
             {
                 entity.Profit = profit.Value;
             }
-            // If no profit is provided and we can't derive it, keep existing entity.Profit.
+            // If no profit is provided and we can't derive it, keep existing entity.Profit. dd
 
             await _db.SaveChangesAsync();
             return Ok(entity);
