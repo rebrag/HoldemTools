@@ -148,4 +148,3 @@ C:\Users\John\Documents\dev\HoldemToolsAPI\PokerRangeAPI2\obj\Debug\net8.0\refin
 C:\Users\John\Documents\dev\HoldemToolsAPI\PokerRangeAPI2\obj\Debug\net8.0\GTOLiteAPI.pdb
 C:\Users\John\Documents\dev\HoldemToolsAPI\PokerRangeAPI2\obj\Debug\net8.0\GTOLiteAPI.genruntimeconfig.cache
 C:\Users\John\Documents\dev\HoldemToolsAPI\PokerRangeAPI2\obj\Debug\net8.0\ref\GTOLiteAPI.dll
-C:\Users\John\Documents\dev\HoldemToolsAPI\PokerRangeAPI2\obj\Debug\net8.0\staticwebassets.upToDateCheck.txt
