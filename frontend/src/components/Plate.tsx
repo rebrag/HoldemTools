@@ -1,9 +1,8 @@
-/* eslint-disable react-hooks/exhaustive-deps */
+ 
 import React, {
   CSSProperties,
   useEffect,
   useMemo,
-  useRef,
   useState,
   ReactNode,
 } from "react";
@@ -12,6 +11,7 @@ import ColorKey from "./ColorKey";
 import DecisionMatrix from "./DecisionMatrix";
 import DealerButton from "./DealerButton";
 import { motion } from "framer-motion";
+import AutoFitText from "./AutoFitText";
 
 /* ── helpers ── */
 const HAND_ORDER = [
@@ -39,92 +39,6 @@ const EMPTY_GRID: HandCellData[] = HAND_ORDER.map((hand) => ({
 const fmt = (n: number, decimals = 1) =>
   Math.abs(n % 1) > 1e-9 ? n.toFixed(decimals) : n.toFixed(0);
 
-/* ── AutoFitText ── */
-const AutoFitText: React.FC<{
-  children: ReactNode;
-  minPx?: number;
-  maxPx?: number;
-  className?: string;
-  title?: string;
-}> = ({ children, minPx = 6, maxPx = 14, className = "", title }) => {
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const innerRef = useRef<HTMLSpanElement>(null);
-  const [size, setSize] = useState<number>(maxPx);
-  const [scale, setScale] = useState<number>(1);
-
-  const fit = () => {
-    const wrap = wrapRef.current;
-    const inner = innerRef.current;
-    if (!wrap || !inner) return;
-
-    const maxW = wrap.clientWidth;
-    if (maxW <= 0) return;
-
-    inner.style.fontSize = `${maxPx}px`;
-    inner.style.whiteSpace = "nowrap";
-    inner.style.transform = "scale(1)";
-    inner.style.transformOrigin = "center";
-
-    let lo = minPx;
-    let hi = maxPx;
-    let best = minPx;
-
-    while (lo <= hi) {
-      const mid = Math.floor((lo + hi) / 2);
-      inner.style.fontSize = `${mid}px`;
-      const tooWide = inner.scrollWidth > maxW;
-      if (!tooWide) {
-        best = mid;
-        lo = mid + 1;
-      } else {
-        hi = mid - 1;
-      }
-    }
-
-    setSize(best);
-    inner.style.fontSize = `${best}px`;
-
-    const widthAtBest = inner.scrollWidth;
-    setScale(widthAtBest > maxW ? Math.max(0.75, maxW / widthAtBest) : 1);
-  };
-
-  useEffect(() => {
-    fit();
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-    const ro = new ResizeObserver(() => fit());
-    ro.observe(wrap);
-    return () => ro.disconnect();
-  }, []);
-
-  useEffect(() => {
-    fit();
-  }, [children]);
-
-  return (
-    <div
-      ref={wrapRef}
-      className={`w-full overflow-hidden ${className}`}
-      title={title}
-      style={{ lineHeight: 1.05 }}
-    >
-      <span
-        ref={innerRef}
-        style={{
-          fontSize: size,
-          display: "inline-block",
-          whiteSpace: "nowrap",
-          transform: `scale(${scale})`,
-          transformOrigin: "center",
-          willChange: "transform",
-        }}
-      >
-        {children}
-      </span>
-    </div>
-  );
-};
-
 /* ── NEW: zoom only the DecisionMatrix inside each Plate ── */
 const ZoomableGrid: React.FC<{ children: ReactNode; isActive: boolean }> = ({
   children,
@@ -132,7 +46,7 @@ const ZoomableGrid: React.FC<{ children: ReactNode; isActive: boolean }> = ({
 }) => (
   <motion.div
     initial={false}
-    animate={{ scale: isActive ? 1.00 : 1 }}
+    animate={{ scale: isActive ? 1.0 : 1 }}
     transition={{ duration: 0.23 }}
     className="w-full h-full origin-center will-change-transform"
   >
@@ -173,8 +87,6 @@ interface PlateProps {
   maxBet?: number;
   onPlateZoom?: (payload: PlateZoomPayload) => void;
   compact?: boolean;
-
-  /** when true, only active seat shows ranges; others render placeholder */
   singleRangeView?: boolean;
 }
 
@@ -227,21 +139,18 @@ const Plate: React.FC<PlateProps> = ({
     `${compact ? "max-w-none" : "max-w-[400px]"} w-full text-base`;
 
   const sizeStyle: CSSProperties | undefined =
-  !compact && plateWidth != null
-    ? {
-        width: plateWidth,
-        maxWidth: plateWidth,
-        // no minWidth – let it shrink if the parent is smaller
-      }
-    : undefined;
-
+    !compact && plateWidth != null
+      ? {
+          width: plateWidth,
+          maxWidth: plateWidth,
+        }
+      : undefined;
 
   const dmWidth = compact && dmWidthPx ? dmWidthPx : undefined;
   const sidebarWidth = compact && sidebarWidthPx ? sidebarWidthPx : undefined;
 
   const stackBB = (displayData?.bb ?? 0) - playerBet;
   const betBB = playerBet;
-
   const shouldShowGrid = !singleRangeView || isActive;
 
   const CardsPlaceholder: React.FC<{ size: number }> = ({ size }) => {
@@ -253,11 +162,7 @@ const Plate: React.FC<PlateProps> = ({
       "absolute rounded-md border border-white/70 bg-white shadow";
 
     return (
-      <div
-        className="relative mx-auto"
-        style={{ width: w * 1.8, height: h }}
-      >
-        {/* back card (left) */}
+      <div className="relative mx-auto" style={{ width: w * 1.8, height: h }}>
         <div
           className={baseCardClass}
           style={{ width: w, height: h, left: 0, top: 0, transform: "rotate(-6deg)" }}
@@ -272,7 +177,6 @@ const Plate: React.FC<PlateProps> = ({
           </div>
         </div>
 
-        {/* front card (right) */}
         <div
           className={baseCardClass}
           style={{
@@ -402,14 +306,10 @@ const Plate: React.FC<PlateProps> = ({
         >
           <div className="relative">
             {compact ? (
-              // ── COMPACT / NARROW LAYOUT ──
+              /* COMPACT LAYOUT */
               <div className="flex gap-1 items-stretch">
-                {/* LEFT: 1:1 grid area */}
                 <div className="relative" style={{ width: dmWidth }}>
-                  <div
-                    className="relative w-full"
-                    style={{ aspectRatio: "1 / 1" }}
-                  >
+                  <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
                     <div
                       className="absolute inset-0 cursor-pointer"
                       onClick={() => {
@@ -434,9 +334,7 @@ const Plate: React.FC<PlateProps> = ({
                         <ZoomableGrid isActive={isActive}>
                           <DecisionMatrix
                             gridData={gridData}
-                            randomFillEnabled={
-                              randomFillEnabled && !!displayData
-                            }
+                            randomFillEnabled={randomFillEnabled && !!displayData}
                             isICMSim={isICMSim}
                           />
                         </ZoomableGrid>
@@ -444,10 +342,7 @@ const Plate: React.FC<PlateProps> = ({
                         <div className="w-full h-full flex items-center justify-center">
                           {alive ? (
                             <CardsPlaceholder
-                              size={Math.max(
-                                28,
-                                (dmWidth ?? 120) * 0.35
-                              )}
+                              size={Math.max(28, (dmWidth ?? 120) * 0.35)}
                             />
                           ) : null}
                         </div>
@@ -456,7 +351,6 @@ const Plate: React.FC<PlateProps> = ({
                   </div>
                 </div>
 
-                {/* RIGHT: Sidebar (ColorKey + small info) */}
                 <div
                   className="shrink-0 pt-1.5"
                   style={{
@@ -492,7 +386,7 @@ const Plate: React.FC<PlateProps> = ({
                 </div>
               </div>
             ) : (
-              // ── WIDE / LANDSCAPE LAYOUT ──
+              /* WIDE LAYOUT */
               <>
                 <div
                   className="cursor-pointer"
@@ -514,17 +408,12 @@ const Plate: React.FC<PlateProps> = ({
                     });
                   }}
                 >
-                  <div
-                    className="relative w-full"
-                    style={{ aspectRatio: "1 / 1" }}
-                  >
+                  <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
                     {shouldShowGrid ? (
                       <ZoomableGrid isActive={isActive}>
                         <DecisionMatrix
                           gridData={gridData}
-                          randomFillEnabled={
-                            randomFillEnabled && !!displayData
-                          }
+                          randomFillEnabled={randomFillEnabled && !!displayData}
                           isICMSim={isICMSim}
                         />
                       </ZoomableGrid>
@@ -532,10 +421,7 @@ const Plate: React.FC<PlateProps> = ({
                       <div className="absolute inset-0 flex items-center justify-center">
                         {alive ? (
                           <CardsPlaceholder
-                            size={Math.min(
-                              72,
-                              (plateWidth ?? 220) * 0.22
-                            )}
+                            size={Math.min(72, (plateWidth ?? 220) * 0.22)}
                           />
                         ) : null}
                       </div>

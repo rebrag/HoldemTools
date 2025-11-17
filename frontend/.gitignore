@@ -23,3 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+src/bankroll_import.csv
+src/bulkImportBankroll.mjs

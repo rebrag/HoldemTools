@@ -1,3 +1,4 @@
+// src/App.tsx
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { auth } from "./firebase";
@@ -6,13 +7,14 @@ import { AppProvider } from "./components/AppContext";
 import AppShell from "./components/AppShell";
 import "./index.css";
 
-type Section = "solver" | "equity";
+type Section = "solver" | "equity" | "bankroll";
 
 const readPath = (): Section => {
   if (typeof window === "undefined") return "solver";
   const seg = window.location.pathname.replace(/^\/+/, "").split("/")[0]?.toLowerCase();
 
   if (seg === "equity") return "equity";
+  if (seg === "bankroll") return "bankroll";
   return "solver";
 };
 
@@ -20,6 +22,8 @@ const pathFor = (section: Section) => {
   switch (section) {
     case "equity":
       return "/equity";
+    case "bankroll":
+      return "/bankroll";
     case "solver":
     default:
       return "/solutions";
@@ -56,6 +60,7 @@ function App() {
       return;
     }
 
+    // keep old /solver canonicalized to /solutions
     if (firstSeg === "solver") {
       replacePathKeepSuffix("/solutions");
     }
@@ -80,6 +85,9 @@ function App() {
   const goToSolver = () => {
     navigate("solver");
   };
+  const goToBankroll = () => {
+    navigate("bankroll");
+  };
 
   if (loading) {
     return (
@@ -98,6 +106,7 @@ function App() {
             section={section}
             goToEquity={goToEquity}
             goToSolver={goToSolver}
+            goToBankroll={goToBankroll}
           />
         </AppProvider>
       </div>

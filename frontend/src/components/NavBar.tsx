@@ -15,9 +15,10 @@ import {
 } from "firebase/auth";
 
 export interface NavBarProps {
-  section: "solver" | "equity";
-  goToEquity: () => void;   // pushes "/equity" and sets state
-  goToSolver: () => void;   // pushes "/solutions" and sets state
+  section: "solver" | "equity" | "bankroll";
+  goToEquity: () => void; // pushes "/equity" and sets state
+  goToSolver: () => void; // pushes "/solutions" and sets state
+  goToBankroll: () => void; // pushes "/bankroll" and sets state
   toggleViewMode?: () => void;
   isSpiralView?: boolean;
   tier?: "free" | "plus" | "pro";
@@ -56,7 +57,7 @@ const TierPill: React.FC<{ tier: "free" | "plus" | "pro"; loading?: boolean }> =
   );
 };
 
-const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
+const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver, goToBankroll }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
   const { tier, loading } = useCurrentTier();
@@ -135,7 +136,7 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
   }, [toolsOpen]);
 
   // Safety net: ensure URL has the correct path even if parent handler forgot
-  const pushPathIfNeeded = (path: "/solutions" | "/equity") => {
+  const pushPathIfNeeded = (path: "/solutions" | "/equity" | "/bankroll") => {
     if (typeof window === "undefined") return;
     if (window.location.pathname !== path) {
       window.history.pushState({}, "", path);
@@ -150,6 +151,11 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
   const goSolutions = () => {
     goToSolver();
     pushPathIfNeeded("/solutions");
+    setToolsOpen(false);
+  };
+  const goBankrollPage = () => {
+    goToBankroll();
+    pushPathIfNeeded("/bankroll");
     setToolsOpen(false);
   };
 
@@ -236,7 +242,7 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
           {toolsOpen && (
             <div
               ref={toolsMenuRef}
-              className="absolute right-0 mt-2 w-44 rounded-lg bg-white shadow-lg ring-1 ring-black/5 z-50"
+              className="absolute right-0 mt-2 w-48 rounded-lg bg-white shadow-lg ring-1 ring-black/5 z-50"
             >
               <div className="py-1">
                 <button
@@ -258,6 +264,16 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
                   aria-current={section === "equity" ? "page" : undefined}
                 >
                   Equity Calculator
+                </button>
+                <button
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    goBankrollPage();
+                  }}
+                  className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
+                  aria-current={section === "bankroll" ? "page" : undefined}
+                >
+                  Bankroll Tracker
                 </button>
               </div>
             </div>
@@ -328,9 +344,7 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
                       disabled={billingBusy}
                       className="w-full inline-flex items-center justify-center rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-60"
                     >
-                      {billingBusy
-                        ? "Opening billing…"
-                        : "Manage subscription"}
+                      {billingBusy ? "Opening billing…" : "Manage subscription"}
                     </button>
                   )}
 
