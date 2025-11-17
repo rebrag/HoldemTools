@@ -38,13 +38,6 @@ namespace PokerRangeAPI2.Controllers
             return Ok(sessions);
         }
 
-        // GET /api/bankroll/ping
-        [HttpGet("ping")]
-        public ActionResult<string> Ping()
-        {
-            return Ok("bankroll ok");
-        }
-
         // GET /api/bankroll/{id}
         [HttpGet("{id:guid}")]
         public async Task<ActionResult<BankrollSession>> GetSessionById(Guid id)
