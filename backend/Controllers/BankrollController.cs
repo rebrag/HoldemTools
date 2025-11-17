@@ -1,0 +1,143 @@
+﻿// Controllers/BankrollController.cs
+using Microsoft.AspNetCore.Mvc;
+using PokerRangeAPI2.Data;
+using PokerRangeAPI2.Models;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+
+namespace PokerRangeAPI2.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class BankrollController : ControllerBase
+    {
+        private readonly AppDbContext _db;
+
+        public BankrollController(AppDbContext db)
+        {
+            _db = db;
+        }
+
+        // GET /api/bankroll?userId=UID
+        [HttpGet]
+        public async Task<ActionResult<IEnumerable<BankrollSession>>> GetSessions([FromQuery] string userId)
+        {
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                return BadRequest("userId is required.");
+            }
+
+            var sessions = await _db.BankrollSessions
+                .Where(s => s.UserId == userId)
+                .OrderBy(s => s.Start)
+                .ToListAsync();
+
+            return Ok(sessions);
+        }
+
+        // GET /api/bankroll/{id}
+        [HttpGet("{id:guid}")]
+        public async Task<ActionResult<BankrollSession>> GetSessionById(Guid id)
+        {
+            var session = await _db.BankrollSessions.FindAsync(id);
+            if (session == null)
+            {
+                return NotFound();
+            }
+
+            return Ok(session);
+        }
+
+        // DTO for POST
+        public class CreateBankrollSessionDto
+        {
+            public string UserId { get; set; } = default!;
+            public string? Type { get; set; }
+
+            public DateTimeOffset? Start { get; set; }
+            public DateTimeOffset? End { get; set; }
+
+            public double? Hours { get; set; }
+
+            public string? Location { get; set; }
+            public string? Game { get; set; }
+            public string? Blinds { get; set; }
+
+            public decimal? BuyIn { get; set; }
+            public decimal? CashOut { get; set; }
+
+            public decimal? Profit { get; set; }
+        }
+
+        // POST /api/bankroll
+        [HttpPost]
+        public async Task<ActionResult<BankrollSession>> CreateSession([FromBody] CreateBankrollSessionDto dto)
+        {
+            if (dto == null)
+            {
+                return BadRequest("Body is required.");
+            }
+
+            if (string.IsNullOrWhiteSpace(dto.UserId))
+            {
+                return BadRequest("UserId is required.");
+            }
+
+            // Profit is required; if not given, try buy-in / cash-out
+            decimal? profit = dto.Profit;
+            if (!profit.HasValue && dto.BuyIn.HasValue && dto.CashOut.HasValue)
+            {
+                profit = dto.CashOut.Value - dto.BuyIn.Value;
+            }
+
+            if (!profit.HasValue)
+            {
+                return BadRequest("Profit is required, or both BuyIn and CashOut must be provided.");
+            }
+
+            var entity = new BankrollSession
+            {
+                Id = Guid.NewGuid(),
+                UserId = dto.UserId,
+                Type = string.IsNullOrWhiteSpace(dto.Type) ? "Cash" : dto.Type.Trim(),
+
+                Start = dto.Start,
+                End = dto.End,
+                Hours = dto.Hours,
+
+                Location = string.IsNullOrWhiteSpace(dto.Location) ? null : dto.Location.Trim(),
+                Game = string.IsNullOrWhiteSpace(dto.Game) ? null : dto.Game.Trim(),
+                Blinds = string.IsNullOrWhiteSpace(dto.Blinds) ? null : dto.Blinds.Trim(),
+
+                BuyIn = dto.BuyIn,
+                CashOut = dto.CashOut,
+                Profit = profit.Value
+            };
+
+            _db.BankrollSessions.Add(entity);
+            await _db.SaveChangesAsync();
+
+            // Frontend just expects the saved entity back
+            return Ok(entity);
+        }
+
+        // OPTIONAL: allow deleting a session later
+        // DELETE /api/bankroll/{id}
+        [HttpDelete("{id:guid}")]
+        public async Task<IActionResult> DeleteSession(Guid id)
+        {
+            var session = await _db.BankrollSessions.FindAsync(id);
+            if (session == null)
+            {
+                return NotFound();
+            }
+
+            _db.BankrollSessions.Remove(session);
+            await _db.SaveChangesAsync();
+            return NoContent();
+        }
+    }
+}

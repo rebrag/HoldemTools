@@ -1,5 +1,99 @@
 [
   {
+    "ContainingType": "PokerRangeAPI2.Controllers.BankrollController",
+    "Method": "GetSessions",
+    "RelativePath": "api/Bankroll",
+    "HttpMethod": "GET",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "userId",
+        "Type": "System.String",
+        "IsRequired": false
+      }
+    ],
+    "ReturnTypes": [
+      {
+        "Type": "System.Collections.Generic.IEnumerable\u00601[[PokerRangeAPI2.Models.BankrollSession, GTOLiteAPI, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null]]",
+        "MediaTypes": [
+          "text/plain",
+          "application/json",
+          "text/json"
+        ],
+        "StatusCode": 200
+      }
+    ]
+  },
+  {
+    "ContainingType": "PokerRangeAPI2.Controllers.BankrollController",
+    "Method": "CreateSession",
+    "RelativePath": "api/Bankroll",
+    "HttpMethod": "POST",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "dto",
+        "Type": "PokerRangeAPI2.Controllers.BankrollController\u002BCreateBankrollSessionDto",
+        "IsRequired": true
+      }
+    ],
+    "ReturnTypes": [
+      {
+        "Type": "PokerRangeAPI2.Models.BankrollSession",
+        "MediaTypes": [
+          "text/plain",
+          "application/json",
+          "text/json"
+        ],
+        "StatusCode": 200
+      }
+    ]
+  },
+  {
+    "ContainingType": "PokerRangeAPI2.Controllers.BankrollController",
+    "Method": "GetSessionById",
+    "RelativePath": "api/Bankroll/{id}",
+    "HttpMethod": "GET",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "id",
+        "Type": "System.Guid",
+        "IsRequired": true
+      }
+    ],
+    "ReturnTypes": [
+      {
+        "Type": "PokerRangeAPI2.Models.BankrollSession",
+        "MediaTypes": [
+          "text/plain",
+          "application/json",
+          "text/json"
+        ],
+        "StatusCode": 200
+      }
+    ]
+  },
+  {
+    "ContainingType": "PokerRangeAPI2.Controllers.BankrollController",
+    "Method": "DeleteSession",
+    "RelativePath": "api/Bankroll/{id}",
+    "HttpMethod": "DELETE",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "id",
+        "Type": "System.Guid",
+        "IsRequired": true
+      }
+    ],
+    "ReturnTypes": []
+  },
+  {
     "ContainingType": "PokerRangeAPI2.Controllers.FilesController",
     "Method": "GrabData",
     "RelativePath": "api/Files/{folderName}/{fileName}",
@@ -22,6 +116,32 @@
   },
   {
     "ContainingType": "PokerRangeAPI2.Controllers.FilesController",
+    "Method": "GetFolderMetadata",
+    "RelativePath": "api/Files/{folderName}/metadata",
+    "HttpMethod": "GET",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "folderName",
+        "Type": "System.String",
+        "IsRequired": true
+      }
+    ],
+    "ReturnTypes": [
+      {
+        "Type": "PokerRangeAPI2.Controllers.FolderMetadataDto",
+        "MediaTypes": [
+          "text/plain",
+          "application/json",
+          "text/json"
+        ],
+        "StatusCode": 200
+      }
+    ]
+  },
+  {
+    "ContainingType": "PokerRangeAPI2.Controllers.FilesController",
     "Method": "GetFolderList",
     "RelativePath": "api/Files/folders",
     "HttpMethod": "GET",
@@ -31,6 +151,32 @@
     "ReturnTypes": [
       {
         "Type": "System.Collections.Generic.List\u00601[[System.String, System.Private.CoreLib, Version=8.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e]]",
+        "MediaTypes": [
+          "text/plain",
+          "application/json",
+          "text/json"
+        ],
+        "StatusCode": 200
+      }
+    ]
+  },
+  {
+    "ContainingType": "PokerRangeAPI2.Controllers.FilesController",
+    "Method": "GetFoldersWithMetadata",
+    "RelativePath": "api/Files/foldersWithMetadata",
+    "HttpMethod": "GET",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "includeMissing",
+        "Type": "System.Boolean",
+        "IsRequired": false
+      }
+    ],
+    "ReturnTypes": [
+      {
+        "Type": "System.Collections.Generic.List\u00601[[PokerRangeAPI2.Controllers.FolderWithMetadataDto, GTOLiteAPI, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null]]",
         "MediaTypes": [
           "text/plain",
           "application/json",
@@ -65,5 +211,21 @@
         "StatusCode": 200
       }
     ]
+  },
+  {
+    "ContainingType": "PokerRangeAPI2.Controllers.GameTreesController",
+    "Method": "UploadGameTree",
+    "RelativePath": "api/GameTrees",
+    "HttpMethod": "POST",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "req",
+        "Type": "PokerRangeAPI2.Controllers.GameTreeUploadRequest",
+        "IsRequired": true
+      }
+    ],
+    "ReturnTypes": []
   }
 ]
