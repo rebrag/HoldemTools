@@ -271,7 +271,10 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   const numSims = items.length;
 
   return (
-    <div data-intro-target="folder-selector overflow-visible" className="flex justify-center overflow-visible">
+    <div
+      data-intro-target="folder-selector overflow-visible"
+      className="flex justify-center overflow-visible"
+    >
       <div className="relative w-full max-w-lg overflow-visible">
         {/* input + toggle + filters */}
         <div className="flex items-stretch gap-2">
@@ -285,7 +288,11 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
               placeholder={`Search ${numSims} Preflop Solutions…`}
               className="
                 bg-white/95 shadow-md hover:bg-blue-100
-                w-full px-4 pr-10 py-2
+                w-full
+                px-3 sm:px-4
+                pr-8 sm:pr-10
+                py-1.5 sm:py-2
+                text-sm sm:text-base
                 border border-gray-300 rounded-xl
                 focus:outline-none focus:ring focus:border-blue-300
               "
@@ -294,11 +301,11 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => setOpen((p) => !p)}
-              className="absolute inset-y-0 right-0 flex items-center px-3"
+              className="absolute inset-y-0 right-0 flex items-center px-2 sm:px-3"
               aria-label="Toggle folder list"
               title="Toggle folder list"
             >
-              <svg className="h-5 w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
+              <svg className="h-4 w-4 sm:h-5 sm:w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
                 <path
                   fillRule="evenodd"
                   d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.23 8.27a.75.75 0 01.02-1.06z"
@@ -317,13 +324,14 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => setShowFilter((p) => !p)}
               className="
-                h-10 w-10 shrink-0
+                h-9 w-9 sm:h-10 sm:w-10
+                shrink-0
                 inline-flex items-center justify-center
                 rounded-xl border border-gray-300 bg-white/95 shadow-md
                 hover:bg-gray-100 focus:outline-none focus:ring
               "
             >
-              <svg viewBox="0 0 24 24" className="h-5 w-5 text-gray-700" fill="currentColor">
+              <svg viewBox="0 0 24 24" className="h-4 w-4 sm:h-5 sm:w-5 text-gray-700" fill="currentColor">
                 <path d="M3 5a1 1 0 011-1h16a1 1 0 01.8 1.6l-6.2 8.27V19a1 1 0 01-.553.894l-3 1.5A1 1 0 019 20.5v-5.63L2.2 5.6A1 1 0 013 5z" />
               </svg>
             </button>
@@ -335,7 +343,9 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
               >
                 {/* Number of players */}
                 <div className="mb-3">
-                  <div className="text-xs font-semibold text-gray-600 mb-1">Number of players</div>
+                  <div className="text-xs font-semibold text-gray-600 mb-1">
+                    Number of players
+                  </div>
                   <div className="flex flex-wrap gap-1">
                     <button
                       className={`px-1 py-1 rounded-md text-xs border ${
@@ -422,7 +432,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
           </div>
         </div>
 
-        {/* Dropdown (floating panel, not full width) */}
+        {/* Dropdown */}
         <FolderSelectorDropdown
           open={open}
           anchorRef={inputWrapRef}

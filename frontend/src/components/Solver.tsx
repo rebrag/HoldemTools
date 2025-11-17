@@ -15,7 +15,7 @@ import { Steps } from "intro.js-react";
 import "intro.js/introjs.css";
 import { User } from "firebase/auth";
 import LoginSignupModal from "./LoginSignupModal";
-import RandomizeButton from "./RandomizeButton";
+// import RandomizeButton from "./RandomizeButton";
 import FolderSelector from "./FolderSelector";
 import ProUpsell from "./ProUpsell";
 import {
@@ -918,60 +918,72 @@ const Solver = ({ user }: SolverProps) => {
             </div>
           </div>
 
-          {/* Sim badge row with right-aligned Single Range toggle */}
+          {/* Sim badge row with Single Range toggle (always in one horizontal line) */}
           {metadata?.name && (
             <div className="px-2 sm:px-4 mt-2 mb-1">
               <div className="mx-auto w-full max-w-5xl">
-                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-                  <div />
-                  <div className="justify-self-center">
+                <div className="flex items-center gap-2">
+                  {/* Centered sim badge, flex-1 so it can shrink/truncate */}
+                  <div className="flex-1 flex justify-center min-w-0">
                     <span
-                      className="inline-flex items-center gap-2 rounded-md bg-white/70 backdrop-blur px-3 py-1 text-xs font-medium text-gray-800 shadow ring-1 ring-black/5"
+                      className="inline-flex items-center gap-2 rounded-md bg-white/80 backdrop-blur px-3 py-1 text-xs sm:text-[0.8rem] font-medium text-gray-800 shadow-sm ring-1 ring-black/5"
                       aria-label="Active Simulation Name"
                       title="Active Simulation"
                     >
-                      <strong className="tracking-wide">Sim:</strong>
-                      <span className="truncate max-w-[58vw] sm:max-w-[42vw]">{metadata.name}</span>
+                      <strong className="tracking-wide text-gray-900">Sim:</strong>
+                      <span className="truncate max-w-full">
+                        {metadata.name}
+                      </span>
                     </span>
                   </div>
-                  <div className="justify-self-end">
+
+                  {/* Single Range toggle, pinned to the right */}
+                  <div className="flex-none">
                     <button
                       type="button"
                       onClick={() => setSingleRangeView((v) => !v)}
                       aria-pressed={singleRangeView}
-                      className={`inline-flex items-center gap-2 rounded-md px-3 py-1 text-xs font-medium shadow
-                                  ring-1 ring-black/5 transition whitespace-nowrap max-w-[180px] overflow-hidden
-                                  ${singleRangeView
-                                    ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                                    : "bg-white/70 text-gray-800 hover:bg-white"}`}
+                      className={[
+                        "inline-flex items-center gap-2 rounded-md px-2.5 sm:px-3 py-1",
+                        "text-[0.7rem] sm:text-xs font-medium shadow-sm ring-1 ring-black/5",
+                        "transition-colors duration-150",
+                        singleRangeView
+                          ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                          : "bg-white/80 text-gray-800 hover:bg-white",
+                      ].join(" ")}
                       title="Show ranges only for the active player"
                     >
                       <span
                         className={`h-2 w-2 rounded-full ${
-                          singleRangeView ? "bg-white" : "bg-emerald-500/70"
+                          singleRangeView ? "bg-white" : "bg-emerald-500/80"
                         }`}
                       />
-                      <span className="ml-0.5">
-                        {singleRangeView ? "Single Range: On" : "Single Range: Off"}
+                      {/* Short label on tiny screens, full label on sm+ */}
+                      <span className="ml-0.5 sm:hidden">
+                        {singleRangeView ? "SR: On" : "SR: Off"}
+                      </span>
+                      <span className="ml-0.5 hidden sm:inline">
+                        {singleRangeView ? "Single Range View: On" : "Single Range View: Off"}
                       </span>
                     </button>
-
                   </div>
                 </div>
               </div>
             </div>
           )}
 
+
+
           {/* Line + right controls */}
           <div className="relative flex items-center mt-1 mb-2">
             <Line line={preflopLine} onLineClick={handleLineClick} />
             <div className="absolute right-0 mr-2 z-20 flex items-center gap-2">
-              <div className="scale-90">
+              {/* <div className="scale-90">
                 <RandomizeButton
                   randomFillEnabled={randomFillEnabled}
                   setRandomFillEnabled={() => setRandomFillEnabled((prev) => !prev)}
                 />
-              </div>
+              </div> */}
             </div>
           </div>
 

@@ -8,7 +8,7 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
 } from "firebase/auth";
-import { getFirestore, serverTimestamp  } from "firebase/firestore";
+import { getFirestore, serverTimestamp } from "firebase/firestore";
 import { FirebaseError } from "firebase/app";
 
 // Firebase config from environment variables
@@ -23,7 +23,7 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-const app = initializeApp(firebaseConfig);
+export const app = initializeApp(firebaseConfig); // ⬅️ export app
 
 // Firebase services
 const auth = getAuth(app);

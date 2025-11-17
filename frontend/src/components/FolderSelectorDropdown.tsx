@@ -1,4 +1,4 @@
- import React from "react";
+import React from "react";
 import type { FolderMetadata } from "../hooks/useFolders";
 
 type Props = {
@@ -39,8 +39,21 @@ const LockIcon: React.FC<{ className?: string; title?: string }> = ({
     className={className}
     focusable="false"
   >
-    <path d="M7 10V8a5 5 0 0 1 10 0v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    <rect x="5" y="10" width="14" height="10" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
+    <path
+      d="M7 10V8a5 5 0 0 1 10 0v2"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+    />
+    <rect
+      x="5"
+      y="10"
+      width="14"
+      height="10"
+      rx="2.5"
+      stroke="currentColor"
+      strokeWidth="1.5"
+    />
     <circle cx="12" cy="15" r="1.25" fill="currentColor" />
     <title>{title}</title>
   </svg>
@@ -48,6 +61,7 @@ const LockIcon: React.FC<{ className?: string; title?: string }> = ({
 
 const FolderSelectorDropdown: React.FC<Props> = ({
   open,
+  anchorRef,
   items,
   header,
   hi,
@@ -58,6 +72,14 @@ const FolderSelectorDropdown: React.FC<Props> = ({
   lockedSet,
 }) => {
   if (!open) return null;
+
+  const anchorEl = anchorRef.current;
+  if (!anchorEl) return null;
+
+  // Match dropdown width to the search bar (anchor) width
+  const width = anchorEl.offsetWidth;
+  // Position dropdown left-aligned to the search bar within the relative parent
+  const left = anchorEl.offsetLeft;
 
   // Fixed column widths to keep the right border of Avg. aligned.
   // Tags: 3rem | Avg: 3rem | Seats: equal flexible columns.
@@ -83,14 +105,17 @@ const FolderSelectorDropdown: React.FC<Props> = ({
 
   return (
     <div
-      className="absolute z-10 mt-2 left-1/2 -translate-x-1/2"
+      className="absolute z-10 mt-2"
       onMouseDown={(e) => e.preventDefault()}
-      style={{ transformOrigin: "top center" }}
+      style={{
+        left,
+        width,
+        maxWidth: "calc(100vw - 1.5rem)",
+        transformOrigin: "top center",
+      }}
     >
       <div
         className="
-          w-[clamp(18rem,85vw,28rem)]
-          max-w-[calc(100vw-1.5rem)]
           rounded-xl border border-gray-200 bg-white/95 backdrop-blur
           shadow-[0_10px_25px_rgba(0,0,0,0.12)]
           overflow-hidden
@@ -103,16 +128,26 @@ const FolderSelectorDropdown: React.FC<Props> = ({
             className="grid sticky top-0 z-10 bg-gray-800 text-gray-200 font-semibold border-b border-gray-700"
             style={{ gridTemplateColumns: GRID_TEMPLATE_COLUMNS, gridAutoRows: "auto" }}
           >
-            <div className={`${CELL_TEXT} ${CELL_PY} ${CELL_TAGS_PX} text-center ${cellBorderR(0)}`}>
+            <div
+              className={`${CELL_TEXT} ${CELL_PY} ${CELL_TAGS_PX} text-center ${cellBorderR(
+                0
+              )}`}
+            >
               Tags
             </div>
-            <div className={`${CELL_TEXT} ${CELL_PY} ${CELL_STD_PX} text-center ${cellBorderR(1)}`}>
+            <div
+              className={`${CELL_TEXT} ${CELL_PY} ${CELL_STD_PX} text-center ${cellBorderR(
+                1
+              )}`}
+            >
               Avg.
             </div>
             {header.map((pos, i) => (
               <div
                 key={`h-${pos}`}
-                className={`${CELL_TEXT} ${CELL_PY} ${CELL_STD_PX} text-center ${cellBorderR(i + 2)}`}
+                className={`${CELL_TEXT} ${CELL_PY} ${CELL_STD_PX} text-center ${cellBorderR(
+                  i + 2
+                )}`}
               >
                 {pos}
               </div>

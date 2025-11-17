@@ -12,20 +12,16 @@ interface AppShellProps {
   goToSolver: () => void;
 }
 
-// Optional: let NavBar consume the tier from context (no prop-drill)
 const NavBarWithTier: React.FC<{
   section: "solver" | "equity";
   goToEquity: () => void;
   goToSolver: () => void;
 }> = ({ section, goToEquity, goToSolver }) => {
-  // const { tier, loading } = useCurrentTier();
   return (
     <NavBar
       section={section}
       goToEquity={goToEquity}
       goToSolver={goToSolver}
-      // If your NavBar needs it as prop (otherwise, it can call useCurrentTier itself)
-      // tier={tier}
     />
   );
 };

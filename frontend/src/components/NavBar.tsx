@@ -1,7 +1,9 @@
+// src/components/NavBar.tsx
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import AccountMenu from "./AccountMenu";
 import { useCurrentTier } from "../context/TierContext";
+import { openBillingPortal } from "../lib/openBillingPortal";
 
 import {
   getAuth,
@@ -64,6 +66,8 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
   const toolsMenuRef = useRef<HTMLDivElement>(null);
 
   const [user, setUser] = useState<User | null>(null);
+  const [billingBusy, setBillingBusy] = useState(false);
+
   useEffect(() => {
     const auth = getAuth();
     return onAuthStateChanged(auth, (u) => setUser(u));
@@ -85,9 +89,20 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
   const openMenu = () => setMenuOpen(true);
   const closeMenu = () => setMenuOpen(false);
 
+  const handleManageBilling = async () => {
+    try {
+      setBillingBusy(true);
+      await openBillingPortal();
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
   useEffect(() => {
     if (!menuOpen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closeMenu(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeMenu();
+    };
     document.addEventListener("keydown", onKey);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -108,7 +123,9 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
       if (toolsMenuRef.current?.contains(t as Node)) return;
       setToolsOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setToolsOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setToolsOpen(false);
+    };
     document.addEventListener("pointerdown", onDocDown);
     document.addEventListener("keydown", onKey);
     return () => {
@@ -125,27 +142,47 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
     }
   };
 
-  const goEquity = () => { goToEquity(); pushPathIfNeeded("/equity"); setToolsOpen(false); };
-  const goSolutions = () => { goToSolver(); pushPathIfNeeded("/solutions"); setToolsOpen(false); };
+  const goEquity = () => {
+    goToEquity();
+    pushPathIfNeeded("/equity");
+    setToolsOpen(false);
+  };
+  const goSolutions = () => {
+    goToSolver();
+    pushPathIfNeeded("/solutions");
+    setToolsOpen(false);
+  };
 
-  // Optional: ring color on navbar based on tier (keeps tier/loading "used")
+  // Optional: ring color on navbar based on tier
   const tierRing =
-    tier === "pro" ? "ring-emerald-500/40" :
-    tier === "plus" ? "ring-amber-500/40" :
-    "ring-gray-300/60";
+    tier === "pro"
+      ? "ring-emerald-500/40"
+      : tier === "plus"
+      ? "ring-amber-500/40"
+      : "ring-gray-300/60";
 
   return (
-    <nav className={`fixed top-0 left-0 right-0 bg-white shadow-md z-80 ring-1 ${tierRing}`} aria-busy={loading || undefined}>
+    <nav
+      className={`fixed top-0 left-0 right-0 bg-white shadow-md z-80 ring-1 ${tierRing}`}
+      aria-busy={loading || undefined}
+    >
       <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 flex items-center justify-between h-12">
         {/* left: hamburger */}
         <button
-          onPointerDown={(e) => { e.preventDefault(); openMenu(); }}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            openMenu();
+          }}
           className="text-gray-600 hover:text-gray-800 focus:outline-none p-1 rounded-md hover:bg-gray-100"
           aria-label="Open menu"
         >
           <svg className="w-6 h-6" viewBox="0 0 24 24" stroke="currentColor" fill="none">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"
-                  d="M4 6h16M4 12h16M4 18h16" />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="2"
+              d="M4 6h16M4 12h16M4 18h16"
+            />
           </svg>
         </button>
 
@@ -162,10 +199,10 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
               className="h-[24px] w-[24px] block select-none"
               draggable="false"
               style={{
-                WebkitTransform: 'translateZ(0)',
-                backfaceVisibility: 'hidden',
-                WebkitBackfaceVisibility: 'hidden',
-                WebkitMaskImage: '-webkit-radial-gradient(white, black)',
+                WebkitTransform: "translateZ(0)",
+                backfaceVisibility: "hidden",
+                WebkitBackfaceVisibility: "hidden",
+                WebkitMaskImage: "-webkit-radial-gradient(white, black)",
               }}
             />
             <span className="text-sm sm:text-base font-semibold tracking-wide text-gray-900">
@@ -178,14 +215,21 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
         <div className="relative">
           <button
             ref={toolsBtnRef}
-            onPointerDown={(e) => { e.preventDefault(); setToolsOpen((v) => !v); }}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              setToolsOpen((v) => !v);
+            }}
             className="inline-flex items-center gap-1 rounded-md bg-gray-100 px-2.5 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-200 shadow"
             aria-haspopup="menu"
             aria-expanded={toolsOpen}
           >
             Tools
             <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.188l3.71-3.957a.75.75 0 111.08 1.04l-4.24 4.52a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+              <path
+                fillRule="evenodd"
+                d="M5.23 7.21a.75.75 0 011.06.02L10 11.188l3.71-3.957a.75.75 0 111.08 1.04l-4.24 4.52a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z"
+                clipRule="evenodd"
+              />
             </svg>
           </button>
 
@@ -196,14 +240,20 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
             >
               <div className="py-1">
                 <button
-                  onPointerDown={(e) => { e.preventDefault(); goSolutions(); }}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    goSolutions();
+                  }}
                   className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
                   aria-current={section === "solver" ? "page" : undefined}
                 >
                   Solutions
                 </button>
                 <button
-                  onPointerDown={(e) => { e.preventDefault(); goEquity(); }}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    goEquity();
+                  }}
                   className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
                   aria-current={section === "equity" ? "page" : undefined}
                 >
@@ -239,20 +289,27 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
                   Menu
                 </h2>
                 <button
-                  onPointerDown={(e) => { e.preventDefault(); closeMenu(); }}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    closeMenu();
+                  }}
                   className="p-2 rounded-md hover:bg-gray-100 text-gray-600"
                   aria-label="Close menu"
                 >
                   <svg className="h-5 w-5" viewBox="0 0 24 24" stroke="currentColor" fill="none">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"
-                          d="M6 18L18 6M6 6l12 12" />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M6 18L18 6M6 6l12 12"
+                    />
                   </svg>
                 </button>
               </div>
 
               <div className="px-4 py-3 space-y-2">
-                {/* Account row with tier on the right */}
-                <div className="pt-2">
+                {/* Account row + tier + manage button */}
+                <div className="pt-2 space-y-2">
                   <div className="flex items-center justify-between gap-3">
                     <AccountMenu
                       isLoggedIn={!!user}
@@ -263,9 +320,27 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver }) => {
                     />
                     <TierPill tier={tier} loading={loading} />
                   </div>
-                </div>
 
-                {/* (add other menu content here if needed) */}
+                  {user && tier !== "free" && (
+                    <button
+                      type="button"
+                      onClick={handleManageBilling}
+                      disabled={billingBusy}
+                      className="w-full inline-flex items-center justify-center rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-60"
+                    >
+                      {billingBusy
+                        ? "Opening billing…"
+                        : "Manage subscription"}
+                    </button>
+                  )}
+
+                  {user && tier === "free" && (
+                    <p className="text-[11px] text-gray-500">
+                      You're on the <strong>Free</strong> tier. Open a locked sim to upgrade to
+                      Plus or Pro.
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
           </div>,

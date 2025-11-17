@@ -3,6 +3,8 @@ import React, { useState } from "react";
 import { getAuth } from "firebase/auth";
 import { startSubscriptionCheckout } from "../lib/checkout";
 import { getPriceIdForTier, TIER_LABEL, Tier } from "../lib/stripeTiers";
+import { useCurrentTier } from "../context/TierContext";
+import { openBillingPortal } from "../lib/openBillingPortal";
 
 type ProUpsellProps = {
   open: boolean;
@@ -36,6 +38,9 @@ const ProUpsell: React.FC<ProUpsellProps> = ({
   priceProLabel = "$25/mo",
 }) => {
   const [loading, setLoading] = useState<Tier | null>(null);
+  const [billingBusy, setBillingBusy] = useState(false);
+  const { tier: currentTier } = useCurrentTier(); // "free" | "plus" | "pro"
+
   if (!open) return null;
 
   async function handleSubscribe(tier: Tier) {
@@ -74,6 +79,15 @@ const ProUpsell: React.FC<ProUpsellProps> = ({
     }
   }
 
+  async function handleManageBilling() {
+    try {
+      setBillingBusy(true);
+      await openBillingPortal();
+    } finally {
+      setBillingBusy(false);
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 z-[1200] flex items-center justify-center"
@@ -83,10 +97,6 @@ const ProUpsell: React.FC<ProUpsellProps> = ({
     >
       {/* Shine CSS (scoped) */}
       <style>{`
-        /* Continuous shine every 4s:
-           - idle off-screen most of the time
-           - brief visible sweep between ~73% and ~85%
-        */
         @keyframes btn-shine-loop {
           0%, 72% {
             transform: translateX(-120%) skewX(-12deg);
@@ -129,7 +139,6 @@ const ProUpsell: React.FC<ProUpsellProps> = ({
           filter: blur(1px);
           animation: btn-shine-loop 4s ease-in-out infinite;
         }
-        /* On hover/focus, run an extra quick sweep immediately (without cancelling the loop) */
         .btn-gloss:hover .shine,
         .btn-gloss:focus-visible .shine {
           animation: btn-shine-loop 5s ease-in-out infinite,
@@ -146,7 +155,11 @@ const ProUpsell: React.FC<ProUpsellProps> = ({
       `}</style>
 
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} aria-hidden="true" />
+      <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        onClick={onClose}
+        aria-hidden="true"
+      />
 
       {/* Panel */}
       <div className="relative w-[94vw] max-w-4xl rounded-3xl bg-white shadow-[0_30px_80px_-20px_rgba(0,0,0,0.45)] overflow-hidden">
@@ -159,7 +172,10 @@ const ProUpsell: React.FC<ProUpsellProps> = ({
                 <Sparkle />
               </div>
               <div>
-                <h2 id="pro-upsell-title" className="text-white text-lg sm:text-xl font-semibold tracking-wide">
+                <h2
+                  id="pro-upsell-title"
+                  className="text-white text-lg sm:text-xl font-semibold tracking-wide"
+                >
                   Unlock the full pre-flop library
                 </h2>
                 <p className="text-white/85 text-xs sm:text-sm">
@@ -173,7 +189,12 @@ const ProUpsell: React.FC<ProUpsellProps> = ({
               aria-label="Close"
             >
               <svg className="h-5 w-5" viewBox="0 0 24 24" stroke="currentColor" fill="none">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M6 18L18 6M6 6l12 12"
+                />
               </svg>
             </button>
           </div>
@@ -211,7 +232,9 @@ const ProUpsell: React.FC<ProUpsellProps> = ({
                       Everything you need for <strong>ChipEV</strong> study & drills
                     </p>
                   </div>
-                  <span className="text-sm font-semibold text-emerald-800">{pricePlusLabel}</span>
+                  <span className="text-sm font-semibold text-emerald-800">
+                    {pricePlusLabel}
+                  </span>
                 </div>
 
                 <ul className="mt-3 text-sm text-emerald-900/90 space-y-1.5">
@@ -231,28 +254,43 @@ const ProUpsell: React.FC<ProUpsellProps> = ({
 
                 <button
                   onClick={() => handleSubscribe("plus")}
-                  disabled={loading !== null}
+                  disabled={loading !== null || currentTier === "plus"}
                   className={[
                     "btn-gloss group mt-4 w-full inline-flex items-center justify-center px-4 py-2.5 rounded-xl font-semibold text-white",
                     "bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800",
                     "shadow-sm shadow-emerald-300/40",
                     "focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500",
                     "disabled:opacity-60 disabled:cursor-not-allowed",
-                    "transition-colors"
+                    "transition-colors",
                   ].join(" ")}
                 >
                   <span className="shine" />
-                  {loading === "plus" ? (
-                    <span className="inline-flex items-center gap-2">
-                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24">
-                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" opacity=".25" />
-                        <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="4" fill="none" />
-                      </svg>
-                      Redirecting…
-                    </span>
-                  ) : (
-                    "Choose Plus"
-                  )}
+                  {currentTier === "plus"
+                    ? "Current plan"
+                    : loading === "plus"
+                    ? (
+                      <span className="inline-flex items-center gap-2">
+                        <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24">
+                          <circle
+                            cx="12"
+                            cy="12"
+                            r="10"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                            fill="none"
+                            opacity=".25"
+                          />
+                          <path
+                            d="M4 12a8 8 0 018-8"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                            fill="none"
+                          />
+                        </svg>
+                        Redirecting…
+                      </span>
+                    )
+                    : "Choose Plus"}
                 </button>
               </div>
             </div>
@@ -273,7 +311,9 @@ const ProUpsell: React.FC<ProUpsellProps> = ({
                       Full access to <strong>everything</strong>: ChipEV + ICM
                     </p>
                   </div>
-                  <span className="text-sm font-semibold text-indigo-800">{priceProLabel}</span>
+                  <span className="text-sm font-semibold text-indigo-800">
+                    {priceProLabel}
+                  </span>
                 </div>
 
                 <ul className="mt-3 text-sm text-indigo-900/90 space-y-1.5">
@@ -292,29 +332,53 @@ const ProUpsell: React.FC<ProUpsellProps> = ({
                 </ul>
 
                 <button
-                  onClick={() => handleSubscribe("pro")}
-                  disabled={loading !== null}
+                  onClick={() => {
+                    if (currentTier === "plus") {
+                      // Already paying → let Stripe portal handle prorated upgrade
+                      handleManageBilling();
+                    } else {
+                      handleSubscribe("pro");
+                    }
+                  }}
+                  disabled={loading !== null || currentTier === "pro"}
                   className={[
                     "btn-gloss group mt-4 w-full inline-flex items-center justify-center px-4 py-2.5 rounded-xl font-semibold text-white",
                     "bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800",
                     "shadow-sm shadow-indigo-300/40",
                     "focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500",
                     "disabled:opacity-60 disabled:cursor-not-allowed",
-                    "transition-colors"
+                    "transition-colors",
                   ].join(" ")}
                 >
                   <span className="shine" />
-                  {loading === "pro" ? (
-                    <span className="inline-flex items-center gap-2">
-                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24">
-                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" opacity=".25" />
-                        <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="4" fill="none" />
-                      </svg>
-                      Redirecting…
-                    </span>
-                  ) : (
-                    "Choose Pro"
-                  )}
+                  {currentTier === "pro"
+                    ? "Current plan"
+                    : loading === "pro"
+                    ? (
+                      <span className="inline-flex items-center gap-2">
+                        <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24">
+                          <circle
+                            cx="12"
+                            cy="12"
+                            r="10"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                            fill="none"
+                            opacity=".25"
+                          />
+                          <path
+                            d="M4 12a8 8 0 018-8"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                            fill="none"
+                          />
+                        </svg>
+                        Redirecting…
+                      </span>
+                    )
+                    : currentTier === "plus"
+                    ? "Upgrade to Pro"
+                    : "Choose Pro"}
                 </button>
               </div>
             </div>
@@ -334,6 +398,16 @@ const ProUpsell: React.FC<ProUpsellProps> = ({
             >
               Keep Current Plan
             </button>
+
+            {currentTier !== "free" && (
+              <button
+                onClick={handleManageBilling}
+                disabled={billingBusy}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-60 transition-colors"
+              >
+                {billingBusy ? "Opening billing…" : "Manage subscription"}
+              </button>
+            )}
 
             <div className="flex items-center gap-3 text-[11px] text-gray-500">
               <div className="inline-flex items-center gap-1.5">
