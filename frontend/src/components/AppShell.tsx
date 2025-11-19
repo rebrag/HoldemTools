@@ -3,7 +3,7 @@ import type { User } from "firebase/auth";
 import NavBar from "./NavBar";
 import Solver from "./Solver";
 import EquityCalc from "./EquityCalc";
-import BankrollTracker from "./BankrollTracker";
+import BankrollTracker from "../bankroll/BankrollTracker";
 import { TierProvider } from "../context/TierContext";
 
 interface AppShellProps {

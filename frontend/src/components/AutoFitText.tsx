@@ -80,9 +80,9 @@ const AutoFitText: React.FC<AutoFitTextProps> = ({
   return (
     <div
       ref={wrapRef}
-      className={`w-full overflow-hidden ${className}`}
+      className={`w-full overflow-visible ${className}`}
       title={title}
-      style={{ lineHeight: 1.05 }}
+      style={{ lineHeight: 1.00 }}
     >
       <span
         ref={innerRef}
