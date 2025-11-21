@@ -1,6 +1,5 @@
 // src/bankroll/SessionTable.tsx
 import React from "react";
-import AutoFitText from "../components/AutoFitText";
 import { formatHours, formatMoney } from "./utils";
 import type { BankrollSession } from "./types";
 
@@ -40,7 +39,6 @@ const SessionTable: React.FC<Props> = ({
     <tbody className="divide-y divide-gray-100 bg-white">
       {ordered.map((s) => {
         const startDate = s.start ? new Date(s.start) : null;
-
         const dateStr = startDate ? startDate.toLocaleDateString() : "—";
 
         const profit = s.profit ?? 0;
@@ -74,44 +72,52 @@ const SessionTable: React.FC<Props> = ({
             className="transition-colors hover:bg-emerald-50/60"
           >
             {/* Date */}
-            <td className="px-2 py-1.5 text-[11px] sm:text-xs text-gray-800">
-              <AutoFitText maxPx={12}>{dateStr}</AutoFitText>
+            <td className="px-2 py-1.5 text-[8px] sm:text-xs text-gray-800">
+              <span className="block truncate max-w-[80px]">
+                {dateStr}
+              </span>
             </td>
 
             {/* Location */}
             <td className="px-2 py-1.5 text-[11px] sm:text-xs text-gray-700">
-              <AutoFitText maxPx={12}>{s.location ?? "—"}</AutoFitText>
+              <span className="block truncate max-w-[110px]">
+                {s.location ?? "—"}
+              </span>
             </td>
 
             {/* Blinds */}
             <td className="px-2 py-1.5 text-[11px] sm:text-xs text-gray-700">
-              <AutoFitText maxPx={12}>{s.blinds ?? "—"}</AutoFitText>
+              <span className="block truncate max-w-[90px]">
+                {s.blinds ?? "—"}
+              </span>
             </td>
 
-            {/* Hours */}
-            <td className="px-2 py-1.5 text-[11px] sm:text-xs text-gray-700">
+            {/* Hours (H:MM) */}
+            <td className="px-2 py-1.5 text-[11px] sm:text-xs text-gray-700 text-center">
               {hoursStr}
             </td>
 
             {/* Buy-in */}
-            <td className="px-2 py-1.5 text-[11px] sm:text-xs text-gray-700">
-              <AutoFitText maxPx={12}>
+            <td className="px-2 py-1.5 text-[10px] sm:text-xs text-gray-700">
+              <span className="block truncate max-w-[80px]">
                 {s.buyIn != null ? `$${buyInStr}` : "—"}
-              </AutoFitText>
+              </span>
             </td>
 
             {/* Cash-out */}
-            <td className="px-2 py-1.5 text-[11px] sm:text-xs text-gray-700">
-              <AutoFitText maxPx={12}>
+            <td className="px-2 py-1.5 text-[10px] sm:text-xs text-gray-700">
+              <span className="block truncate max-w-[80px]">
                 {s.cashOut != null ? `$${cashOutStr}` : "—"}
-              </AutoFitText>
+              </span>
             </td>
 
             {/* Profit */}
             <td
               className={`px-2 py-1.5 text-[11px] sm:text-xs font-semibold ${profitColor}`}
             >
-              <AutoFitText maxPx={12}>${profitStr}</AutoFitText>
+              <span className="block truncate max-w-[80px]">
+                ${profitStr}
+              </span>
             </td>
 
             {/* Actions */}

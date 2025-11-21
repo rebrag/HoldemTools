@@ -144,7 +144,7 @@ const BankrollFormModal: React.FC<Props> = ({
                 {loc}
               </option>
             ))}
-            <option value="__ht_add_location__">＋ Add location…</option>
+            <option value="__ht_add_location__">+ Add location…</option>
           </select>
         </div>
 

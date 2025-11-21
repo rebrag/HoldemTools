@@ -15,15 +15,20 @@ export const formatMoney = (val: number | null | undefined): string => {
   });
 };
 
-export const formatHours = (val: number | null | undefined): string => {
-  if (val == null) return "—";
-
-  const rounded = Math.round(val * 100) / 100;
-  if (Number.isInteger(rounded)) {
-    return rounded.toString();
+// src/bankroll/utils.ts
+export function formatHours(hours: number | null | undefined): string {
+  if (hours == null || !Number.isFinite(hours) || hours <= 0) {
+    return "—";
   }
-  return rounded.toFixed(1);
-};
+
+  // hours is a decimal number of hours (e.g. 3.5)
+  const totalMinutes = Math.round(hours * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+
+  return `${h}:${String(m).padStart(2, "0")}`; // e.g. 3:30
+}
+
 
 export const toLocalInputValue = (iso: string | null): string => {
   if (!iso) return "";

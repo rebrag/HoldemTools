@@ -7,7 +7,12 @@ import BankrollChart from "./BankrollChart";
 import BankrollFormModal from "./BankrollFormModal";
 import BankrollStatsGrid from "./BankrollStatsGrid";
 import SessionTable from "./SessionTable";
-import { buildCumulativePoints, toLocalInputValue } from "./utils";
+import {
+  buildCumulativePoints,
+  toLocalInputValue,
+  formatHours,
+  formatMoney,
+} from "./utils";
 import type {
   BankrollSession,
   BankrollTrackerProps,
@@ -27,6 +32,17 @@ type DraftSession = {
   createdAt: string;
 };
 
+type BreakdownMode = "sessions" | "weekday" | "month" | "year";
+
+type FilterState = {
+  location: string;
+  game: string;
+  fromDate: string; // YYYY-MM-DD
+  toDate: string; // YYYY-MM-DD
+  minHours: string;
+  maxHours: string;
+};
+
 const BankrollModalPortal: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
@@ -42,6 +58,200 @@ const defaultForm: FormState = {
   blinds: "1/2 NLH",
   buyIn: "",
   cashOut: "",
+};
+
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_LABELS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+type BreakdownRow = {
+  label: string;
+  totalProfit: number;
+  totalHours: number;
+  numSessions: number;
+  hourly: number;
+  sortValue: number;
+};
+
+function buildBreakdownRows(
+  sessions: BankrollSession[],
+  mode: "weekday" | "month" | "year"
+): BreakdownRow[] {
+  const groups: Record<string, BreakdownRow> = {};
+
+  for (const s of sessions) {
+    if (!s.start) continue;
+
+    const startDate = new Date(s.start);
+    if (Number.isNaN(startDate.getTime())) continue;
+
+    const profit = s.profit ?? 0;
+    const hours = s.hours ?? 0;
+
+    let key: string;
+    let label: string;
+    let sortValue: number;
+
+    if (mode === "weekday") {
+      const day = startDate.getDay(); // 0 = Sun
+      key = `wd-${day}`;
+      label = WEEKDAY_LABELS[day];
+      sortValue = day;
+    } else if (mode === "month") {
+      const year = startDate.getFullYear();
+      const month = startDate.getMonth(); // 0-based
+      key = `m-${year}-${month}`;
+      label = `${MONTH_LABELS[month]} ${year}`;
+      sortValue = year * 12 + month; // bigger = more recent
+    } else {
+      const year = startDate.getFullYear();
+      key = `y-${year}`;
+      label = `${year}`;
+      sortValue = year; // bigger = more recent
+    }
+
+    const existing = groups[key];
+    if (!existing) {
+      groups[key] = {
+        label,
+        totalProfit: profit,
+        totalHours: hours,
+        numSessions: 1,
+        hourly: 0,
+        sortValue,
+      };
+    } else {
+      existing.totalProfit += profit;
+      existing.totalHours += hours;
+      existing.numSessions += 1;
+    }
+  }
+
+  const rows = Object.values(groups);
+
+  for (const row of rows) {
+    row.hourly =
+      row.totalHours > 0 ? row.totalProfit / row.totalHours : 0;
+  }
+
+  rows.sort((a, b) => {
+    if (mode === "weekday") {
+      // Sun → Sat
+      return a.sortValue - b.sortValue;
+    }
+    // Month / Year: newest first
+    return b.sortValue - a.sortValue;
+  });
+
+  return rows;
+}
+
+
+const BreakdownTable: React.FC<{
+  sessions: BankrollSession[];
+  mode: "weekday" | "month" | "year";
+}> = ({ sessions, mode }) => {
+  if (!sessions.length) {
+    return (
+      <div className="px-3 py-3 text-center text-sm text-gray-500 bg-white">
+        No sessions match the current filters.
+      </div>
+    );
+  }
+
+  const rows = buildBreakdownRows(sessions, mode);
+  if (!rows.length) {
+    return (
+      <div className="px-3 py-3 text-center text-sm text-gray-500 bg-white">
+        Not enough data to compute this breakdown.
+      </div>
+    );
+  }
+
+  const heading =
+    mode === "weekday"
+      ? "Weekday"
+      : mode === "month"
+      ? "Month"
+      : "Year";
+
+  return (
+    <table className="w-full table-fixed divide-y divide-gray-200 text-left">
+      <colgroup>
+        <col className="w-[26%]" /> {/* Period */}
+        <col className="w-[14%]" /> {/* Sessions */}
+        <col className="w-[18%]" /> {/* Hours */}
+        <col className="w-[21%]" /> {/* Net */}
+        <col className="w-[21%]" /> {/* Hourly */}
+      </colgroup>
+      <thead className="bg-gray-50">
+        <tr>
+          <th className="px-2 py-2 text-[11px] font-semibold text-gray-700 text-left">
+            {heading}
+          </th>
+          <th className="px-2 py-2 text-[11px] font-semibold text-gray-700 text-right">
+            Sessions
+          </th>
+          <th className="px-2 py-2 text-[11px] font-semibold text-gray-700 text-right">
+            Hours
+          </th>
+          <th className="px-2 py-2 text-[11px] font-semibold text-gray-700 text-right">
+            Net
+          </th>
+          <th className="px-2 py-2 text-[11px] font-semibold text-gray-700 text-right">
+            Hourly
+          </th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-gray-100 bg-white">
+        {rows.map((row) => {
+          const profitColor =
+            row.totalProfit > 0
+              ? "text-emerald-600"
+              : row.totalProfit < 0
+              ? "text-rose-600"
+              : "text-slate-700";
+
+          return (
+            <tr
+              key={row.label}
+              className="transition-colors hover:bg-emerald-50/60"
+            >
+              <td className="px-2 py-1.5 text-[11px] sm:text-xs text-gray-800">
+                {row.label}
+              </td>
+              <td className="px-2 py-1.5 text-[11px] sm:text-xs text-right text-gray-700">
+                {row.numSessions}
+              </td>
+              <td className="px-2 py-1.5 text-[11px] sm:text-xs text-right text-gray-700">
+                {formatHours(row.totalHours)}
+              </td>
+              <td
+                className={`px-2 py-1.5 text-[11px] sm:text-xs text-right font-semibold ${profitColor}`}
+              >
+                ${formatMoney(row.totalProfit)}
+              </td>
+              <td className="px-2 py-1.5 text-[11px] sm:text-xs text-right text-gray-700">
+                ${formatMoney(row.hourly)}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
 };
 
 const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
@@ -72,6 +282,19 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
 
   // chart hover index
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+
+  // filters + breakdown mode
+  const [filters, setFilters] = useState<FilterState>({
+    location: "",
+    game: "",
+    fromDate: "",
+    toDate: "",
+    minHours: "",
+    maxHours: "",
+  });
+  const [showFilters, setShowFilters] = useState(false);
+  const [breakdownMode, setBreakdownMode] =
+    useState<BreakdownMode>("sessions");
 
   /* ───────────────── Restore drafts from localStorage ───────────────── */
 
@@ -354,38 +577,117 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
     return { hours, minutes };
   };
 
-  const autoProfit = useMemo(
-    () => computeAutoProfit(form),
-    [form]
-  );
+  const autoProfit = useMemo(() => computeAutoProfit(form), [form]);
 
   const sessionDuration = useMemo(
     () => computeSessionDuration(form),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [form, now]
   );
 
-  // stats
+  /* ───────────────── Filtering (with safe parsing) ───────────────── */
+
+  const filteredSessions = useMemo(() => {
+    if (!sessions.length) return [];
+
+    const parseDateBound = (dateStr: string, endOfDay: boolean): number | null => {
+      if (!dateStr || dateStr.length < 10) return null; // ignore partial input
+      const full = endOfDay
+        ? `${dateStr}T23:59:59.999`
+        : `${dateStr}T00:00:00`;
+      const t = new Date(full).getTime();
+      return Number.isNaN(t) ? null : t;
+    };
+
+    const parseHours = (val: string): number | null => {
+      if (!val.trim()) return null;
+      const n = Number(val);
+      return Number.isFinite(n) && n >= 0 ? n : null;
+    };
+
+    const fromMs = parseDateBound(filters.fromDate, false);
+    const toMs = parseDateBound(filters.toDate, true);
+
+    let minHours = parseHours(filters.minHours);
+    let maxHours = parseHours(filters.maxHours);
+
+    // If both present and order is inverted, swap them
+    if (minHours != null && maxHours != null && minHours > maxHours) {
+      const tmp = minHours;
+      minHours = maxHours;
+      maxHours = tmp;
+    }
+
+    return sessions.filter((s) => {
+      // Location filter
+      if (filters.location && s.location?.trim() !== filters.location) {
+        return false;
+      }
+
+      // Game filter
+      if (filters.game && s.blinds?.trim() !== filters.game) {
+        return false;
+      }
+
+      const start = s.start ? new Date(s.start) : null;
+      const startMs =
+        start && !Number.isNaN(start.getTime())
+          ? start.getTime()
+          : null;
+
+      // Date range filter
+      if (fromMs !== null) {
+        if (startMs === null || startMs < fromMs) return false;
+      }
+      if (toMs !== null) {
+        if (startMs === null || startMs > toMs) return false;
+      }
+
+      // Hours filter
+      const hours = s.hours ?? 0;
+      if (minHours !== null && hours < minHours) return false;
+      if (maxHours !== null && hours > maxHours) return false;
+
+      return true;
+    });
+  }, [sessions, filters]);
+
+  const totalSessions = sessions.length;
+  const filteredCount = filteredSessions.length;
+  const isFiltering =
+    !!filters.location ||
+    !!filters.game ||
+    !!filters.fromDate ||
+    !!filters.toDate ||
+    !!filters.minHours ||
+    !!filters.maxHours;
+
+  // stats & chart based on filtered sessions
   const stats: BankrollStats = useMemo(() => {
-    if (!sessions.length) {
+    if (!filteredSessions.length) {
       return { totalProfit: 0, totalHours: 0, numSessions: 0, hourly: 0 };
     }
-    const totalProfit = sessions.reduce(
+    const totalProfit = filteredSessions.reduce(
       (sum, s) => sum + (s.profit || 0),
       0
     );
-    const totalHours = sessions.reduce(
+    const totalHours = filteredSessions.reduce(
       (sum, s) => sum + (s.hours || 0),
       0
     );
-    const numSessions = sessions.length;
+    const numSessions = filteredSessions.length;
     const hourly = totalHours > 0 ? totalProfit / totalHours : 0;
     return { totalProfit, totalHours, numSessions, hourly };
-  }, [sessions]);
+  }, [filteredSessions]);
 
   const cumulativePoints = useMemo(
-    () => buildCumulativePoints(sessions),
-    [sessions]
-  );
+  () =>
+    filteredSessions.length > 0
+      ? buildCumulativePoints(filteredSessions)
+      : [],
+  [filteredSessions]
+);
+
 
   const displayStats: BankrollStats = useMemo(() => {
     if (
@@ -607,9 +909,7 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
     onChange("location", value);
   };
 
-  const handleGameSelectChange = (
-    e: React.ChangeEvent<HTMLSelectElement>
-  ) => {
+  const handleGameSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
     if (value === ADD_GAME_OPTION) {
       const name = window.prompt("Add a new game name:");
@@ -644,6 +944,32 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
   };
 
   const draftsWithStart = drafts.filter((d) => d.form.start);
+
+  const resetFilters = () => {
+    setFilters({
+      location: "",
+      game: "",
+      fromDate: "",
+      toDate: "",
+      minHours: "",
+      maxHours: "",
+    });
+  };
+
+  const setThisYear = () => {
+    const nowDate = new Date();
+    const year = nowDate.getFullYear();
+    const month = String(nowDate.getMonth() + 1).padStart(2, "0");
+    const day = String(nowDate.getDate()).padStart(2, "0");
+    const today = `${year}-${month}-${day}`;
+    const startOfYear = `${year}-01-01`;
+
+    setFilters((prev) => ({
+      ...prev,
+      fromDate: startOfYear,
+      toDate: today,
+    }));
+  };
 
   /* ───────────────── Render ───────────────── */
 
@@ -775,87 +1101,323 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
       )}
 
       {/* chart */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-emerald-50">
-            Profit over time
-          </h2>
-          <p className="text-xs text-emerald-100/80">
-            Cumulative profit vs. hours played.
-          </p>
+    <div className="space-y-2">
+    <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-emerald-50">
+        Profit over time
+        </h2>
+        <p className="text-xs text-emerald-100/80">
+        Cumulative profit vs. hours played.
+        </p>
+    </div>
+
+    {loading ? (
+        <div className="flex items-center justify-center py-6">
+        <LoadingIndicator />
         </div>
+    ) : cumulativePoints.length === 0 ? (
+        <div className="flex items-center justify-center py-6 rounded-2xl border border-emerald-300/30 bg-emerald-900/40 text-xs text-emerald-100/80">
+        No sessions match the current filters.
+        </div>
+    ) : (
+        <BankrollChart
+        points={cumulativePoints}
+        hoverIndex={hoverIndex}
+        onHoverIndexChange={setHoverIndex}
+        />
+    )}
+    </div>
 
-        {loading ? (
-          <div className="flex items-center justify-center py-6">
-            <LoadingIndicator />
-          </div>
-        ) : (
-          <BankrollChart
-            points={cumulativePoints}
-            hoverIndex={hoverIndex}
-            onHoverIndexChange={setHoverIndex}
-          />
-        )}
-      </div>
 
-      {/* table */}
+      {/* table + filters + breakdown */}
       <div className="rounded-2xl border border-emerald-300/40 bg-white/95 shadow-lg shadow-emerald-500/20 overflow-hidden backdrop-blur-sm">
-        <div className="border-b border-gray-200 px-3 py-2 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-gray-900">
-            Session history
-          </h2>
-          <p className="text-xs text-gray-500">
-            {stats.numSessions} session
-            {stats.numSessions === 1 ? "" : "s"} logged
-          </p>
+        <div className="border-b border-gray-200 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+          {/* Session history + count, same line */}
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-gray-900">
+              Session history
+            </h2>
+            <span className="text-xs text-gray-500">
+              {isFiltering
+                ? `${filteredCount} of ${totalSessions} sessions shown`
+                : `${totalSessions} session${
+                    totalSessions === 1 ? "" : "s"
+                  } logged`}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* View toggle */}
+            <div className="inline-flex items-center rounded-full bg-gray-100 p-[2px] text-[11px]">
+              {(["sessions", "weekday", "month", "year"] as BreakdownMode[]).map(
+                (modeKey) => {
+                  const label =
+                    modeKey === "sessions"
+                      ? "Sessions"
+                      : modeKey === "weekday"
+                      ? "Weekday"
+                      : modeKey === "month"
+                      ? "Month"
+                      : "Year";
+                  const active = breakdownMode === modeKey;
+                  return (
+                    <button
+                      key={modeKey}
+                      type="button"
+                      onClick={() => setBreakdownMode(modeKey)}
+                      className={`px-2.5 py-1 rounded-full transition text-[11px] ${
+                        active
+                          ? "bg-white text-emerald-700 shadow-sm"
+                          : "text-gray-600 hover:text-gray-800"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                }
+              )}
+            </div>
+
+            {/* Filter button */}
+            <button
+              type="button"
+              onClick={() => setShowFilters((v) => !v)}
+              className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-50 transition"
+            >
+              <svg
+                viewBox="0 0 20 20"
+                className="h-3.5 w-3.5"
+                aria-hidden="true"
+              >
+                <path
+                  d="M3 4h14v2l-5 5v4l-4 2v-6L3 6V4z"
+                  fill="currentColor"
+                />
+              </svg>
+              <span>Filter</span>
+              {isFiltering && (
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              )}
+            </button>
+          </div>
         </div>
-        <div className="overflow-hidden">
-          <table className="w-full table-fixed divide-y divide-gray-200 text-left">
-            <colgroup>
-              <col className="w-[14%]" /> {/* Date */}
-              <col className="w-[18%]" /> {/* Location */}
-              <col className="w-[14%]" /> {/* Blinds */}
-              <col className="w-[8%]" /> {/* Hours */}
-              <col className="w-[12%]" /> {/* Buy-in */}
-              <col className="w-[12%]" /> {/* Cash-out */}
-              <col className="w-[12%]" /> {/* Profit */}
-              <col className="w-[10%]" /> {/* Actions */}
-            </colgroup>
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-2 py-2 text-[11px] font-semibold text-gray-700 text-center">
-                  Date
-                </th>
-                <th className="px-2 py-2 text-[11px] font-semibold text-gray-700 text-center">
-                  Location
-                </th>
-                <th className="px-2 py-2 text-[11px] font-semibold text-gray-700 text-center">
-                  Blinds
-                </th>
-                <th className="px-1 py-2 text-[11px] font-semibold text-gray-700 text-center">
-                  Hours
-                </th>
-                <th className="px-2 py-2 text-[10px] font-semibold text-gray-700 text-center">
-                  Buy-in
-                </th>
-                <th className="px-2 py-2 text-[10px] font-semibold text-gray-700 text-center">
-                  Cashout
-                </th>
-                <th className="px-2 py-2 text-[11px] font-semibold text-gray-700 text-center">
-                  Profit
-                </th>
-                <th className="px-2 py-2 text-[11px] font-semibold text-gray-700 text-center">
-                  {/* Actions */}
-                </th>
-              </tr>
-            </thead>
-            <SessionTable
-              sessions={sessions}
-              onEdit={startEdit}
-              onDelete={handleDelete}
+
+        {/* filter panel */}
+        {showFilters && (
+          <div className="border-b border-emerald-100 bg-emerald-50/70 px-3 py-2 text-xs space-y-2">
+            <div className="grid gap-2 sm:grid-cols-5">
+              {/* Location */}
+              <div className="flex flex-col gap-1">
+                <span className="font-medium text-gray-700">Location</span>
+                <select
+                  className="rounded-md border border-emerald-200 bg-white px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  value={filters.location}
+                  onChange={(e) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      location: e.target.value,
+                    }))
+                  }
+                >
+                  <option value="">All locations</option>
+                  {knownLocations.map((loc) => (
+                    <option key={loc} value={loc}>
+                      {loc}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Game */}
+              <div className="flex flex-col gap-1">
+                <span className="font-medium text-gray-700">Game</span>
+                <select
+                  className="rounded-md border border-emerald-200 bg-white px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  value={filters.game}
+                  onChange={(e) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      game: e.target.value,
+                    }))
+                  }
+                >
+                  <option value="">All games</option>
+                  {knownGames.map((g) => (
+                    <option key={g} value={g}>
+                      {g}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* From date */}
+              <div className="flex flex-col gap-1">
+                <span className="font-medium text-gray-700">From date</span>
+                <input
+                  type="date"
+                  className="rounded-md border border-emerald-200 bg-white px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  value={filters.fromDate}
+                  onChange={(e) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      fromDate: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+
+              {/* To date */}
+              <div className="flex flex-col gap-1">
+                <span className="font-medium text-gray-700">To date</span>
+                <input
+                  type="date"
+                  className="rounded-md border border-emerald-200 bg-white px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  value={filters.toDate}
+                  onChange={(e) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      toDate: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+
+              {/* Quick range: This year */}
+              <div className="flex flex-col gap-1 justify-end">
+                <span className="font-medium text-gray-700">Quick range</span>
+                <button
+                  type="button"
+                  onClick={setThisYear}
+                  className="inline-flex items-center justify-center rounded-md border border-emerald-300 bg-white px-2 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 transition"
+                >
+                  This year
+                </button>
+              </div>
+            </div>
+
+            {/* Session length row */}
+            <div className="flex flex-col gap-1">
+              <span className="font-medium text-gray-700">
+                Session length (hrs)
+              </span>
+              <div className="flex items-center gap-1">
+                <input
+                  type="number"
+                  min={0}
+                  step={0.25}
+                  className="w-24 rounded-md border border-emerald-200 bg-white px-1.5 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  placeholder="Min"
+                  value={filters.minHours}
+                  onChange={(e) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      minHours: e.target.value,
+                    }))
+                  }
+                />
+                <span className="text-gray-500">–</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.25}
+                  className="w-24 rounded-md border border-emerald-200 bg-white px-1.5 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  placeholder="Max"
+                  value={filters.maxHours}
+                  onChange={(e) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      maxHours: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[11px] text-gray-600">
+                Showing{" "}
+                <span className="font-semibold">
+                  {filteredCount} / {totalSessions}
+                </span>{" "}
+                sessions.
+              </p>
+              <div className="flex items-center gap-2">
+                {isFiltering && (
+                  <button
+                    type="button"
+                    onClick={resetFilters}
+                    className="text-[11px] text-emerald-700 underline underline-offset-2 hover:text-emerald-800"
+                  >
+                    Clear filters
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowFilters(false)}
+                  className="text-[11px] text-gray-600 hover:text-gray-800"
+                >
+                  Hide
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+                <div className="overflow-hidden">
+          {breakdownMode === "sessions" ? (
+            <table className="w-full table-fixed divide-y divide-gray-200 text-left">
+              <colgroup>
+                <col className="w-[14%]" /> {/* Date */}
+                <col className="w-[18%]" /> {/* Location */}
+                <col className="w-[14%]" /> {/* Blinds */}
+                <col className="w-[8%]" /> {/* Hours */}
+                <col className="w-[12%]" /> {/* Buy-in */}
+                <col className="w-[12%]" /> {/* Cash-out */}
+                <col className="w-[12%]" /> {/* Profit */}
+                <col className="w-[10%]" /> {/* Actions */}
+              </colgroup>
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-2 py-2 text-[11px] font-semibold text-gray-700 text-center">
+                    Date
+                  </th>
+                  <th className="px-2 py-2 text-[11px] font-semibold text-gray-700 text-center">
+                    Location
+                  </th>
+                  <th className="px-2 py-2 text-[11px] font-semibold text-gray-700 text-center">
+                    Blinds
+                  </th>
+                  <th className="px-1 py-2 text-[11px] font-semibold text-gray-700 text-center">
+                    Hours
+                  </th>
+                  <th className="px-2 py-2 text-[10px] font-semibold text-gray-700 text-center">
+                    Buy-in
+                  </th>
+                  <th className="px-2 py-2 text-[10px] font-semibold text-gray-700 text-center">
+                    Cashout
+                  </th>
+                  <th className="px-2 py-2 text-[11px] font-semibold text-gray-700 text-center">
+                    Profit
+                  </th>
+                  <th className="px-2 py-2 text-[11px] font-semibold text-gray-700 text-center">
+                    {/* Actions */}
+                  </th>
+                </tr>
+              </thead>
+              <SessionTable
+                sessions={filteredSessions}
+                onEdit={startEdit}
+                onDelete={handleDelete}
+              />
+            </table>
+          ) : (
+            <BreakdownTable
+              sessions={filteredSessions}
+              mode={breakdownMode as "weekday" | "month" | "year"}
             />
-          </table>
+          )}
         </div>
+
       </div>
     </div>
   );

@@ -5,6 +5,7 @@ import { auth } from "./firebase";
 import LoadingIndicator from "./components/LoadingIndicator";
 import { AppProvider } from "./components/AppContext";
 import AppShell from "./components/AppShell";
+import Homepage from "./components/Homepage"; // ⬅️ new
 import "./index.css";
 
 type Section = "solver" | "equity" | "bankroll";
@@ -34,6 +35,11 @@ function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [section, setSection] = useState<Section>(() => readPath());
+  const [isHome, setIsHome] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    const path = window.location.pathname || "/";
+    return path === "/";
+  });
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (currentUser) => {
@@ -49,16 +55,20 @@ function App() {
   };
 
   useEffect(() => {
-    const currentSection = readPath();
-    setSection(currentSection);
+    if (typeof window === "undefined") return;
+    const path = window.location.pathname || "/";
 
-    const path = window.location.pathname;
-    const firstSeg = path.replace(/^\/+/, "").split("/")[0]?.toLowerCase() || "";
-
+    // If we're on the root path, show the homepage and don't redirect
     if (path === "/" || path === "") {
-      replacePathKeepSuffix(pathFor(currentSection));
+      setIsHome(true);
       return;
     }
+
+    setIsHome(false);
+
+    const firstSeg = path.replace(/^\/+/, "").split("/")[0]?.toLowerCase() || "";
+    const currentSection = readPath();
+    setSection(currentSection);
 
     // keep old /solver canonicalized to /solutions
     if (firstSeg === "solver") {
@@ -67,7 +77,13 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const onPop = () => setSection(readPath());
+    const onPop = () => {
+      const path = window.location.pathname || "/";
+      setIsHome(path === "/" || path === "");
+      if (path !== "/" && path !== "") {
+        setSection(readPath());
+      }
+    };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
@@ -76,22 +92,17 @@ function App() {
     const url = pathFor(next);
     if (replace) window.history.replaceState({}, "", url);
     else window.history.pushState({}, "", url);
+    setIsHome(false);
     setSection(next);
   };
 
-  const goToEquity = () => {
-    navigate("equity");
-  };
-  const goToSolver = () => {
-    navigate("solver");
-  };
-  const goToBankroll = () => {
-    navigate("bankroll");
-  };
+  const goToEquity = () => navigate("equity");
+  const goToSolver = () => navigate("solver");
+  const goToBankroll = () => navigate("bankroll");
 
   if (loading) {
     return (
-      <div className="absolute inset-0 flex items-center justify-center z-10 transition-opacity duration-300">
+      <div className="absolute inset-0 z-10 flex items-center justify-center transition-opacity duration-300">
         <LoadingIndicator />
       </div>
     );
@@ -100,18 +111,27 @@ function App() {
   return (
     <div className="min-h-screen flex flex-col">
       <div className="flex-grow">
-        <AppProvider>
-          <AppShell
-            user={user}
-            section={section}
-            goToEquity={goToEquity}
-            goToSolver={goToSolver}
-            goToBankroll={goToBankroll}
+        {isHome ? (
+          <Homepage
+            onGoToSolutions={goToSolver}
+            onGoToEquity={goToEquity}
+            onGoToBankroll={goToBankroll}
           />
-        </AppProvider>
+        ) : (
+          <AppProvider>
+            <AppShell
+              user={user}
+              section={section}
+              goToEquity={goToEquity}
+              goToSolver={goToSolver}
+              goToBankroll={goToBankroll}
+            />
+          </AppProvider>
+        )}
       </div>
     </div>
   );
+
 }
 
 export default App;
