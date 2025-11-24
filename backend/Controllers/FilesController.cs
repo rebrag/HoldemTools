@@ -85,7 +85,7 @@ namespace PokerRangeAPI2.Controllers
         }
 
         // --------------------------------------------------------------------
-        // GET api/files/{folder}/{file} – raw file fetch
+        // GET api/files/{folder}/{file} – raw file fetch (sim JSONs)
         // --------------------------------------------------------------------
         [HttpGet("{folderName}/{fileName}")]
         public async Task<IActionResult> GrabData(string folderName, string fileName)
@@ -100,6 +100,34 @@ namespace PokerRangeAPI2.Controllers
             BlobDownloadResult result = await blob.DownloadContentAsync();
             // result.Content is BinaryData; convert to string for JSON/text files:
             return Ok(result.Content.ToString());
+        }
+
+        // --------------------------------------------------------------------
+        // NEW: GET api/files/piosolutions/{stacks}/{node}/{board}.json
+        // Reads solution JSON written by your remote Pio script
+        // --------------------------------------------------------------------
+        [HttpGet("piosolutions/{stacks}/{node}/{board}.json")]
+        public async Task<IActionResult> GetPioSolution(
+            string stacks,
+            string node,
+            string board)
+        {
+            // Path matches what your Python script writes:
+            // piosolutions/{stacks}/{node}/{board}.json
+            string blobPath = $"piosolutions/{stacks}/{node}/{board}.json";
+
+            BlobClient blob = _blobServiceClient
+                .GetBlobContainerClient(_containerName)
+                .GetBlobClient(blobPath);
+
+            if (!await blob.ExistsAsync())
+                return NotFound($"Pio solution not found: {blobPath}");
+
+            BlobDownloadResult result = await blob.DownloadContentAsync();
+            var json = result.Content.ToString();
+
+            // Mirror GrabData behaviour so axios sees the same shape
+            return Ok(json);
         }
 
         // --------------------------------------------------------------------
@@ -135,9 +163,6 @@ namespace PokerRangeAPI2.Controllers
         // --------------------------------------------------------------------
         // GET api/files/foldersWithMetadata
         // NOW: single source of truth from sim-index.json
-        // - Reads sim-index.json from Blob Storage
-        // - Deserializes to List<FolderWithMetadataDto>
-        // - Caches in IMemoryCache for faster subsequent calls
         // --------------------------------------------------------------------
         [HttpGet("foldersWithMetadata")]
         public async Task<ActionResult<List<FolderWithMetadataDto>>> GetFoldersWithMetadata(
