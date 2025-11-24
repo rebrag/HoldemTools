@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using System;
 using System.IO;
+using System.Linq;            // 👈 needed for .Select(...)
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -31,7 +32,7 @@ namespace PokerRangeAPI2.Controllers
 
         // --------------------------------------------------------------------
         // POST api/gametrees
-        // Body: { folder, line[], actingPos, isICM, text, uid? }
+        // Body: { folder, line[], actingPos, isICM, text, uid?, alivePositions[] }
         // Writes JSON payload to /gametrees/yyyy/MM/dd/uid_or_anon/...
         // --------------------------------------------------------------------
         [HttpPost]
@@ -56,6 +57,7 @@ namespace PokerRangeAPI2.Controllers
             string fileName = $"{now:HHmmss}_line={safeLine}_pos={safePos}_icm={(req.IsICM ? 1 : 0)}.json";
             DataLakeFileClient file = dir.GetFileClient(fileName);
 
+            // 👇 Include AlivePositions in the stored JSON
             var payload = new
             {
                 req.Folder,
@@ -63,6 +65,7 @@ namespace PokerRangeAPI2.Controllers
                 req.ActingPos,
                 req.IsICM,
                 req.Text,
+                req.AlivePositions,   // 👈 NEW FIELD
                 UploadedAtUtc = now
             };
 
@@ -97,5 +100,8 @@ namespace PokerRangeAPI2.Controllers
         public bool IsICM { get; set; }
         public string Text { get; set; } = "";
         public string? Uid { get; set; }
+
+        // 👇 NEW: list of alive positions from the frontend (e.g. ["UTG1","BB"])
+        public string[] AlivePositions { get; set; } = Array.Empty<string>();
     }
 }
