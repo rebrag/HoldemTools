@@ -38,6 +38,13 @@ namespace PokerRangeAPI2.Controllers
             return Ok(sessions);
         }
 
+        // GET /api/bankroll/ping
+        [HttpGet("ping")]
+        public ActionResult<string> Ping()
+        {
+            return Ok("bankroll ok");
+        }
+
         // GET /api/bankroll/{id}
         [HttpGet("{id:guid}")]
         public async Task<ActionResult<BankrollSession>> GetSessionById(Guid id)
@@ -178,7 +185,7 @@ namespace PokerRangeAPI2.Controllers
             {
                 entity.Profit = profit.Value;
             }
-            // If no profit is provided and we can't derive it, keep existing entity.Profit. dd
+            // If no profit is provided and we can't derive it, keep existing entity.Profit.
 
             await _db.SaveChangesAsync();
             return Ok(entity);
