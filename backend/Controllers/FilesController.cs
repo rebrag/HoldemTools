@@ -106,15 +106,21 @@ namespace PokerRangeAPI2.Controllers
         // NEW: GET api/files/piosolutions/{stacks}/{node}/{board}.json
         // Reads solution JSON written by your remote Pio script
         // --------------------------------------------------------------------
-        [HttpGet("piosolutions/{stacks}/{node}/{board}.json")]
+        [HttpGet("piosolutions/{stacks}/{node}/{board}/{nodeId}.json")]
         public async Task<IActionResult> GetPioSolution(
             string stacks,
             string node,
-            string board)
+            string board,
+            string nodeId)
         {
-            // Path matches what your Python script writes:
-            // piosolutions/{stacks}/{node}/{board}.json
-            string blobPath = $"piosolutions/{stacks}/{node}/{board}.json";
+            // nodeId can be "r:0", "r:0:1", or already "r.0.1".
+            // Normalize to the suffix used in blob filenames: replace ':' with '.'
+            var nodeSuffix = (nodeId ?? "root").Replace(":", ".");
+
+            // Matches what the Python script writes:
+            // piosolutions/{stacks}/{node}/{board}-{nodeSuffix}.json
+            string fileName = $"{board}-{nodeSuffix}.json";
+            string blobPath = $"piosolutions/{stacks}/{node}/{fileName}";
 
             BlobClient blob = _blobServiceClient
                 .GetBlobContainerClient(_containerName)
@@ -126,9 +132,10 @@ namespace PokerRangeAPI2.Controllers
             BlobDownloadResult result = await blob.DownloadContentAsync();
             var json = result.Content.ToString();
 
-            // Mirror GrabData behaviour so axios sees the same shape
+            // Same shape your frontend already expects (stringified JSON)
             return Ok(json);
         }
+
 
         // --------------------------------------------------------------------
         // GET api/files/{folder}/metadata – parsed, typed metadata summary
