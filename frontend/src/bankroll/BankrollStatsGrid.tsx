@@ -92,7 +92,7 @@ const BankrollStatsGrid: React.FC<Props> = ({
           <AutoFitText>Winrate ($ / hr)</AutoFitText>
         </div>
         <div
-          className={`text-lg font-semibold ${
+          className={`text-md font-semibold ${
             hourlyPositive ? "text-emerald-200" : "text-rose-200"
           }`}
         >

@@ -15,7 +15,6 @@ import { Steps } from "intro.js-react";
 import "intro.js/introjs.css";
 import { User } from "firebase/auth";
 import LoginSignupModal from "./LoginSignupModal";
-// import RandomizeButton from "./RandomizeButton";
 import FolderSelector from "./FolderSelector";
 import ProUpsell from "./ProUpsell";
 import {
@@ -32,10 +31,11 @@ import { useCurrentTier } from "../context/TierContext";
 import CardPicker from "./CardPicker";
 import PlayingCard from "./PlayingCard";
 import { handleActionClickImpl, type PendingFlopUpload } from "../lib/handleActionClick";
+import { root169ToJsonData, pollForPioSolutionByGametree } from "../lib/postflopClient";
+import type { PioSolutionDoc } from "../lib/postflopClient";
 
-/* ────────────────────────────────────────────────────────────── */
-/*  Card constants + flop input parsing                          */
-/* ────────────────────────────────────────────────────────────── */
+// Toggle experimental postflop pipeline (upload + polling)
+const POSTFLOP_ENABLED = false;
 
 const RANKS = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"] as const;
 const SUITS = ["h", "d", "c", "s"] as const;
@@ -99,8 +99,6 @@ function parseFlopInputString(raw: string): { cards: string[]; error: string | n
   return { cards: parsed, error: null };
 }
 
-
-
 const tourSteps = [
   { element: '[data-intro-target="folder-selector"]', intro: "Choose a pre-flop sim here.", position: "bottom" },
   { element: '[data-intro-target="color-key-btn"]', intro: "Click on an action to see how other players should react.", position: "bottom" },
@@ -113,7 +111,6 @@ const Solver = ({ user }: SolverProps) => {
   const { windowWidth, windowHeight } = useWindowDimensions();
   const uid = user?.uid ?? null;
   const { tier, loading: tierLoading } = useCurrentTier();
-
   const [folder, setFolder] = useState<string>("23UTG_23UTG1_23LJ_23HJ_23CO_23BTN_23SB_23BB");
   const [plateData, setPlateData] = useState<Record<string, JsonData>>({});
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>({});
@@ -121,11 +118,9 @@ const Solver = ({ user }: SolverProps) => {
   const [lastRangePos, setLastRangePos] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [preflopLine, setPreflopLine] = useState<string[]>(["Root"]);
-
   const playerCount = useMemo(() => (folder ? folder.split("_").length : 1), [folder]);
   const [alivePlayers, setAlivePlayers] = useState<Record<string, boolean>>({});
   const [activePlayer, setActivePlayer] = useState<string>("");
-
   const [metadata, setMetadata] = useState<{ name: string; ante: number; icm: number[] }>({
     name: "",
     ante: 0,
@@ -150,6 +145,9 @@ const Solver = ({ user }: SolverProps) => {
   const [flopInput, setFlopInput] = useState<string>(""); // NEW: text input for flop
   const [flopInputError, setFlopInputError] = useState<string | null>(null); // NEW: error text
 
+  // NEW: persist the last confirmed board so we can display it in the main UI
+  const [currentBoard, setCurrentBoard] = useState<string[]>([]);
+
   // NEW: singleRangeView toggle (persist)
   const [singleRangeView, setSingleRangeView] = useState<boolean>(() => {
     try {
@@ -162,6 +160,17 @@ const Solver = ({ user }: SolverProps) => {
 
   const tourBooted = useRef(localStorage.getItem("tourSeen") === "1");
   const lastClickRef = useRef<{ plate: string; action: string } | null>(null);
+
+  // NEW: list of alive positions & helper flag
+  const alivePositions = useMemo(
+    () =>
+      Object.entries(alivePlayers)
+        .filter(([, alive]) => alive)
+        .map(([pos]) => pos),
+    [alivePlayers]
+  );
+
+  const canConfirmFlop = flopCards.length === 3 && alivePositions.length === 2;
 
   const defaultPlateNames = useMemo(() => {
     const filesArray: string[] = [];
@@ -341,6 +350,7 @@ const Solver = ({ user }: SolverProps) => {
         axios
           .get(`${API_BASE_URL}/api/Files/${folderRef.current}/${plate}`, { cancelToken: source.token })
           .then((res) => ({ plate, data: res.data }))
+
           .catch(() => null)
       )
     )
@@ -661,13 +671,15 @@ const Solver = ({ user }: SolverProps) => {
 
   // --- flop modal side-effects ---
   useEffect(() => {
-    if (pendingFlopUpload) {
+    if (!POSTFLOP_ENABLED) return;
+
+    if (pendingFlopUpload && alivePositions.length === 2) {
       setFlopCards([]);
       setFlopInput("");
       setFlopInputError(null);
       setShowFlopModal(true);
     }
-  }, [pendingFlopUpload]);
+  }, [pendingFlopUpload, alivePositions.length]);
 
   // keep text input in sync with flopCards when they change via clicks/random
   useEffect(() => {
@@ -722,9 +734,30 @@ const Solver = ({ user }: SolverProps) => {
 
   const confirmFlopAndUpload = async () => {
     if (!pendingFlopUpload || flopCards.length !== 3) return;
-    const boardStr = flopCards.join(" ");
-    const { folder: pfFolder, actingPosition, preflopLine: pfLine, isICMSim: pfICM, linesBeforeBoard, linesAfterBoard } =
-      pendingFlopUpload;
+
+    // Only proceed heads-up
+    if (alivePositions.length !== 2) {
+      console.warn(
+        `confirmFlopAndUpload called with ${alivePositions.length} alive players; expected 2. Aborting.`,
+        alivePositions
+      );
+      return;
+    }
+
+    // Remember this flop so we can display it in the main Solver UI
+    setCurrentBoard([...flopCards]);
+
+    const boardStr = flopCards.join(" "); // "Ah Kd 9c"
+    const boardName = flopCards.join(""); // "AhKd9c"
+
+    const {
+      folder: pfFolder,
+      actingPosition,
+      preflopLine: pfLine,
+      isICMSim: pfICM,
+      linesBeforeBoard,
+      linesAfterBoard,
+    } = pendingFlopUpload;
 
     const allLines = [
       ...linesBeforeBoard,
@@ -742,9 +775,109 @@ const Solver = ({ user }: SolverProps) => {
         isICM: pfICM,
         text: adjustedText,
         uid,
+        alivePositions, // heads-up seats sent to backend (already working)
       });
-      console.log("✅ Game tree uploaded:", result?.path ?? "(no path returned)");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
+      console.log("✅ Game tree uploaded:", result);
+
+      const gametreePath = result?.path as string | undefined;
+
+      if (!gametreePath) {
+        console.warn(
+          "uploadGameTree response did not include a 'path' field; cannot derive piosolutions path."
+        );
+        return;
+      }
+
+      // Fire-and-forget polling; once BOTH solutions are ready, map them to OOP/IP plates
+      void (async () => {
+        // 1) Fetch the two node JSONs: r:0 (OOP) and r:0:c (IP-facing-check)
+        const [rootSolution, checkSolution] = await Promise.all([
+          pollForPioSolutionByGametree(API_BASE_URL, gametreePath, boardName, "r:0"),
+          pollForPioSolutionByGametree(API_BASE_URL, gametreePath, boardName, "r:0:c"),
+        ]);
+
+        if (!rootSolution?.root_169 && !checkSolution?.root_169) {
+          console.warn("No root_169 in either solution doc; cannot build postflop JsonData");
+          return;
+        }
+
+        const solutions: PioSolutionDoc[] = [];
+        if (rootSolution?.root_169) solutions.push(rootSolution);
+        if (checkSolution?.root_169) solutions.push(checkSolution);
+
+        if (solutions.length === 0) return;
+
+        // 2) Figure out who is OOP and who is IP based on table position order
+        const sortedAlive = [...alivePositions].sort(
+          (a, b) => positionOrder.indexOf(a) - positionOrder.indexOf(b)
+        );
+        if (sortedAlive.length !== 2) {
+          console.warn("Expected exactly 2 alive positions after sort, got:", sortedAlive);
+          return;
+        }
+
+        const oopSeat = sortedAlive[0];
+        const ipSeat = sortedAlive[1];
+
+        // 3) Use the JSON's .position field to decide which solution is OOP vs IP
+        const solutionForRole: Partial<Record<"OOP" | "IP", PioSolutionDoc>> = {};
+
+        for (const s of solutions) {
+          if (s.position === "OOP" || s.position === "IP") {
+            solutionForRole[s.position] = s;
+          }
+        }
+
+        // Fallbacks (in case .position is missing or weird)
+        if (!solutionForRole.OOP) solutionForRole.OOP = solutions[0];
+        if (!solutionForRole.IP) solutionForRole.IP = solutions[solutions.length - 1];
+
+        const applySolutionToSeat = (
+          seat: string,
+          role: "oop" | "ip",
+          doc: PioSolutionDoc | undefined | null
+        ) => {
+          if (!doc?.root_169) return;
+
+          // Look up starting BB from the preflop plate (if present)
+          const preflopFile = plateMapping[seat];
+          const startingBb =
+            preflopFile && plateData[preflopFile]
+              ? plateData[preflopFile].bb ?? 0
+              : 0;
+
+          // IMPORTANT: this uses the strategy matrix from THIS JSON only.
+          const json = root169ToJsonData(doc.root_169, role, seat, startingBb);
+
+          // Give each seat its own flop file
+          const postflopFileName = `${seat}_flop.json`;
+
+          setPlateData((prev) => ({
+            ...prev,
+            [postflopFileName]: json,
+          }));
+
+          setPlateMapping((prev) => ({
+            ...prev,
+            [seat]: postflopFileName,
+          }));
+
+          setAlivePlayers((prev) => ({
+            ...prev,
+            [seat]: true,
+          }));
+        };
+
+        // 4) Apply the two node JSONs: r:0 → OOP seat, r:0:c → IP seat
+        applySolutionToSeat(oopSeat, "oop", solutionForRole.OOP || null);
+        applySolutionToSeat(ipSeat, "ip", solutionForRole.IP || null);
+
+        // You can choose which player becomes "active" postflop.
+        // For now, default to OOP as the one to act.
+        setActivePlayer(oopSeat);
+      })();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       console.warn("⚠️ Failed to upload game tree:", err?.message ?? err);
     } finally {
@@ -759,7 +892,7 @@ const Solver = ({ user }: SolverProps) => {
       <Steps enabled={tourRun} steps={tourSteps} initialStep={0} onExit={() => setTourRun(false)} />
 
       {/* FLOP PICKER MODAL */}
-      {showFlopModal && pendingFlopUpload && (
+      {POSTFLOP_ENABLED && showFlopModal && pendingFlopUpload && (
         <div
           className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60"
           onMouseDown={closeFlopModal}
@@ -881,10 +1014,10 @@ const Solver = ({ user }: SolverProps) => {
               <button
                 type="button"
                 onClick={confirmFlopAndUpload}
-                disabled={flopCards.length !== 3}
+                disabled={!canConfirmFlop}
                 className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold shadow
                   ${
-                    flopCards.length === 3
+                    canConfirmFlop
                       ? "bg-emerald-600 hover:bg-emerald-700 text-white"
                       : "bg-emerald-600/50 text-white/70 cursor-not-allowed"
                   }`}
@@ -892,6 +1025,7 @@ const Solver = ({ user }: SolverProps) => {
                 <span>Confirm flop</span>
                 <span aria-hidden="true">✓</span>
               </button>
+
             </div>
           </div>
         </div>
@@ -972,20 +1106,31 @@ const Solver = ({ user }: SolverProps) => {
             </div>
           )}
 
-
-
           {/* Line + right controls */}
           <div className="relative flex items-center mt-1 mb-2">
             <Line line={preflopLine} onLineClick={handleLineClick} />
             <div className="absolute right-0 mr-2 z-20 flex items-center gap-2">
-              {/* <div className="scale-90">
-                <RandomizeButton
-                  randomFillEnabled={randomFillEnabled}
-                  setRandomFillEnabled={() => setRandomFillEnabled((prev) => !prev)}
-                />
-              </div> */}
+              {/* <RandomizeButton ... /> if you bring it back */}
             </div>
           </div>
+
+          {/* CURRENT FLOP DISPLAY */}
+          {currentBoard.length > 0 && (
+            <div className="flex justify-center mb-2 px-2">
+              <div className="inline-flex items-center gap-2 rounded-md bg-slate-900/80 border border-emerald-500/40 px-3 py-1.5 shadow-sm">
+                <span className="text-[11px] font-semibold tracking-wide text-emerald-300">
+                  Board:
+                </span>
+                {currentBoard.map((code) => (
+                  <PlayingCard
+                    key={code}
+                    code={code}
+                    width="clamp(28px, 6vw, 44px)"
+                  />
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* PlateGrid */}
           <div className="relative z-0">

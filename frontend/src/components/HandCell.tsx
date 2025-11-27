@@ -1,9 +1,8 @@
+// src/components/HandCell.tsx
 import React, { useEffect, useState, useMemo } from "react";
-import { HandCellData } from "../utils/utils";
-import { ALL_ACTIONS, ALL_COLORS } from "../utils/constants";
+import { HandCellData, getColorForAction, UNKNOWN_MULTI_COLOR } from "../utils/utils";
+import { ALL_ACTIONS, Action as BucketAction } from "../utils/constants";
 import "./App.css";
-
-export type Action = "ALLIN" | "UNKNOWN" | "Min" | "Call" | "Fold";
 
 interface HandCellProps {
   data: HandCellData & { evs: Record<string, number> };
@@ -12,6 +11,25 @@ interface HandCellProps {
   onHover?: (evs: Record<string, number>) => void;
   onLeave?: () => void;
 }
+
+// Map raw action keys from the JSON (e.g. "c", "check", "ALLIN", etc.)
+// into your 5 display buckets: ALLIN, UNKNOWN, Min, Call, Fold.
+const mapRawToBucket = (raw: string): BucketAction => {
+  switch (raw) {
+    case "ALLIN":
+      return "ALLIN";
+    case "Min":
+      return "Min";
+    case "Fold":
+      return "Fold";
+    case "Call":
+    case "c":
+    case "check":
+      return "Call";
+    default:
+      return "UNKNOWN";
+  }
+};
 
 const HandCell: React.FC<HandCellProps> = ({
   data,
@@ -28,46 +46,87 @@ const HandCell: React.FC<HandCellProps> = ({
       setRandomizedAction(null);
       return;
     }
+
     const entries = Object.entries(data.actions);
-    const totalWeight = entries.reduce((sum, [, w]) => sum + w, 0);
+    const totalWeight = entries.reduce((sum, [, w]) => sum + (w || 0), 0);
+
     if (totalWeight === 0) {
       setRandomizedAction(null);
       return;
     }
+
     const rand = Math.random() * totalWeight;
     let cumulative = 0;
+
     for (const [action, weight] of entries) {
-      cumulative += weight;
+      const w = weight || 0;
+      cumulative += w;
       if (rand <= cumulative) {
         setRandomizedAction(action);
         return;
       }
     }
+
+    // Fallback (shouldn’t usually happen)
     setRandomizedAction(entries[0][0]);
   }, [isRandomFill, data.actions]);
 
   /* ───────── segments for bar colouring ───────── */
   const segments = useMemo(() => {
-    let unknownWeight = 0;
-    Object.keys(data.actions).forEach((key) => {
-      if (!ALL_ACTIONS.includes(key as Action))
-        unknownWeight += data.actions[key] || 0;
+    // Bucket weights in your canonical order
+    const bucketWeights: Record<BucketAction, number> = {
+      ALLIN: 0,
+      UNKNOWN: 0,
+      Min: 0,
+      Call: 0,
+      Fold: 0,
+    };
+
+    let unknownActionsCount = 0;
+
+    // Aggregate raw actions into buckets
+    Object.entries(data.actions).forEach(([rawAction, weight]) => {
+      const w = weight || 0;
+      const bucket = mapRawToBucket(rawAction);
+      bucketWeights[bucket] += w;
+      if (bucket === "UNKNOWN") {
+        unknownActionsCount += 1;
+      }
     });
-    return ALL_ACTIONS.map((action) => {
-      const weight =
-        action === "UNKNOWN"
-          ? unknownWeight
-          : data.actions[action] || 0;
+
+    // For randomFill: map the chosen raw action into its bucket
+    const randomBucket: BucketAction | null =
+      isRandomFill && randomizedAction
+        ? mapRawToBucket(randomizedAction)
+        : null;
+
+    // Build segments in the exact order from ALL_ACTIONS:
+    // ["ALLIN", "UNKNOWN", "Min", "Call", "Fold"]
+    return ALL_ACTIONS.map((bucket) => {
+      const weight = bucketWeights[bucket] || 0;
+
       const targetWidth =
-        isRandomFill && randomizedAction
-          ? randomizedAction === action ||
-            (!ALL_ACTIONS.includes(randomizedAction as Action) &&
-              action === "UNKNOWN")
+        randomBucket !== null
+          ? bucket === randomBucket
             ? 100
             : 0
           : weight * 100;
-      const color = ALL_COLORS[ALL_ACTIONS.indexOf(action)];
-      return { action, style: { width: `${targetWidth}%`, backgroundColor: color } };
+
+      // Base color from utils…
+      let color = getColorForAction(bucket);
+
+      // …but if there are multiple unknown raw actions, use the multi-unknown color.
+      if (bucket === "UNKNOWN" && unknownActionsCount > 1) {
+        color = UNKNOWN_MULTI_COLOR;
+      }
+
+      return {
+        action: bucket,
+        style: {
+          width: `${targetWidth}%`,
+          backgroundColor: color,
+        },
+      };
     });
   }, [data.actions, isRandomFill, randomizedAction]);
 
@@ -108,7 +167,7 @@ const HandCell: React.FC<HandCellProps> = ({
         className="absolute inset-0 flex items-center justify-center text-white font-semibold"
         style={{
           fontSize: computedFontSize,
-          textShadow: "2px 2px 3px rgba(0, 0, 0, .7)",
+          textShadow: "2px 2px 3px rgba(0, 0, 0, 0.7)",
         }}
       >
         {data.hand}

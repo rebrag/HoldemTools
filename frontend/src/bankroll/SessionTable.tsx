@@ -98,14 +98,14 @@ const SessionTable: React.FC<Props> = ({
             </td>
 
             {/* Buy-in */}
-            <td className="px-2 py-1.5 text-[10px] sm:text-xs text-gray-700">
+            <td className="px-2 py-1.5 text-[9px] sm:text-xs text-gray-700">
               <span className="block truncate max-w-[80px]">
                 {s.buyIn != null ? `$${buyInStr}` : "—"}
               </span>
             </td>
 
             {/* Cash-out */}
-            <td className="px-2 py-1.5 text-[10px] sm:text-xs text-gray-700">
+            <td className="px-2 py-1.5 text-[9px] sm:text-xs text-gray-700">
               <span className="block truncate max-w-[80px]">
                 {s.cashOut != null ? `$${cashOutStr}` : "—"}
               </span>

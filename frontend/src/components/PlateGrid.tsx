@@ -1,3 +1,4 @@
+//PlateGrid.tsx
 /* eslint-disable react-hooks/rules-of-hooks */
 import React, { useMemo, useState } from "react";
 import Plate, { PlateZoomPayload } from "./Plate";

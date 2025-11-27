@@ -6,6 +6,7 @@ export type UploadGameTreeBody = {
   isICM: boolean;
   text: string;
   uid?: string | null;
+  alivePositions: string[];
 };
 
 export async function uploadGameTree(apiBase: string, body: UploadGameTreeBody) {
