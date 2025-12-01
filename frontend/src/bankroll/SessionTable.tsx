@@ -113,7 +113,7 @@ const SessionTable: React.FC<Props> = ({
 
             {/* Profit */}
             <td
-              className={`px-2 py-1.5 text-[11px] sm:text-xs font-semibold ${profitColor}`}
+              className={`px-2 py-1.5 text-[10px] sm:text-xs font-semibold ${profitColor}`}
             >
               <span className="block truncate max-w-[90px]">
                 ${profitStr}

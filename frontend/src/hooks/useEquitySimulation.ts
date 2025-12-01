@@ -1,3 +1,4 @@
+//hooks/useEquitySimluation.ts
 /* eslint-disable no-empty */
 import { useEffect, useRef, useState } from "react";
 import { buildDeck, tokenize } from "../lib/cards"; // sortCardsDesc

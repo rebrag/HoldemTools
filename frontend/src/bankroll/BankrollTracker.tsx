@@ -262,6 +262,7 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(defaultForm);
   const [mode, setMode] = useState<"draft" | "edit" | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -271,11 +272,7 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
   const [extraLocations, setExtraLocations] = useState<string[]>([]);
   const [extraGames, setExtraGames] = useState<string[]>([]);
   const [now, setNow] = useState<Date>(() => new Date());
-
-  // chart hover index
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
-
-  // filters + breakdown mode
   const [filters, setFilters] = useState<FilterState>({
     location: "",
     game: "",
@@ -440,8 +437,10 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
   };
 
   const onChange = (field: keyof FormState, value: string) => {
+    setFormError(null);
     updateForm((prev) => ({ ...prev, [field]: value }));
   };
+
 
   const setStartToNow = () => {
     const nowDate = new Date();
@@ -456,32 +455,78 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
     }));
   };
 
-  const setEndToNow = () => {
+  const setEndToNowAndSave = async () => {
     const nowDate = new Date();
     const local = new Date(
       nowDate.getTime() - nowDate.getTimezoneOffset() * 60000
     );
     const isoLocal = local.toISOString().slice(0, 16);
-    updateForm((prev) => ({
-      ...prev,
+
+    // Build a candidate form with the end time, but DO NOT commit it to state yet.
+    const candidateForm: FormState = {
+      ...form,
       end: isoLocal,
-    }));
+    };
+
+    const ok = await handleSave(candidateForm);
+
+    if (!ok) {
+      // Save failed (e.g., invalid buy-in/cash-out).
+      // We intentionally DO NOT set form.end, so:
+      // - isTimerRunning stays true
+      // - button stays "End"
+      // - duration keeps ticking as "in progress"
+      return;
+    }
+
+    // On success, handleSave already did all the state reset / closing for us.
   };
+
+
+
+    const getLastUsedLocation = () => {
+    // sessions are sorted oldest → newest, so walk from the end
+    for (let i = sessions.length - 1; i >= 0; i--) {
+      const loc = sessions[i].location?.trim();
+      if (loc) return loc;
+    }
+    return "";
+  };
+
+  const getLastUsedGame = () => {
+    for (let i = sessions.length - 1; i >= 0; i--) {
+      const g = sessions[i].blinds?.trim();
+      if (g) return g;
+    }
+    return "";
+  };
+
 
   const createDraftId = () =>
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
       : `draft-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-  const createNewDraft = (): DraftSession => {
+    const createNewDraft = (): DraftSession => {
+    const lastLocation = getLastUsedLocation();
+    const lastGame = getLastUsedGame();
+
     const draft: DraftSession = {
       id: createDraftId(),
-      form: defaultForm,
+      form: {
+        ...defaultForm,
+        // If we have a last used value, use it; otherwise fall back to whatever
+        // defaultForm has (location: "", blinds: "1/2 NLH").
+        location: lastLocation || defaultForm.location,
+        blinds: lastGame || defaultForm.blinds,
+      },
       createdAt: new Date().toISOString(),
     };
+
     setDrafts((prev) => [...prev, draft]);
     return draft;
   };
+
 
   const openNewSessionModal = () => {
     const draft = createNewDraft();
@@ -534,8 +579,8 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
   }, [sessions, extraGames]);
 
   const computeAutoProfit = (f: FormState): number | null => {
-    const buyRaw = f.buyIn.trim();
-    const cashRaw = f.cashOut.trim();
+    const buyRaw = (f.buyIn ?? "").toString().trim();
+    const cashRaw = (f.cashOut ?? "").toString().trim();
     if (!buyRaw || !cashRaw) return null;
     const buyNum = Number(buyRaw);
     const cashNum = Number(cashRaw);
@@ -712,117 +757,120 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
 
   /* ───────────────── Edit / Save / Delete ───────────────── */
 
-  const handleSave = async () => {
-    if (!user) {
-      setError("You must be logged in to save bankroll sessions.");
-      return;
+  const handleSave = async (overrideForm?: FormState): Promise<boolean> => {
+  if (!user) {
+    setError("You must be logged in to save bankroll sessions.");
+    return false;
+  }
+
+  const currentMode = mode;
+  const currentEditingId = editingId;
+  const currentActiveDraftId = activeDraftId;
+  const currentForm = overrideForm ?? form;
+
+  try {
+    setSaving(true);
+    setError(null);
+    setFormError(null);
+
+    const startDate = currentForm.start ? new Date(currentForm.start) : null;
+    const endDate = currentForm.end ? new Date(currentForm.end) : null;
+
+    const buyRaw = (currentForm.buyIn ?? "").toString().trim();
+    const cashRaw = (currentForm.cashOut ?? "").toString().trim();
+
+    const buyIn = buyRaw ? Number(buyRaw) : NaN;
+    const cashOut = cashRaw ? Number(cashRaw) : NaN;
+
+    if (!Number.isFinite(buyIn) || !Number.isFinite(cashOut)) {
+      setFormError("Please enter valid Buy-in and Cash-out amounts.");
+      return false; // don't close modal, don't toggle timer
     }
 
-    const currentMode = mode;
-    const currentEditingId = editingId;
-    const currentActiveDraftId = activeDraftId;
-    const currentForm = form;
+    const profit = cashOut - buyIn;
 
-    try {
-      setSaving(true);
-      setError(null);
-
-      const startDate = currentForm.start ? new Date(currentForm.start) : null;
-      const endDate = currentForm.end ? new Date(currentForm.end) : null;
-
-      const buyIn = currentForm.buyIn.trim()
-        ? Number(currentForm.buyIn)
-        : NaN;
-      const cashOut = currentForm.cashOut.trim()
-        ? Number(currentForm.cashOut)
-        : NaN;
-
-      if (!Number.isFinite(buyIn) || !Number.isFinite(cashOut)) {
-        throw new Error("Please enter valid Buy-in and Cash-out amounts.");
+    let hours: number | null = null;
+    if (startDate && endDate) {
+      const diffMs = endDate.getTime() - startDate.getTime();
+      if (diffMs > 0) {
+        const h = diffMs / (1000 * 60 * 60);
+        hours = Math.round(h * 100) / 100;
       }
+    }
 
-      const profit = cashOut - buyIn;
+    const payload = {
+      userId: user.uid,
+      type: currentForm.type || "Cash",
+      start: startDate ? startDate.toISOString() : null,
+      end: endDate ? endDate.toISOString() : null,
+      hours,
+      location: currentForm.location || null,
+      blinds: currentForm.blinds || null,
+      buyIn,
+      cashOut,
+      profit,
+    };
 
-      let hours: number | null = null;
-      if (startDate && endDate) {
-        const diffMs = endDate.getTime() - startDate.getTime();
-        if (diffMs > 0) {
-          const h = diffMs / (1000 * 60 * 60);
-          hours = Math.round(h * 100) / 100;
-        }
-      }
+    const isEdit = currentMode === "edit" && !!currentEditingId;
+    const url = isEdit
+      ? `${API_BASE_URL}/api/bankroll/${encodeURIComponent(currentEditingId!)}`
+      : `${API_BASE_URL}/api/bankroll`;
+    const method = isEdit ? "PUT" : "POST";
 
-      const payload = {
-        userId: user.uid,
-        type: currentForm.type || "Cash",
-        start: startDate ? startDate.toISOString() : null,
-        end: endDate ? endDate.toISOString() : null,
-        hours,
-        location: currentForm.location || null,
-        blinds: currentForm.blinds || null,
-        buyIn,
-        cashOut,
-        profit,
-      };
+    const res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
 
-      const isEdit = currentMode === "edit" && !!currentEditingId;
-      const url = isEdit
-        ? `${API_BASE_URL}/api/bankroll/${encodeURIComponent(
-            currentEditingId!
-          )}`
-        : `${API_BASE_URL}/api/bankroll`;
-      const method = isEdit ? "PUT" : "POST";
-
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        throw new Error(
-          `Failed to ${isEdit ? "update" : "save"} session (${res.status})`
-        );
-      }
-
-      const saved = (await res.json()) as BankrollSession;
-
-      setSessions((prev) => {
-        let next: BankrollSession[];
-        if (isEdit) {
-          next = prev.map((s) => (s.id === saved.id ? saved : s));
-        } else {
-          next = [...prev, saved];
-        }
-        next.sort((a, b) => {
-          const aTime = a.start ? new Date(a.start).getTime() : 0;
-          const bTime = b.start ? new Date(b.start).getTime() : 0;
-          return aTime - bTime;
-        });
-        return next;
-      });
-
-      // if we just saved a draft, remove that draft
-      if (!isEdit && currentMode === "draft" && currentActiveDraftId) {
-        setDrafts((prev) =>
-          prev.filter((d) => d.id !== currentActiveDraftId)
-        );
-      }
-
-      setForm(defaultForm);
-      setEditingId(null);
-      setActiveDraftId(null);
-      setMode(null);
-      setIsModalExpanded(true);
-    } catch (e: unknown) {
-      console.error(e);
-      setError(
-        e instanceof Error ? e.message : "Failed to save bankroll session"
+    if (!res.ok) {
+      throw new Error(
+        `Failed to ${isEdit ? "update" : "save"} session (${res.status})`
       );
-    } finally {
-      setSaving(false);
     }
-  };
+
+    const saved = (await res.json()) as BankrollSession;
+
+    setSessions((prev) => {
+      let next: BankrollSession[];
+      if (isEdit) {
+        next = prev.map((s) => (s.id === saved.id ? saved : s));
+      } else {
+        next = [...prev, saved];
+      }
+      next.sort((a, b) => {
+        const aTime = a.start ? new Date(a.start).getTime() : 0;
+        const bTime = b.start ? new Date(b.start).getTime() : 0;
+        return aTime - bTime;
+      });
+      return next;
+    });
+
+    // if we just saved a draft, remove that draft
+    if (!isEdit && currentMode === "draft" && currentActiveDraftId) {
+      setDrafts((prev) => prev.filter((d) => d.id !== currentActiveDraftId));
+    }
+
+    // success: reset everything & close modal
+    setForm(defaultForm);
+    setEditingId(null);
+    setActiveDraftId(null);
+    setMode(null);
+    setIsModalExpanded(true);
+
+    return true;
+  } catch (e: unknown) {
+    console.error(e);
+    setError(
+      e instanceof Error ? e.message : "Failed to save bankroll session"
+    );
+    return false;
+  } finally {
+    setSaving(false);
+  }
+};
+
+
 
   const startEdit = (session: BankrollSession) => {
     setEditingId(session.id);
@@ -1049,11 +1097,13 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
                 onLocationChange={handleLocationSelectChange}
                 onGameChange={handleGameSelectChange}
                 onStartNow={setStartToNow}
-                onEndNow={setEndToNow}
-                onSave={handleSave}
+                onEndNow={setEndToNowAndSave}       // ✅ uses new async version
+                onSave={() => void handleSave()}    // ✅ actually calls handleSave
                 onCancel={cancelModal}
                 onMinimize={handleMinimize}
+                errorMessage={formError}
               />
+
             </div>
           </div>
         </BankrollModalPortal>
@@ -1373,13 +1423,13 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
           {breakdownMode === "sessions" ? (
             <table className="w-full table-fixed divide-y divide-gray-200 text-left">
               <colgroup>
-                <col className="w-[14%]" /> {/* Date */}
+                <col className="w-[12%]" /> {/* Date */}
                 <col className="w-[18%]" /> {/* Location */}
                 <col className="w-[14%]" /> {/* Blinds */}
                 <col className="w-[8%]" /> {/* Hours */}
                 <col className="w-[12%]" /> {/* Buy-in */}
                 <col className="w-[12%]" /> {/* Cash-out */}
-                <col className="w-[12%]" /> {/* Profit */}
+                <col className="w-[14%]" /> {/* Profit */}
                 <col className="w-[10%]" /> {/* Actions */}
               </colgroup>
               <thead className="bg-gray-50">
@@ -1397,7 +1447,7 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
                     Hours
                   </th>
                   <th className="px-2 py-2 text-[10px] font-semibold text-gray-700 text-center">
-                    Buy-in
+                    Buyin
                   </th>
                   <th className="px-2 py-2 text-[10px] font-semibold text-gray-700 text-center">
                     Cashout

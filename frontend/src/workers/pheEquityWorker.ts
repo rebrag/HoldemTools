@@ -1,5 +1,5 @@
-/// <reference lib="webworker" />
 
+//pheEquityWorker.ts/// <reference lib="webworker" />
 // A Vite module worker. No DOM APIs here.
 import * as PHE from "phe";
 

@@ -26,8 +26,8 @@ const AccountMenu: React.FC<AccountMenuProps> = ({
 
       <div className="flex items-center gap-2">
         <button
-          onPointerDown={(e) => {
-            e.preventDefault();
+          type="button"
+          onClick={() => {
             // eslint-disable-next-line @typescript-eslint/no-unused-expressions
             isLoggedIn ? onLogout() : onLogin();
           }}
@@ -35,6 +35,7 @@ const AccountMenu: React.FC<AccountMenuProps> = ({
         >
           {isLoggedIn ? "Logout" : "Login"}
         </button>
+
       </div>
     </div>
   );
