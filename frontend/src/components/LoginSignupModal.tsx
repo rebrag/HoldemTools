@@ -104,7 +104,7 @@ const LoginSignupModal: React.FC<LoginSignupModalProps> = ({ onClose }) => {
 
           {/* heading */}
           <h2 className="text-xl font-bold mb-4 text-center">
-            {isLogin ? "Hold'em Tool Login" : "Create an Account"}
+            {isLogin ? "HoldemTools Login" : "Create an Account"}
           </h2>
 
           {/* error / info */}

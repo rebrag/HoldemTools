@@ -172,12 +172,15 @@ const BankrollFormModal: React.FC<Props> = ({
             Buy-in
           </label>
           <input
-            type="number"
-            className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
+            type="tel"
+            inputMode="decimal"
+            pattern="[0-9]*"
+            className="w-full rounded-md border border-gray-300 px-2 py-1 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
             value={form.buyIn}
             onChange={(e) => onChange("buyIn", e.target.value)}
             placeholder="200"
           />
+
         </div>
 
         <div className="flex-1 min-w-[120px] flex flex-col gap-1">
@@ -185,8 +188,10 @@ const BankrollFormModal: React.FC<Props> = ({
             Cash-out
           </label>
           <input
-            type="number"
-            className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
+            type="tel"
+            inputMode="decimal"
+            pattern="[0-9]*"
+            className="w-full rounded-md border border-gray-300 px-2 py-1 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
             value={form.cashOut}
             onChange={(e) => onChange("cashOut", e.target.value)}
             placeholder="520"

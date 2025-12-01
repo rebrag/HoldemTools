@@ -20,6 +20,7 @@ import type {
   FormState,
   SessionDuration,
 } from "./types";
+import LoginSignupModal from "../components/LoginSignupModal";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
 const DRAFT_KEY = "ht_bankroll_draft_v1";
@@ -33,6 +34,8 @@ type DraftSession = {
 };
 
 type BreakdownMode = "sessions" | "weekday" | "month" | "year";
+
+
 
 type FilterState = {
   location: string;
@@ -259,25 +262,14 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // single "current form" used by the modal (either for a draft or an edit)
   const [form, setForm] = useState<FormState>(defaultForm);
-
-  // mode: are we editing a draft (new session) or an existing saved one?
   const [mode, setMode] = useState<"draft" | "edit" | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-
-  // multiple draft sessions in progress
   const [drafts, setDrafts] = useState<DraftSession[]>([]);
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
-
-  // modal state: expanded (overlay) vs minimized (chips only)
   const [isModalExpanded, setIsModalExpanded] = useState(true);
-
   const [extraLocations, setExtraLocations] = useState<string[]>([]);
   const [extraGames, setExtraGames] = useState<string[]>([]);
-
-  // used for live duration ticking for in-progress sessions
   const [now, setNow] = useState<Date>(() => new Date());
 
   // chart hover index
@@ -293,8 +285,9 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
     maxHours: "",
   });
   const [showFilters, setShowFilters] = useState(false);
-  const [breakdownMode, setBreakdownMode] =
-    useState<BreakdownMode>("sessions");
+  const [breakdownMode, setBreakdownMode] = useState<BreakdownMode>("sessions");
+  const [showLoginModal, setShowLoginModal] = useState(true);
+
 
   /* ───────────────── Restore drafts from localStorage ───────────────── */
 
@@ -974,18 +967,31 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
   /* ───────────────── Render ───────────────── */
 
   if (!user) {
+  // If the user dismissed the modal, show a simple message instead.
+  if (!showLoginModal) {
     return (
       <div className="max-w-5xl mx-auto px-4 pb-10 pt-6">
         <h1 className="text-2xl font-semibold text-white mb-2">
           Bankroll Tracker
         </h1>
         <p className="text-sm text-emerald-100/90 max-w-md">
-          Please log in with your HoldemTools account to track your sessions and
-          see your bankroll graph.
+          You need to log in with your HoldemTools account to track your
+          sessions and see your bankroll graph.
         </p>
       </div>
     );
   }
+
+  return (
+    <LoginSignupModal
+      onClose={() => {
+        setShowLoginModal(false);
+      }}
+    />
+  );
+}
+
+
 
   return (
     <div className="max-w-5xl mx-auto px-4 pb-12 pt-6 space-y-6">
