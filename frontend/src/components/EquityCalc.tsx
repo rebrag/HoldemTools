@@ -656,7 +656,7 @@ const EquityCalc: React.FC = () => {
 
   /* --- RENDER --- */
   return (
-    <div className="flex flex-col h-[calc(100vh-100px)]  w-full overflow-hidden">
+    <div className="flex flex-col h-[100dvh] max-h-[100dvh] w-full overflow-hidden">
       {/* TOP CONTROLS */}
       <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2 shadow-sm z-20">
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
