@@ -20,11 +20,15 @@ export interface FolderSelectorProps {
   folders: string[];
   currentFolder: string;
   onFolderSelect: (folder: string) => void;
-  /** metadata for each folder (from useFolders) */
   metaByFolder?: Record<string, FolderMetadata | null>;
-
-  /** NEW: current user tier used to pre-mark locked folders; defaults to "free" */
   userTier?: Tier;
+
+  /** When true, selector stretches to full width (no max-w-lg cap) */
+  fullWidth?: boolean;
+
+  /** Single-range view state + toggle (optional so other call sites don't break) */
+  singleRangeView?: boolean;
+  onToggleSingleRange?: () => void;
 }
 
 type FTFilter = "any" | "only" | "exclude";
@@ -132,6 +136,9 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   onFolderSelect,
   metaByFolder,
   userTier = "free",
+  fullWidth = false,
+  singleRangeView,
+  onToggleSingleRange,
 }) => {
   const [user] = useAuthState(auth);
 
@@ -245,7 +252,6 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
     }
   };
 
-  // Build header from visible rows
   const header = useMemo(() => {
     const present = new Set<string>();
     for (const f of items) {
@@ -256,7 +262,6 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
     return ordered.length ? ordered : DESIRED_HEADER_ORDER;
   }, [items]);
 
-  // NEW: compute which of the *visible* items are locked for this userTier
   const lockedSet = useMemo(() => {
     const s = new Set<string>();
     for (const f of items) {
@@ -271,14 +276,17 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   const numSims = items.length;
 
   return (
-    <div
-      data-intro-target="folder-selector overflow-visible"
-      className="flex justify-center overflow-visible"
-    >
-      <div className="relative w-full max-w-lg overflow-visible">
-        {/* input + toggle + filters */}
-        <div className="flex items-stretch gap-2">
-          <div ref={inputWrapRef} className="relative flex-1">
+    <div className={fullWidth ? "flex justify-stretch overflow-visible" : "flex justify-center overflow-visible"}>
+      <div
+        className={
+          fullWidth
+            ? "relative w-full overflow-visible"
+            : "relative w-full max-w-lg overflow-visible"
+        }
+      >
+        {/* Input + filter + SR buttons */}
+        <div className="flex items-stretch gap-1">
+          <div ref={inputWrapRef} className="relative flex-1 min-w-0">
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -315,8 +323,8 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
             </button>
           </div>
 
-          {/* Filter Button + Popover */}
-          <div className="relative">
+          {/* Filter button */}
+          <div className="relative flex-shrink-0">
             <button
               type="button"
               aria-label="Open filters"
@@ -325,7 +333,6 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
               onClick={() => setShowFilter((p) => !p)}
               className="
                 h-9 w-9 sm:h-10 sm:w-10
-                shrink-0
                 inline-flex items-center justify-center
                 rounded-xl border border-gray-300 bg-white/95 shadow-md
                 hover:bg-gray-100 focus:outline-none focus:ring
@@ -376,7 +383,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
                 {/* Final Table */}
                 <div className="mb-2">
                   <div className="text-xs font-semibold text-gray-600 mb-1">Final Table</div>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap gap-1">
                     <button
                       className={`px-2 py-1 rounded-md text-xs border ${
                         ftFilter === "any"
@@ -430,6 +437,33 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
               </div>
             )}
           </div>
+
+          {/* Single Range button, same size as filter, immediately to the right */}
+          {onToggleSingleRange && (
+            <button
+              type="button"
+              onClick={onToggleSingleRange}
+              aria-pressed={singleRangeView ?? false}
+              data-intro-target="color-key-btn"
+              className={[
+                "h-9 w-9 sm:h-10 sm:w-10",
+                "inline-flex flex-col items-center justify-center",
+                "rounded-xl border shadow-md focus:outline-none focus:ring",
+                singleRangeView
+                  ? "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
+                  : "border-gray-300 bg-white/95 text-gray-800 hover:bg-gray-100",
+              ].join(" ")}
+              title="Toggle Single Range View"
+            >
+              <span className="text-[9px] uppercase tracking-wide leading-tight">SR</span>
+              <span
+                className={[
+                  "mt-0.5 h-1.5 w-1.5 rounded-full",
+                  singleRangeView ? "bg-white" : "bg-emerald-500/80",
+                ].join(" ")}
+              />
+            </button>
+          )}
         </div>
 
         {/* Dropdown */}

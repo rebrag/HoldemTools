@@ -1,8 +1,8 @@
 //hooks/useEquitySimluation.ts
 /* eslint-disable no-empty */
-import { useEffect, useRef, useState } from "react";
-import { buildDeck, tokenize } from "../lib/cards"; // sortCardsDesc
-import { gameLabel, GameType, EquityResult } from "../lib/types";
+import { useRef, useState } from "react";
+import { buildDeck, tokenize } from "../lib/cards"; 
+import { gameLabel, GameType } from "../lib/types";
 import { wilsonHalf } from "../lib/stats";
 import {
   DEFAULT_CI_PCT, DEFAULT_Z, MAX_PREFLOP_SAMPLES, MIN_PREFLOP_SAMPLES,
@@ -10,8 +10,15 @@ import {
 } from "../lib/constants";
 import { RANK_IDX, SUIT_IDX } from "../lib/cards";
 
-type BarPct = { p1: number; tie: number; p2: number };
-type ComputeOptions = { dead?: string[] }; // NEW: cards to exclude (e.g., other board’s known cards)
+// Updated Result type for N players
+export type EquityResult = {
+  wins: number[]; // Array of win counts for each seat
+  ties: number;   // Total ties
+  total: number;
+  game: GameType;
+};
+
+type ComputeOptions = { dead?: string[] };
 
 const workerCount = () => {
   const hc = typeof navigator !== "undefined" ? (navigator.hardwareConcurrency || 4) : 4;
@@ -24,19 +31,9 @@ export function useEquitySimulation() {
   const [progress, setProgress] = useState(0);
   const [samples, setSamples] = useState(0);
   const [result, setResult] = useState<EquityResult | null>(null);
-  const [barPct, setBarPct] = useState<BarPct>({ p1: 0, tie: 0, p2: 0 });
 
   const poolRef = useRef<Worker[]>([]);
   const stoppedRef = useRef(false);
-
-  // update bar on result
-  useEffect(() => {
-    if (!result) return;
-    const p1v = (100 * result.p1Win) / result.total;
-    const tiev = (100 * result.ties) / result.total;
-    const p2v = (100 * result.p2Win) / result.total;
-    setBarPct({ p1: p1v, tie: tiev, p2: p2v });
-  }, [result]);
 
   const cancelAll = () => {
     stoppedRef.current = true;
@@ -51,24 +48,32 @@ export function useEquitySimulation() {
   };
 
   const validate = (
-    board: string, p1: string, p2: string
+    board: string, hands: string[]
   ): { ok: boolean; msg?: string; game?: GameType } => {
     const b = tokenize(board);
-    const h1 = tokenize(p1);
-    const h2 = tokenize(p2);
+    const tokensList = hands.map(h => tokenize(h));
 
     if (!(b.length === 0 || b.length === 3 || b.length === 4 || b.length === 5)) {
       return { ok: false, msg: "Board must have 0, 3, 4, or 5 cards." };
     }
-    const both2 = h1.length === 2 && h2.length === 2;
-    const both4 = h1.length === 4 && h2.length === 4;
-    const both5 = h1.length === 5 && h2.length === 5;
-    if (!(both2 || both4 || both5)) {
-      return { ok: false, msg: "Both hands must have 2 (NLH), 4 (PLO4), or 5 (PLO5) cards." };
+    
+    // Check all hands are same length and valid length
+    const lens = tokensList.map(t => t.length);
+    const firstLen = lens[0];
+    
+    // Check if lengths are uniform (except for empty seats if we allowed them, but here we expect full seats)
+    if (!lens.every(l => l === firstLen)) {
+        return { ok: false, msg: "All hands must be the same size." };
     }
-    const all = [...b, ...h1, ...h2];
+
+    if (![2, 4, 5].includes(firstLen)) {
+       return { ok: false, msg: "Hands must have 2, 4, or 5 cards." };
+    }
+
+    const all = [...b, ...tokensList.flat()];
     const set = new Set(all);
     if (set.size !== all.length) return { ok: false, msg: "Duplicate cards detected." };
+    
     for (const c of all) {
       const r = c[0].toUpperCase();
       const s = c[1].toLowerCase();
@@ -80,26 +85,26 @@ export function useEquitySimulation() {
       }
     }
 
-    const game: GameType = both2 ? "texas-holdem" : both4 ? "omaha4" : "omaha5";
+    const game: GameType = firstLen === 2 ? "texas-holdem" : firstLen === 4 ? "omaha4" : "omaha5";
     return { ok: true, game };
   };
 
-  // Exact postflop enumeration; `dead` cards (e.g., from the other board) are removed from `avail`.
-  const exactPostflop = async (game: GameType, b: string[], h1: string[], h2: string[], dead?: string[]) => {
+  const exactPostflop = async (game: GameType, b: string[], hands: string[][], dead?: string[]) => {
     const deck = buildDeck();
-    const used = new Set<string>([...b, ...h1, ...h2, ...(dead ?? [])]); // NEW: include dead
+    const used = new Set<string>([...b, ...hands.flat(), ...(dead ?? [])]);
     const avail = deck.filter((c) => !used.has(c));
 
+    // Worker Message: Expects "wins" array instead of w1, w2
     type ExactMsg =
-      | { type: "progress"; w1: number; w2: number; t: number; n: number }
-      | { type: "done"; w1: number; w2: number; t: number; n: number };
+      | { type: "progress"; wins: number[]; t: number; n: number }
+      | { type: "done"; wins: number[]; t: number; n: number };
 
     setStatus("Enumerating postflop runouts…");
     const w = new Worker(new URL("../workers/pheEquityWorker.ts", import.meta.url), { type: "module" });
 
     w.onmessage = (ev: MessageEvent<ExactMsg>) => {
       const m = ev.data;
-      setResult({ p1Win: m.w1, p2Win: m.w2, ties: m.t, total: m.n, game });
+      setResult({ wins: m.wins, ties: m.t, total: m.n, game });
       setSamples(m.n);
       if (m.type === "done") {
         const label = b.length === 3 ? "from the flop" : b.length === 4 ? "from the turn" : "on the river";
@@ -114,39 +119,39 @@ export function useEquitySimulation() {
       try { w.terminate(); } catch {}
     };
 
-    // Worker expects board + avail deck; excluding `dead` is handled via avail above.
-    w.postMessage({ type: "start-exact", payload: { game, h1, h2, board: b, avail } });
+    w.postMessage({ type: "start-exact", payload: { game, hands, board: b, avail } });
   };
 
-  // NOTE: added `opts?: ComputeOptions`
-  const compute = async (board: string, p1: string, p2: string, opts?: ComputeOptions) => {
+  const compute = async (board: string, hands: string[], opts?: ComputeOptions) => {
     if (computing) return;
     setStatus("");
 
-    const v = validate(board, p1, p2);
+    const v = validate(board, hands);
     if (!v.ok) { setStatus(v.msg || "Invalid input."); return; }
     const game = v.game as GameType;
 
     const b = tokenize(board);
-    const h1 = tokenize(p1);
-    const h2 = tokenize(p2);
+    const tokensList = hands.map(h => tokenize(h));
 
-    // POSTFLOP PATH (exact enumeration)
+    // POSTFLOP PATH
     if (b.length > 0) {
       setComputing(true);
-      await exactPostflop(game, b, h1, h2, opts?.dead); // NEW: pass dead
+      await exactPostflop(game, b, tokensList, opts?.dead);
       setComputing(false);
       return;
     }
 
-    // PREFLOP PATH (Monte Carlo)
+    // PREFLOP PATH
     setComputing(true);
     setProgress(0);
     setSamples(0);
     setStatus(`Simulating preflop ${gameLabel[game]} with ${workerCount()} workers…`);
     stoppedRef.current = false;
 
-    const agg = { w1: 0, w2: 0, t: 0, n: 0, finished: 0 };
+    // Aggregators
+    const nPlayers = hands.length;
+    const agg = { wins: new Array(nPlayers).fill(0), t: 0, n: 0, finished: 0 };
+    
     const nWorkers = workerCount();
     const perMax = Math.ceil(MAX_PREFLOP_SAMPLES / nWorkers);
     const workers: Worker[] = [];
@@ -161,14 +166,21 @@ export function useEquitySimulation() {
     const finalize = (reason: "converged" | "cap" | "canceled") => {
       setComputing(false);
       const n = agg.n;
-      const p1p = n ? (agg.w1 + 0.5 * agg.t) / n : 0;
-      const p2p = n ? (agg.w2 + 0.5 * agg.t) / n : 0;
-      const worst = n ? Math.max(wilsonHalf(p1p, n, DEFAULT_Z), wilsonHalf(p2p, n, DEFAULT_Z)) : 1;
+      // Use max CI half-width of any player
+      let worst = 0;
+      if (n > 0) {
+          for (const w of agg.wins) {
+              const p = (w + 0.5 * agg.t) / n;
+              worst = Math.max(worst, wilsonHalf(p, n, DEFAULT_Z));
+          }
+      } else {
+          worst = 1;
+      }
 
       if (reason === "converged") {
-        setStatus(`Precision target reached (worst CI half-width ${(worst * 100).toFixed(3)}%).`);
+        setStatus(`Precision target reached (worst CI ±${(worst * 100).toFixed(3)}%).`);
       } else if (reason === "cap") {
-        setStatus(`Max samples reached (worst CI half-width ${(worst * 100).toFixed(3)}%).`);
+        setStatus(`Max samples reached (worst CI ±${(worst * 100).toFixed(3)}%).`);
       } else {
         setStatus("Simulation canceled.");
       }
@@ -181,29 +193,35 @@ export function useEquitySimulation() {
       const w = new Worker(new URL("../workers/pheEquityWorker.ts", import.meta.url), { type: "module" });
       const seed = (Math.floor(Math.random() * 0x7fffffff) ^ (Date.now() + i * 1013904223)) >>> 0;
 
+      // Worker Message: Expects "wins" array
       type IncMsg =
-        | { type: "progress"; dw1: number; dw2: number; dt: number; dn: number }
-        | { type: "done";     dw1: number; dw2: number; dt: number; dn: number };
+        | { type: "progress"; dwins: number[]; dt: number; dn: number }
+        | { type: "done";     dwins: number[]; dt: number; dn: number };
 
       w.onmessage = (ev: MessageEvent<IncMsg>) => {
         if (stoppedRef.current) return;
         const m = ev.data;
 
-        agg.w1 += m.dw1;
-        agg.w2 += m.dw2;
+        // Accumulate wins per player
+        m.dwins.forEach((val, idx) => {
+            agg.wins[idx] += val;
+        });
         agg.t  += m.dt;
         agg.n  += m.dn;
 
         setSamples(agg.n);
-        setResult({ p1Win: agg.w1, p2Win: agg.w2, ties: agg.t, total: agg.n, game });
+        setResult({ wins: [...agg.wins], ties: agg.t, total: agg.n, game });
         setProgress(Math.min(1, agg.n / MAX_PREFLOP_SAMPLES));
 
         const n = agg.n;
         if (n > 0) {
-          const p1p = (agg.w1 + 0.5 * agg.t) / n;
-          const p2p = (agg.w2 + 0.5 * agg.t) / n;
-          const worst = Math.max(wilsonHalf(p1p, n, DEFAULT_Z), wilsonHalf(p2p, n, DEFAULT_Z));
-          setStatus(`Running… current worst CI half-width ${(worst * 100).toFixed(3)}%`);
+          let worst = 0;
+          for (const val of agg.wins) {
+              const p = (val + 0.5 * agg.t) / n;
+              worst = Math.max(worst, wilsonHalf(p, n, DEFAULT_Z));
+          }
+          
+          setStatus(`Running… CI ±${(worst * 100).toFixed(3)}%`);
 
           if (n >= MIN_PREFLOP_SAMPLES && worst <= (DEFAULT_CI_PCT / 100)) {
             stoppedRef.current = true;
@@ -234,10 +252,17 @@ export function useEquitySimulation() {
         try { w.terminate(); } catch {}
       };
 
-      // NEW: pass dead (safe if worker ignores it)
+      // PASS ARRAY OF HANDS
       w.postMessage({
         type: "start-preflop",
-        payload: { game, h1, h2, seed, reportEvery: REPORT_EVERY, maxSamples: perMax, dead: opts?.dead ?? [] }
+        payload: { 
+            game, 
+            hands: tokensList, // Changed from h1, h2
+            seed, 
+            reportEvery: REPORT_EVERY, 
+            maxSamples: perMax, 
+            dead: opts?.dead ?? [] 
+        }
       });
 
       workers.push(w);
@@ -245,7 +270,7 @@ export function useEquitySimulation() {
   };
 
   return {
-    computing, status, progress, samples, result, barPct,
+    computing, status, progress, samples, result,
     compute, cancelAll,
     workerCount
   };

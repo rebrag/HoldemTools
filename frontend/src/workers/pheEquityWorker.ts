@@ -1,5 +1,4 @@
-
-//pheEquityWorker.ts/// <reference lib="webworker" />
+/// <reference lib="webworker" />
 // A Vite module worker. No DOM APIs here.
 import * as PHE from "phe";
 
@@ -14,7 +13,8 @@ function resolveEval5(): Eval5 {
   throw new Error("Could not find evaluateCards(cards) in 'phe' inside worker.");
 }
 const eval5: Eval5 = resolveEval5();
-const better = (a: number, b: number) => (a < b ? -1 : a > b ? 1 : 0);
+// In PHE, lower value is better (1 = Best, ...). 
+// The existing `better` helper (a < b ? -1) confirms this.
 
 /* ---------- cards ---------- */
 const RANKS = ["A","K","Q","J","T","9","8","7","6","5","4","3","2"];
@@ -25,7 +25,7 @@ const buildDeck = (): string[] => {
   return deck;
 };
 
-// Add near top of worker:
+/* ---------- QMC / Halton ---------- */
 const BASES = [2,3,5,7,11] as const;
 function halton(i: number, base: number) {
   let f = 1 / base, r = 0, n = i;
@@ -44,7 +44,6 @@ function draw5Halton(avail: string[], qIndex: number, shifts: number[]) {
   }
   return out;
 }
-
 
 /* ---------- best-of-7 NLH ---------- */
 function bestHoldem(board5: string[], hole2: string[]): number {
@@ -107,19 +106,20 @@ type StartPreflopMsg = {
   type: "start-preflop";
   payload: {
     game: GameType;
-    h1: string[]; h2: string[];
+    hands: string[][]; // Changed from h1, h2
     seed: number;
     reportEvery: number;
-    maxSamples: number; // per worker safety cap
+    maxSamples: number;
+    dead?: string[];
   };
 };
 type StartExactMsg = {
   type: "start-exact";
   payload: {
     game: GameType;
-    h1: string[]; h2: string[];
-    board: string[];     // 3/4/5 cards
-    avail: string[];     // remaining deck (precomputed by host)
+    hands: string[][]; // Changed from h1, h2
+    board: string[];
+    avail: string[];
   };
 };
 type CancelMsg = { type: "cancel" };
@@ -127,28 +127,42 @@ type InMsg = StartPreflopMsg | StartExactMsg | CancelMsg;
 
 /* preflop progress deltas (host aggregates) */
 type IncMsg =
-  | { type: "progress"; dw1: number; dw2: number; dt: number; dn: number }
-  | { type: "done";     dw1: number; dw2: number; dt: number; dn: number };
+  | { type: "progress"; dwins: number[]; dt: number; dn: number }
+  | { type: "done";     dwins: number[]; dt: number; dn: number };
 
 /* postflop streaming (totals) */
 type ExactOut =
-  | { type: "progress"; w1: number; w2: number; t: number; n: number }
-  | { type: "done";     w1: number; w2: number; t: number; n: number };
+  | { type: "progress"; wins: number[]; t: number; n: number }
+  | { type: "done";     wins: number[]; t: number; n: number };
 
 let canceled = false;
 
-/* helpers to post typed messages */
 const postInc = (m: IncMsg) => self.postMessage(m);
 const postExact = (m: ExactOut) => self.postMessage(m);
 
-/* ---------- exact postflop enumeration ---------- */
-function evalPair(game: GameType, board5: string[], h1: string[], h2: string[]) {
-  const v1 = game === "texas-holdem" ? bestHoldem(board5, h1) : bestOmaha(board5, h1);
-  const v2 = game === "texas-holdem" ? bestHoldem(board5, h2) : bestOmaha(board5, h2);
-  const cmp = better(v1, v2);
-  if (cmp === 0) return { w1: 0, w2: 0, t: 1 };
-  if (cmp < 0)  return { w1: 1, w2: 0, t: 0 };
-  return { w1: 0, w2: 1, t: 0 };
+/* ---------- N-Player Evaluation ---------- */
+// Returns indices of winners (multiple indices = tie)
+function evalWinners(game: GameType, board5: string[], hands: string[][]): number[] {
+  // 1. Calculate score for each hand
+  const scores = new Array(hands.length);
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (let i = 0; i < hands.length; i++) {
+    const s = game === "texas-holdem" 
+      ? bestHoldem(board5, hands[i]) 
+      : bestOmaha(board5, hands[i]);
+    scores[i] = s;
+    if (s < bestScore) bestScore = s;
+  }
+
+  // 2. Identify all players who have the best score
+  const winners: number[] = [];
+  for (let i = 0; i < hands.length; i++) {
+    if (scores[i] === bestScore) {
+      winners.push(i);
+    }
+  }
+  return winners;
 }
 
 /* ---------- worker entry ---------- */
@@ -158,64 +172,77 @@ self.onmessage = (ev: MessageEvent<InMsg>) => {
 
   if (msg.type === "start-preflop") {
     canceled = false;
-    const { game, h1, h2, seed, reportEvery, maxSamples } = msg.payload;
+    const { game, hands, seed, reportEvery, maxSamples, dead } = msg.payload;
     seedLCG(seed);
 
-    // build avail from deck minus hole cards
     const deck = buildDeck();
-    const used = new Set<string>([...h1, ...h2]);
+    const used = new Set<string>([...hands.flat(), ...(dead ?? [])]);
     const avail = deck.filter((c) => !used.has(c));
 
     const shifts = Array.from({ length: 5 }, () => Math.random());
     let qIndex = (seed % 1_000_000_007) || 1;
-    const USE_QMC = true; // toggle
+    const USE_QMC = true;
 
-    // AFTER (remove unused w1/w2/t, keep n and deltas)
+    // Accumulators
     let n = 0;
-    let dw1 = 0, dw2 = 0, dt = 0, dn = 0;
+    // Local delta accumulators for reporting
+    const dwins = new Array(hands.length).fill(0);
+    let dt = 0;
+    let dn = 0;
 
     const step = () => {
-    const board5 = USE_QMC ? draw5Halton(avail, qIndex++, shifts) : draw5(avail);
-    // const board5 = draw5(avail);
-    const v1 = game === "texas-holdem" ? bestHoldem(board5, h1) : bestOmaha(board5, h1);
-    const v2 = game === "texas-holdem" ? bestHoldem(board5, h2) : bestOmaha(board5, h2);
-    const cmp = better(v1, v2);
-    if (cmp === 0) { dt++; } else if (cmp < 0) { dw1++; } else { dw2++; }
-    n++; dn++;
+      const board5 = USE_QMC ? draw5Halton(avail, qIndex++, shifts) : draw5(avail);
+      
+      const winners = evalWinners(game, board5, hands);
+      
+      if (winners.length === 1) {
+        // Strict win
+        dwins[winners[0]]++;
+      } else {
+        // Tie
+        dt++;
+      }
+      n++; dn++;
     };
-
 
     while (!canceled && n < maxSamples) {
       step();
       if (n % reportEvery === 0) {
-        postInc({ type: "progress", dw1, dw2, dt, dn });
-        dw1 = 0; dw2 = 0; dt = 0; dn = 0;
+        postInc({ type: "progress", dwins: [...dwins], dt, dn });
+        // Reset deltas
+        dwins.fill(0);
+        dt = 0; dn = 0;
       }
     }
-    // flush remainder
-    if (!canceled && (dw1 || dw2 || dt || dn)) {
-      postInc({ type: "progress", dw1, dw2, dt, dn });
-      dw1 = 0; dw2 = 0; dt = 0; dn = 0;
+    
+    // Flush remainder
+    if (!canceled && dn > 0) {
+      postInc({ type: "progress", dwins: [...dwins], dt, dn });
     }
-    // tell host we're done (maybe due to cap)
-    postInc({ type: "done", dw1: 0, dw2: 0, dt: 0, dn: 0 });
+    
+    postInc({ type: "done", dwins: new Array(hands.length).fill(0), dt: 0, dn: 0 });
     return;
   }
 
   if (msg.type === "start-exact") {
     canceled = false;
-    const { game, h1, h2, board, avail } = msg.payload;
+    const { game, hands, board, avail } = msg.payload;
 
-    let w1 = 0, w2 = 0, t = 0, n = 0;
+    const wins = new Array(hands.length).fill(0);
+    let t = 0, n = 0;
 
     const tally = (board5: string[]) => {
-      const r = evalPair(game, board5, h1, h2);
-      w1 += r.w1; w2 += r.w2; t += r.t; n += 1;
-      if (n % 5000 === 0) postExact({ type: "progress", w1, w2, t, n });
+      const winners = evalWinners(game, board5, hands);
+      if (winners.length === 1) {
+        wins[winners[0]]++;
+      } else {
+        t++;
+      }
+      n++;
+      if (n % 5000 === 0) postExact({ type: "progress", wins: [...wins], t, n });
     };
 
     if (board.length === 3) {
-      // flop: choose 2 from avail for turn+river
       for (let i = 0; i < avail.length; i++) {
         if (canceled) break;
         for (let j = i + 1; j < avail.length; j++) {
@@ -231,7 +258,7 @@ self.onmessage = (ev: MessageEvent<InMsg>) => {
       tally([board[0], board[1], board[2], board[3], board[4]]);
     }
 
-    postExact({ type: "done", w1, w2, t, n });
+    postExact({ type: "done", wins, t, n });
     return;
   }
 };

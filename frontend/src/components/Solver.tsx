@@ -42,14 +42,11 @@ const SUITS = ["h", "d", "c", "s"] as const;
 const ALL_CARDS: string[] = RANKS.flatMap((r) => SUITS.map((s) => `${r}${s}`));
 
 function parseFlopInputString(raw: string): { cards: string[]; error: string | null } {
-  // Strip spaces, commas and other separators, keep only letters/numbers
   const stripped = raw.replace(/[^a-zA-Z0-9]/g, "").trim();
-
   if (!stripped) return { cards: [], error: null };
 
   const upper = stripped.toUpperCase();
 
-  // Each card is 2 chars: rank + suit, max 3 cards => 6 chars
   if (upper.length > 6) {
     return {
       cards: [],
@@ -101,7 +98,7 @@ function parseFlopInputString(raw: string): { cards: string[]; error: string | n
 
 const tourSteps = [
   { element: '[data-intro-target="folder-selector"]', intro: "Choose a pre-flop sim here.", position: "bottom" },
-  { element: '[data-intro-target="color-key-btn"]', intro: "Click on an action to see how other players should react.", position: "bottom" },
+  { element: '[data-intro-target="color-key-btn"]', intro: "Toggle single-range view here.", position: "bottom" },
 ];
 
 type SolverProps = { user: User | null };
@@ -111,6 +108,7 @@ const Solver = ({ user }: SolverProps) => {
   const { windowWidth, windowHeight } = useWindowDimensions();
   const uid = user?.uid ?? null;
   const { tier, loading: tierLoading } = useCurrentTier();
+
   const [folder, setFolder] = useState<string>("23UTG_23UTG1_23LJ_23HJ_23CO_23BTN_23SB_23BB");
   const [plateData, setPlateData] = useState<Record<string, JsonData>>({});
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>({});
@@ -138,17 +136,16 @@ const Solver = ({ user }: SolverProps) => {
   const [showProModal, setShowProModal] = useState(false);
   const [upsellBusy, setUpsellBusy] = useState(false);
 
-  // NEW: pending flop upload + flop modal state
+  // Postflop modal
   const [pendingFlopUpload, setPendingFlopUpload] = useState<PendingFlopUpload | null>(null);
   const [showFlopModal, setShowFlopModal] = useState(false);
-  const [flopCards, setFlopCards] = useState<string[]>([]); // exact user-picked order
-  const [flopInput, setFlopInput] = useState<string>(""); // NEW: text input for flop
-  const [flopInputError, setFlopInputError] = useState<string | null>(null); // NEW: error text
+  const [flopCards, setFlopCards] = useState<string[]>([]);
+  const [flopInput, setFlopInput] = useState<string>("");
+  const [flopInputError, setFlopInputError] = useState<string | null>(null);
 
-  // NEW: persist the last confirmed board so we can display it in the main UI
   const [currentBoard, setCurrentBoard] = useState<string[]>([]);
 
-  // NEW: singleRangeView toggle (persist)
+  // Single-range view toggle (persisted)
   const [singleRangeView, setSingleRangeView] = useState<boolean>(() => {
     try {
       const raw = localStorage.getItem("singleRangeView");
@@ -158,10 +155,12 @@ const Solver = ({ user }: SolverProps) => {
     }
   });
 
+  // Sim info popover open state (for click on mobile)
+  const [simInfoOpen, setSimInfoOpen] = useState(false);
+
   const tourBooted = useRef(localStorage.getItem("tourSeen") === "1");
   const lastClickRef = useRef<{ plate: string; action: string } | null>(null);
 
-  // NEW: list of alive positions & helper flag
   const alivePositions = useMemo(
     () =>
       Object.entries(alivePlayers)
@@ -169,7 +168,6 @@ const Solver = ({ user }: SolverProps) => {
         .map(([pos]) => pos),
     [alivePlayers]
   );
-
   const canConfirmFlop = flopCards.length === 3 && alivePositions.length === 2;
 
   const defaultPlateNames = useMemo(() => {
@@ -269,7 +267,6 @@ const Solver = ({ user }: SolverProps) => {
     }
   }, [tourReady]);
 
-  // Open folder util
   const actuallyOpenFolder = useCallback(
     (selectedFolder: string) => {
       const newPlayerCount = selectedFolder.split("_").length;
@@ -287,6 +284,7 @@ const Solver = ({ user }: SolverProps) => {
       const bbIdx = Object.keys(freshMapping).indexOf("BB");
       const nextIdx = (bbIdx + 1) % Object.keys(freshMapping).length;
       setActivePlayer(Object.keys(freshMapping)[nextIdx]);
+      setSimInfoOpen(false);
     },
     [defaultPlateNames]
   );
@@ -350,7 +348,6 @@ const Solver = ({ user }: SolverProps) => {
         axios
           .get(`${API_BASE_URL}/api/Files/${folderRef.current}/${plate}`, { cancelToken: source.token })
           .then((res) => ({ plate, data: res.data }))
-
           .catch(() => null)
       )
     )
@@ -381,7 +378,7 @@ const Solver = ({ user }: SolverProps) => {
 
       if (!uid) {
         setPendingFolder(selectedFolder);
-        setPendingTier(requiredTierForFolder(selectedFolder)); // rough guess
+        setPendingTier(requiredTierForFolder(selectedFolder));
         setShowLoginOverlay(true);
         return;
       }
@@ -394,7 +391,7 @@ const Solver = ({ user }: SolverProps) => {
         );
         meta = res.data ?? null;
       } catch {
-        // no metadata — we'll fall back to filename rules in requiredTierForFolder
+        // ignore, fallback to filename rules
       }
 
       const need = requiredTierForFolder(selectedFolder, meta ?? undefined);
@@ -461,11 +458,13 @@ const Solver = ({ user }: SolverProps) => {
         const blindPot = Object.values(initialBets).reduce((sum, b) => sum + b);
         const totalPot = blindPot + ante;
         setPotSize(totalPot);
+        setSimInfoOpen(false);
       })
       .catch(() => {
         setMetadata({ name: "", ante: 0, icm: [] });
         setPlayerBets({ SB: 0.5, BB: 1 });
         setPotSize(1.5);
+        setSimInfoOpen(false);
       });
   }, [folder, API_BASE_URL, playerCount]);
 
@@ -662,17 +661,9 @@ const Solver = ({ user }: SolverProps) => {
     }
   }, [singleRangeView]);
 
-  const triggerPrevSolution = useCallback(() => {
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
-  }, []);
-  const triggerNextSolution = useCallback(() => {
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
-  }, []);
-
-  // --- flop modal side-effects ---
+  // Postflop modal side-effects
   useEffect(() => {
     if (!POSTFLOP_ENABLED) return;
-
     if (pendingFlopUpload && alivePositions.length === 2) {
       setFlopCards([]);
       setFlopInput("");
@@ -681,7 +672,6 @@ const Solver = ({ user }: SolverProps) => {
     }
   }, [pendingFlopUpload, alivePositions.length]);
 
-  // keep text input in sync with flopCards when they change via clicks/random
   useEffect(() => {
     if (!showFlopModal) return;
     if (flopCards.length === 0) {
@@ -701,10 +691,8 @@ const Solver = ({ user }: SolverProps) => {
 
   const onPickFlopCard = (code: string) => {
     setFlopCards((prev) => {
-      if (prev.includes(code)) {
-        return prev.filter((c) => c !== code);
-      }
-      if (prev.length >= 3) return prev; // ignore extra
+      if (prev.includes(code)) return prev.filter((c) => c !== code);
+      if (prev.length >= 3) return prev;
       return [...prev, code];
     });
   };
@@ -712,17 +700,13 @@ const Solver = ({ user }: SolverProps) => {
   const handleFlopInputChange = (e: ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setFlopInput(value);
-
     const { cards, error } = parseFlopInputString(value);
     setFlopInputError(error);
-    if (!error) {
-      setFlopCards(cards);
-    }
+    if (!error) setFlopCards(cards);
   };
 
   const randomizeFlop = useCallback(() => {
     const deck = [...ALL_CARDS];
-    // simple Fisher–Yates shuffle
     for (let i = deck.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [deck[i], deck[j]] = [deck[j], deck[i]];
@@ -734,8 +718,6 @@ const Solver = ({ user }: SolverProps) => {
 
   const confirmFlopAndUpload = async () => {
     if (!pendingFlopUpload || flopCards.length !== 3) return;
-
-    // Only proceed heads-up
     if (alivePositions.length !== 2) {
       console.warn(
         `confirmFlopAndUpload called with ${alivePositions.length} alive players; expected 2. Aborting.`,
@@ -744,11 +726,10 @@ const Solver = ({ user }: SolverProps) => {
       return;
     }
 
-    // Remember this flop so we can display it in the main Solver UI
     setCurrentBoard([...flopCards]);
 
-    const boardStr = flopCards.join(" "); // "Ah Kd 9c"
-    const boardName = flopCards.join(""); // "AhKd9c"
+    const boardStr = flopCards.join(" ");
+    const boardName = flopCards.join("");
 
     const {
       folder: pfFolder,
@@ -759,12 +740,7 @@ const Solver = ({ user }: SolverProps) => {
       linesAfterBoard,
     } = pendingFlopUpload;
 
-    const allLines = [
-      ...linesBeforeBoard,
-      `#Board#${boardStr}`,
-      ...linesAfterBoard,
-    ];
-
+    const allLines = [...linesBeforeBoard, `#Board#${boardStr}`, ...linesAfterBoard];
     const adjustedText = allLines.join("\n");
 
     try {
@@ -775,23 +751,18 @@ const Solver = ({ user }: SolverProps) => {
         isICM: pfICM,
         text: adjustedText,
         uid,
-        alivePositions, // heads-up seats sent to backend (already working)
+        alivePositions,
       });
 
       console.log("✅ Game tree uploaded:", result);
 
       const gametreePath = result?.path as string | undefined;
-
       if (!gametreePath) {
-        console.warn(
-          "uploadGameTree response did not include a 'path' field; cannot derive piosolutions path."
-        );
+        console.warn("uploadGameTree response did not include a 'path' field; cannot derive piosolutions path.");
         return;
       }
 
-      // Fire-and-forget polling; once BOTH solutions are ready, map them to OOP/IP plates
       void (async () => {
-        // 1) Fetch the two node JSONs: r:0 (OOP) and r:0:c (IP-facing-check)
         const [rootSolution, checkSolution] = await Promise.all([
           pollForPioSolutionByGametree(API_BASE_URL, gametreePath, boardName, "r:0"),
           pollForPioSolutionByGametree(API_BASE_URL, gametreePath, boardName, "r:0:c"),
@@ -805,10 +776,8 @@ const Solver = ({ user }: SolverProps) => {
         const solutions: PioSolutionDoc[] = [];
         if (rootSolution?.root_169) solutions.push(rootSolution);
         if (checkSolution?.root_169) solutions.push(checkSolution);
-
         if (solutions.length === 0) return;
 
-        // 2) Figure out who is OOP and who is IP based on table position order
         const sortedAlive = [...alivePositions].sort(
           (a, b) => positionOrder.indexOf(a) - positionOrder.indexOf(b)
         );
@@ -820,16 +789,12 @@ const Solver = ({ user }: SolverProps) => {
         const oopSeat = sortedAlive[0];
         const ipSeat = sortedAlive[1];
 
-        // 3) Use the JSON's .position field to decide which solution is OOP vs IP
         const solutionForRole: Partial<Record<"OOP" | "IP", PioSolutionDoc>> = {};
-
         for (const s of solutions) {
           if (s.position === "OOP" || s.position === "IP") {
             solutionForRole[s.position] = s;
           }
         }
-
-        // Fallbacks (in case .position is missing or weird)
         if (!solutionForRole.OOP) solutionForRole.OOP = solutions[0];
         if (!solutionForRole.IP) solutionForRole.IP = solutions[solutions.length - 1];
 
@@ -839,18 +804,13 @@ const Solver = ({ user }: SolverProps) => {
           doc: PioSolutionDoc | undefined | null
         ) => {
           if (!doc?.root_169) return;
-
-          // Look up starting BB from the preflop plate (if present)
           const preflopFile = plateMapping[seat];
           const startingBb =
             preflopFile && plateData[preflopFile]
               ? plateData[preflopFile].bb ?? 0
               : 0;
 
-          // IMPORTANT: this uses the strategy matrix from THIS JSON only.
           const json = root169ToJsonData(doc.root_169, role, seat, startingBb);
-
-          // Give each seat its own flop file
           const postflopFileName = `${seat}_flop.json`;
 
           setPlateData((prev) => ({
@@ -869,15 +829,11 @@ const Solver = ({ user }: SolverProps) => {
           }));
         };
 
-        // 4) Apply the two node JSONs: r:0 → OOP seat, r:0:c → IP seat
         applySolutionToSeat(oopSeat, "oop", solutionForRole.OOP || null);
         applySolutionToSeat(ipSeat, "ip", solutionForRole.IP || null);
-
-        // You can choose which player becomes "active" postflop.
-        // For now, default to OOP as the one to act.
         setActivePlayer(oopSeat);
       })();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       console.warn("⚠️ Failed to upload game tree:", err?.message ?? err);
     } finally {
@@ -901,7 +857,6 @@ const Solver = ({ user }: SolverProps) => {
             className="relative w-full max-w-md mx-3 rounded-2xl bg-slate-900/95 border border-emerald-500/40 shadow-2xl p-4 text-gray-100"
             onMouseDown={(e) => e.stopPropagation()}
           >
-            {/* close button */}
             <button
               type="button"
               onClick={closeFlopModal}
@@ -916,7 +871,6 @@ const Solver = ({ user }: SolverProps) => {
               Pick exactly three cards for the flop. This board will be sent with the game tree to be saved for later.
             </p>
 
-            {/* flop display: 3 slots + randomize button */}
             <div className="flex items-center justify-center gap-3 mb-2">
               <div className="flex items-center justify-center gap-2">
                 {Array.from({ length: 3 }).map((_, idx) => {
@@ -967,7 +921,6 @@ const Solver = ({ user }: SolverProps) => {
               </button>
             </div>
 
-            {/* typed flop input */}
             <div className="mb-3 px-1">
               <div className="flex items-baseline justify-between mb-1 gap-2">
                 <label className="text-[11px] font-medium text-gray-200">
@@ -989,20 +942,18 @@ const Solver = ({ user }: SolverProps) => {
               />
             </div>
 
-            {/* Card picker */}
-            <div className="mt-2 max-h=[320px] overflow-y-auto pb-1">
+            <div className="mt-2 max-h-[320px] overflow-y-auto pb-1">
               <CardPicker
                 used={usedSetForFlop}
                 onPick={onPickFlopCard}
                 size="sm"
                 fitToWidth
-                cardWidth="100%"          // not strictly required now, but fine
+                cardWidth="100%"
                 gapPx={4}
                 className="w-full inline-grid mx-auto rounded-xl border border-gray-300 bg-slate-700/80 p-2"
               />
             </div>
 
-            {/* actions */}
             <div className="mt-4 flex items-center justify-end gap-2">
               <button
                 type="button"
@@ -1025,7 +976,6 @@ const Solver = ({ user }: SolverProps) => {
                 <span>Confirm flop</span>
                 <span aria-hidden="true">✓</span>
               </button>
-
             </div>
           </div>
         </div>
@@ -1035,86 +985,117 @@ const Solver = ({ user }: SolverProps) => {
         <div className="pt-1 p-1 flex-grow">
           {(folderError || filesError) && <div className="text-red-500">{folderError || filesError}</div>}
 
-          {/* Folder selector row */}
+          {/* Top row: Sim info button (small), FolderSelector (wide, with filter + SR buttons) */}
           <div className="px-2 sm:px-4 mt-1">
             <div className="mx-auto w-full max-w-5xl">
               <div className="relative z-50">
-                <div data-intro-target="folder-selector" className="w-auto">
-                  <FolderSelector
-                    folders={folders}
-                    currentFolder={folder}
-                    onFolderSelect={handleFolderSelect}
-                    metaByFolder={folderMetaMap}
-                    userTier={tier ?? "free"}
-                  />
+                <div className="flex items-stretch gap-2">
+                  {/* Sim info: same footprint as filter/SR, always on the left */}
+                  {metadata?.name && (
+                    <div className="flex-shrink-0">
+                      <div className="relative group">
+                        <button
+                          type="button"
+                          onClick={() => setSimInfoOpen((o) => !o)}
+                          className="
+                            h-9 w-9 sm:h-10 sm:w-10
+                            inline-flex flex-col items-center justify-center
+                            rounded-xl border border-gray-300 bg-white/90 shadow-md
+                            hover:bg-gray-100 text-gray-800
+                            focus:outline-none focus:ring
+                          "
+                          aria-label="Simulation info"
+                          title={metadata.name}
+                        >
+                          <span className="text-[9px] uppercase tracking-wide leading-tight">
+                            Sim
+                          </span>
+                          <span className="text-[8px] leading-tight truncate max-w-[2.4rem]">
+                            {metadata.name}
+                          </span>
+                        </button>
+
+                        {/* Sim info panel on hover / click */}
+                        <div
+                          className={[
+                            "transition-opacity duration-150 absolute left-0 top-full mt-1 w-max max-w-xs sm:max-w-sm",
+                            "bg-slate-900 text-emerald-50 text-xs rounded-md shadow-lg border border-emerald-500/40 p-3 z-50",
+                            simInfoOpen
+                              ? "opacity-100 pointer-events-auto"
+                              : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto",
+                          ].join(" ")}
+                        >
+                          <div className="font-semibold text-xs mb-1 break-words">
+                            {metadata.name}
+                          </div>
+
+                          {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
+                            <div className="space-y-0.5">
+                              <div className="text-[11px] uppercase tracking-wide text-emerald-300">
+                                ICM Structure
+                              </div>
+                              {metadata.icm.map((value, idx) => {
+                                const rank = idx + 1;
+                                const suffix =
+                                  rank === 1 ? "st" : rank === 2 ? "nd" : rank === 3 ? "rd" : "th";
+                                return (
+                                  <div key={idx} className="flex justify-between gap-2">
+                                    <span>
+                                      {rank}
+                                      <sup>{suffix}</sup> place
+                                    </span>
+                                    <span>${value.toLocaleString()}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="text-[11px] text-gray-300">
+                              <span className="font-semibold text-emerald-300">ICM:</span> None
+                            </div>
+                          )}
+
+                          {/* {typeof metadata.ante === "number" && metadata.ante > 0 && (
+                            <div className="mt-2 text-[11px] text-gray-200">
+                              <span className="font-semibold text-emerald-300">Ante:</span>{" "}
+                              {metadata.ante} BB
+                            </div>
+                          )} */}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Folder selector (center, wide) */}
+                  <div
+                    data-intro-target="folder-selector"
+                    className="flex-1 min-w-0"
+                  >
+                    <FolderSelector
+                      folders={folders}
+                      currentFolder={folder}
+                      onFolderSelect={handleFolderSelect}
+                      metaByFolder={folderMetaMap}
+                      userTier={tier ?? "free"}
+                      fullWidth
+                      singleRangeView={singleRangeView}
+                      onToggleSingleRange={() => setSingleRangeView((v) => !v)}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Sim badge row with Single Range toggle (always in one horizontal line) */}
-          {metadata?.name && (
-            <div className="px-2 sm:px-4 mt-2 mb-1">
-              <div className="mx-auto w-full max-w-5xl">
-                <div className="flex items-center gap-2">
-                  {/* Centered sim badge, flex-1 so it can shrink/truncate */}
-                  <div className="flex-1 flex justify-center min-w-0">
-                    <span
-                      className="inline-flex items-center gap-2 rounded-md bg-white/80 backdrop-blur px-3 py-1 text-xs sm:text-[0.8rem] font-medium text-gray-800 shadow-sm ring-1 ring-black/5"
-                      aria-label="Active Simulation Name"
-                      title="Active Simulation"
-                    >
-                      <strong className="tracking-wide text-gray-900">Sim:</strong>
-                      <span className="truncate max-w-full">
-                        {metadata.name}
-                      </span>
-                    </span>
-                  </div>
-
-                  {/* Single Range toggle, pinned to the right */}
-                  <div className="flex-none">
-                    <button
-                      type="button"
-                      onClick={() => setSingleRangeView((v) => !v)}
-                      aria-pressed={singleRangeView}
-                      className={[
-                        "inline-flex items-center gap-2 rounded-md px-2.5 sm:px-3 py-1",
-                        "text-[0.7rem] sm:text-xs font-medium shadow-sm ring-1 ring-black/5",
-                        "transition-colors duration-150",
-                        singleRangeView
-                          ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                          : "bg-white/80 text-gray-800 hover:bg-white",
-                      ].join(" ")}
-                      title="Show ranges only for the active player"
-                    >
-                      <span
-                        className={`h-2 w-2 rounded-full ${
-                          singleRangeView ? "bg-white" : "bg-emerald-500/80"
-                        }`}
-                      />
-                      {/* Short label on tiny screens, full label on sm+ */}
-                      <span className="ml-0.5 sm:hidden">
-                        {singleRangeView ? "SR: On" : "SR: Off"}
-                      </span>
-                      <span className="ml-0.5 hidden sm:inline">
-                        {singleRangeView ? "Single Range View: On" : "Single Range View: Off"}
-                      </span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Line + right controls */}
-          <div className="relative flex items-center mt-1 mb-2">
+          {/* Line row */}
+          <div className="relative flex items-center mt-2 mb-2">
             <Line line={preflopLine} onLineClick={handleLineClick} />
             <div className="absolute right-0 mr-2 z-20 flex items-center gap-2">
-              {/* <RandomizeButton ... /> if you bring it back */}
+              {/* placeholder for future controls */}
             </div>
           </div>
 
-          {/* CURRENT FLOP DISPLAY */}
+          {/* Current flop display */}
           {currentBoard.length > 0 && (
             <div className="flex justify-center mb-2 px-2">
               <div className="inline-flex items-center gap-2 rounded-md bg-slate-900/80 border border-emerald-500/40 px-3 py-1.5 shadow-sm">
@@ -1132,7 +1113,7 @@ const Solver = ({ user }: SolverProps) => {
             </div>
           )}
 
-          {/* PlateGrid */}
+          {/* Plate grid */}
           <div className="relative z-0">
             <PlateGrid
               files={displayPlates}
@@ -1153,60 +1134,8 @@ const Solver = ({ user }: SolverProps) => {
               singleRangeView={singleRangeView}
             />
           </div>
-
-          {/* Prev/Next solution buttons */}
-          <div className="mx-auto w-full max-w-5xl mt-3 mb-2 px-2 sm:px-4">
-            <div className="flex items-center justify-between">
-              <button
-                type="button"
-                onClick={triggerNextSolution}
-                className="inline-flex items-center gap-2 rounded-md bg-white/70 hover:bg-white/90 active:bg-white text-gray-800 px-3 py-1.5 text-xs font-medium shadow transition pointer-events-auto"
-                aria-label="Previous solution (Arrow Down)"
-                title="Previous solution (Arrow Down)"
-              >
-                Previous solution
-              </button>
-
-              <button
-                type="button"
-                onClick={triggerPrevSolution}
-                className="inline-flex items-center gap-2 rounded-md bg-white/70 hover:bg-white/90 active:bg-white text-gray-800 px-3 py-1.5 text-xs font-medium shadow transition pointer-events-auto"
-                aria-label="Next solution (Arrow Up)"
-                title="Next solution (Arrow Up)"
-              >
-                Next solution
-              </button>
-            </div>
-          </div>
-
-          {/* ICM metadata */}
-          <div className="flex justify-center mt-1 mb-2 pointer-events-none select-none">
-            <div className="bg-white/60 backdrop-blur-sm rounded-md px-2 py-1 text-xs shadow text-center text-gray-800">
-              {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
-                <>
-                  <strong>ICM&nbsp;Structure:</strong>
-                  <br />
-                  {metadata.icm.map((value, idx) => {
-                    const rank = idx + 1;
-                    const suffix = rank === 1 ? "st" : rank === 2 ? "nd" : rank === 3 ? "rd" : "th";
-                    return (
-                      <div key={idx}>
-                        {rank}
-                        <sup>{suffix}</sup>: ${value.toLocaleString()}
-                      </div>
-                    );
-                  })}
-                </>
-              ) : (
-                <>
-                  <strong>ICM:</strong>&nbsp;None
-                </>
-              )}
-            </div>
-          </div>
         </div>
 
-        <div className="text-center select-none pt-5 text-white/70">© HoldemTools 2025</div>
       </div>
 
       {showLoginOverlay && (
