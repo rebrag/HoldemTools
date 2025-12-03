@@ -25,15 +25,6 @@ const RandomizeButton: React.FC<RandomizeButtonProps> = ({
     triggerAnimation();
   };
 
-  const variants = {
-    idle: { rotate: 0 },
-    spin: {
-      rotate: [0, 360],
-      transition: { duration: animationSpeed, ease: "easeInOut" },
-    },
-  };
-
-
   return (
     <motion.button onClick={handleClick} className="focus:outline-none select-none">
       <motion.img
@@ -41,7 +32,6 @@ const RandomizeButton: React.FC<RandomizeButtonProps> = ({
         alt="Dice"
         style={{ width: 40, height: 40 }}
         animate={animate ? "spin" : "idle"} 
-        variants={variants}
         whileHover={{ scale: 1.1 }}
       />
     </motion.button>
