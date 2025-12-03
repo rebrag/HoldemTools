@@ -1,7 +1,7 @@
 // src/bankroll/BankrollStatsGrid.tsx
 import React from "react";
 import AutoFitText from "../components/AutoFitText";
-import AnimatedNumber from "./AnimatedNumber";
+import { SlidingNumber } from "../components/ui/shadcn-io/sliding-number";
 import type { BankrollStats } from "./types";
 
 interface Props {
@@ -15,7 +15,6 @@ const BankrollStatsGrid: React.FC<Props> = ({
   displayStats,
   isHoveringChart,
 }) => {
-  // When hovering the chart, use the "snapshot" stats; otherwise use overall stats
   const active = isHoveringChart ? displayStats : stats;
 
   const totalProfit = active.totalProfit ?? 0;
@@ -47,62 +46,63 @@ const BankrollStatsGrid: React.FC<Props> = ({
         </div>
 
         <div
-          className={`mt-1.5 sm:mt-2 text-base sm:text-md font-semibold ${
+          className={`mt-1.5 sm:mt-2 ${
             profitPositive ? "text-emerald-300" : "text-rose-300"
           }`}
         >
-          {profitPositive ? "+" : "-"}$
-          <AnimatedNumber
-            value={Math.abs(totalProfit)}
-            animate={true}
-            durationMs={450}
-            format={(v) =>
-              Math.abs(v).toLocaleString(undefined, {
-                maximumFractionDigits: 0,
-                minimumFractionDigits: 0,
-              })
-            }
-          />
+          <span className="text-lg sm:text-xl md:text-2xl font-semibold tabular-nums inline-flex items-baseline">
+            <span className="mr-0.5">
+              {profitPositive ? "+$" : "-$"}
+            </span>
+            <SlidingNumber
+              number={Math.abs(totalProfit)}
+              decimalPlaces={0}      // no decimals
+              inView={true}          // always animate in this context
+            />
+          </span>
         </div>
       </div>
 
-      {/* hours played (no animation, new format) */}
+      {/* hours played (no animation) */}
       <div className="rounded-xl bg-white/10 border border-emerald-400/30 px-3 py-2 backdrop-blur-sm">
-        <div className="text-[11px] uppercase tracking-wide text-emerald-100/80">
+        <div className="text-[10px] sm:text-[11px] uppercase tracking-wide text-emerald-100/80">
           <AutoFitText>Hours played</AutoFitText>
         </div>
-        <div className="font-semibold text-emerald-50 text-[8px] sm:text-base md:text-lg lg:text-xl">
+        <div className="mt-1 font-semibold text-emerald-50 text-xs sm:text-sm md:text-base">
           {humanHoursLabel}
         </div>
       </div>
 
       {/* sessions (no animation) */}
       <div className="rounded-xl bg-white/10 border border-emerald-400/30 px-3 py-2 backdrop-blur-sm">
-        <div className="text-[11px] uppercase tracking-wide text-emerald-100/80">
+        <div className="text-[10px] sm:text-[11px] uppercase tracking-wide text-emerald-100/80">
           Sessions
         </div>
-        <div className="text-lg font-semibold text-emerald-50">
+        <div className="mt-1 text-base sm:text-lg font-semibold text-emerald-50 tabular-nums">
           {numSessions}
         </div>
       </div>
 
       {/* winrate */}
       <div className="rounded-xl bg-white/10 border border-emerald-400/30 px-3 py-2 backdrop-blur-sm">
-        <div className="text-[11px] uppercase tracking-wide text-emerald-100/80">
+        <div className="text-[10px] sm:text-[11px] uppercase tracking-wide text-emerald-100/80">
           <AutoFitText>Winrate ($ / hr)</AutoFitText>
         </div>
         <div
-          className={`text-md font-semibold ${
+          className={`mt-1 ${
             hourlyPositive ? "text-emerald-200" : "text-rose-200"
           }`}
         >
-          {hourlyPositive ? "+" : "-"}$
-          <AnimatedNumber
-            value={Math.abs(hourly)}
-            animate={true}
-            durationMs={450}
-            format={(v) => Math.abs(v).toFixed(2)}
-          />
+          <span className="text-sm sm:text-base md:text-lg font-medium tabular-nums inline-flex items-baseline">
+            <span className="mr-0.5">
+              {hourlyPositive ? "+$" : "-$"}
+            </span>
+            <SlidingNumber
+              number={Math.abs(hourly)}
+              decimalPlaces={2}
+              inView={true}
+            />
+          </span>
         </div>
       </div>
     </div>

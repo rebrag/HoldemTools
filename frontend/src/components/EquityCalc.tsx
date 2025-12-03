@@ -1,6 +1,12 @@
 // src/components/EquityCalc.tsx
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useMemo, useState, useCallback, useRef, useEffect } from "react";
+import React, {
+  useMemo,
+  useState,
+  useCallback,
+  useRef,
+  useEffect,
+} from "react";
 import PokerBackground from "./PokerBackground";
 import { buildDeck, sampleN, tokenize, sortCardsDesc } from "../lib/cards";
 import { useEquitySimulation } from "../hooks/useEquitySimulation";
@@ -8,6 +14,7 @@ import CardPicker from "./CardPicker";
 import PlayingCard from "./PlayingCard";
 import ploOpenRangeCSV from "../data/ploOpenRangeCSV.txt?raw";
 import ploCallRangeCSV from "../data/ploCallRangeCSV.txt?raw";
+import { SlidingNumber } from "./ui/shadcn-io/sliding-number";
 
 /* ===== Shared helpers & constants ===== */
 // Dynamic card width based on viewport to ensure fit
@@ -132,8 +139,8 @@ type SeatPanelProps = {
   cards: string[];
   emptySlots: number;
   onRandomize: () => void;
-  totalEVText: string;
-  breakdowns: { label: string; winText: string; tieText: string }[];
+  totalEV?: number;
+  breakdowns: { label: string; winPct?: number }[];
   cap: 2 | 4 | 5;
   cardWidth: string;
   slotGap: string;
@@ -153,7 +160,7 @@ const SeatPanel: React.FC<SeatPanelProps> = React.memo(
     cards,
     emptySlots,
     onRandomize,
-    totalEVText,
+    totalEV,
     breakdowns,
     cardWidth,
     slotGap,
@@ -164,13 +171,16 @@ const SeatPanel: React.FC<SeatPanelProps> = React.memo(
       ["--slot-gap" as any]: slotGap,
     };
 
-    // Determine background color based on active/empty state
     const isActive = cards.length > 0;
 
     return (
       <div
         className={`relative w-full h-full flex flex-col justify-between bg-white/90 backdrop-blur-sm border border-gray-300 shadow-sm rounded-lg p-1.5 transition-all
-          ${highlightFirstEmpty ? "ring-2 ring-emerald-400 ring-offset-1 ring-offset-emerald-900" : ""}`}
+          ${
+            highlightFirstEmpty
+              ? "ring-2 ring-emerald-400 ring-offset-1 ring-offset-emerald-900"
+              : ""
+          }`}
         style={slotVars}
       >
         {/* Top Row: Input & Controls */}
@@ -273,28 +283,49 @@ const SeatPanel: React.FC<SeatPanelProps> = React.memo(
         {/* Stats Footer - Very Compact */}
         <div className="mt-auto pt-1 border-t border-gray-200">
           <div className="flex justify-between items-end leading-none">
+            {/* Per-board win% */}
             <div className="flex flex-col text-[9px] text-gray-500 gap-0.5">
               {breakdowns.map((b) => (
-              <div key={b.label} className="flex gap-1">
-                <span className="opacity-70">{b.label}:</span>
-                <span
-                  className={
-                    parseFloat(b.winText) > 50
-                      ? "font-bold text-gray-800"
-                      : ""
-                  }
-                >
-                  {b.winText}
-                </span>
-              </div>
-            ))}
+                <div key={b.label} className="flex gap-1 items-baseline">
+                  <span className="opacity-70">{b.label}:</span>
+                  {b.winPct === undefined ? (
+                    <span className="text-gray-400">—</span>
+                  ) : (
+                    <span
+                      className={`inline-flex items-baseline ${
+                        b.winPct > 50 ? "font-bold text-gray-800" : ""
+                      }`}
+                    >
+                      <SlidingNumber
+                        number={b.winPct}
+                        decimalPlaces={1}
+                        inView={true}
+                      />
+                      <span className="ml-0.5 text-[9px]">%</span>
+                    </span>
+                  )}
+                </div>
+              ))}
             </div>
+
+            {/* Total equity (average across boards) */}
             <div className="text-right">
               <div className="text-[10px] text-gray-400 uppercase tracking-tighter">
                 Equity
               </div>
-              <div className="text-sm font-bold text-emerald-700">
-                {totalEVText}
+              <div className="text-sm font-bold text-emerald-700 inline-flex items-baseline">
+                {totalEV === undefined ? (
+                  <span className="text-gray-400">—</span>
+                ) : (
+                  <>
+                    <SlidingNumber
+                      number={totalEV}
+                      decimalPlaces={1}
+                      inView={true}
+                    />
+                    <span className="ml-0.5 text-[10px]">%</span>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -419,6 +450,12 @@ const EquityCalc: React.FC = () => {
   const computing = sim1.computing || (boardsCount === 2 && sim2.computing);
   const cap: 2 | 4 | 5 = mode === "NLH" ? 2 : mode === "PLO4" ? 4 : 5;
   const lastComputedKeyRef = useRef<string | null>(null);
+
+  // These hold the last *displayed* equities so SlidingNumber
+  // always animates from previous → next instead of from "—".
+  const [displayWinPcts1, setDisplayWinPcts1] = useState<number[]>([]);
+  const [displayWinPcts2, setDisplayWinPcts2] = useState<number[]>([]);
+  const [displayTotalEVs, setDisplayTotalEVs] = useState<number[]>([]);
 
   /* --- Helpers --- */
   const usedSetFrom = useCallback(
@@ -598,15 +635,29 @@ const EquityCalc: React.FC = () => {
   });
   const isFresh = lastComputedKeyRef.current === currentKey;
 
-  const getTotalEV = (idx: number) => {
-    if (boardsCount === 1)
-      return isFresh && s1.ready ? s1.evPcts[idx] : undefined;
-    return isFresh && s1.ready && s2.ready
-      ? (s1.evPcts[idx] + s2.evPcts[idx]) / 2
-      : undefined;
-  };
-  const fmt = (v?: number) =>
-    v === undefined ? "—" : `${v.toFixed(1)}%`;
+  // When a fresh result arrives, update the "display" arrays
+  // so SlidingNumber animates from previous → new values.
+  useEffect(() => {
+    if (!isFresh) return;
+    if (!s1.ready) return;
+
+    setDisplayWinPcts1(s1.winPcts);
+
+    if (boardsCount === 2 && s2.ready) {
+      setDisplayWinPcts2(s2.winPcts);
+    } else if (boardsCount === 1) {
+      setDisplayWinPcts2([]);
+    }
+
+    setDisplayTotalEVs(
+      hands.map((_, idx) => {
+        if (boardsCount === 1) return s1.evPcts[idx];
+        if (!s2.ready) return s1.evPcts[idx];
+        return (s1.evPcts[idx] + s2.evPcts[idx]) / 2;
+      })
+    );
+  }, [isFresh, s1, s2, boardsCount, hands]);
+
   const target = nextAddTarget(
     boardsCount,
     cap,
@@ -632,6 +683,9 @@ const EquityCalc: React.FC = () => {
     setBoard1("");
     setBoard2("");
     setHands((p) => p.map(() => ""));
+    setDisplayWinPcts1([]);
+    setDisplayWinPcts2([]);
+    setDisplayTotalEVs([]);
     lastComputedKeyRef.current = null;
   };
 
@@ -640,23 +694,24 @@ const EquityCalc: React.FC = () => {
     hands.every((h) => tokenize(h).length === cap) &&
     b1Cards.length >= 3 &&
     (boardsCount === 1 || b2Cards.length >= 3);
+
   useEffect(() => {
     if (allFilled && !computing && lastComputedKeyRef.current !== currentKey)
       handleCompute();
   }, [allFilled, computing, currentKey, handleCompute]);
-   
+
   useEffect(() => {
     if (computing) {
       sim1.cancelAll();
       sim2.cancelAll();
     }
     lastComputedKeyRef.current = null;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [board1, board2, hands, boardsCount, cap, mode]);
 
   /* --- RENDER --- */
   return (
-    <div className="flex flex-col h-[calc(100dvh-100px)]  w-full overflow-hidden">
+    <div className="flex flex-col h-[calc(100dvh-100px)] w-full overflow-hidden">
       {/* TOP CONTROLS */}
       <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2 shadow-sm z-20">
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
@@ -687,6 +742,21 @@ const EquityCalc: React.FC = () => {
                   const n = [...hands];
                   n.pop();
                   setHands(n);
+                  setDisplayWinPcts1((prev) => {
+                    const arr = [...prev];
+                    arr.pop();
+                    return arr;
+                  });
+                  setDisplayWinPcts2((prev) => {
+                    const arr = [...prev];
+                    arr.pop();
+                    return arr;
+                  });
+                  setDisplayTotalEVs((prev) => {
+                    const arr = [...prev];
+                    arr.pop();
+                    return arr;
+                  });
                   lastComputedKeyRef.current = null;
                 }
               }}
@@ -709,13 +779,12 @@ const EquityCalc: React.FC = () => {
             </button>
           </div>
 
-            {/* NEW: PLO4 range hint */}
-            {mode === "PLO4" && (
-              <span className="text-[10px] text-white whitespace-nowrap">
-                Seat&nbsp;1: raise range · Others: call ranges
-              </span>
-            )}
-
+          {/* NEW: PLO4 range hint */}
+          {mode === "PLO4" && (
+            <span className="text-[10px] text-white whitespace-nowrap">
+              Seat&nbsp;1: raise range · Others: call ranges
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button
@@ -814,6 +883,21 @@ const EquityCalc: React.FC = () => {
                       const n = [...hands];
                       n.splice(i, 1);
                       setHands(n);
+                      setDisplayWinPcts1((prev) => {
+                        const arr = [...prev];
+                        arr.splice(i, 1);
+                        return arr;
+                      });
+                      setDisplayWinPcts2((prev) => {
+                        const arr = [...prev];
+                        arr.splice(i, 1);
+                        return arr;
+                      });
+                      setDisplayTotalEVs((prev) => {
+                        const arr = [...prev];
+                        arr.splice(i, 1);
+                        return arr;
+                      });
                       lastComputedKeyRef.current = null;
                     }
                   }}
@@ -821,25 +905,17 @@ const EquityCalc: React.FC = () => {
                   cards={handTokens[i]}
                   emptySlots={Math.max(0, cap - handTokens[i].length)}
                   onRandomize={() => randomizeHand(i)}
-                  totalEVText={fmt(getTotalEV(i))}
+                  totalEV={displayTotalEVs[i]}
                   breakdowns={[
                     {
                       label: "B1",
-                      winText: fmt(
-                        isFresh && s1.ready ? s1.winPcts[i] : undefined
-                      ),
-                      tieText: "",
+                      winPct: displayWinPcts1[i],
                     },
                     ...(boardsCount === 2
                       ? [
                           {
                             label: "B2",
-                            winText: fmt(
-                              isFresh && s2.ready
-                                ? s2.winPcts[i]
-                                : undefined
-                            ),
-                            tieText: "",
+                            winPct: displayWinPcts2[i],
                           },
                         ]
                       : []),
@@ -867,9 +943,7 @@ const EquityCalc: React.FC = () => {
               const s = new Set<string>();
               tokenize(board1).forEach((c) => s.add(c));
               tokenize(board2).forEach((c) => s.add(c));
-              hands.forEach((h) =>
-                tokenize(h).forEach((c) => s.add(c))
-              );
+              hands.forEach((h) => tokenize(h).forEach((c) => s.add(c)));
               return s;
             }, [board1, board2, hands])}
             onPick={onPickCard}

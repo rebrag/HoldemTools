@@ -1,65 +1,72 @@
 // src/bankroll/AnimatedNumber.tsx
-import React, { useEffect, useRef, useState } from "react";
+"use client";
+
+import React from "react";
+import type { SpringOptions } from "motion/react";
+import { SlidingNumber } from "../components/ui/shadcn-io/sliding-number";
 
 type AnimatedNumberProps = {
   value: number;
-  format?: (value: number) => string;
   className?: string;
+  prefix?: string;
+  suffix?: string;
+  decimalPlaces?: number;
   animate?: boolean;
-  durationMs?: number;
+  inView?: boolean;
+  transition?: SpringOptions;
 };
 
 const AnimatedNumber: React.FC<AnimatedNumberProps> = ({
   value,
-  format = (v) => v.toString(),
   className,
+  prefix,
+  suffix,
+  decimalPlaces = 0,
   animate = true,
-  durationMs = 0,
+  inView = true,
+  transition,
 }) => {
-  const [displayValue, setDisplayValue] = useState(value);
-  const previousValueRef = useRef(value);
-  const frameRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!animate || durationMs <= 0) {
-      if (frameRef.current !== null) {
-        cancelAnimationFrame(frameRef.current);
-        frameRef.current = null;
-      }
-      previousValueRef.current = value;
-      setDisplayValue(value);
-      return;
+  const formatWithGrouping = (val: number) => {
+    if (decimalPlaces != null) {
+      return new Intl.NumberFormat("en-US", {
+        minimumFractionDigits: decimalPlaces,
+        maximumFractionDigits: decimalPlaces,
+      }).format(val);
     }
+    return new Intl.NumberFormat("en-US").format(val);
+  };
 
-    const start = previousValueRef.current;
-    const end = value;
+  // If animation is disabled, just render a formatted number with commas.
+  if (!animate) {
+    const formatted = formatWithGrouping(value);
 
-    if (start === end) return;
+    return (
+      <span className={className}>
+        {prefix}
+        {formatted}
+        {suffix}
+      </span>
+    );
+  }
 
-    const startTime = performance.now();
-
-    const step = (now: number) => {
-      const t = Math.min(1, (now - startTime) / durationMs);
-      const eased = 1 - Math.pow(1 - t, 3); // ease-out
-      const next = start + (end - start) * eased;
-      setDisplayValue(next);
-      if (t < 1) {
-        frameRef.current = requestAnimationFrame(step);
-      }
-    };
-
-    frameRef.current = requestAnimationFrame(step);
-    previousValueRef.current = end;
-
-    return () => {
-      if (frameRef.current !== null) {
-        cancelAnimationFrame(frameRef.current);
-        frameRef.current = null;
-      }
-    };
-  }, [value, animate, durationMs]);
-
-  return <span className={className}>{format(displayValue)}</span>;
+  return (
+    <span className={className}>
+      {prefix && <span className="mr-0.5">{prefix}</span>}
+      <SlidingNumber
+        number={value}
+        decimalPlaces={decimalPlaces}
+        inView={inView}
+        transition={
+          transition ?? {
+            stiffness: 200,
+            damping: 20,
+            mass: 0.4,
+          }
+        }
+      />
+      {suffix && <span className="ml-0.5">{suffix}</span>}
+    </span>
+  );
 };
 
 export default AnimatedNumber;
