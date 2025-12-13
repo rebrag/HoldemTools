@@ -408,7 +408,7 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
       } catch (e: unknown) {
         console.error(e);
         setError(
-          e instanceof Error ? e.message : "Failed to load bankroll sessions"
+          e instanceof Error ? e.message : "We couldn't load your bankroll sessions yet. Please wait about 15 seconds and refresh the page (or tap Retry)."
         );
       } finally {
         setLoading(false);
