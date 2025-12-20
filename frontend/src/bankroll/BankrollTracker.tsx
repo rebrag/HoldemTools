@@ -1,9 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // src/bankroll/BankrollTracker.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useLocation } from "react-router-dom";
 import LoadingIndicator from "../components/LoadingIndicator";
-import BankrollChart from "./BankrollChart";
+import BankrollChartShadcn from "./BankrollChartShadcn";
 import BankrollFormModal from "./BankrollFormModal";
 import BankrollStatsGrid from "./BankrollStatsGrid";
 import SessionTable from "./SessionTable";
@@ -21,11 +22,14 @@ import type {
   SessionDuration,
 } from "./types";
 import LoginSignupModal from "../components/LoginSignupModal";
+import { useLocalStorageState } from "@/hooks/useLocalStorageState";
+import AutoFitText from "@/components/AutoFitText";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
 const DRAFT_KEY = "ht_bankroll_draft_v1";
 const ADD_LOCATION_OPTION = "__ht_add_location__";
 const ADD_GAME_OPTION = "__ht_add_game__";
+const FILTERS_KEY = "ht_bankroll_filters_v1";
 
 type DraftSession = {
   id: string;
@@ -34,8 +38,6 @@ type DraftSession = {
 };
 
 type BreakdownMode = "sessions" | "weekday" | "month" | "year";
-
-
 
 type FilterState = {
   location: string;
@@ -63,21 +65,40 @@ const defaultForm: FormState = {
   cashOut: "",
 };
 
+const defaultFilters: FilterState = {
+  location: "",
+  game: "",
+  fromDate: "",
+  toDate: "",
+  minHours: "",
+  maxHours: "",
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function parseFiltersOrDefault(raw: string): FilterState {
+  const v: unknown = JSON.parse(raw);
+  if (!isRecord(v)) return defaultFilters;
+
+  const read = (k: keyof FilterState): string => {
+    const x = v[k];
+    return typeof x === "string" ? x : "";
+  };
+
+  return {
+    location: read("location"),
+    game: read("game"),
+    fromDate: read("fromDate"),
+    toDate: read("toDate"),
+    minHours: read("minHours"),
+    maxHours: read("maxHours"),
+  };
+}
+
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTH_LABELS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
+const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec",];
 
 type BreakdownRow = {
   label: string;
@@ -273,17 +294,32 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
   const [extraGames, setExtraGames] = useState<string[]>([]);
   const [now, setNow] = useState<Date>(() => new Date());
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
-  const [filters, setFilters] = useState<FilterState>({
-    location: "",
-    game: "",
-    fromDate: "",
-    toDate: "",
-    minHours: "",
-    maxHours: "",
-  });
+  // const [filters, setFilters] = useState<FilterState>({
+  //   location: "",
+  //   game: "",
+  //   fromDate: "",
+  //   toDate: "",
+  //   minHours: "",
+  //   maxHours: "",
+  // });
   const [showFilters, setShowFilters] = useState(false);
   const [breakdownMode, setBreakdownMode] = useState<BreakdownMode>("sessions");
   const [showLoginModal, setShowLoginModal] = useState(true);
+
+  const [filters, setFilters] = useLocalStorageState<FilterState>(
+    FILTERS_KEY,
+    defaultFilters,
+    parseFiltersOrDefault
+  );
+  const location = useLocation();
+  const sessionsRef = useRef<BankrollSession[]>([]);
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
+
+  const [chartNonce, setChartNonce] = useState(0);
+  const restartRef = useRef(true);
+
 
 
   /* ───────────────── Restore drafts from localStorage ───────────────── */
@@ -384,39 +420,46 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
   /* ───────────────── Load sessions from API ───────────────── */
 
   useEffect(() => {
-    if (!user) return;
+  if (!user) return;
 
-    const fetchSessions = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const res = await fetch(
-          `${API_BASE_URL}/api/bankroll?userId=${encodeURIComponent(
-            user.uid
-          )}`
-        );
-        if (!res.ok) {
-          throw new Error(`Failed to load bankroll sessions (${res.status})`);
-        }
-        const data = (await res.json()) as BankrollSession[];
-        data.sort((a, b) => {
-          const aTime = a.start ? new Date(a.start).getTime() : 0;
-          const bTime = b.start ? new Date(b.start).getTime() : 0;
-          return aTime - bTime;
-        });
-        setSessions(data);
-      } catch (e: unknown) {
-        console.error(e);
-        setError(
-          e instanceof Error ? e.message : "We couldn't load your bankroll sessions yet. Please wait about 15 seconds and refresh the page (or tap Retry)."
-        );
-      } finally {
-        setLoading(false);
+  const fetchSessions = async () => {
+    const shouldBlock = sessionsRef.current.length === 0;
+
+    try {
+      if (shouldBlock) setLoading(true);
+      setError(null);
+
+      const res = await fetch(
+        `${API_BASE_URL}/api/bankroll?userId=${encodeURIComponent(user.uid)}`
+      );
+
+      if (!res.ok) {
+        throw new Error(`Failed to load bankroll sessions (${res.status})`);
       }
-    };
 
-    void fetchSessions();
-  }, [user]);
+      const data = (await res.json()) as BankrollSession[];
+      data.sort((a, b) => {
+        const aTime = a.start ? new Date(a.start).getTime() : 0;
+        const bTime = b.start ? new Date(b.start).getTime() : 0;
+        return aTime - bTime;
+      });
+
+      setSessions(data);
+    } catch (e: unknown) {
+      console.error(e);
+      setError(
+        e instanceof Error
+          ? e.message
+          : "We couldn't load your bankroll sessions yet. Please wait about 15 seconds and refresh the page (or tap Retry)."
+      );
+    } finally {
+      if (shouldBlock) setLoading(false);
+    }
+  };
+
+  void fetchSessions();
+}, [user]);
+
 
   /* ───────────────── Helpers ───────────────── */
 
@@ -745,6 +788,20 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
     return { totalProfit, totalHours, numSessions, hourly };
   }, [hoverIndex, cumulativePoints, stats]);
 
+  useEffect(() => {
+    restartRef.current = true;
+  }, [location.key]);
+
+  useEffect(() => {
+    if (!restartRef.current) return;
+    if (loading) return;
+    if (cumulativePoints.length === 0) return;
+
+    restartRef.current = false;
+    setChartNonce((n) => n + 1);
+  }, [location.key, loading, cumulativePoints.length]);
+
+
   const isHoveringChart =
     hoverIndex != null &&
     hoverIndex > 0 &&
@@ -1061,7 +1118,7 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
             className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-4 py-1.5 text-sm font-semibold text-emerald-50 shadow-sm shadow-emerald-500/40 ring-1 ring-emerald-300/60 hover:bg-emerald-500 hover:text-white transition"
           >
             <span className="text-base leading-none">＋</span>
-            Add Session
+            <AutoFitText>Add Session</AutoFitText>
           </button>
         </div>
 
@@ -1176,11 +1233,12 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
         No sessions match the current filters.
         </div>
     ) : (
-        <BankrollChart
+       <BankrollChartShadcn
+        key={`bankroll-chart-${chartNonce}`}
         points={cumulativePoints}
         hoverIndex={hoverIndex}
         onHoverIndexChange={setHoverIndex}
-        />
+      />
     )}
     </div>
 

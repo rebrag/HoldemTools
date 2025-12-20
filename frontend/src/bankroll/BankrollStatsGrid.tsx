@@ -50,7 +50,7 @@ const BankrollStatsGrid: React.FC<Props> = ({
             profitPositive ? "text-emerald-300" : "text-rose-300"
           }`}
         >
-          <span className="text-lg sm:text-xl md:text-2xl font-semibold tabular-nums inline-flex items-baseline">
+          <span className="sm:text-xl md:text-2xl font-semibold tabular-nums inline-flex items-baseline">
             <span className="mr-0.5">
               {profitPositive ? "+$" : "-$"}
             </span>
@@ -69,7 +69,7 @@ const BankrollStatsGrid: React.FC<Props> = ({
           <AutoFitText>Hours played</AutoFitText>
         </div>
         <div className="mt-1 font-semibold text-emerald-50 text-xs sm:text-sm md:text-base">
-          {humanHoursLabel}
+          <AutoFitText>{humanHoursLabel}</AutoFitText>
         </div>
       </div>
 

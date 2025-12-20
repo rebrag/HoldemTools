@@ -15,6 +15,7 @@ import PlayingCard from "./PlayingCard";
 import ploOpenRangeCSV from "../data/ploOpenRangeCSV.txt?raw";
 import ploCallRangeCSV from "../data/ploCallRangeCSV.txt?raw";
 import { SlidingNumber } from "./ui/shadcn-io/sliding-number";
+import { useLocalStorageState } from "@/hooks/useLocalStorageState";
 
 /* ===== Shared helpers & constants ===== */
 // Dynamic card width based on viewport to ensure fit
@@ -31,6 +32,12 @@ type PloRangeCache = {
   cum: number[] | null;
   total: number;
 };
+
+function parseModeOrDefault(raw: string): Mode {
+  const v: unknown = JSON.parse(raw);
+  if (v === "NLH" || v === "PLO4" || v === "PLO5") return v;
+  return "NLH";
+}
 
 const splitPloHand = (hand: string): string[] => {
   // CSV uses things like "AhAs3s2s" → split into ["Ah","As","3s","2s"]
@@ -434,11 +441,16 @@ const BoardPanel: React.FC<{
   )
 );
 
-/* ===== Main Component ===== */
 type Mode = "NLH" | "PLO4" | "PLO5";
+const MODE_KEY = "ht_equity_mode_v1";
 
 const EquityCalc: React.FC = () => {
-  const [mode, setMode] = useState<Mode>("NLH");
+  // const [mode, setMode] = useState<Mode>("NLH");
+  const [mode, setMode] = useLocalStorageState<Mode>(
+    MODE_KEY,
+    "NLH",
+    parseModeOrDefault
+  );
   const [board1, setBoard1] = useState("");
   const [board2, setBoard2] = useState("");
   const [hands, setHands] = useState<string[]>(["", ""]);
@@ -456,6 +468,7 @@ const EquityCalc: React.FC = () => {
   const [displayWinPcts1, setDisplayWinPcts1] = useState<number[]>([]);
   const [displayWinPcts2, setDisplayWinPcts2] = useState<number[]>([]);
   const [displayTotalEVs, setDisplayTotalEVs] = useState<number[]>([]);
+  
 
   /* --- Helpers --- */
   const usedSetFrom = useCallback(
