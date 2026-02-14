@@ -434,7 +434,7 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
       );
 
       if (!res.ok) {
-        throw new Error(`Failed to load bankroll sessions (${res.status})`);
+        throw new Error(`We couldn't load your bankroll sessions yet. Please wait about 60 seconds and refresh the page (or tap Retry). (${res.status})`);
       }
 
       const data = (await res.json()) as BankrollSession[];
@@ -450,7 +450,7 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
       setError(
         e instanceof Error
           ? e.message
-          : "We couldn't load your bankroll sessions yet. Please wait about 15 seconds and refresh the page (or tap Retry)."
+          : "We couldn't load your bankroll sessions yet. Please wait about 60 seconds and refresh the page (or tap Retry)."
       );
     } finally {
       if (shouldBlock) setLoading(false);
