@@ -21,6 +21,25 @@ namespace PokerRangeAPI2.Controllers
             _db = db;
         }
 
+        // --- NEW WARMUP ENDPOINT ---
+        // Matches GET /api/warmup/sql from Homepage.tsx
+        [HttpGet("/api/warmup/sql")]
+        public async Task<IActionResult> WarmupSql()
+        {
+            try
+            {
+                // Executes a lightweight query to wake up the database and prime EF Core
+                await _db.Database.ExecuteSqlRawAsync("SELECT 1");
+                return Ok(new { warmed = true, timestamp = DateTime.UtcNow });
+            }
+            catch (Exception)
+            {
+                // Homepage.tsx expects a best-effort result; 
+                // We return a 500 but the frontend .catch() will ignore it.
+                return StatusCode(500, "Warmup failed");
+            }
+        }
+
         // GET /api/bankroll?userId=UID
         [HttpGet]
         public async Task<ActionResult<IEnumerable<BankrollSession>>> GetSessions([FromQuery] string userId)
@@ -93,7 +112,6 @@ namespace PokerRangeAPI2.Controllers
                 return BadRequest("UserId is required.");
             }
 
-            // Profit is required; if not given, try buy-in / cash-out
             decimal? profit = dto.Profit;
             if (!profit.HasValue && dto.BuyIn.HasValue && dto.CashOut.HasValue)
             {
@@ -110,15 +128,12 @@ namespace PokerRangeAPI2.Controllers
                 Id = Guid.NewGuid(),
                 UserId = dto.UserId,
                 Type = string.IsNullOrWhiteSpace(dto.Type) ? "Cash" : dto.Type.Trim(),
-
                 Start = dto.Start,
                 End = dto.End,
                 Hours = dto.Hours,
-
                 Location = string.IsNullOrWhiteSpace(dto.Location) ? null : dto.Location.Trim(),
                 Game = string.IsNullOrWhiteSpace(dto.Game) ? null : dto.Game.Trim(),
                 Blinds = string.IsNullOrWhiteSpace(dto.Blinds) ? null : dto.Blinds.Trim(),
-
                 BuyIn = dto.BuyIn,
                 CashOut = dto.CashOut,
                 Profit = profit.Value
@@ -127,12 +142,10 @@ namespace PokerRangeAPI2.Controllers
             _db.BankrollSessions.Add(entity);
             await _db.SaveChangesAsync();
 
-            // Frontend expects the saved entity back
             return Ok(entity);
         }
 
         // PUT /api/bankroll/{id}
-        // Used by the BankrollTracker edit flow
         [HttpPut("{id:guid}")]
         public async Task<ActionResult<BankrollSession>> UpdateSession(
             Guid id,
@@ -149,29 +162,22 @@ namespace PokerRangeAPI2.Controllers
                 return NotFound();
             }
 
-            // Optional safety check: if client sends a userId, it must match the existing row
             if (!string.IsNullOrWhiteSpace(dto.UserId) && dto.UserId != entity.UserId)
             {
                 return BadRequest("UserId mismatch for this session.");
             }
 
-            // Type (fallback to existing / Cash)
             if (!string.IsNullOrWhiteSpace(dto.Type))
             {
                 entity.Type = dto.Type.Trim();
             }
 
-            // Dates / hours – allow explicit null from client
             entity.Start = dto.Start;
             entity.End = dto.End;
             entity.Hours = dto.Hours;
-
-            // Text fields – normalize empty strings to null
             entity.Location = string.IsNullOrWhiteSpace(dto.Location) ? null : dto.Location.Trim();
             entity.Game = string.IsNullOrWhiteSpace(dto.Game) ? null : dto.Game.Trim();
             entity.Blinds = string.IsNullOrWhiteSpace(dto.Blinds) ? null : dto.Blinds.Trim();
-
-            // Money fields
             entity.BuyIn = dto.BuyIn;
             entity.CashOut = dto.CashOut;
 
@@ -185,7 +191,6 @@ namespace PokerRangeAPI2.Controllers
             {
                 entity.Profit = profit.Value;
             }
-            // If no profit is provided and we can't derive it, keep existing entity.Profit.
 
             await _db.SaveChangesAsync();
             return Ok(entity);
