@@ -50,7 +50,7 @@ const BankrollStatsGrid: React.FC<Props> = ({
             profitPositive ? "text-emerald-300" : "text-rose-300"
           }`}
         >
-          <span className="sm:text-xl md:text-2xl font-semibold tabular-nums inline-flex items-baseline">
+          <span className="sm:text-xl md:text-2xl font-semibold tabular-nums inline-flex items-baseline whitespace-nowrap">
             <span className="mr-0.5">
               {profitPositive ? "+$" : "-$"}
             </span>
@@ -93,7 +93,7 @@ const BankrollStatsGrid: React.FC<Props> = ({
             hourlyPositive ? "text-emerald-200" : "text-rose-200"
           }`}
         >
-          <span className="text-sm sm:text-base md:text-lg font-medium tabular-nums inline-flex items-baseline">
+          <span className="text-sm sm:text-base md:text-lg font-medium tabular-nums inline-flex items-baseline whitespace-nowrap">
             <span className="mr-0.5">
               {hourlyPositive ? "+$" : "-$"}
             </span>

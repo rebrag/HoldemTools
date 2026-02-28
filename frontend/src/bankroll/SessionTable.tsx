@@ -40,9 +40,7 @@ const SessionTable: React.FC<Props> = ({
       {ordered.map((s) => {
         const startDate = s.start ? new Date(s.start) : null;
         const dateStr = startDate ? startDate.toLocaleDateString() : "—";
-
         const profit = s.profit ?? 0;
-
         const hoursStr = formatHours(s.hours);
         const profitStr = formatMoney(s.profit);
 
@@ -69,49 +67,43 @@ const SessionTable: React.FC<Props> = ({
         return (
           <tr
             key={s.id}
-            className="transition-colors hover:bg-emerald-50/60"
+            onClick={() => onEdit(s)}
+            className="transition-colors hover:bg-emerald-50/60 cursor-pointer group"
           >
-            {/* Date */}
             <td className="px-2 py-1.5 text-[8px] sm:text-xs text-gray-800">
               <span className="block truncate max-w-[80px]">
                 {dateStr}
               </span>
             </td>
 
-            {/* Location */}
             <td className="px-2 py-1.5 text-[11px] sm:text-xs text-gray-700">
               <span className="block truncate max-w-[110px]">
                 {s.location ?? "—"}
               </span>
             </td>
 
-            {/* Blinds */}
             <td className="px-2 py-1.5 text-[11px] sm:text-xs text-gray-700">
               <span className="block truncate max-w-[90px]">
                 {s.blinds ?? "—"}
               </span>
             </td>
 
-            {/* Hours (H:MM) */}
             <td className="px-2 py-1.5 text-[11px] sm:text-xs text-gray-700 text-center">
               {hoursStr}
             </td>
 
-            {/* Buy-in */}
             <td className="px-2 py-1.5 text-[9px] sm:text-xs text-gray-700">
               <span className="block truncate max-w-[80px]">
                 {s.buyIn != null ? `$${buyInStr}` : "—"}
               </span>
             </td>
 
-            {/* Cash-out */}
             <td className="px-2 py-1.5 text-[9px] sm:text-xs text-gray-700">
               <span className="block truncate max-w-[80px]">
                 {s.cashOut != null ? `$${cashOutStr}` : "—"}
               </span>
             </td>
 
-            {/* Profit */}
             <td
               className={`px-2 py-1.5 text-[10px] sm:text-xs font-semibold ${profitColor}`}
             >
@@ -120,13 +112,11 @@ const SessionTable: React.FC<Props> = ({
               </span>
             </td>
 
-            {/* Actions */}
             <td className="px-2 py-1.5 text-[11px] sm:text-xs text-gray-500">
               <div className="flex items-center gap-1 justify-end">
-                <button
-                  type="button"
-                  onClick={() => onEdit(s)}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-300/70 bg-white hover:bg-emerald-50 text-emerald-600 transition"
+                {/* Visual indicator for Edit - button behavior now handled by row */}
+                <div
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-300/70 bg-white group-hover:bg-emerald-100 text-emerald-600 transition"
                   title="Edit session"
                 >
                   <svg
@@ -139,11 +129,14 @@ const SessionTable: React.FC<Props> = ({
                       fill="currentColor"
                     />
                   </svg>
-                </button>
+                </div>
                 <button
                   type="button"
-                  onClick={() => onDelete(s.id)}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-rose-300/70 bg-white hover:bg-rose-50 text-rose-600 transition"
+                  onClick={(e) => {
+                    e.stopPropagation(); // Prevents onEdit from firing
+                    onDelete(s.id);
+                  }}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-rose-300/70 bg-white hover:bg-rose-50 text-rose-600 transition relative z-10"
                   title="Delete session"
                 >
                   <svg
