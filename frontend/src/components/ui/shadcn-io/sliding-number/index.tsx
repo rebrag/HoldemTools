@@ -12,7 +12,7 @@ import {
 } from 'motion/react';
 import useMeasure from 'react-use-measure';
  
-import { cn2 } from "../../../../lib/utils";
+import { cn } from "../../../../lib/utils";
 
  
 type SlidingNumberRollerProps = {
@@ -201,7 +201,7 @@ function SlidingNumber({
     <span
       ref={localRef}
       data-slot="sliding-number"
-      className={cn2('inline-flex items-center', className)}
+      className={cn('inline-flex items-center', className)}
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       {...(props as any)}
     >

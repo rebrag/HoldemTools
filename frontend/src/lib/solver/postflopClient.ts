@@ -1,6 +1,6 @@
 // src/lib/postflopClient.ts
 import axios from "axios";
-import type { JsonData } from "../utils/utils";
+import type { JsonData } from "@/lib/solver/utils";
 
 export type PioSolutionDoc = {
   board: string;

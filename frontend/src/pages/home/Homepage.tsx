@@ -1,4 +1,5 @@
 import { JSX, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   motion,
   type Variants,
@@ -6,12 +7,8 @@ import {
   useScroll,
   useTransform,
 } from "framer-motion";
-
-type HomepageProps = {
-  onGoToSolutions: () => void;
-  onGoToEquity: () => void;
-  onGoToBankroll: () => void;
-};
+import { LoopingPreviewVideo } from "./LoopingPreviewVideo";
+import { useTypewriter } from "./useTypewriter";
 
 type ToolId = "solutions" | "equity" | "bankroll";
 
@@ -54,11 +51,11 @@ const tools: Tool[] = [
   },
 ];
 
-function getHandlers(p: HomepageProps): Record<ToolId, () => void> {
+function getHandlers(nav: (path: string) => void): Record<ToolId, () => void> {
   return {
-    solutions: p.onGoToSolutions,
-    equity: p.onGoToEquity,
-    bankroll: p.onGoToBankroll,
+    solutions: () => nav("/solutions"),
+    equity: () => nav("/equity"),
+    bankroll: () => nav("/bankroll"),
   };
 }
 
@@ -91,116 +88,10 @@ const itemVariants = (reduce: boolean): Variants => ({
   },
 });
 
-type UseTypewriterParams = {
-  text: string;
-  start: boolean;
-  speedMs: number;
-};
 
-function useTypewriter(params: UseTypewriterParams): string {
-  const { text, start, speedMs } = params;
-  const [out, setOut] = useState<string>("");
-  const doneRef = useRef<boolean>(false);
-
-  useEffect(() => {
-    if (!start) return;
-    if (doneRef.current) {
-      setOut(text);
-      return;
-    }
-
-    let i = 0;
-    setOut("");
-
-    const id = window.setInterval(() => {
-      i += 1;
-      setOut(text.slice(0, i));
-      if (i >= text.length) {
-        doneRef.current = true;
-        window.clearInterval(id);
-      }
-    }, speedMs);
-
-    return () => window.clearInterval(id);
-  }, [text, start, speedMs]);
-
-  return out;
-}
-
-type LoopingPreviewVideoProps = {
-  src: string;
-  poster?: string;
-  className?: string;
-};
-
-/**
- * Plays on loop when visible; pauses when off-screen.
- * Uses object-contain so the video is NEVER cropped.
- */
-function LoopingPreviewVideo(props: LoopingPreviewVideoProps): JSX.Element {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-
-  useEffect(() => {
-    const el = videoRef.current;
-    if (!el) return;
-
-    const tryPlay = async (): Promise<void> => {
-      try {
-        await el.play();
-      } catch {
-        // Ignore autoplay failures; we retry on intersection.
-      }
-    };
-
-    void tryPlay();
-
-    const obs = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-        if (!entry) return;
-
-        if (entry.isIntersecting) {
-          void tryPlay();
-        } else {
-          el.pause();
-        }
-      },
-      { threshold: 0.15 },
-    );
-
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, []);
-
-  return (
-    <div className="relative h-full w-full bg-slate-950/60">
-      <video
-        ref={videoRef}
-        className={
-          props.className ??
-          "h-full w-full object-contain"
-        }
-        muted
-        playsInline
-        loop
-        autoPlay
-        preload="metadata"
-        poster={props.poster}
-      >
-        <source src={props.src} type="video/mp4" />
-      </video>
-
-      {/* subtle inner border so letterboxing looks intentional */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 ring-1 ring-white/10"
-      />
-    </div>
-  );
-}
-
-export default function Homepage(props: HomepageProps): JSX.Element {
-  const handlers = useMemo(() => getHandlers(props), [props]);
+export default function Homepage(): JSX.Element {
+  const navigate = useNavigate();
+  const handlers = useMemo(() => getHandlers(navigate), [navigate]);
   const reduceMotion = useReducedMotion();
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined;
 

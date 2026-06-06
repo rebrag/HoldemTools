@@ -1,8 +1,8 @@
 // src/hooks/useTier.ts
 import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot } from "firebase/firestore";
-import { db } from "../firebase";
-import { getPriceIdForTier, type Tier } from "../lib/stripeTiers";
+import { db } from "@/lib/firebase";
+import { getPriceIdForTier, type Tier } from "@/lib/stripe/stripeTiers";
 
 // Which subscription statuses count as "active enough"
 const ACTIVE = new Set(["active", "trialing", "past_due"]);

@@ -2,11 +2,11 @@
 /* eslint-disable react-hooks/rules-of-hooks */
 import React, { useMemo, useState } from "react";
 import Plate, { PlateZoomPayload } from "./Plate";
-import LoadingIndicator from "./LoadingIndicator";
-import { generateSpiralOrder } from "../utils/gridUtils";
-import { JsonData } from "../utils/utils";
+import LoadingIndicator from "@/components/LoadingIndicator";
+import { generateSpiralOrder } from "@/lib/solver/gridUtils";
+import { JsonData } from "@/lib/solver/utils";
 import { LayoutGroup } from "framer-motion";
-import useElementSize from "../hooks/useElementSize";
+import useElementSize from "@/hooks/useElementSize";
 import DecisionMatrix from "./DecisionMatrix";
 
 type PlateGridProps = {

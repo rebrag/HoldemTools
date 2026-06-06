@@ -1,9 +1,10 @@
 // src/components/NavBar.tsx
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import AccountMenu from "./AccountMenu";
-import { useCurrentTier } from "../context/TierContext";
-import { openBillingPortal } from "../lib/openBillingPortal";
+import { useNavigate, useLocation } from "react-router-dom";
+import AccountMenu from "@/components/layout/AccountMenu";
+import { useCurrentTier } from "@/context/TierContext";
+import { openBillingPortal } from "@/lib/stripe/openBillingPortal";
 
 import {
   getAuth,
@@ -15,13 +16,8 @@ import {
 } from "firebase/auth";
 
 export interface NavBarProps {
-  section: "solver" | "equity" | "bankroll";
-  goToEquity: () => void; // pushes "/equity" and sets state
-  goToSolver: () => void; // pushes "/solutions" and sets state
-  goToBankroll: () => void; // pushes "/bankroll" and sets state
   toggleViewMode?: () => void;
   isSpiralView?: boolean;
-  tier?: "free" | "plus" | "pro";
 }
 
 /* ───────────────────────── Tier pill ───────────────────────── */
@@ -57,7 +53,15 @@ const TierPill: React.FC<{ tier: "free" | "plus" | "pro"; loading?: boolean }> =
   );
 };
 
-const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver, goToBankroll }) => {
+const NavBar: React.FC<NavBarProps> = () => {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const section = pathname.startsWith("/equity")
+    ? "equity"
+    : pathname.startsWith("/bankroll")
+    ? "bankroll"
+    : "solver";
+
   const [menuOpen, setMenuOpen] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
   const { tier, loading } = useCurrentTier();
@@ -135,29 +139,9 @@ const NavBar: React.FC<NavBarProps> = ({ section, goToEquity, goToSolver, goToBa
     };
   }, [toolsOpen]);
 
-  // Safety net: ensure URL has the correct path even if parent handler forgot
-  const pushPathIfNeeded = (path: "/solutions" | "/equity" | "/bankroll") => {
-    if (typeof window === "undefined") return;
-    if (window.location.pathname !== path) {
-      window.history.pushState({}, "", path);
-    }
-  };
-
-  const goEquity = () => {
-    goToEquity();
-    pushPathIfNeeded("/equity");
-    setToolsOpen(false);
-  };
-  const goSolutions = () => {
-    goToSolver();
-    pushPathIfNeeded("/solutions");
-    setToolsOpen(false);
-  };
-  const goBankrollPage = () => {
-    goToBankroll();
-    pushPathIfNeeded("/bankroll");
-    setToolsOpen(false);
-  };
+  const goEquity = () => { navigate("/equity"); setToolsOpen(false); };
+  const goSolutions = () => { navigate("/solutions"); setToolsOpen(false); };
+  const goBankrollPage = () => { navigate("/bankroll"); setToolsOpen(false); };
 
   // Optional: ring color on navbar based on tier
   const tierRing =

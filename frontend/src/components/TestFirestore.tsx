@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
-import { auth, db } from "../firebase";
+import { auth, db } from "@/lib/firebase";
 
 interface UserData {
   email: string;

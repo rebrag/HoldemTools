@@ -7,14 +7,14 @@ import React, {
   useRef,
   useEffect,
 } from "react";
-import PokerBackground from "./PokerBackground";
-import { buildDeck, sampleN, tokenize, sortCardsDesc } from "../lib/cards";
-import { useEquitySimulation } from "../hooks/useEquitySimulation";
-import CardPicker from "./CardPicker";
-import PlayingCard from "./PlayingCard";
-import ploOpenRangeCSV from "../data/ploOpenRangeCSV.txt?raw";
-import ploCallRangeCSV from "../data/ploCallRangeCSV.txt?raw";
-import { SlidingNumber } from "./ui/shadcn-io/sliding-number";
+import PokerBackground from "@/components/PokerBackground";
+import { buildDeck, sampleN, tokenize, sortCardsDesc } from "@/lib/cards";
+import { useEquitySimulation } from "@/hooks/useEquitySimulation";
+import CardPicker from "@/components/CardPicker";
+import PlayingCard from "@/components/PlayingCard";
+import ploOpenRangeCSV from "@/data/ploOpenRangeCSV.txt?raw";
+import ploCallRangeCSV from "@/data/ploCallRangeCSV.txt?raw";
+import { SlidingNumber } from "@/components/ui/shadcn-io/sliding-number";
 import { useLocalStorageState } from "@/hooks/useLocalStorageState";
 
 /* ===== Shared helpers & constants ===== */

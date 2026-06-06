@@ -6,7 +6,7 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   FirebaseError,
-} from "../firebase";
+} from "@/lib/firebase";
 import { sendEmailVerification } from "firebase/auth";
 
 interface LoginSignupModalProps {

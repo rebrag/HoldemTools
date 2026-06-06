@@ -7,12 +7,12 @@ import React, {
   useState,
   ReactNode,
 } from "react";
-import { combineDataByHand, HandCellData, JsonData } from "../utils/utils";
+import { combineDataByHand, HandCellData, JsonData } from "@/lib/solver/utils";
 import ColorKey from "./ColorKey";
 import DecisionMatrix from "./DecisionMatrix";
 import DealerButton from "./DealerButton";
 import { motion } from "framer-motion";
-import AutoFitText from "./AutoFitText";
+import AutoFitText from "@/components/AutoFitText";
 
 /* ── helpers ── */
 const HAND_ORDER = [

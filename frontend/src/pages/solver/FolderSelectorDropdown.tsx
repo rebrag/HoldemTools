@@ -1,5 +1,5 @@
 import React from "react";
-import type { FolderMetadata } from "../hooks/useFolders";
+import type { FolderMetadata } from "@/hooks/useFolders";
 
 type Props = {
   open: boolean;

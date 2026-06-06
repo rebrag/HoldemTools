@@ -1,8 +1,8 @@
 // src/context/TierContext.tsx
 import React, { createContext, useContext, useMemo } from "react";
 import type { User } from "firebase/auth";
-import { useTier } from "../hooks/useTier";
-import type { Tier } from "../lib/stripeTiers";
+import { useTier } from "@/hooks/useTier";
+import type { Tier } from "@/lib/stripe/stripeTiers";
 
 type TierContextValue = {
   tier: Tier;

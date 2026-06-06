@@ -1,6 +1,6 @@
 // src/components/ColorKey.tsx
 import React from "react";
-import { HandCellData, getColorForAction } from "../utils/utils";
+import { HandCellData, getColorForAction } from "@/lib/solver/utils";
 import { motion } from "framer-motion";
 
 interface ColorKeyProps {

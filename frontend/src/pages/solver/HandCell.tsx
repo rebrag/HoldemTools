@@ -1,7 +1,7 @@
 // src/components/HandCell.tsx
 import React, { useEffect, useState, useMemo } from "react";
-import { HandCellData, getColorForAction, UNKNOWN_MULTI_COLOR } from "../utils/utils";
-import { ALL_ACTIONS, Action as BucketAction } from "../utils/constants";
+import { HandCellData, getColorForAction, UNKNOWN_MULTI_COLOR } from "@/lib/solver/utils";
+import { ALL_ACTIONS, Action as BucketAction } from "@/lib/solver/constants";
 import "./App.css";
 
 interface HandCellProps {

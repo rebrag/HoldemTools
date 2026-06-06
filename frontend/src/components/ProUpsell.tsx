@@ -1,10 +1,10 @@
 // src/components/ProUpsell.tsx
 import React, { useState } from "react";
 import { getAuth } from "firebase/auth";
-import { startSubscriptionCheckout } from "../lib/checkout";
-import { getPriceIdForTier, TIER_LABEL, Tier } from "../lib/stripeTiers";
-import { useCurrentTier } from "../context/TierContext";
-import { openBillingPortal } from "../lib/openBillingPortal";
+import { startSubscriptionCheckout } from "@/lib/stripe/checkout";
+import { getPriceIdForTier, TIER_LABEL, Tier } from "@/lib/stripe/stripeTiers";
+import { useCurrentTier } from "@/context/TierContext";
+import { openBillingPortal } from "@/lib/stripe/openBillingPortal";
 
 type ProUpsellProps = {
   open: boolean;

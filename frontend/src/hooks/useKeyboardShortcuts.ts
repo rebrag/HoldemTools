@@ -1,6 +1,6 @@
 // src/hooks/useKeyboardShortcuts.ts
 import { useEffect, useCallback } from "react";
-import { sortFoldersLikeSelector } from "../utils/folderSort";
+import { sortFoldersLikeSelector } from "@/lib/solver/folderSort";
 
 /* ------------------------------------------------------------------ */
 /*  Hook options                                                      */

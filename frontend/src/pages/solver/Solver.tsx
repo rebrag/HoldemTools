@@ -2,21 +2,21 @@
 import { useState, useCallback, useLayoutEffect, useEffect, useMemo, useRef } from "react";
 import type { ChangeEvent } from "react";
 import PlateGrid from "./PlateGrid";
-import { actionToNumberMap } from "../utils/constants";
-import { getInitialMapping } from "../utils/getInitialMapping";
-import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
-import useWindowDimensions from "../hooks/useWindowDimensions";
-import useFolders from "../hooks/useFolders";
-import useFiles from "../hooks/useFiles";
+import { actionToNumberMap } from "@/lib/solver/constants";
+import { getInitialMapping } from "@/lib/solver/getInitialMapping";
+import useKeyboardShortcuts from "@/hooks/useKeyboardShortcuts";
+import useWindowDimensions from "@/hooks/useWindowDimensions";
+import useFolders from "@/hooks/useFolders";
+import useFiles from "@/hooks/useFiles";
 import axios from "axios";
-import { JsonData } from "../utils/utils";
+import { JsonData } from "@/lib/solver/utils";
 import Line from "./Line";
 import { Steps } from "intro.js-react";
 import "intro.js/introjs.css";
 import { User } from "firebase/auth";
-import LoginSignupModal from "./LoginSignupModal";
+import LoginSignupModal from "@/components/LoginSignupModal";
 import FolderSelector from "./FolderSelector";
-import ProUpsell from "./ProUpsell";
+import ProUpsell from "@/components/ProUpsell";
 import {
   requiredTierForFolder,
   getPriceIdForTier,
@@ -24,15 +24,15 @@ import {
   type Tier,
   isTierSufficient,
   type FolderMetaLike,
-} from "../lib/stripeTiers";
-import { startSubscriptionCheckout } from "../lib/checkout";
-import { uploadGameTree } from "../lib/uploadGameTree";
-import { useCurrentTier } from "../context/TierContext";
-import CardPicker from "./CardPicker";
-import PlayingCard from "./PlayingCard";
-import { handleActionClickImpl, type PendingFlopUpload } from "../lib/handleActionClick";
-import { root169ToJsonData, pollForPioSolutionByGametree } from "../lib/postflopClient";
-import type { PioSolutionDoc } from "../lib/postflopClient";
+} from "@/lib/stripe/stripeTiers";
+import { startSubscriptionCheckout } from "@/lib/stripe/checkout";
+import { uploadGameTree } from "@/lib/solver/uploadGameTree";
+import { useCurrentTier } from "@/context/TierContext";
+import CardPicker from "@/components/CardPicker";
+import PlayingCard from "@/components/PlayingCard";
+import { handleActionClickImpl, type PendingFlopUpload } from "@/lib/solver/handleActionClick";
+import { root169ToJsonData, pollForPioSolutionByGametree } from "@/lib/solver/postflopClient";
+import type { PioSolutionDoc } from "@/lib/solver/postflopClient";
 
 // Toggle experimental postflop pipeline (upload + polling)
 const POSTFLOP_ENABLED = false;

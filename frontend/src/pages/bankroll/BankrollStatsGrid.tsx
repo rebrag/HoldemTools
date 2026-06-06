@@ -1,7 +1,7 @@
 // src/bankroll/BankrollStatsGrid.tsx
 import React from "react";
-import AutoFitText from "../components/AutoFitText";
-import { SlidingNumber } from "../components/ui/shadcn-io/sliding-number";
+import AutoFitText from "@/components/AutoFitText";
+import { SlidingNumber } from "@/components/ui/shadcn-io/sliding-number";
 import type { BankrollStats } from "./types";
 
 interface Props {

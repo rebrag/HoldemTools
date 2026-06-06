@@ -1,7 +1,7 @@
 // src/lib/handleActionClick.ts
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import { getActionNumber, numberToActionMap } from "../utils/constants";
-import type { JsonData } from "../utils/utils";
+import { getActionNumber, numberToActionMap } from "@/lib/solver/constants";
+import type { JsonData } from "@/lib/solver/utils";
 
 export interface PendingFlopUpload {
   folder: string;

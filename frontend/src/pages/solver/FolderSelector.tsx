@@ -1,17 +1,17 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useAuthState } from "react-firebase-hooks/auth";
-import { auth } from "../firebase";
-import { logUserAction } from "../logEvent";
-import { sortFoldersLikeSelector } from "../utils/folderSort";
-import type { FolderMetadata } from "../hooks/useFolders";
+import { auth } from "@/lib/firebase";
+import { logUserAction } from "@/lib/logEvent";
+import { sortFoldersLikeSelector } from "@/lib/solver/folderSort";
+import type { FolderMetadata } from "@/hooks/useFolders";
 import FolderSelectorDropdown from "./FolderSelectorDropdown";
 import {
   requiredTierForFolder,
   isTierSufficient,
   type Tier,
   type FolderMetaLike,
-} from "../lib/stripeTiers";
+} from "@/lib/stripe/stripeTiers";
 
 /* ────────────────────────────────────────────────────────────────── */
 /*  Types                                                             */

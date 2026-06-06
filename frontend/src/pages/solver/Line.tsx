@@ -1,7 +1,7 @@
 // src/components/Line.tsx
 import React, { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { getColorForAction, stringToColor } from "../utils/utils";
+import { getColorForAction, stringToColor } from "@/lib/solver/utils";
 
 export interface LineProps {
   line: string[];

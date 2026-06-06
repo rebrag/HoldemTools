@@ -3,7 +3,7 @@
 
 import React from "react";
 import type { SpringOptions } from "motion/react";
-import { SlidingNumber } from "../components/ui/shadcn-io/sliding-number";
+import { SlidingNumber } from "@/components/ui/shadcn-io/sliding-number";
 
 type AnimatedNumberProps = {
   value: number;

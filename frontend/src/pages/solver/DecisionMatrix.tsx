@@ -7,8 +7,8 @@ import {
   HTMLAttributes,
 } from "react";
 import HandCell from "./HandCell";
-import { HandCellData } from "../utils/utils";
-import { ALL_ACTIONS } from "../utils/constants";
+import { HandCellData } from "@/lib/solver/utils";
+import { ALL_ACTIONS } from "@/lib/solver/constants";
 
 /* ---------- props ---------- */
 interface DecisionMatrixProps extends HTMLAttributes<HTMLDivElement> {

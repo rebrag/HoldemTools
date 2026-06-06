@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
-import LoadingIndicator from "../components/LoadingIndicator";
+import LoadingIndicator from "@/components/LoadingIndicator";
 import BankrollChartShadcn from "./BankrollChartShadcn";
 import BankrollFormModal from "./BankrollFormModal";
 import BankrollStatsGrid from "./BankrollStatsGrid";
@@ -21,7 +21,7 @@ import type {
   FormState,
   SessionDuration,
 } from "./types";
-import LoginSignupModal from "../components/LoginSignupModal";
+import LoginSignupModal from "@/components/LoginSignupModal";
 import { useLocalStorageState } from "@/hooks/useLocalStorageState";
 import AutoFitText from "@/components/AutoFitText";
 
@@ -1055,17 +1055,14 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
   };
 
   const setThisYear = () => {
-    const nowDate = new Date();
-    const year = nowDate.getFullYear();
-    const month = String(nowDate.getMonth() + 1).padStart(2, "0");
-    const day = String(nowDate.getDate()).padStart(2, "0");
-    const today = `${year}-${month}-${day}`;
+    const year = new Date().getFullYear();
     const startOfYear = `${year}-01-01`;
+    const endOfYear = `${year}-12-31`;
 
     setFilters((prev) => ({
       ...prev,
       fromDate: startOfYear,
-      toDate: today,
+      toDate: endOfYear,
     }));
   };
 

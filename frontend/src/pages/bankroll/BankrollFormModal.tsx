@@ -1,7 +1,7 @@
 // src/bankroll/BankrollFormModal.tsx
 import React from "react";
 import type { FormState, SessionDuration } from "./types";
-import LoadingIndicator from "../components/LoadingIndicator";
+import LoadingIndicator from "@/components/LoadingIndicator";
 
 interface Props {
   form: FormState;

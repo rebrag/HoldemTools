@@ -1,6 +1,6 @@
 // src/components/VerifyEmailPrompt.tsx
 import { useState } from "react";
-import { auth } from "../firebase";
+import { auth } from "@/lib/firebase";
 import { useNavigate } from "react-router-dom";
 import { signOut } from "firebase/auth";
 

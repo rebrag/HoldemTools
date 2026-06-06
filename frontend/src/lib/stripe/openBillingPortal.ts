@@ -1,7 +1,7 @@
 // src/lib/openBillingPortal.ts
 import { getAuth } from "firebase/auth";
 import { getFunctions, httpsCallable, HttpsCallableResult } from "firebase/functions";
-import { app } from "../firebase";
+import { app } from "@/lib/firebase";
 
 type PortalLinkPayload = {
   returnUrl: string;
