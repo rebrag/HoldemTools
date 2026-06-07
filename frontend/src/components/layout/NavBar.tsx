@@ -60,6 +60,8 @@ const NavBar: React.FC<NavBarProps> = () => {
     ? "equity"
     : pathname.startsWith("/bankroll")
     ? "bankroll"
+    : pathname.startsWith("/course")
+    ? "course"
     : "solver";
 
   const [menuOpen, setMenuOpen] = useState(false);
@@ -142,6 +144,7 @@ const NavBar: React.FC<NavBarProps> = () => {
   const goEquity = () => { navigate("/equity"); setToolsOpen(false); };
   const goSolutions = () => { navigate("/solutions"); setToolsOpen(false); };
   const goBankrollPage = () => { navigate("/bankroll"); setToolsOpen(false); };
+  const goCoursePage = () => { navigate("/course"); setToolsOpen(false); };
 
   // Optional: ring color on navbar based on tier
   const tierRing =
@@ -258,6 +261,16 @@ const NavBar: React.FC<NavBarProps> = () => {
                   aria-current={section === "bankroll" ? "page" : undefined}
                 >
                   Bankroll Tracker
+                </button>
+                <button
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    goCoursePage();
+                  }}
+                  className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
+                  aria-current={section === "course" ? "page" : undefined}
+                >
+                  Course
                 </button>
               </div>
             </div>

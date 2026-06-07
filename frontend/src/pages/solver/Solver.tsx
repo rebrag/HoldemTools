@@ -158,6 +158,11 @@ const Solver = ({ user }: SolverProps) => {
   // Sim info popover open state (for click on mobile)
   const [simInfoOpen, setSimInfoOpen] = useState(false);
 
+  // Line ↔ PlateGrid alignment
+  const [plateContentEl, setPlateContentEl] = useState<HTMLDivElement | null>(null);
+  const lineWrapperRef = useRef<HTMLDivElement | null>(null);
+  const [linePad, setLinePad] = useState({ left: 0, right: 0 });
+
   const tourBooted = useRef(localStorage.getItem("tourSeen") === "1");
   const lastClickRef = useRef<{ plate: string; action: string } | null>(null);
 
@@ -318,6 +323,26 @@ const Solver = ({ user }: SolverProps) => {
   useLayoutEffect(() => {
     setLoadedPlates(defaultPlateNames);
   }, [folder, playerCount, defaultPlateNames]);
+
+  useLayoutEffect(() => {
+    const compute = () => {
+      const plateEl = plateContentEl;
+      const lineEl = lineWrapperRef.current;
+      if (!plateEl || !lineEl) { setLinePad({ left: 0, right: 0 }); return; }
+      const pr = plateEl.getBoundingClientRect();
+      const lr = lineEl.getBoundingClientRect();
+      setLinePad({
+        left: Math.max(0, pr.left - lr.left),
+        right: Math.max(0, lr.right - pr.right),
+      });
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    if (plateContentEl) ro.observe(plateContentEl);
+    if (lineWrapperRef.current) ro.observe(lineWrapperRef.current);
+    window.addEventListener("resize", compute);
+    return () => { ro.disconnect(); window.removeEventListener("resize", compute); };
+  }, [plateContentEl]);
 
   useEffect(() => {
     setPlateMapping((prev) => {
@@ -987,7 +1012,7 @@ const Solver = ({ user }: SolverProps) => {
 
           {/* Top row: Sim info button (small), FolderSelector (wide, with filter + SR buttons) */}
           <div className="px-2 sm:px-4 mt-1">
-            <div className="mx-auto w-full max-w-5xl">
+            <div className="mx-auto w-full max-w-xl">
               <div className="relative z-50">
                 <div className="flex items-stretch gap-2">
                   {/* Sim info: same footprint as filter/SR, always on the left */}
@@ -1088,11 +1113,12 @@ const Solver = ({ user }: SolverProps) => {
           </div>
 
           {/* Line row */}
-          <div className="relative flex items-center mt-2 mb-2">
+          <div
+            ref={lineWrapperRef}
+            className="relative flex items-center mt-2 mb-2"
+            style={{ paddingLeft: linePad.left, paddingRight: linePad.right }}
+          >
             <Line line={preflopLine} onLineClick={handleLineClick} />
-            <div className="absolute right-0 mr-2 z-20 flex items-center gap-2">
-              {/* placeholder for future controls */}
-            </div>
           </div>
 
           {/* Current flop display */}
@@ -1132,6 +1158,7 @@ const Solver = ({ user }: SolverProps) => {
               pot={potSize}
               activePlayer={activePlayer}
               singleRangeView={singleRangeView}
+              onPlateContentRef={setPlateContentEl}
             />
           </div>
         </div>

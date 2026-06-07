@@ -281,7 +281,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
         className={
           fullWidth
             ? "relative w-full overflow-visible"
-            : "relative w-full max-w-lg overflow-visible"
+            : "relative w-full max-w-md overflow-visible"
         }
       >
         {/* Input + filter + SR buttons */}

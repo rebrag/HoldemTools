@@ -9,6 +9,7 @@ import Homepage from "@/pages/home/Homepage";
 import Solver from "@/pages/solver/Solver";
 import EquityCalc from "@/pages/equity/EquityCalc";
 import BankrollTracker from "@/pages/bankroll/BankrollTracker";
+import Course from "@/pages/course/Course";
 import "./index.css";
 
 function App() {
@@ -46,6 +47,7 @@ function App() {
             <Route path="/solutions" element={<Solver user={user} />} />
             <Route path="/equity" element={<EquityCalc />} />
             <Route path="/bankroll" element={<BankrollTracker user={user} />} />
+            <Route path="/course" element={<Course />} />
           </Route>
         </Routes>
       </div>

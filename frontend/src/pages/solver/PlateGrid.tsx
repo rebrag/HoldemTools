@@ -30,6 +30,9 @@ type PlateGridProps = {
 
   /** NEW: show ranges only for active player */
   singleRangeView?: boolean;
+
+  /** Called with the inner plate-row div so the parent can align the Line component */
+  onPlateContentRef?: (el: HTMLDivElement | null) => void;
 };
 
 /** ─── Narrow-only sizing constants ─── */
@@ -67,6 +70,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   activePlayer = "UTG",
 
   singleRangeView = false,
+  onPlateContentRef,
 }) => {
   const [zoom, setZoom] = useState<PlateZoomPayload | null>(null);
 
@@ -342,11 +346,12 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                 ) as (readonly [string, string])[];
                 if (!plates.length) return null;
                 return (
-                  <div
-                    key={`row-${rowIdx}`}
-                    className="flex justify-center gap-2 flex-nowrap"
-                  >
-                    {plates.map(([posKey, file]) => (
+                  <div key={`row-${rowIdx}`} className="flex justify-center">
+                    <div
+                      ref={rowIdx === 0 ? onPlateContentRef : undefined}
+                      className="flex gap-2 flex-nowrap"
+                    >
+                      {plates.map(([posKey, file]) => (
                       <Plate
                         key={posKey}
                         plateId={file}
@@ -364,7 +369,8 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                         onPlateZoom={(payload) => setZoom(payload)}
                         singleRangeView={singleRangeView}
                       />
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 );
               })}

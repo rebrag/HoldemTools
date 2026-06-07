@@ -8,9 +8,6 @@ export interface LineProps {
   onLineClick: (idx: number) => void;
 }
 
-/* Reserve space on the far-right for the RandomizeButton */
-const RESERVED_RIGHT = 56;
-
 /* Soft-gray colour for the special “Reset” chip */
 const ROOT_COLOR = "#d1d5db"; // Tailwind gray-300-ish
 
@@ -65,12 +62,11 @@ const Line: React.FC<LineProps> = ({ line, onLineClick }) => {
         </button>
       )}
 
-      {/* → chevron (just before dice gap) */}
+      {/* → chevron */}
       {canRight && (
         <button
           onClick={() => move(220)}
-          style={{ right: RESERVED_RIGHT }}
-          className="absolute top-1/2 -translate-y-1/2 z-10 p-1 rounded-full bg-black/40 text-white"
+          className="absolute right-0 top-1/2 -translate-y-1/2 z-10 p-1 rounded-full bg-black/40 text-white"
         >
           <ChevronRight size={18} strokeWidth={2.4} />
         </button>
@@ -79,8 +75,7 @@ const Line: React.FC<LineProps> = ({ line, onLineClick }) => {
       {/* scroll strip */}
       <div
         ref={scrollerRef}
-        style={{ width: `calc(100% - ${RESERVED_RIGHT}px)` }}
-        className="flex flex-nowrap overflow-x-auto scroll-smooth space-x-0.5 no-scrollbar"
+        className="flex flex-nowrap overflow-x-auto scroll-smooth space-x-0.5 no-scrollbar w-full"
       >
         {/* “LINE:” label */}
         <div
