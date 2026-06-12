@@ -224,11 +224,8 @@ export default function Homepage(): JSX.Element {
       </div>
 
       <div className="mx-auto max-w-6xl px-4 pb-24 pt-14 sm:px-6 lg:px-8">
-        <motion.section
+        <section
           className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 p-8 shadow-2xl shadow-emerald-500/10 sm:p-12"
-          initial="hidden"
-          animate="show"
-          variants={sectionVariants(!!reduceMotion)}
         >
           <motion.div
             className="pointer-events-none absolute inset-0"
@@ -248,12 +245,23 @@ export default function Homepage(): JSX.Element {
             />
           </motion.div>
 
-          <div className="relative">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">
+          <motion.div
+            className="relative"
+            initial="hidden"
+            animate="show"
+            variants={staggerVariants(!!reduceMotion)}
+          >
+            <motion.p
+              className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300"
+              variants={itemVariants(!!reduceMotion)}
+            >
               Hold’em study, streamlined
-            </p>
+            </motion.p>
 
-            <h1 className="mt-3 min-h-[3.25rem] text-balance text-4xl font-semibold tracking-tight sm:min-h-[4rem] sm:text-5xl">
+            <motion.h1
+              className="relative mt-3 text-balance text-4xl font-semibold tracking-tight sm:text-5xl"
+              variants={itemVariants(!!reduceMotion)}
+            >
               {reduceMotion ? (
                 <>
                   Build ranges. Train equity.{" "}
@@ -261,19 +269,29 @@ export default function Homepage(): JSX.Element {
                 </>
               ) : (
                 <>
-                  <span>{typedA}</span>
-                  <span className="text-emerald-300">{typedB}</span>
-                  <motion.span
-                    aria-hidden="true"
-                    className="ml-0.5 inline-block h-[1em] w-[0.55ch] align-[-0.12em] bg-emerald-300/80"
-                    animate={{ opacity: [0, 1, 0] }}
-                    transition={{ duration: 0.9, repeat: Infinity }}
-                  />
+                  <span className="invisible" aria-hidden>
+                    {heroA}
+                    <span className="text-emerald-300">{heroB}</span>
+                    <span className="ml-0.5 inline-block w-[0.55ch]" />
+                  </span>
+                  <span className="absolute inset-0">
+                    <span>{typedA}</span>
+                    <span className="text-emerald-300">{typedB}</span>
+                    <motion.span
+                      aria-hidden="true"
+                      className="ml-0.5 inline-block h-[1em] w-[0.55ch] align-[-0.12em] bg-emerald-300/80"
+                      animate={{ opacity: [0, 1, 0] }}
+                      transition={{ duration: 0.9, repeat: Infinity }}
+                    />
+                  </span>
                 </>
               )}
-            </h1>
+            </motion.h1>
 
-            <p className="mt-4 min-h-[4.5rem] max-w-2xl text-pretty text-sm leading-relaxed text-slate-300 sm:min-h-[4.8rem] sm:text-base">
+            <motion.p
+              className="relative mt-4 max-w-2xl text-pretty text-sm leading-relaxed text-slate-300 sm:text-base"
+              variants={itemVariants(!!reduceMotion)}
+            >
               {reduceMotion ? (
                 <>
                   HoldemTools is a focused suite for serious players: solver-grade
@@ -283,24 +301,25 @@ export default function Homepage(): JSX.Element {
                 </>
               ) : (
                 <>
-                  {typedSub.split("standard grid").map((part, idx, arr) => {
-                    if (idx === arr.length - 1) return <span key={idx}>{part}</span>;
-                    return (
-                      <span key={idx}>
-                        {part}
-                        <span className="text-slate-100">standard grid</span>
-                      </span>
-                    );
-                  })}
+                  <span className="invisible" aria-hidden>{heroSub}</span>
+                  <span className="absolute inset-0">
+                    {typedSub.split("standard grid").map((part, idx, arr) => {
+                      if (idx === arr.length - 1) return <span key={idx}>{part}</span>;
+                      return (
+                        <span key={idx}>
+                          {part}
+                          <span className="text-slate-100">standard grid</span>
+                        </span>
+                      );
+                    })}
+                  </span>
                 </>
               )}
-            </p>
+            </motion.p>
 
             <motion.div
               className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center"
               variants={staggerVariants(!!reduceMotion)}
-              initial="hidden"
-              animate="show"
             >
               <motion.button
                 type="button"
@@ -333,8 +352,8 @@ export default function Homepage(): JSX.Element {
                 No fluff. Fast workflows. Built for grinders.
               </motion.div>
             </motion.div>
-          </div>
-        </motion.section>
+          </motion.div>
+        </section>
 
         {/* VALUE PROPS */}
         <motion.section

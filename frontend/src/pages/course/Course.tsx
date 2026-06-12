@@ -1,4 +1,5 @@
 import React from "react";
+import { useNavigate } from "react-router-dom";
 
 const sections = [
   {
@@ -58,6 +59,8 @@ const sections = [
 ];
 
 const Course: React.FC = () => {
+  const navigate = useNavigate();
+
   return (
     <div className="max-w-2xl mx-auto px-4 pb-12 pt-6 space-y-6">
       {/* Header */}
@@ -65,9 +68,7 @@ const Course: React.FC = () => {
         <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">
           Course
         </p>
-        <h1 className="text-2xl font-semibold text-white">
-          Think Like a Professional
-        </h1>
+        <h1 className="text-2xl font-semibold text-white">Think Like a Professional</h1>
         <p className="text-sm text-emerald-100/80 max-w-md">
           An entry-level guide to understanding poker through the lens of mathematics and strategy.
         </p>
@@ -80,19 +81,36 @@ const Course: React.FC = () => {
         </div>
         <div className="divide-y divide-gray-100">
           {sections.map((section) => (
-            <div key={section.number} className="flex gap-4 px-4 py-3.5">
-              <div className="shrink-0 w-7 h-7 rounded-full bg-emerald-50 ring-1 ring-emerald-200 flex items-center justify-center mt-0.5">
+            <button
+              key={section.number}
+              onClick={() => navigate(`/course/${section.number}`)}
+              className="w-full text-left flex gap-4 px-4 py-3.5 hover:bg-emerald-50 transition-colors group"
+            >
+              <div className="shrink-0 w-7 h-7 rounded-full bg-emerald-50 ring-1 ring-emerald-200 group-hover:ring-emerald-400 group-hover:bg-emerald-100 flex items-center justify-center mt-0.5 transition-colors">
                 <span className="text-[11px] font-bold text-emerald-700">{section.number}</span>
               </div>
-              <div>
+              <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-gray-900">{section.title}</p>
-                <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">{section.description}</p>
+                <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">
+                  {section.description}
+                </p>
               </div>
-            </div>
+              <div className="shrink-0 flex items-center self-center text-gray-300 group-hover:text-emerald-400 transition-colors">
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+              </div>
+            </button>
           ))}
         </div>
         <div className="border-t border-gray-100 px-4 py-3 text-center">
-          <p className="text-xs text-gray-400">Course content coming soon.</p>
+          <p className="text-xs text-gray-400">9 sections · Start with Section 1</p>
         </div>
       </div>
     </div>
