@@ -111,6 +111,24 @@ const pickRandomFromRange = (
   return null;
 };
 
+const calcStats = (res: any, handCount: number) => {
+  if (!res || res.total <= 0 || res.wins.length !== handCount)
+    return {
+      winPcts: Array<number>(handCount).fill(0),
+      tiePct: 0,
+      evPcts: Array<number>(handCount).fill(0),
+      ready: false,
+    };
+  const n = res.total;
+  const tieShare = res.ties / handCount;
+  return {
+    winPcts: res.wins.map((w: number) => (w / n) * 100),
+    tiePct: (res.ties / n) * 100,
+    evPcts: res.wins.map((w: number) => ((w + tieShare) / n) * 100),
+    ready: true,
+  };
+};
+
 const encodeBoard = (cards: string[]) => {
   const n = Math.min(3, cards.length);
   const first = sortCardsDesc(cards.slice(0, n));
@@ -628,26 +646,8 @@ const EquityCalc: React.FC = () => {
     resetDisplayed,
   ]);
 
-  const calcStats = (res: any) => {
-    if (!res || res.total <= 0 || res.wins.length !== hands.length)
-      return {
-        winPcts: hands.map(() => 0),
-        tiePct: 0,
-        evPcts: hands.map(() => 0),
-        ready: false,
-      };
-    const n = res.total;
-    const tieShare = res.ties / hands.length;
-    return {
-      winPcts: res.wins.map((w: number) => (w / n) * 100),
-      tiePct: (res.ties / n) * 100,
-      evPcts: res.wins.map((w: number) => ((w + tieShare) / n) * 100),
-      ready: true,
-    };
-  };
-
-  const s1 = calcStats(sim1.result);
-  const s2 = calcStats(sim2.result);
+  const s1 = useMemo(() => calcStats(sim1.result, hands.length), [sim1.result, hands.length]);
+  const s2 = useMemo(() => calcStats(sim2.result, hands.length), [sim2.result, hands.length]);
 
   const currentKey = JSON.stringify({
     mode,
@@ -679,7 +679,7 @@ const EquityCalc: React.FC = () => {
         return (s1.evPcts[idx] + s2.evPcts[idx]) / 2;
       })
     );
-  }, [isFresh, s1, s2, boardsCount, hands]);
+  }, [isFresh, s1, s2, boardsCount, hands]); // s1/s2 are memoized so this won't loop
 
   const target = nextAddTarget(
     boardsCount,

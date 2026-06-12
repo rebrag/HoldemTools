@@ -48,8 +48,8 @@ function App() {
             <Route path="/solutions" element={<Solver user={user} />} />
             <Route path="/equity" element={<EquityCalc />} />
             <Route path="/bankroll" element={<BankrollTracker user={user} />} />
-            <Route path="/course" element={<Course />} />
-            <Route path="/course/:sectionId" element={<CourseSection />} />
+            <Route path="/course" element={<Course user={user} />} />
+            <Route path="/course/:sectionId" element={<CourseSection user={user} />} />
           </Route>
         </Routes>
       </div>

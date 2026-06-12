@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useEffect, useId, useState } from "react";
+import { useQuizTrackerContext } from "./QuizTrackerContext";
 
 interface Option {
   label: string;
@@ -12,10 +13,25 @@ interface QuizQuestionProps {
 }
 
 const QuizQuestion: React.FC<QuizQuestionProps> = ({ question, options, correctIndex }) => {
+  const id = useId();
+  const tracker = useQuizTrackerContext();
   const [selected, setSelected] = useState<number | null>(null);
+
+  useEffect(() => {
+    tracker?.register(id);
+    return () => tracker?.unregister(id);
+  }, [tracker, id]);
 
   const answered = selected !== null;
   const isCorrect = selected === correctIndex;
+
+  function handleSelect(i: number) {
+    if (answered) return;
+    setSelected(i);
+    if (i === correctIndex) {
+      tracker?.reportCorrect(id);
+    }
+  }
 
   return (
     <div className="space-y-3">
@@ -44,9 +60,7 @@ const QuizQuestion: React.FC<QuizQuestionProps> = ({ question, options, correctI
             <button
               key={i}
               className={btnCls}
-              onClick={() => {
-                if (!answered) setSelected(i);
-              }}
+              onClick={() => handleSelect(i)}
             >
               <span className="flex items-start gap-2">
                 <span className="w-4 shrink-0 font-bold leading-5">
