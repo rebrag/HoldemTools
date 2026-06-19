@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import QuizQuestion from "../components/QuizQuestion";
+import ChipStack from "@/components/ChipStack";
 
 /* ── Bluff calc ── */
 const BluffCalc: React.FC = () => {
@@ -24,13 +25,23 @@ const BluffCalc: React.FC = () => {
             onChange={(e) => setBet(Number(e.target.value))} className="w-full accent-blue-600" />
         </div>
       </div>
-      <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 space-y-1.5">
+      <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 space-y-3">
+        <div className="flex items-end justify-around pb-3 border-b border-emerald-200">
+          <div className="flex flex-col items-center gap-1">
+            <ChipStack amount={pot} showBreakdown={false} showLabel={false} />
+            <span className="text-[10px] text-gray-500 font-medium">Pot</span>
+          </div>
+          <div className="flex flex-col items-center gap-1">
+            <ChipStack amount={bet} showBreakdown={false} showLabel={false} />
+            <span className="text-[10px] text-gray-500 font-medium">Your bluff</span>
+          </div>
+        </div>
         <div className="flex items-center justify-between">
           <span className="text-sm text-emerald-700">Break-even fold %</span>
           <span className="text-2xl font-bold text-emerald-700">{breakEven}%</span>
         </div>
         <p className="text-xs font-mono text-emerald-600">${bet} ÷ (${bet} + ${pot}) = {breakEven}%</p>
-        <p className="text-xs text-emerald-600 mt-1">
+        <p className="text-xs text-emerald-600">
           Villain must fold {">"}  {breakEven}% for this bluff to be immediately profitable.
           {breakEven > 60 && " This is a large bluff — ensure you have fold equity."}
           {breakEven < 35 && " Low break-even — this bet can be profitable even if villain folds rarely."}
@@ -70,14 +81,26 @@ const SemiBluffCalc: React.FC = () => {
             onChange={(e) => setEquity(Number(e.target.value))} className="w-full accent-amber-600" />
         </div>
       </div>
-      <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 space-y-1.5 text-xs font-mono text-blue-800">
-        <p className="font-bold text-sm font-sans text-blue-700">Three-Step Shortcut</p>
-        <p>1. Total pot after shove: ${pot} + ${shove} + ${shove} = ${totalPot + shove}</p>
-        <p>2. Win when called: {equity}% × ${totalPot + shove} = ${winWhenCalled.toFixed(0)}</p>
-        <p>3. Break-even fold: ${shove} ÷ ${totalPot} = {breakEvenFold}%</p>
-        <p className={`text-base font-bold ${ev > 0 ? "text-emerald-700" : "text-red-600"}`}>
-          Approx EV: {ev > 0 ? "+" : ""}{ev.toFixed(0)}
-        </p>
+      <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 space-y-3">
+        <div className="flex items-end justify-around pb-3 border-b border-blue-200">
+          <div className="flex flex-col items-center gap-1">
+            <ChipStack amount={pot} showBreakdown={false} showLabel={false} />
+            <span className="text-[10px] text-gray-500 font-medium">Pot</span>
+          </div>
+          <div className="flex flex-col items-center gap-1">
+            <ChipStack amount={shove} showBreakdown={false} showLabel={false} />
+            <span className="text-[10px] text-gray-500 font-medium">Your shove</span>
+          </div>
+        </div>
+        <div className="text-xs font-mono text-blue-800 space-y-1">
+          <p className="font-bold text-sm font-sans text-blue-700">Three-Step Shortcut</p>
+          <p>1. Total pot after shove: ${pot} + ${shove} + ${shove} = ${totalPot + shove}</p>
+          <p>2. Win when called: {equity}% × ${totalPot + shove} = ${winWhenCalled.toFixed(0)}</p>
+          <p>3. Break-even fold: ${shove} ÷ ${totalPot} = {breakEvenFold}%</p>
+          <p className={`text-base font-bold ${ev > 0 ? "text-emerald-700" : "text-red-600"}`}>
+            Approx EV: {ev > 0 ? "+" : ""}{ev.toFixed(0)}
+          </p>
+        </div>
       </div>
     </div>
   );

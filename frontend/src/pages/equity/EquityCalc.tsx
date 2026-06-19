@@ -619,8 +619,12 @@ const EquityCalc: React.FC = () => {
   );
 
   const boardsComplete = useMemo(() => {
-    if (b1Cards.length < 3) return false;
-    if (boardsCount === 2 && b2Cards.length < 3) return false;
+    const b1Valid = b1Cards.length === 0 || b1Cards.length >= 3;
+    if (!b1Valid) return false;
+    if (boardsCount === 2) {
+      const b2Valid = b2Cards.length === 0 || b2Cards.length >= 3;
+      if (!b2Valid) return false;
+    }
     return true;
   }, [b1Cards.length, b2Cards.length, boardsCount]);
 

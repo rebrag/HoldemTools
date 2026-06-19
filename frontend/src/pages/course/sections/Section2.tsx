@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import QuizQuestion from "../components/QuizQuestion";
+import ChipStack from "@/components/ChipStack";
 
 /* ── Bet-sizing drill ── */
 const BET_FRACTIONS = [
@@ -36,16 +37,23 @@ const BetSizingDrill: React.FC = () => {
         ))}
       </div>
       {selected !== null && (
-        <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3">
-          <p className="text-sm text-emerald-800">
-            <span className="font-bold">{BET_FRACTIONS[selected].label}</span> of a ${pot} pot ={" "}
-            <span className="font-bold text-lg text-emerald-700">
-              ${(pot * BET_FRACTIONS[selected].value).toFixed(0)}
-            </span>
-          </p>
-          <p className="text-xs text-emerald-600 mt-0.5 font-mono">
-            ${pot} × {BET_FRACTIONS[selected].pct} = ${(pot * BET_FRACTIONS[selected].value).toFixed(0)}
-          </p>
+        <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 flex items-end gap-4">
+          <ChipStack
+            amount={Math.round(pot * BET_FRACTIONS[selected].value)}
+            showBreakdown={false}
+            showLabel={false}
+          />
+          <div>
+            <p className="text-sm text-emerald-800">
+              <span className="font-bold">{BET_FRACTIONS[selected].label}</span> of a ${pot} pot ={" "}
+              <span className="font-bold text-lg text-emerald-700">
+                ${(pot * BET_FRACTIONS[selected].value).toFixed(0)}
+              </span>
+            </p>
+            <p className="text-xs text-emerald-600 mt-0.5 font-mono">
+              ${pot} × {BET_FRACTIONS[selected].pct} = ${(pot * BET_FRACTIONS[selected].value).toFixed(0)}
+            </p>
+          </div>
         </div>
       )}
     </div>
@@ -75,11 +83,27 @@ const PotRaiseCalc: React.FC = () => {
             onChange={(e) => setBet(Number(e.target.value))} className="w-full accent-blue-600" />
         </div>
       </div>
-      <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 space-y-2 font-mono text-xs text-emerald-800">
-        <p className="font-bold text-sm text-emerald-700 font-sans">Two-step calculation:</p>
-        <p>Step 1: call × 2 = ${bet} × 2 = <strong>${step1}</strong></p>
-        <p>Step 2: ${step1} + (pot ${pot} + bet ${bet}) = ${step1} + ${pot + bet}</p>
-        <p className="text-base font-bold text-emerald-700">= ${step2} total raise</p>
+      <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 space-y-3">
+        <p className="font-bold text-sm text-emerald-700">Two-step calculation:</p>
+        <div className="flex items-end justify-around pb-3 border-b border-emerald-200">
+          <div className="flex flex-col items-center gap-1">
+            <ChipStack amount={pot || 5} showBreakdown={false} showLabel={false} />
+            <span className="text-[10px] text-gray-500 font-medium">Dead pot</span>
+          </div>
+          <div className="flex flex-col items-center gap-1">
+            <ChipStack amount={bet} showBreakdown={false} showLabel={false} />
+            <span className="text-[10px] text-gray-500 font-medium">Villain bet</span>
+          </div>
+          <div className="flex flex-col items-center gap-1">
+            <ChipStack amount={step2} showBreakdown={false} showLabel={false} />
+            <span className="text-[10px] text-gray-500 font-medium">Your raise</span>
+          </div>
+        </div>
+        <div className="font-mono text-xs text-emerald-800 space-y-1">
+          <p>Step 1: call × 2 = ${bet} × 2 = <strong>${step1}</strong></p>
+          <p>Step 2: ${step1} + (pot ${pot} + bet ${bet}) = ${step1} + ${pot + bet}</p>
+          <p className="text-base font-bold text-emerald-700">= ${step2} total raise</p>
+        </div>
       </div>
     </div>
   );

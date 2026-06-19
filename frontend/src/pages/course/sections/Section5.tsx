@@ -1,27 +1,181 @@
 import React, { useState } from "react";
 import QuizQuestion from "../components/QuizQuestion";
+import ChipStack from "@/components/ChipStack";
 
 /* ── Pot odds calculator ── */
+interface BoardCard { rank: string; suit: string; red?: boolean }
+
 interface Scenario {
   pot: number;
   call: number;
   equity: number;
   label: string;
+  board: BoardCard[];
 }
 
 const SCENARIOS: Scenario[] = [
-  { pot: 60, call: 20, equity: 36, label: "Flush draw vs ⅓-pot bet" },
-  { pot: 80, call: 40, equity: 24, label: "Gutshot vs ½-pot bet" },
-  { pot: 100, call: 100, equity: 33, label: "OESD vs pot-size bet" },
-  { pot: 50, call: 25, equity: 20, label: "Overcards vs ½-pot bet" },
+  {
+    pot: 60, call: 20, equity: 36, label: "Flush draw vs ⅓-pot bet",
+    board: [
+      { rank: "K", suit: "♥", red: true },
+      { rank: "7", suit: "♣" },
+      { rank: "2", suit: "♥", red: true },
+    ],
+  },
+  {
+    pot: 80, call: 40, equity: 24, label: "Gutshot vs ½-pot bet",
+    board: [
+      { rank: "K", suit: "♠" },
+      { rank: "Q", suit: "♣" },
+      { rank: "3", suit: "♦", red: true },
+    ],
+  },
+  {
+    pot: 100, call: 100, equity: 33, label: "OESD vs pot-size bet",
+    board: [
+      { rank: "7", suit: "♠" },
+      { rank: "6", suit: "♦", red: true },
+      { rank: "2", suit: "♣" },
+    ],
+  },
+  {
+    pot: 50, call: 25, equity: 20, label: "Overcards vs ½-pot bet",
+    board: [
+      { rank: "J", suit: "♣" },
+      { rank: "8", suit: "♥", red: true },
+      { rank: "3", suit: "♠" },
+    ],
+  },
 ];
+
+/* ── Visual aid ── */
+interface CardFace {
+  rank?: string;
+  suit?: string;
+  red?: boolean;
+  faceDown?: boolean;
+  small?: boolean;
+}
+
+const MiniCard: React.FC<CardFace> = ({ rank, suit, red, faceDown, small }) => (
+  <div
+    className={`flex flex-col items-center justify-center select-none border rounded shadow
+      ${small ? "w-7 h-10" : "w-10 h-[3.5rem]"}
+      ${faceDown ? "bg-blue-900 border-blue-700" : "bg-white border-gray-300"}`}
+  >
+    {faceDown ? (
+      <span className={`text-blue-400/40 leading-none ${small ? "text-base" : "text-2xl"}`}>◈</span>
+    ) : (
+      <>
+        <span className={`font-bold leading-none ${small ? "text-[11px]" : "text-base"} ${red ? "text-red-600" : "text-gray-900"}`}>{rank}</span>
+        <span className={`leading-none ${small ? "text-[11px]" : "text-base"} ${red ? "text-red-600" : "text-gray-900"}`}>{suit}</span>
+      </>
+    )}
+  </div>
+);
+
+// Hero hole cards indexed to match SCENARIOS order
+const HERO_HANDS: CardFace[][] = [
+  [{ rank: "A", suit: "♥", red: true }, { rank: "9", suit: "♥", red: true }],   // flush draw
+  [{ rank: "J", suit: "♦", red: true }, { rank: "T", suit: "♠" }],              // gutshot
+  [{ rank: "9", suit: "♥", red: true }, { rank: "8", suit: "♣" }],              // OESD
+  [{ rank: "A", suit: "♠" },            { rank: "K", suit: "♦", red: true }],   // overcards
+];
+
+// Renders a ChipStack scaled to fit inside the felt oval.
+// A fixed-height container anchors the label position independent of chip count.
+const OvalChip: React.FC<{ amount: number; label: string; labelColor?: string; dimmed?: boolean }> = ({
+  amount, label, labelColor = "text-yellow-200", dimmed = false,
+}) => (
+  <div className={`flex flex-col items-center ${dimmed ? "opacity-55" : ""}`} style={{ gap: 0 }}>
+    <div style={{ position: "relative", height: 48, display: "flex", justifyContent: "center", alignItems: "flex-start", overflow: "visible" }}>
+      <div style={{ transform: "scale(0.43)", transformOrigin: "top center", lineHeight: 0 }}>
+        <ChipStack amount={amount} showBreakdown={false} showLabel={false} showAmount={false} />
+      </div>
+    </div>
+    <span className={`text-[9px] font-bold leading-none mt-0.5 ${labelColor}`}>{label}</span>
+  </div>
+);
+
+const PokerTableDiagram: React.FC<{
+  pot: number;
+  bet: number;
+  scenarioIdx: number;
+  board: BoardCard[];
+}> = ({ pot, bet, scenarioIdx, board }) => {
+  const total   = pot + bet + bet;
+  const reqPct  = Math.round((bet / total) * 100);
+  const heroHand = HERO_HANDS[scenarioIdx] ?? HERO_HANDS[0];
+
+  return (
+    <div className="w-full max-w-[300px] mx-auto select-none">
+      {/* Villain */}
+      <div className="flex flex-col items-center gap-1.5 mb-3">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Villain</p>
+        <div className="flex gap-2">
+          <MiniCard faceDown />
+          <MiniCard faceDown />
+        </div>
+      </div>
+
+      {/* Felt oval */}
+      <div className="relative w-full aspect-[5/3] rounded-[50%] border-[8px] border-amber-800/70 bg-emerald-700 shadow-xl">
+        <div className="absolute inset-0 rounded-[50%] bg-gradient-to-b from-white/10 to-black/10 pointer-events-none" />
+
+        {/* Villain's bet — upper area */}
+        <div className="absolute top-[4%] left-1/2 -translate-x-1/2">
+          <OvalChip amount={bet} label={`$${bet} bet`} />
+        </div>
+
+        {/* Board cards + pot chip — center */}
+        <div className="absolute inset-0 flex items-center justify-center gap-3">
+          <div className="flex gap-1">
+            {board.map((c, i) => (
+              <MiniCard key={i} rank={c.rank} suit={c.suit} red={c.red} small />
+            ))}
+          </div>
+          <div className="flex flex-col items-center" style={{ gap: 0 }}>
+            <div style={{ position: "relative", height: 36, display: "flex", justifyContent: "center", alignItems: "flex-start", overflow: "visible" }}>
+              <div style={{ transform: "scale(0.38)", transformOrigin: "top center", lineHeight: 0 }}>
+                <ChipStack amount={pot} showBreakdown={false} showLabel={false} showAmount={false} />
+              </div>
+            </div>
+            <span className="text-white/80 text-[8px] font-semibold leading-none">${pot}</span>
+          </div>
+        </div>
+
+        {/* Hero's call — lower area (dimmed = not yet committed) */}
+        <div className="absolute bottom-[4%] left-1/2 -translate-x-1/2">
+          <OvalChip amount={bet} label={`$${bet} to call · ${reqPct}% needed`} labelColor="text-emerald-200" dimmed />
+        </div>
+      </div>
+
+      {/* Hero */}
+      <div className="flex flex-col items-center gap-1.5 mt-3">
+        <div className="flex gap-2">
+          {heroHand.map((card, i) => (
+            <MiniCard key={i} {...card} />
+          ))}
+        </div>
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Hero (you)</p>
+      </div>
+
+      {/* Math annotation */}
+      <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-center">
+        <p className="text-[11px] font-mono text-emerald-800">
+          ${bet} ÷ (${pot} + ${bet} + ${bet}) = <strong>{reqPct}%</strong> required equity
+        </p>
+      </div>
+    </div>
+  );
+};
 
 const PotOddsCalc: React.FC = () => {
   const [idx, setIdx] = useState(0);
   const [revealed, setRevealed] = useState(false);
 
   const sc = SCENARIOS[idx];
-  const required = Math.round((sc.call / (sc.call + sc.pot)) * 100);
+  const required = Math.round((sc.call / (sc.pot + sc.call * 2)) * 100);
   const profitable = sc.equity > required;
 
   return (
@@ -39,6 +193,9 @@ const PotOddsCalc: React.FC = () => {
       <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-1 text-sm">
         <p>Pot: <strong>${sc.pot}</strong> &nbsp;|&nbsp; Call: <strong>${sc.call}</strong> &nbsp;|&nbsp; My equity: <strong>{sc.equity}%</strong></p>
       </div>
+
+      <PokerTableDiagram pot={sc.pot} bet={sc.call} scenarioIdx={idx} board={sc.board} />
+
       {!revealed ? (
         <button onClick={() => setRevealed(true)}
           className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors">
@@ -47,7 +204,7 @@ const PotOddsCalc: React.FC = () => {
       ) : (
         <div className={`rounded-lg border px-4 py-3 space-y-2 ${profitable ? "bg-emerald-50 border-emerald-200" : "bg-red-50 border-red-200"}`}>
           <p className="text-xs font-mono text-gray-700">
-            Pot odds: ${sc.call} ÷ (${sc.call} + ${sc.pot}) = <strong>{required}% needed</strong>
+            Pot odds: ${sc.call} ÷ (${sc.pot} + ${sc.call} + ${sc.call}) = <strong>{required}% needed</strong>
           </p>
           <p className={`text-xs font-mono ${profitable ? "text-emerald-700" : "text-red-700"}`}>
             My equity ({sc.equity}%) {profitable ? ">" : "<"} required ({required}%) → {" "}
@@ -80,12 +237,12 @@ const Section5: React.FC = () => (
       <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-2">
         <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">Formula</p>
         <p className="text-center font-mono font-bold text-lg text-emerald-800 py-1">
-          Required equity = call ÷ (call + pot)
+          Required equity = call ÷ total pot (including your call)
         </p>
         <div className="bg-white rounded-lg border border-emerald-200 p-3 text-xs font-mono text-emerald-700 space-y-0.5">
           <p className="font-bold text-sm font-sans">Example: Pot $60, villain bets $20</p>
-          <p>Call = $20 &nbsp; Total pot after call = $20 + $60 = $80</p>
-          <p>Required equity = $20 ÷ $80 = 25%</p>
+          <p>Total pot after call = $60 + $20 (bet) + $20 (call) = $100</p>
+          <p>Required equity = $20 ÷ $100 = 20%</p>
         </div>
       </div>
 
@@ -135,31 +292,13 @@ const Section5: React.FC = () => (
           Should you call?
         </p>
         <div className="text-xs font-mono text-gray-700 bg-white border border-gray-200 rounded-lg p-3 space-y-0.5">
-          <p>Step 1: Pot odds = $40 ÷ ($40 + $60) = $40 ÷ $100 = 40% needed</p>
-          <p>Step 2: Equity = 9 outs × 2 = 18% (just the turn, not all-in)</p>
-          <p>Step 3: 18% &lt; 40% → FOLD (unless implied odds are strong)</p>
+          <p>Step 1: Total pot after call = $60 + $40 + $40 = $140</p>
+          <p>Step 2: Required equity = $40 ÷ $140 ≈ 29%</p>
+          <p>Step 3: Turn-only equity = 9 outs × 2 = 18% → 18% &lt; 29% → FOLD (need implied odds)</p>
         </div>
         <p className="text-xs text-gray-500">
-          But if you were all-in (seeing turn + river): 9 × 4 = 36%. Still 36% &lt; 40% → fold or
-          need implied odds. This is a marginal spot — implied odds analysis is needed.
-        </p>
-      </div>
-
-      {/* EV method */}
-      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2">
-        <p className="text-xs font-bold uppercase tracking-wide text-blue-700">
-          Alternative: EV Method for Calling
-        </p>
-        <p className="text-sm text-blue-900">
-          Instead of comparing percentages, you can calculate the EV of the call directly:
-        </p>
-        <div className="text-xs font-mono text-blue-800 bg-white border border-blue-200 rounded-lg p-3 space-y-0.5">
-          <p>EV = (equity × pot after call) − ((1 − equity) × call)</p>
-          <p>EV = (0.36 × $100) − (0.64 × $40)</p>
-          <p>EV = $36 − $25.60 = <strong>+$10.40</strong></p>
-        </div>
-        <p className="text-xs text-blue-700 mt-1">
-          Both methods give the same answer — choose whichever is faster for you mentally.
+          But if you were all-in (seeing turn + river): 9 × 4 = 36%. Now 36% &gt; 29% → profitable call!
+          Whether to call depends on whether you expect to be all-in or still have streets to play.
         </p>
       </div>
     </div>
@@ -256,9 +395,9 @@ const Section5: React.FC = () => (
         <QuizQuestion
           question="Pot is $80, villain bets $80 (pot-size bet). You have a gutshot straight draw (4 outs) on the turn. Should you call based on pot odds alone?"
           options={[
-            { label: "Yes — a pot-size bet only needs 25% equity", explanation: "A pot-size bet needs 33% equity: $80 ÷ ($80 + $80) = 33%. Gutshot on turn: 4 × 2 = 8%. Way below 33% → fold unless strong implied odds." },
-            { label: "Yes — a gutshot has enough equity vs a pot bet", explanation: "Gutshot on turn: 4 × 2 = 8%. A pot-size bet requires 33%. 8% < 33% — this is a large fold based on pot odds alone." },
-            { label: "No — pot-size bets need 33% equity; gutshot turn equity is only ~8%", explanation: "Correct! $80 ÷ $160 = 33% needed. Gutshot turn equity = 4 × 2 = 8%. Far below → fold or need major implied odds (4× multiplier)." },
+            { label: "Yes — a pot-size bet only needs 25% equity", explanation: "A pot-size bet needs 33% equity: $80 ÷ ($80 + $80 + $80) = $80 ÷ $240 = 33%. Gutshot on turn: 4 × 2 = 8%. Way below 33% → fold unless strong implied odds." },
+            { label: "Yes — a gutshot has enough equity vs a pot bet", explanation: "Gutshot on turn: 4 × 2 = 8%. Total pot after call = $80 + $80 + $80 = $240. Required = $80 ÷ $240 = 33%. Since 8% < 33%, this is a large fold based on pot odds alone." },
+            { label: "No — pot-size bets need 33% equity; gutshot turn equity is only ~8%", explanation: "Correct! Total pot after call = $80 + $80 + $80 = $240. Required = $80 ÷ $240 = 33%. Gutshot turn equity = 4 × 2 = 8%. Far below → fold or need major implied odds (4× multiplier)." },
             { label: "No — you should never call with a gutshot", explanation: "Gutshots can be profitable with good implied odds. The issue here is that the required equity (33%) far exceeds your equity (8%), not that gutshots are always bad." },
           ]}
           correctIndex={2}

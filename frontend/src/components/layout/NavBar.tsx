@@ -235,12 +235,12 @@ const NavBar: React.FC<NavBarProps> = () => {
                 <button
                   onPointerDown={(e) => {
                     e.preventDefault();
-                    goSolutions();
+                    goCoursePage();
                   }}
                   className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
-                  aria-current={section === "solver" ? "page" : undefined}
+                  aria-current={section === "course" ? "page" : undefined}
                 >
-                  Solutions
+                  Course
                 </button>
                 <button
                   onPointerDown={(e) => {
@@ -265,12 +265,12 @@ const NavBar: React.FC<NavBarProps> = () => {
                 <button
                   onPointerDown={(e) => {
                     e.preventDefault();
-                    goCoursePage();
+                    goSolutions();
                   }}
                   className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
-                  aria-current={section === "course" ? "page" : undefined}
+                  aria-current={section === "solver" ? "page" : undefined}
                 >
-                  Course
+                  Solutions
                 </button>
               </div>
             </div>

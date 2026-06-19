@@ -36,7 +36,6 @@ function App() {
     <div className="min-h-screen flex flex-col">
       <div className="flex-grow">
         <Routes>
-          <Route path="/" element={<Homepage />} />
           <Route path="/solver" element={<Navigate to="/solutions" replace />} />
           <Route
             element={
@@ -45,6 +44,7 @@ function App() {
               </AppProvider>
             }
           >
+            <Route path="/" element={<Homepage />} />
             <Route path="/solutions" element={<Solver user={user} />} />
             <Route path="/equity" element={<EquityCalc />} />
             <Route path="/bankroll" element={<BankrollTracker user={user} />} />

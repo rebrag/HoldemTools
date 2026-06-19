@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import CardRow from "@/components/CardRow";
 import QuizQuestion from "../components/QuizQuestion";
+import ChipStack from "@/components/ChipStack";
 
 /* ── SPR Calculator ── */
 const SPR_CATEGORIES = [
@@ -33,13 +34,23 @@ const SPRCalc: React.FC = () => {
             onChange={(e) => setPot(Number(e.target.value))} className="w-full accent-blue-600" />
         </div>
       </div>
-      <div className={`rounded-lg border px-4 py-3 space-y-1.5 ${colorMap[category.color]}`}>
+      <div className={`rounded-lg border px-4 py-3 space-y-3 ${colorMap[category.color]}`}>
+        <div className="flex items-end justify-around pb-3 border-b border-current/10">
+          <div className="flex flex-col items-center gap-1">
+            <ChipStack amount={stack} showBreakdown={false} showLabel={false} />
+            <span className="text-[10px] text-gray-500 font-medium">Stack</span>
+          </div>
+          <div className="flex flex-col items-center gap-1">
+            <ChipStack amount={pot} showBreakdown={false} showLabel={false} />
+            <span className="text-[10px] text-gray-500 font-medium">Pot</span>
+          </div>
+        </div>
         <div className="flex items-center justify-between">
           <span className="text-sm font-semibold">{category.label}</span>
           <span className="text-2xl font-bold font-mono">SPR {spr}</span>
         </div>
         <p className="text-xs font-mono">${stack} ÷ ${pot} = {spr}</p>
-        <p className="text-xs font-semibold mt-1">Stack off with: {category.hands}</p>
+        <p className="text-xs font-semibold">Stack off with: {category.hands}</p>
         <p className="text-xs">{category.note}</p>
       </div>
     </div>

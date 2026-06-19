@@ -1,5 +1,119 @@
 import React, { useState } from "react";
 import QuizQuestion from "../components/QuizQuestion";
+import PlayingCard from "../../../components/PlayingCard";
+
+/* ── Pocket-pair / suited / offsuit illustrated combos ── */
+const AA_ROWS: [string, string][][] = [
+  [["Ah", "As"], ["Ah", "Ad"], ["Ah", "Ac"]],
+  [["As", "Ad"], ["As", "Ac"]],
+  [["Ad", "Ac"]],
+];
+const AKS_ROWS: [string, string][][] = [
+  [["As", "Ks"], ["Ah", "Kh"]],
+  [["Ad", "Kd"], ["Ac", "Kc"]],
+];
+const AKO_ROWS: [string, string][][] = [
+  [["As", "Kh"], ["As", "Kd"], ["As", "Kc"]],
+  [["Ah", "Ks"], ["Ah", "Kd"], ["Ah", "Kc"]],
+  [["Ad", "Ks"], ["Ad", "Kh"], ["Ad", "Kc"]],
+  [["Ac", "Ks"], ["Ac", "Kh"], ["Ac", "Kd"]],
+];
+
+const ComboGrid: React.FC<{ rows: [string, string][][] }> = ({ rows }) => (
+  <div className="space-y-2 mt-2">
+    {rows.map((row, ri) => (
+      <div key={ri} className="flex gap-4">
+        {row.map(([c1, c2], ci) => (
+          <div key={ci} className="flex gap-px">
+            <PlayingCard code={c1} width={28} />
+            <PlayingCard code={c2} width={28} />
+          </div>
+        ))}
+      </div>
+    ))}
+  </div>
+);
+
+/* ── Board card removal interactive ── */
+const BOARD_STEPS = [
+  { board: [] as string[], label: "No board cards", note: "All 6 AA combos are live." },
+  { board: ["As"],          label: "A♠ on the board", note: "Any combo containing A♠ is impossible — 3 combos removed." },
+  { board: ["As", "Ah"],    label: "A♠ and A♥ on the board", note: "5 combos removed. Only A♦A♣ survives." },
+];
+
+const AA_DEMO_ROWS: [string, string][][] = [
+  [["Ah", "As"], ["Ah", "Ad"], ["Ah", "Ac"]],
+  [["As", "Ad"], ["As", "Ac"]],
+  [["Ad", "Ac"]],
+];
+
+const BoardRemovalDemo: React.FC = () => {
+  const [step, setStep] = useState(0);
+  const { board, label, note } = BOARD_STEPS[step];
+  const isRemoved = (c1: string, c2: string) => board.includes(c1) || board.includes(c2);
+  const remaining = AA_DEMO_ROWS.flat().filter(([c1, c2]) => !isRemoved(c1, c2)).length;
+
+  return (
+    <div className="bg-white border border-blue-200 rounded-lg p-3 space-y-3">
+      {/* Board display */}
+      <div className="flex items-center gap-2.5">
+        <span className="text-xs font-bold text-gray-500 uppercase tracking-wide shrink-0">Board:</span>
+        {board.length === 0 ? (
+          <span className="text-xs text-gray-400 italic">no cards yet</span>
+        ) : (
+          <div className="flex gap-1">
+            {board.map(c => <PlayingCard key={c} code={c} width={30} />)}
+          </div>
+        )}
+      </div>
+
+      {/* AA combo rows — removed ones fade to gray */}
+      <div className="space-y-2">
+        {AA_DEMO_ROWS.map((row, ri) => (
+          <div key={ri} className="flex gap-4">
+            {row.map(([c1, c2], ci) => (
+              <div key={ci} className={`flex gap-px transition-all duration-300 ${isRemoved(c1, c2) ? "opacity-20 grayscale" : ""}`}>
+                <PlayingCard code={c1} width={28} />
+                <PlayingCard code={c2} width={28} />
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+
+      {/* Count + step label */}
+      <div className="space-y-0.5">
+        <p className="text-xs font-semibold text-blue-700">{label}</p>
+        <p className="text-sm text-gray-700">
+          <span className="text-xl font-bold text-emerald-700 font-mono">{remaining}</span>{" "}
+          AA combo{remaining !== 1 ? "s" : ""} remain
+        </p>
+        <p className="text-xs text-blue-700">{note}</p>
+      </div>
+
+      {/* Controls */}
+      <div className="flex gap-2">
+        {step > 0 && (
+          <button onClick={() => setStep(step - 1)}
+            className="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 text-xs font-medium hover:bg-gray-50 transition-colors">
+            ← Back
+          </button>
+        )}
+        {step < BOARD_STEPS.length - 1 ? (
+          <button onClick={() => setStep(step + 1)}
+            className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 transition-colors">
+            Add board card →
+          </button>
+        ) : (
+          <button onClick={() => setStep(0)}
+            className="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 text-xs font-medium hover:bg-gray-50 transition-colors">
+            Reset
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
 
 /* ── Combos clickable table ── */
 const HAND_COMBOS = [
@@ -93,19 +207,39 @@ const Section6: React.FC = () => (
 
       <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
         <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">Three Categories of Starting Hands</p>
-        <div className="grid grid-cols-3 gap-3">
-          {[
-            { label: "Pocket Pairs", count: "6 combos", sub: "(e.g., AA, KK)", detail: "C(4,2) = 6. Shortcut: sum integers downward (3+2+1=6)." },
-            { label: "Suited Hands", count: "4 combos", sub: "(e.g., AKs)", detail: "One per suit. Only 4 suits → 4 suited combos." },
-            { label: "Offsuit Hands", count: "12 combos", sub: "(e.g., AKo)", detail: "4 suits × 4 suits = 16 total, minus 4 suited = 12 offsuit." },
-          ].map(c => (
-            <div key={c.label} className="bg-white rounded-lg border border-emerald-200 p-3 text-center">
-              <p className="text-xs font-bold text-gray-700">{c.label}</p>
-              <p className="text-2xl font-bold text-emerald-700 font-mono">{c.count}</p>
-              <p className="text-xs text-gray-500">{c.sub}</p>
-              <p className="text-xs text-gray-400 mt-1 leading-tight">{c.detail}</p>
+        <div className="space-y-3">
+          {/* Pocket Pairs */}
+          <div className="bg-white rounded-lg border border-emerald-200 p-3">
+            <div className="flex items-baseline gap-2">
+              <p className="text-xs font-bold text-gray-700">Pocket Pairs</p>
+              <p className="text-lg font-bold text-emerald-700 font-mono">6 combos</p>
+              <p className="text-xs text-gray-500">(e.g., AA)</p>
             </div>
-          ))}
+            <ComboGrid rows={AA_ROWS} />
+          </div>
+
+          {/* Suited Hands */}
+          <div className="bg-white rounded-lg border border-emerald-200 p-3">
+            <div className="flex items-baseline gap-2">
+              <p className="text-xs font-bold text-gray-700">Suited Hands</p>
+              <p className="text-lg font-bold text-emerald-700 font-mono">4 combos</p>
+              <p className="text-xs text-gray-500">(e.g., AKs)</p>
+            </div>
+            <ComboGrid rows={AKS_ROWS} />
+          </div>
+
+          {/* Offsuit Hands */}
+          <div className="bg-white rounded-lg border border-emerald-200 p-3">
+            <div className="flex items-baseline gap-2">
+              <p className="text-xs font-bold text-gray-700">Offsuit Hands</p>
+              <p className="text-lg font-bold text-emerald-700 font-mono">12 combos</p>
+              <p className="text-xs text-gray-500">(e.g., AKo)</p>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Any two-card hand has <strong className="text-gray-700">16 total combos</strong> — 4 suited (AKs) + 12 offsuit (AKo). Below are all 12 offsuit combinations of AK:
+            </p>
+            <ComboGrid rows={AKO_ROWS} />
+          </div>
         </div>
       </div>
 
@@ -116,14 +250,7 @@ const Section6: React.FC = () => (
           When a card appears on the board, it's removed from the deck. This reduces the number of
           possible combos for any hand that includes that rank or suit.
         </p>
-        <div className="space-y-1.5 text-xs text-blue-800 font-mono bg-white border border-blue-200 rounded-lg p-3">
-          <p>AA normally: 6 combos (C(4,2) = 6)</p>
-          <p>AA after one ace on board: C(3,2) = 3 combos</p>
-          <p>AA after two aces on board: C(2,2) = 1 combo</p>
-          <p className="mt-1">AKo normally: 12 combos (4×4 minus 4 suited = 12)</p>
-          <p>AKo after A♠ on board: 3×4 = 12 → minus 3 suited = 9 combos</p>
-          <p>AKo after A♠ and K♥ on board: 3×3 = 9 → minus 2 suited = 7 combos</p>
-        </div>
+        <BoardRemovalDemo />
         <p className="text-xs text-blue-700">
           This is why the same hand can have different weights depending on board texture.
           AA is 6× more likely than an empty range weight, but only 3× as likely after an ace flop.

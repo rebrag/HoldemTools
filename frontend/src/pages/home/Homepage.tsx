@@ -10,52 +10,53 @@ import {
 import { LoopingPreviewVideo } from "./LoopingPreviewVideo";
 import { useTypewriter } from "./useTypewriter";
 
-type ToolId = "solutions" | "equity" | "bankroll";
 
-type Tool = {
-  id: ToolId;
-  name: string;
-  label: string;
-  description: string;
-  cta: string;
-  imageSrc: string;
-};
+function MiniCourseCard(): JSX.Element {
+  const courseSections = [
+    { num: 1, title: "Why Math Matters" },
+    { num: 2, title: "Measurements" },
+    { num: 3, title: "Getting Started with Numbers" },
+    { num: 4, title: "Hit the Deck" },
+    { num: 5, title: "Putting it Together" },
+  ];
+  return (
+    <div className="rounded-2xl border border-emerald-200/40 bg-white/95 shadow-xl shadow-emerald-500/15 overflow-hidden">
+      <div className="border-b border-gray-100 px-4 py-3">
+        <p className="text-xs font-semibold uppercase tracking-widest text-emerald-600">Course</p>
+        <h3 className="text-sm font-bold text-gray-900 mt-0.5">Think Like a Professional</h3>
+        <p className="text-xs text-gray-400 mt-0.5">9 sections · Poker math &amp; strategy</p>
+      </div>
+      <div className="divide-y divide-gray-50">
+        {courseSections.map((s) => (
+          <div key={s.num} className="flex items-center gap-3 px-4 py-2.5">
+            <div className="shrink-0 w-6 h-6 rounded-full bg-emerald-50 ring-1 ring-emerald-200 flex items-center justify-center">
+              <span className="text-[10px] font-bold text-emerald-700">{s.num}</span>
+            </div>
+            <span className="text-sm text-gray-700">{s.title}</span>
+            <svg className="ml-auto w-3.5 h-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+          </div>
+        ))}
+        <div className="px-4 py-3 flex items-center gap-2 text-xs text-gray-400">
+          <span>···</span>
+          <span>+ 4 more sections</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
-const tools: Tool[] = [
-  {
-    id: "solutions",
-    name: "Solutions",
-    label: "Preflop Solutions",
-    description:
-      "Explore solver-approved preflop ranges with an interactive standard grid, positions, and stack depths.",
-    imageSrc: "/preview-solutions.png",
-    cta: "Open Solutions",
-  },
-  {
-    id: "equity",
-    name: "Equity Calculator",
-    label: "Equity Calculator",
-    description:
-      "Quickly compare hand equities for different games and 2-4 players to sharpen your intuition in common spots.",
-    imageSrc: "/preview-equity.png",
-    cta: "Open Equity Calculator",
-  },
-  {
-    id: "bankroll",
-    name: "Bankroll Tracker",
-    label: "Bankroll Tracker",
-    description:
-      "Track live & online sessions, visualize winrate over time, and stay on top of your bankroll health.",
-    imageSrc: "/preview-bankroll.png",
-    cta: "Open Bankroll Tracker",
-  },
-];
+type ToolId = "solutions" | "equity" | "bankroll" | "course";
+
+
 
 function getHandlers(nav: (path: string) => void): Record<ToolId, () => void> {
   return {
     solutions: () => nav("/solutions"),
     equity: () => nav("/equity"),
     bankroll: () => nav("/bankroll"),
+    course: () => nav("/course"),
   };
 }
 
@@ -138,7 +139,7 @@ export default function Homepage(): JSX.Element {
   const heroA = "Study solutions. Train equity intuition. ";
   const heroB = "Track your sessions.";
   const heroSub =
-    "HoldemTools is a focused suite for serious players: solver-grade preflop work in the interactive standard grid, quick equity drills, and a bankroll tracker that keeps you honest.";
+    "HoldemTools is a focused suite for serious players: solver-grade preflop work in the interactive standard grid, quick equity drills, a bankroll tracker that keeps you honest, and a course to build your poker math foundation.";
 
   const [startTyping, setStartTyping] = useState<boolean>(false);
 
@@ -356,8 +357,8 @@ export default function Homepage(): JSX.Element {
         </section>
 
         {/* VALUE PROPS */}
-        <motion.section
-          className="mt-12 grid gap-4 sm:grid-cols-3"
+        {/* <motion.section
+          className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
           variants={staggerVariants(!!reduceMotion)}
           initial="hidden"
           whileInView="show"
@@ -365,8 +366,8 @@ export default function Homepage(): JSX.Element {
         >
           {[
             {
-              title: "Solver-grade preflop",
-              body: "Browse ranges by position and stack depth inside the standard grid.",
+              title: "Poker fundamentals",
+              body: "A 9-section course to master the math and strategy behind every decision.",
             },
             {
               title: "Equity intuition",
@@ -375,6 +376,10 @@ export default function Homepage(): JSX.Element {
             {
               title: "Bankroll clarity",
               body: "Track sessions, and see your beautiful graph.",
+            },
+            {
+              title: "Solver-grade preflop",
+              body: "Browse ranges by position and stack depth inside the standard grid.",
             },
           ].map((x) => (
             <motion.div
@@ -390,7 +395,7 @@ export default function Homepage(): JSX.Element {
               </div>
             </motion.div>
           ))}
-        </motion.section>
+        </motion.section> */}
 
         {/* WOW: SOLUTIONS STICKY SECTION */}
         <section className="mt-14">
@@ -505,28 +510,53 @@ export default function Homepage(): JSX.Element {
 
         {/* FEATURE ROWS (remaining) */}
         <section className="mt-10 space-y-10">
-          {[
-            {
-              eyebrow: "Equity",
-              title: "Train your gut with real numbers.",
-              body: "Run quick comparisons across games and player counts. Improve the feel for what’s actually ahead.",
-              src: equityVideoSrc,
-              poster: "/preview-equity.png",
-              onClick: handlers.equity,
-              cta: "Open Equity",
-              reverse: true,
-            },
-            {
-              eyebrow: "Bankroll",
-              title: "Know your edge, track your swings.",
-              body: "Session logging + trendlines that tell you whether your strategy is working.",
-              src: bankrollVideoSrc,
-              poster: "/preview-bankroll.png",
-              onClick: handlers.bankroll,
-              cta: "Open Bankroll",
-              reverse: false,
-            },
-          ].map((row) => (
+          {(
+            [
+              {
+                eyebrow: "Course",
+                title: "Master the fundamentals.",
+                body: "A 9-section guided course covering poker math, pot odds, equity, and GTO thinking. Learn the why behind every decision — with quizzes to lock it in.",
+                src: "",
+                poster: "",
+                onClick: handlers.course,
+                cta: "Start the Course",
+                reverse: false,
+                visual: <MiniCourseCard />,
+              },
+              {
+                eyebrow: "Equity",
+                title: "Train your gut with real numbers.",
+                body: "Run quick comparisons across games and player counts. Improve the feel for what’s actually ahead.",
+                src: equityVideoSrc,
+                poster: "/preview-equity.png",
+                onClick: handlers.equity,
+                cta: "Open Equity",
+                reverse: true,
+                visual: null as JSX.Element | null,
+              },
+              {
+                eyebrow: "Bankroll",
+                title: "Know your edge, track your swings.",
+                body: "Session logging + trendlines that tell you whether your strategy is working.",
+                src: bankrollVideoSrc,
+                poster: "/preview-bankroll.png",
+                onClick: handlers.bankroll,
+                cta: "Open Bankroll",
+                reverse: false,
+                visual: null as JSX.Element | null,
+              },
+            ] satisfies {
+              eyebrow: string;
+              title: string;
+              body: string;
+              src: string;
+              poster: string;
+              onClick: () => void;
+              cta: string;
+              reverse: boolean;
+              visual: JSX.Element | null;
+            }[]
+          ).map((row) => (
             <motion.div
               key={row.eyebrow}
               className={`grid items-center gap-6 rounded-3xl border border-white/10 bg-white/5 p-6 sm:p-8 lg:grid-cols-2 ${
@@ -573,17 +603,21 @@ export default function Homepage(): JSX.Element {
                 }
                 whileHover={reduceMotion ? undefined : { scale: 1.01 }}
               >
-                <div className="p-2 sm:p-3">
-                <div className="w-full overflow-hidden rounded-xl border border-white/10 bg-slate-950/50 shadow-inner">
-                  <div className="aspect-[1332/1114] w-full max-h-[900px]">
-                    <LoopingPreviewVideo
-                      src={row.src}
-                      poster={row.poster}
-                      className="h-full w-full object-cover"
-                    />
+                {row.visual ? (
+                  <div className="p-4 sm:p-5">{row.visual}</div>
+                ) : (
+                  <div className="p-2 sm:p-3">
+                    <div className="w-full overflow-hidden rounded-xl border border-white/10 bg-slate-950/50 shadow-inner">
+                      <div className="aspect-[1332/1114] w-full max-h-[900px]">
+                        <LoopingPreviewVideo
+                          src={row.src}
+                          poster={row.poster}
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                )}
 
                 <div className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-slate-950/40 via-transparent to-transparent" />
               </motion.div>
@@ -592,7 +626,7 @@ export default function Homepage(): JSX.Element {
         </section>
 
         {/* TOOL CARDS */}
-        <motion.section
+        {/* <motion.section
           className="mt-14"
           initial="hidden"
           whileInView="show"
@@ -604,7 +638,7 @@ export default function Homepage(): JSX.Element {
           </h3>
 
           <motion.div
-            className="mt-4 grid gap-5 sm:grid-cols-2 lg:grid-cols-3"
+            className="mt-4 grid gap-5 sm:grid-cols-2 lg:grid-cols-4"
             variants={staggerVariants(!!reduceMotion)}
           >
             {tools.map((tool) => (
@@ -637,7 +671,7 @@ export default function Homepage(): JSX.Element {
               </motion.button>
             ))}
           </motion.div>
-        </motion.section>
+        </motion.section> */}
 
         {/* FOOTER CTA */}
         <motion.section
