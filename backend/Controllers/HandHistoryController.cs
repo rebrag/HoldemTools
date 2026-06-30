@@ -49,8 +49,11 @@ namespace PokerRangeAPI2.Controllers
 
         // GET /api/handhistory
         // Returns the caller's hand histories. An admin may pass ?userId= to view another user's.
+        // Pass ?sessionId= to return only the hands linked to a given bankroll session.
         [HttpGet]
-        public async Task<ActionResult<IEnumerable<HandHistory>>> GetAll([FromQuery] string? userId)
+        public async Task<ActionResult<IEnumerable<HandHistory>>> GetAll(
+            [FromQuery] string? userId,
+            [FromQuery] Guid? sessionId)
         {
             var uid = CurrentUid();
             if (string.IsNullOrWhiteSpace(uid))
@@ -60,8 +63,14 @@ namespace PokerRangeAPI2.Controllers
 
             var target = (IsAdmin() && !string.IsNullOrWhiteSpace(userId)) ? userId! : uid;
 
-            var items = await _db.HandHistories
-                .Where(h => h.UserId == target)
+            var query = _db.HandHistories.Where(h => h.UserId == target);
+
+            if (sessionId.HasValue)
+            {
+                query = query.Where(h => h.SessionId == sessionId.Value);
+            }
+
+            var items = await query
                 .OrderByDescending(h => h.CreatedAt)
                 .ToListAsync();
 
