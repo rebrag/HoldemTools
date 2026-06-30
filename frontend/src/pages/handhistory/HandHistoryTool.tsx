@@ -1,17 +1,17 @@
 // src/pages/handhistory/HandHistoryTool.tsx
 import React, { useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, type Variants } from "framer-motion";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import { authedFetch } from "@/lib/api";
 import HandHistoryEditorModal from "./HandHistoryEditorModal";
 import type { HandHistory, HandHistoryDraft, HandHistoryToolProps } from "./types";
 
-const listVariants = {
+const listVariants: Variants = {
   hidden: {},
   visible: { transition: { staggerChildren: 0.06, delayChildren: 0.05 } },
 };
 
-const itemVariants = {
+const itemVariants: Variants = {
   hidden: { opacity: 0, y: 14, scale: 0.98 },
   visible: {
     opacity: 1,
@@ -185,9 +185,9 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
           <h1 className="bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-xl font-bold text-transparent">
             Hand Histories
           </h1>
-          <p className="text-xs text-gray-500">
+          {/* <p className="text-xs text-gray-500">
             Paste in hands you've played and keep them in one place.
-          </p>
+          </p> */}
         </div>
         <motion.button
           type="button"
