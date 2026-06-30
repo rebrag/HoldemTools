@@ -8,6 +8,8 @@ import BankrollChartShadcn from "./BankrollChartShadcn";
 import BankrollFormModal from "./BankrollFormModal";
 import BankrollStatsGrid from "./BankrollStatsGrid";
 import SessionTable from "./SessionTable";
+import type { LocalHand } from "./SessionHandHistories";
+import { authedFetch } from "@/lib/api";
 import {
   buildCumulativePoints,
   toLocalInputValue,
@@ -35,6 +37,7 @@ type DraftSession = {
   id: string;
   form: FormState;
   createdAt: string;
+  hands: LocalHand[]; // logged during play; persisted+linked when the session is saved
 };
 
 type BreakdownMode = "sessions" | "weekday" | "month" | "year";
@@ -337,7 +340,12 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
         | null;
 
       if (parsed && Array.isArray((parsed as any).drafts)) {
-        setDrafts((parsed as any).drafts);
+        // Older drafts predate the `hands` field — default it.
+        const restored = ((parsed as any).drafts as DraftSession[]).map((d) => ({
+          ...d,
+          hands: Array.isArray(d.hands) ? d.hands : [],
+        }));
+        setDrafts(restored);
       } else if (parsed && (parsed as any).form) {
         // legacy single-draft format: upgrade to new array format
         const legacyForm = (parsed as any).form as FormState;
@@ -350,6 +358,7 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
             id,
             form: legacyForm,
             createdAt: new Date().toISOString(),
+            hands: [],
           },
         ]);
       }
@@ -365,7 +374,9 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
 
     try {
       const nonEmptyDrafts = drafts.filter(
-        (d) => JSON.stringify(d.form) !== JSON.stringify(defaultForm)
+        (d) =>
+          JSON.stringify(d.form) !== JSON.stringify(defaultForm) ||
+          d.hands.length > 0
       );
 
       if (!nonEmptyDrafts.length) {
@@ -564,6 +575,7 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
         blinds: lastGame || defaultForm.blinds,
       },
       createdAt: new Date().toISOString(),
+      hands: [],
     };
 
     setDrafts((prev) => [...prev, draft]);
@@ -588,6 +600,17 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
     setEditingId(null);
     setMode("draft");
     setIsModalExpanded(true);
+  };
+
+  // Hands logged against the in-progress (draft) session in the modal.
+  const activeDraftHands =
+    (activeDraftId && drafts.find((d) => d.id === activeDraftId)?.hands) || [];
+
+  const updateActiveDraftHands = (next: LocalHand[]) => {
+    if (!activeDraftId) return;
+    setDrafts((prev) =>
+      prev.map((d) => (d.id === activeDraftId ? { ...d, hands: next } : d))
+    );
   };
 
   // known locations / games
@@ -903,8 +926,28 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
       return next;
     });
 
-    // if we just saved a draft, remove that draft
+    // if we just saved a draft, attach its locally-logged hands to the new
+    // session (now that it has a real id), then remove the draft.
     if (!isEdit && currentMode === "draft" && currentActiveDraftId) {
+      const draft = drafts.find((d) => d.id === currentActiveDraftId);
+      const localHands = draft?.hands ?? [];
+      if (localHands.length > 0) {
+        try {
+          await Promise.all(
+            localHands.map(async (h) => {
+              const r = await authedFetch("/api/handhistory", {
+                method: "POST",
+                body: JSON.stringify({ rawText: h.rawText, sessionId: saved.id }),
+              });
+              if (!r.ok) throw new Error(`hand save failed (${r.status})`);
+            })
+          );
+        } catch {
+          setError(
+            "Session saved, but some hands couldn't be attached. Open the session to re-add them."
+          );
+        }
+      }
       setDrafts((prev) => prev.filter((d) => d.id !== currentActiveDraftId));
     }
 
@@ -1148,6 +1191,8 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
                 saving={saving}
                 editingId={editingId}
                 user={user}
+                draftHands={activeDraftHands}
+                onDraftHandsChange={updateActiveDraftHands}
                 onChange={onChange}
                 onLocationChange={handleLocationSelectChange}
                 onGameChange={handleGameSelectChange}

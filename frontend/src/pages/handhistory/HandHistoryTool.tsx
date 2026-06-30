@@ -385,7 +385,8 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
 
       {editorOpen && (
         <HandHistoryEditorModal
-          initial={editing}
+          initialRawText={editing?.rawText ?? null}
+          isEdit={!!editing}
           saving={saving}
           errorMessage={saveError}
           onSave={handleSave}

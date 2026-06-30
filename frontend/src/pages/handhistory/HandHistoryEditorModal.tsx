@@ -2,10 +2,11 @@
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import LoadingIndicator from "@/components/LoadingIndicator";
-import type { HandHistory, HandHistoryDraft } from "./types";
+import type { HandHistoryDraft } from "./types";
 
 interface Props {
-  initial: HandHistory | null; // null = create, otherwise editing
+  initialRawText?: string | null; // existing text when editing
+  isEdit: boolean; // false = create, true = editing
   saving: boolean;
   errorMessage?: string | null;
   onSave: (draft: HandHistoryDraft) => void;
@@ -13,13 +14,14 @@ interface Props {
 }
 
 const HandHistoryEditorModal: React.FC<Props> = ({
-  initial,
+  initialRawText,
+  isEdit,
   saving,
   errorMessage,
   onSave,
   onCancel,
 }) => {
-  const [rawText, setRawText] = useState(initial?.rawText ?? "");
+  const [rawText, setRawText] = useState(initialRawText ?? "");
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -48,7 +50,7 @@ const HandHistoryEditorModal: React.FC<Props> = ({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={initial ? "Edit hand history" : "Add hand history"}
+        aria-label={isEdit ? "Edit hand history" : "Add hand history"}
         className="relative z-[1210] w-full max-w-2xl rounded-2xl border border-emerald-300/40 bg-white/95 p-4 shadow-2xl shadow-emerald-500/30 backdrop-blur-sm"
         onPointerDown={(e) => e.stopPropagation()}
       >
@@ -60,7 +62,7 @@ const HandHistoryEditorModal: React.FC<Props> = ({
 
         <div className="mb-3 flex items-center justify-between gap-2">
           <h2 className="text-base font-semibold text-gray-900">
-            {initial ? "Edit Hand History" : "Add Hand History"}
+            {isEdit ? "Edit Hand History" : "Add Hand History"}
           </h2>
           <button
             type="button"
@@ -103,7 +105,7 @@ const HandHistoryEditorModal: React.FC<Props> = ({
             onClick={() => onSave({ rawText })}
             className="inline-flex items-center rounded-full bg-emerald-600 px-5 py-1.5 text-sm font-semibold text-white shadow-md shadow-emerald-500/40 transition-transform duration-150 hover:-translate-y-[1px] hover:bg-emerald-500 active:translate-y-[1px] disabled:opacity-60 disabled:shadow-none"
           >
-            {initial ? "Update" : "Save"}
+            {isEdit ? "Update" : "Save"}
           </button>
         </div>
       </div>

@@ -3,7 +3,7 @@ import React from "react";
 import type { User } from "firebase/auth";
 import type { FormState, SessionDuration } from "./types";
 import LoadingIndicator from "@/components/LoadingIndicator";
-import SessionHandHistories from "./SessionHandHistories";
+import SessionHandHistories, { type LocalHand } from "./SessionHandHistories";
 
 interface Props {
   form: FormState;
@@ -16,6 +16,8 @@ interface Props {
   saving: boolean;
   editingId: string | null;
   user: User | null;
+  draftHands: LocalHand[];
+  onDraftHandsChange: (next: LocalHand[]) => void;
   onChange: (field: keyof FormState, value: string) => void;
   onLocationChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
   onGameChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
@@ -38,6 +40,8 @@ const BankrollFormModal: React.FC<Props> = ({
   saving,
   editingId,
   user,
+  draftHands,
+  onDraftHandsChange,
   onChange,
   onLocationChange,
   onGameChange,
@@ -203,10 +207,17 @@ const BankrollFormModal: React.FC<Props> = ({
         </div>
       )}
 
-      {/* Hand histories for this session — only for saved (editable) sessions */}
-      {editingId && user && (
-        <SessionHandHistories user={user} sessionId={editingId} />
-      )}
+      {/* Hand histories: saved session → server-backed; in-progress draft →
+          held locally and attached when the session is saved. */}
+      {editingId && user ? (
+        <SessionHandHistories mode="session" user={user} sessionId={editingId} />
+      ) : canUseTimerControls ? (
+        <SessionHandHistories
+          mode="draft"
+          draftHands={draftHands}
+          onDraftChange={onDraftHandsChange}
+        />
+      ) : null}
 
       {/* Footer: Timer / Net / Actions */}
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
