@@ -5,6 +5,30 @@ import LoadingIndicator from "@/components/LoadingIndicator";
 import { authedFetch } from "@/lib/api";
 import HandHistoryEditorModal from "./HandHistoryEditorModal";
 import type { HandHistory, HandHistoryDraft, HandHistoryToolProps } from "./types";
+import type { BankrollSession } from "@/pages/bankroll/types";
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
+
+// A hand linked to a session shows that session's date/location/blinds
+// (the hand's "time" is the session's), instead of its own saved-at stamp.
+function sessionLabel(s: BankrollSession): string {
+  const parts: string[] = [];
+  if (s.start) {
+    const d = new Date(s.start);
+    if (!Number.isNaN(d.getTime())) {
+      parts.push(
+        d.toLocaleDateString(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        })
+      );
+    }
+  }
+  if (s.location?.trim()) parts.push(s.location.trim());
+  if (s.blinds?.trim()) parts.push(s.blinds.trim());
+  return parts.join(" · ");
+}
 
 const listVariants: Variants = {
   hidden: {},
@@ -50,6 +74,9 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [sessionsById, setSessionsById] = useState<Map<string, BankrollSession>>(
+    new Map()
+  );
 
   const itemsRef = useRef<HandHistory[]>([]);
   itemsRef.current = items;
@@ -88,6 +115,36 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
         }
       } finally {
         if (!cancelled && shouldBlock) setLoading(false);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  // Load the user's bankroll sessions so linked hands can show their
+  // session's date/location. Best-effort: labels are an enhancement, so
+  // failures here are silent and don't block the hand list.
+  useEffect(() => {
+    if (!user) {
+      setSessionsById(new Map());
+      return;
+    }
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/bankroll?userId=${encodeURIComponent(user.uid)}`
+        );
+        if (!res.ok) return;
+        const data = (await res.json()) as BankrollSession[];
+        if (cancelled) return;
+        const map = new Map<string, BankrollSession>();
+        for (const s of data) map.set(s.id, s);
+        setSessionsById(map);
+      } catch {
+        // ignore — session labels are non-critical
       }
     };
     void run();
@@ -271,9 +328,15 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                     <div className="truncate text-sm font-semibold text-gray-900">
                       Hand #{hh.id}
                     </div>
-                    <div className="mt-0.5 text-[11px] text-gray-500">
-                      {formatDate(hh.createdAt)}
-                    </div>
+                    {hh.sessionId && sessionsById.get(hh.sessionId) ? (
+                      <div className="mt-0.5 inline-flex max-w-full items-center gap-1 truncate rounded-full bg-emerald-50 px-2 py-[1px] text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                        🗓 {sessionLabel(sessionsById.get(hh.sessionId)!)}
+                      </div>
+                    ) : (
+                      <div className="mt-0.5 text-[11px] text-gray-500">
+                        {formatDate(hh.createdAt)}
+                      </div>
+                    )}
                     {!expanded && (
                       <div className="mt-1 truncate font-mono text-[11px] text-gray-500">
                         {previewOf(hh.rawText)}
