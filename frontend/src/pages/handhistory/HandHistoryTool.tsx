@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, type Variants } from "framer-motion";
 import LoadingIndicator from "@/components/LoadingIndicator";
+import CopyButton from "@/components/CopyButton";
 import { authedFetch } from "@/lib/api";
 import HandHistoryEditorModal from "./HandHistoryEditorModal";
 import type { HandHistory, HandHistoryDraft, HandHistoryToolProps } from "./types";
@@ -345,6 +346,10 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                   </button>
 
                   <div className="flex shrink-0 items-center gap-2">
+                    <CopyButton
+                      text={hh.rawText}
+                      className="rounded-md border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100"
+                    />
                     <button
                       type="button"
                       onClick={() => openEdit(hh)}

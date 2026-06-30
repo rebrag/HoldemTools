@@ -11,6 +11,7 @@ import React, { useEffect, useRef, useState } from "react";
 import type { User } from "firebase/auth";
 import { AnimatePresence, motion } from "framer-motion";
 import LoadingIndicator from "@/components/LoadingIndicator";
+import CopyButton from "@/components/CopyButton";
 import { authedFetch } from "@/lib/api";
 import HandHistoryEditorModal from "@/pages/handhistory/HandHistoryEditorModal";
 import type { HandHistory } from "@/pages/handhistory/types";
@@ -274,6 +275,10 @@ const SessionHandHistories: React.FC<Props> = ({
                       )}
                     </button>
                     <div className="flex shrink-0 items-center gap-1.5">
+                      <CopyButton
+                        text={row.rawText}
+                        className="rounded-md border border-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-700 hover:bg-gray-100"
+                      />
                       <button
                         type="button"
                         onClick={() => openEdit(row.key)}
