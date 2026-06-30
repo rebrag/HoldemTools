@@ -32,9 +32,11 @@ namespace GTOLiteAPI.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal?>("BuyIn")
+                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal?>("CashOut")
+                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTimeOffset?>("End")
@@ -50,6 +52,7 @@ namespace GTOLiteAPI.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal>("Profit")
+                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTimeOffset?>("Start")
@@ -70,9 +73,11 @@ namespace GTOLiteAPI.Migrations
 
             modelBuilder.Entity("PokerRangeAPI2.Models.HandHistory", b =>
                 {
-                    b.Property<Guid>("Id")
+                    b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
@@ -84,10 +89,6 @@ namespace GTOLiteAPI.Migrations
                     b.Property<Guid?>("SessionId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("Title")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
                     b.Property<DateTimeOffset?>("UpdatedAt")
                         .HasColumnType("datetimeoffset");
 
@@ -98,9 +99,21 @@ namespace GTOLiteAPI.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("SessionId");
+
                     b.HasIndex("UserId");
 
                     b.ToTable("HandHistories");
+                });
+
+            modelBuilder.Entity("PokerRangeAPI2.Models.HandHistory", b =>
+                {
+                    b.HasOne("PokerRangeAPI2.Models.BankrollSession", "Session")
+                        .WithMany()
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Session");
                 });
 #pragma warning restore 612, 618
         }

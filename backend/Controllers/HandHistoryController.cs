@@ -69,8 +69,8 @@ namespace PokerRangeAPI2.Controllers
         }
 
         // GET /api/handhistory/{id}
-        [HttpGet("{id:guid}")]
-        public async Task<ActionResult<HandHistory>> GetById(Guid id)
+        [HttpGet("{id:int}")]
+        public async Task<ActionResult<HandHistory>> GetById(int id)
         {
             var uid = CurrentUid();
             if (string.IsNullOrWhiteSpace(uid))
@@ -90,7 +90,6 @@ namespace PokerRangeAPI2.Controllers
 
         public class HandHistoryDto
         {
-            public string? Title { get; set; }
             public string? RawText { get; set; }
             public Guid? SessionId { get; set; }
         }
@@ -112,9 +111,8 @@ namespace PokerRangeAPI2.Controllers
 
             var entity = new HandHistory
             {
-                Id = Guid.NewGuid(),
+                // Id is a database-generated identity; do not set it here.
                 UserId = uid, // from the token, never the body
-                Title = string.IsNullOrWhiteSpace(dto.Title) ? null : dto.Title.Trim(),
                 RawText = dto.RawText,
                 SessionId = dto.SessionId,
                 CreatedAt = DateTimeOffset.UtcNow,
@@ -128,8 +126,8 @@ namespace PokerRangeAPI2.Controllers
         }
 
         // PUT /api/handhistory/{id}
-        [HttpPut("{id:guid}")]
-        public async Task<ActionResult<HandHistory>> Update(Guid id, [FromBody] HandHistoryDto dto)
+        [HttpPut("{id:int}")]
+        public async Task<ActionResult<HandHistory>> Update(int id, [FromBody] HandHistoryDto dto)
         {
             var uid = CurrentUid();
             if (string.IsNullOrWhiteSpace(uid))
@@ -148,7 +146,6 @@ namespace PokerRangeAPI2.Controllers
                 return NotFound();
             }
 
-            entity.Title = string.IsNullOrWhiteSpace(dto.Title) ? null : dto.Title.Trim();
             entity.RawText = dto.RawText;
             entity.SessionId = dto.SessionId;
             entity.UpdatedAt = DateTimeOffset.UtcNow;
@@ -158,8 +155,8 @@ namespace PokerRangeAPI2.Controllers
         }
 
         // DELETE /api/handhistory/{id}
-        [HttpDelete("{id:guid}")]
-        public async Task<IActionResult> Delete(Guid id)
+        [HttpDelete("{id:int}")]
+        public async Task<IActionResult> Delete(int id)
         {
             var uid = CurrentUid();
             if (string.IsNullOrWhiteSpace(uid))

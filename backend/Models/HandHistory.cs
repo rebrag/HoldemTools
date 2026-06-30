@@ -5,16 +5,16 @@ namespace PokerRangeAPI2.Models
 {
     public class HandHistory
     {
-        public Guid Id { get; set; }
+        public int Id { get; set; } // "HandId" — sequential identity PK
 
         public string UserId { get; set; } = default!; // Firebase uid (set from the verified token)
 
-        public string? Title { get; set; }
-
         public string RawText { get; set; } = default!; // the full pasted hand-history string
 
-        // Reserved for a future link to a BankrollSession.Id. Unused by the UI for now.
+        // Optional link to a bankroll session. Searchable hand attributes
+        // (location, dates, game, blinds) live on the linked BankrollSession.
         public Guid? SessionId { get; set; }
+        public BankrollSession? Session { get; set; } // navigation property
 
         public DateTimeOffset CreatedAt { get; set; }
         public DateTimeOffset? UpdatedAt { get; set; }

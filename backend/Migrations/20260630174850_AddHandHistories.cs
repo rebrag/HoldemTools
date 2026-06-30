@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -15,9 +15,9 @@ namespace GTOLiteAPI.Migrations
                 name: "HandHistories",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    Id = table.Column<int>(type: "int", nullable: false)
+                        .Annotation("SqlServer:Identity", "1, 1"),
                     UserId = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
-                    Title = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: true),
                     RawText = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     SessionId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
                     CreatedAt = table.Column<DateTimeOffset>(type: "datetimeoffset", nullable: false),
@@ -26,7 +26,18 @@ namespace GTOLiteAPI.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_HandHistories", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_HandHistories_BankrollSessions_SessionId",
+                        column: x => x.SessionId,
+                        principalTable: "BankrollSessions",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.SetNull);
                 });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_HandHistories_SessionId",
+                table: "HandHistories",
+                column: "SessionId");
 
             migrationBuilder.CreateIndex(
                 name: "IX_HandHistories_UserId",
