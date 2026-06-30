@@ -13,6 +13,8 @@ namespace PokerRangeAPI2.Data
 
         public DbSet<BankrollSession> BankrollSessions { get; set; } = default!;
 
+        public DbSet<HandHistory> HandHistories { get; set; } = default!;
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -27,6 +29,19 @@ namespace PokerRangeAPI2.Data
 
                 entity.Property(e => e.Profit)
                     .HasPrecision(18, 2);
+            });
+
+            modelBuilder.Entity<HandHistory>(entity =>
+            {
+                // Bounded so it can be indexed (SQL Server can't index nvarchar(max)).
+                entity.Property(e => e.UserId)
+                    .HasMaxLength(128);
+
+                entity.Property(e => e.Title)
+                    .HasMaxLength(200);
+
+                // RawText is left as nvarchar(max) so full hand histories fit.
+                entity.HasIndex(e => e.UserId);
             });
         }
     }
