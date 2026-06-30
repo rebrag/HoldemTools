@@ -1,7 +1,9 @@
 // src/bankroll/BankrollFormModal.tsx
 import React from "react";
+import type { User } from "firebase/auth";
 import type { FormState, SessionDuration } from "./types";
 import LoadingIndicator from "@/components/LoadingIndicator";
+import SessionHandHistories from "./SessionHandHistories";
 
 interface Props {
   form: FormState;
@@ -13,6 +15,7 @@ interface Props {
   isTimerRunning: boolean;
   saving: boolean;
   editingId: string | null;
+  user: User | null;
   onChange: (field: keyof FormState, value: string) => void;
   onLocationChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
   onGameChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
@@ -34,6 +37,7 @@ const BankrollFormModal: React.FC<Props> = ({
   isTimerRunning,
   saving,
   editingId,
+  user,
   onChange,
   onLocationChange,
   onGameChange,
@@ -197,6 +201,11 @@ const BankrollFormModal: React.FC<Props> = ({
         <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs text-rose-700">
           {errorMessage}
         </div>
+      )}
+
+      {/* Hand histories for this session — only for saved (editable) sessions */}
+      {editingId && user && (
+        <SessionHandHistories user={user} sessionId={editingId} />
       )}
 
       {/* Footer: Timer / Net / Actions */}

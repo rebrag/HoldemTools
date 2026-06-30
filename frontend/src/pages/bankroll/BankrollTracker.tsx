@@ -1147,6 +1147,7 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
                 isTimerRunning={isTimerRunning}
                 saving={saving}
                 editingId={editingId}
+                user={user}
                 onChange={onChange}
                 onLocationChange={handleLocationSelectChange}
                 onGameChange={handleGameSelectChange}
