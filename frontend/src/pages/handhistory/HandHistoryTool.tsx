@@ -1,9 +1,26 @@
 // src/pages/handhistory/HandHistoryTool.tsx
 import React, { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import { authedFetch } from "@/lib/api";
 import HandHistoryEditorModal from "./HandHistoryEditorModal";
 import type { HandHistory, HandHistoryDraft, HandHistoryToolProps } from "./types";
+
+const listVariants = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.06, delayChildren: 0.05 } },
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 14, scale: 0.98 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    scale: 1,
+    transition: { type: "spring", stiffness: 320, damping: 26 },
+  },
+  exit: { opacity: 0, x: -24, transition: { duration: 0.18 } },
+};
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -32,7 +49,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
 
   const itemsRef = useRef<HandHistory[]>([]);
   itemsRef.current = items;
@@ -91,20 +108,17 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     setEditorOpen(true);
   };
 
-  const handleSave = async ({ title, rawText }: HandHistoryDraft) => {
+  const handleSave = async ({ rawText }: HandHistoryDraft) => {
     if (!user) return;
     setSaving(true);
     setSaveError(null);
     try {
       const isEdit = !!editing;
       const res = await authedFetch(
-        isEdit
-          ? `/api/handhistory/${encodeURIComponent(editing!.id)}`
-          : "/api/handhistory",
+        isEdit ? `/api/handhistory/${editing!.id}` : "/api/handhistory",
         {
           method: isEdit ? "PUT" : "POST",
           body: JSON.stringify({
-            title: title || null,
             rawText,
             sessionId: editing?.sessionId ?? null,
           }),
@@ -138,10 +152,9 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     const prev = itemsRef.current;
     setItems((p) => p.filter((i) => i.id !== hh.id));
     try {
-      const res = await authedFetch(
-        `/api/handhistory/${encodeURIComponent(hh.id)}`,
-        { method: "DELETE" }
-      );
+      const res = await authedFetch(`/api/handhistory/${hh.id}`, {
+        method: "DELETE",
+      });
       if (!res.ok) throw new Error();
     } catch {
       setItems(prev); // rollback
@@ -162,34 +175,64 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
 
   return (
     <div className="mx-auto max-w-3xl px-4 pt-16 pb-12">
-      <div className="mb-4 flex items-center justify-between gap-3">
+      <motion.div
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ type: "spring", stiffness: 260, damping: 24 }}
+        className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-emerald-300/40 bg-white/90 px-5 py-4 shadow-sm shadow-emerald-500/10 backdrop-blur-sm"
+      >
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">Hand Histories</h1>
+          <h1 className="bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-xl font-bold text-transparent">
+            Hand Histories
+          </h1>
           <p className="text-xs text-gray-500">
             Paste in hands you've played and keep them in one place.
           </p>
         </div>
-        <button
+        <motion.button
           type="button"
           onClick={openCreate}
-          className="inline-flex items-center rounded-full bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white shadow-md shadow-emerald-500/40 transition-transform duration-150 hover:-translate-y-[1px] hover:bg-emerald-500 active:translate-y-[1px]"
+          whileHover={{ y: -2, scale: 1.03 }}
+          whileTap={{ scale: 0.96 }}
+          transition={{ type: "spring", stiffness: 400, damping: 17 }}
+          className="inline-flex items-center rounded-full bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white shadow-md shadow-emerald-500/40 hover:bg-emerald-500"
         >
           + Add hand history
-        </button>
-      </div>
+        </motion.button>
+      </motion.div>
 
-      {error && (
-        <div className="mb-4 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {error}
-        </div>
-      )}
+      <AnimatePresence>
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mb-4 overflow-hidden rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"
+          >
+            {error}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {loading ? (
         <div className="flex items-center justify-center py-16">
           <LoadingIndicator />
         </div>
       ) : items.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-gray-300 bg-white/60 px-6 py-12 text-center">
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ type: "spring", stiffness: 240, damping: 22 }}
+          className="rounded-2xl border border-dashed border-emerald-300/50 bg-white/70 px-6 py-12 text-center backdrop-blur-sm"
+        >
+          <motion.div
+            aria-hidden="true"
+            animate={{ y: [0, -8, 0], rotate: [-4, 4, -4] }}
+            transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+            className="mx-auto mb-3 w-fit text-4xl"
+          >
+            🂡
+          </motion.div>
           <p className="text-sm text-gray-600">No hand histories yet.</p>
           <button
             type="button"
@@ -198,14 +241,24 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
           >
             Add your first one
           </button>
-        </div>
+        </motion.div>
       ) : (
-        <ul className="space-y-3">
+        <motion.ul
+          className="space-y-3"
+          variants={listVariants}
+          initial="hidden"
+          animate="visible"
+        >
+          <AnimatePresence initial={false}>
           {items.map((hh) => {
             const expanded = expandedId === hh.id;
             return (
-              <li
+              <motion.li
                 key={hh.id}
+                layout
+                variants={itemVariants}
+                exit="exit"
+                whileHover={{ y: -2 }}
                 className="rounded-2xl border border-emerald-300/40 bg-white/90 p-4 shadow-sm shadow-emerald-500/10 backdrop-blur-sm"
               >
                 <div className="flex items-start justify-between gap-3">
@@ -216,7 +269,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                     aria-expanded={expanded}
                   >
                     <div className="truncate text-sm font-semibold text-gray-900">
-                      {hh.title?.trim() || "Untitled hand"}
+                      Hand #{hh.id}
                     </div>
                     <div className="mt-0.5 text-[11px] text-gray-500">
                       {formatDate(hh.createdAt)}
@@ -246,15 +299,25 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                   </div>
                 </div>
 
-                {expanded && (
-                  <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-[11px] leading-relaxed text-gray-800">
-                    {hh.rawText}
-                  </pre>
-                )}
-              </li>
+                <AnimatePresence initial={false}>
+                  {expanded && (
+                    <motion.pre
+                      key="raw"
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.22, ease: "easeInOut" }}
+                      className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-[11px] leading-relaxed text-gray-800"
+                    >
+                      {hh.rawText}
+                    </motion.pre>
+                  )}
+                </AnimatePresence>
+              </motion.li>
             );
           })}
-        </ul>
+          </AnimatePresence>
+        </motion.ul>
       )}
 
       {editorOpen && (

@@ -2,11 +2,10 @@
 import type { User } from "firebase/auth";
 
 export interface HandHistory {
-  id: string;
+  id: number; // "HandId" — sequential identity PK
   userId: string;
-  title: string | null;
   rawText: string;
-  sessionId: string | null; // reserved for future bankroll-session link; unused by UI for now
+  sessionId: string | null; // optional bankroll-session link; unused by UI for now
   createdAt: string; // ISO
   updatedAt: string | null; // ISO
 }
@@ -16,6 +15,5 @@ export interface HandHistoryToolProps {
 }
 
 export interface HandHistoryDraft {
-  title: string;
   rawText: string;
 }

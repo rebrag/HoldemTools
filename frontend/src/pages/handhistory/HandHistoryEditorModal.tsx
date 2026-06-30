@@ -19,7 +19,6 @@ const HandHistoryEditorModal: React.FC<Props> = ({
   onSave,
   onCancel,
 }) => {
-  const [title, setTitle] = useState(initial?.title ?? "");
   const [rawText, setRawText] = useState(initial?.rawText ?? "");
 
   useEffect(() => {
@@ -74,19 +73,6 @@ const HandHistoryEditorModal: React.FC<Props> = ({
         </div>
 
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-700">
-            Title <span className="text-gray-400">(optional)</span>
-          </label>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. AA vs 3-bet at Bellagio 2/5"
-            className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
-          />
-        </div>
-
-        <div className="mt-4 flex flex-col gap-1">
           <label className="text-xs font-medium text-gray-700">Hand history</label>
           <textarea
             value={rawText}
@@ -114,7 +100,7 @@ const HandHistoryEditorModal: React.FC<Props> = ({
           <button
             type="button"
             disabled={!canSave}
-            onClick={() => onSave({ title: title.trim(), rawText })}
+            onClick={() => onSave({ rawText })}
             className="inline-flex items-center rounded-full bg-emerald-600 px-5 py-1.5 text-sm font-semibold text-white shadow-md shadow-emerald-500/40 transition-transform duration-150 hover:-translate-y-[1px] hover:bg-emerald-500 active:translate-y-[1px] disabled:opacity-60 disabled:shadow-none"
           >
             {initial ? "Update" : "Save"}
