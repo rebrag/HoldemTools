@@ -253,6 +253,119 @@ body {
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
+/* ==========================================================================
+   WillyAim design-kit tokens (Tailwind v4) — surface + motion "technique",
+   wired to HoldemTools' existing emerald / slate / blue scheme.
+   No new brand colors: each token maps to a color the app already uses, so
+   this only adds glass surfaces, accent glow, and motion. Placed AFTER the
+   shadcn `@theme inline` block so `accent` resolves to the real brand emerald
+   (the shadcn `accent` placeholder is unused as a utility anywhere in src/).
+   ========================================================================== */
+@theme {
+  --color-surface: #0f172a;    /* slate-900  — elevated glass-panel base */
+  --color-accent: #10b981;     /* emerald-500 — primary brand accent */
+  --color-accent-2: #3b82f6;   /* blue-500    — secondary accent */
+  --color-on-accent: #020617;  /* slate-950   — text on accent buttons */
+
+  /* Subtle hairline, matching the existing `border-white/10`. */
+  --color-hairline: rgba(255, 255, 255, 0.1);
+
+  /* Glow shadows tint themselves from the accents above via color-mix. */
+  --shadow-glow: 0 0 24px color-mix(in srgb, var(--color-accent) 35%, transparent);
+  --shadow-glow-2: 0 0 24px color-mix(in srgb, var(--color-accent-2) 35%, transparent);
+
+  /* Motion (color-agnostic). */
+  --animate-grid-pan: grid-pan 3s linear infinite;
+  --animate-pulse-ring: pulse-ring 1.5s ease-out infinite;
+
+  @keyframes grid-pan {
+    from { background-position: 0 0; }
+    to { background-position: 40px 40px; }
+  }
+  @keyframes pulse-ring {
+    from { transform: scale(0.9); opacity: 0.7; }
+    to { transform: scale(1.6); opacity: 0; }
+  }
+
+  /* ---- 2026 homepage redesign motion ---------------------------------- */
+  --animate-marquee: marquee var(--marquee-duration, 40s) linear infinite;
+  --animate-meteor: meteor 5s linear infinite;
+  --animate-shimmer: shimmer 2.4s linear infinite;
+  --animate-gradient-pan: gradient-pan 6s ease infinite;
+  --animate-float: float 7s ease-in-out infinite;
+  --animate-aurora: aurora 18s ease-in-out infinite;
+
+  @keyframes marquee {
+    to { transform: translateX(-50%); }
+  }
+  @keyframes meteor {
+    0% { transform: rotate(215deg) translateX(0); opacity: 1; }
+    70% { opacity: 1; }
+    100% { transform: rotate(215deg) translateX(-560px); opacity: 0; }
+  }
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  @keyframes gradient-pan {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+  @keyframes aurora {
+    0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+    33% { transform: translate3d(4%, -6%, 0) scale(1.1); }
+    66% { transform: translate3d(-5%, 4%, 0) scale(0.95); }
+  }
+}
+
+@layer base {
+  html { scroll-behavior: smooth; }
+}
+
+/* Animated gradient text — pair with an `animate-gradient-pan` bg-clip-text. */
+.text-gradient-animated {
+  background-size: 200% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Fade the edges of an infinite marquee track. */
+.marquee-mask {
+  -webkit-mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+  mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-mask [class*="animate-marquee"],
+  [class*="animate-meteor"],
+  [class*="animate-float"],
+  [class*="animate-aurora"],
+  [class*="animate-gradient-pan"] {
+    animation: none !important;
+  }
+}
+
+/* Tactical grid backdrop (available for an opt-in <TacticalBackground/>);
+   tints from accent-2, so it blends with the existing scheme. */
+.tactical-grid {
+  background-image:
+    linear-gradient(
+      color-mix(in srgb, var(--color-accent-2) 8%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--color-accent-2) 8%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 40px 40px;
+}
+
 :root {
   --radius: 0.625rem;
   --background: oklch(1 0 0);
