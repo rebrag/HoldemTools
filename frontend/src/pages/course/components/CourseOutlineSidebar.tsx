@@ -11,6 +11,8 @@ interface CourseOutlineSidebarProps {
   activeSection?: number;
   completedSections: Set<number>;
   isFree: boolean;
+  /** Tailwind top offset for the sticky container; must clear any fixed/sticky headers above it. */
+  stickyTopClassName?: string;
 }
 
 const CourseOutlineSidebar: React.FC<CourseOutlineSidebarProps> = ({
@@ -18,11 +20,12 @@ const CourseOutlineSidebar: React.FC<CourseOutlineSidebarProps> = ({
   activeSection,
   completedSections,
   isFree,
+  stickyTopClassName = "top-16",
 }) => {
   const navigate = useNavigate();
 
   return (
-    <aside className="hidden lg:block w-64 shrink-0 sticky top-16 self-start">
+    <aside className={`hidden lg:block w-64 shrink-0 sticky ${stickyTopClassName} self-start`}>
       <div className="rounded-2xl border border-emerald-300/40 bg-white/95 shadow-lg shadow-emerald-500/20 overflow-hidden backdrop-blur-sm">
         <div className="border-b border-gray-200 px-4 py-2.5">
           <h2 className="text-sm font-semibold text-gray-900">Course Outline</h2>

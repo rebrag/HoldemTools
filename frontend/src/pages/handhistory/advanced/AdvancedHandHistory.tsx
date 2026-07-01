@@ -6,12 +6,13 @@ import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { User } from "firebase/auth";
 import PlayingCard from "@/components/PlayingCard";
+import PokerTable, { CardBack, type PokerTableSeat } from "@/components/PokerTable";
 import CopyButton from "@/components/CopyButton";
 import { authedFetch } from "@/lib/api";
 import SeatEditorModal from "./SeatEditorModal";
 import BoardEditorModal from "./BoardEditorModal";
 import ActionPanel from "./ActionPanel";
-import { positionLabels, seatCoords } from "./positions";
+import { positionLabels } from "./positions";
 import {
   applyAction,
   buildEngine,
@@ -40,14 +41,6 @@ const TABLE_SIZES = [9, 8, 7, 6, 5, 4, 3, 2];
 const inputCls =
   "w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition";
 
-const CardBack: React.FC<{ w?: number }> = ({ w = 22 }) => (
-  <div
-    className="aspect-[3/4] rounded-[4px] border border-rose-900/50 bg-gradient-to-br from-rose-600 to-rose-800 shadow-sm"
-    style={{ width: w }}
-    aria-hidden="true"
-  />
-);
-
 const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
   const navigate = useNavigate();
   const [state, setState] = useState<AdvancedHandState>(() => createInitialState());
@@ -67,7 +60,6 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
     () => positionLabels(state.tableSize, state.buttonSeat),
     [state.tableSize, state.buttonSeat]
   );
-  const coords = useMemo(() => seatCoords(state.tableSize), [state.tableSize]);
 
   const occupiedCount = state.seats.filter((s) => s.occupied).length;
 
@@ -176,6 +168,34 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
     !!engine.winners &&
     (engine.numBoards === 1 || !!engine.winners2);
 
+  const tableSeats: PokerTableSeat[] = Array.from(
+    { length: state.tableSize },
+    (_, i): PokerTableSeat => {
+      const seat = state.seats[i];
+      const label = seat.name.trim() || labels[i];
+      const ep = engine?.players.find((p) => p.seat === i) ?? null;
+      const isActive =
+        !!engine && engine.toAct != null && engine.players[engine.toAct]?.seat === i;
+      const stackText = ep
+        ? `${fmtUnit(ep.stack, engine!.bb, unitMode)}${unitMode === "bb" ? " BB" : ""}`
+        : seat.stack.trim();
+      const committed = ep?.committed ?? 0;
+      return {
+        key: i,
+        label,
+        stackText: stackText || undefined,
+        committedText:
+          committed > 0 ? fmtUnit(committed, engine!.bb, unitMode) : undefined,
+        holeCards: seat.holeCards,
+        isButton: state.buttonSeat === i,
+        isHero: state.heroSeat === i,
+        isActive,
+        folded: ep?.folded ?? false,
+        hidden: !!engine && !ep, // seat empty during a live hand
+      };
+    }
+  );
+
   return (
     <div className="mx-auto max-w-2xl px-4 pt-6 pb-16">
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -191,141 +211,62 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
       </div>
 
       {/* ───────── Table ───────── */}
-      <div className="rounded-3xl bg-slate-950/70 p-2 shadow-2xl shadow-emerald-900/40">
-        <div className="rounded-[40px] bg-gradient-to-b from-slate-800 to-slate-900 p-2">
-          <div className="relative mx-auto aspect-[4/5] w-full max-w-sm">
-            {/* felt */}
-            <div
-              className="absolute inset-[6%] rounded-[46%] ring-4 ring-slate-950/60"
-              style={{
-                background:
-                  "radial-gradient(ellipse at 50% 42%, #0e7490 0%, #0c5566 55%, #083344 100%)",
-                boxShadow: "inset 0 6px 30px rgba(0,0,0,0.45)",
-              }}
-            />
-
-            {/* center: pot / street / board */}
-            <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1.5">
-              {engine ? (
-                <span className="rounded-full bg-black/50 px-3 py-0.5 text-[11px] font-semibold text-white">
-                  {STREET_NAMES[engine.street]} · Pot {fmtUnit(engine.pot, engine.bb, unitMode)}
-                  {unitMode === "bb" ? " BB" : ""}
-                </span>
-              ) : (
-                <span className="rounded-full bg-black/40 px-2 py-0.5 text-[10px] font-medium text-white/80">
-                  Tap a card to edit
-                </span>
-              )}
+      <PokerTable
+        size={state.tableSize}
+        seats={tableSeats}
+        onSeatClick={phase === "setup" ? (i) => setEditingSeat(i) : undefined}
+        center={
+          <>
+            {engine ? (
+              <span className="rounded-full bg-black/50 px-3 py-0.5 text-[11px] font-semibold text-white">
+                {STREET_NAMES[engine.street]} · Pot {fmtUnit(engine.pot, engine.bb, unitMode)}
+                {unitMode === "bb" ? " BB" : ""}
+              </span>
+            ) : (
+              <span className="rounded-full bg-black/40 px-2 py-0.5 text-[10px] font-medium text-white/80">
+                Tap a card to edit
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => setEditingBoard(true)}
+              className="flex gap-1"
+              aria-label="Edit board"
+            >
+              {[0, 1, 2, 3, 4].map((i) => {
+                const revealed = !engine || i < revealCount;
+                const c = state.board[i];
+                return revealed && c ? (
+                  <PlayingCard key={i} code={c} size="sm" width={26} />
+                ) : (
+                  <CardBack key={i} w={26} />
+                );
+              })}
+            </button>
+            {state.numBoards === 2 && (
               <button
                 type="button"
-                onClick={() => setEditingBoard(true)}
+                onClick={() => setEditingBoard2(true)}
                 className="flex gap-1"
-                aria-label="Edit board"
+                aria-label="Edit board 2"
               >
                 {[0, 1, 2, 3, 4].map((i) => {
                   const revealed = !engine || i < revealCount;
-                  const c = state.board[i];
+                  const c = state.board2[i];
                   return revealed && c ? (
-                    <PlayingCard key={i} code={c} size="sm" width={26} />
+                    <PlayingCard key={i} code={c} size="sm" width={22} />
                   ) : (
-                    <CardBack key={i} w={26} />
+                    <CardBack key={i} w={22} />
                   );
                 })}
               </button>
-              {state.numBoards === 2 && (
-                <button
-                  type="button"
-                  onClick={() => setEditingBoard2(true)}
-                  className="flex gap-1"
-                  aria-label="Edit board 2"
-                >
-                  {[0, 1, 2, 3, 4].map((i) => {
-                    const revealed = !engine || i < revealCount;
-                    const c = state.board2[i];
-                    return revealed && c ? (
-                      <PlayingCard key={i} code={c} size="sm" width={22} />
-                    ) : (
-                      <CardBack key={i} w={22} />
-                    );
-                  })}
-                </button>
-              )}
-              <span className="text-[9px] font-semibold uppercase tracking-widest text-white/25">
-                HoldemTools
-              </span>
-            </div>
-
-            {/* seats */}
-            {Array.from({ length: state.tableSize }, (_, i) => {
-              const seat = state.seats[i];
-              const coord = coords[i];
-              const label = seat.name.trim() || labels[i];
-              const isButton = state.buttonSeat === i;
-              const isHero = state.heroSeat === i;
-
-              // Live engine info for this seat (action phase)
-              const ep = engine?.players.find((p) => p.seat === i) ?? null;
-              const isActive = !!engine && engine.toAct != null && engine.players[engine.toAct]?.seat === i;
-              const folded = ep?.folded ?? false;
-              const stackText = ep
-                ? `${fmtUnit(ep.stack, engine!.bb, unitMode)}${unitMode === "bb" ? " BB" : ""}`
-                : seat.stack.trim();
-              const committed = ep?.committed ?? 0;
-
-              if (engine && !ep) return null; // seat empty during a hand
-
-              return (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => phase === "setup" && setEditingSeat(i)}
-                  className={`absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5 ${
-                    phase === "setup" ? "cursor-pointer" : "cursor-default"
-                  } ${folded ? "opacity-40 grayscale" : ""}`}
-                  style={{ left: `${coord.x}%`, top: `${coord.y}%` }}
-                  aria-label={`Seat ${label}`}
-                >
-                  <div className="relative flex gap-0.5">
-                    {[0, 1].map((h) =>
-                      seat.holeCards[h] ? (
-                        <PlayingCard key={h} code={seat.holeCards[h]!} size="sm" width={22} />
-                      ) : (
-                        <CardBack key={h} w={22} />
-                      )
-                    )}
-                    {isButton && (
-                      <span className="absolute -right-3 -bottom-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-white text-[9px] font-bold text-gray-800 shadow ring-1 ring-gray-300">
-                        D
-                      </span>
-                    )}
-                  </div>
-                  <span
-                    className={`max-w-[80px] truncate rounded px-1.5 py-[1px] text-[10px] font-semibold ring-1 ${
-                      isActive
-                        ? "bg-emerald-500 text-white ring-emerald-200"
-                        : isHero
-                        ? "bg-amber-500/90 text-white ring-amber-200"
-                        : "bg-slate-900/80 text-sky-100 ring-slate-700"
-                    }`}
-                  >
-                    {label}
-                  </span>
-                  {stackText && (
-                    <span className="rounded bg-black/50 px-1.5 text-[10px] font-semibold text-emerald-100">
-                      {stackText}
-                    </span>
-                  )}
-                  {committed > 0 && (
-                    <span className="mt-0.5 rounded-full bg-amber-400/90 px-1.5 text-[9px] font-bold text-amber-950">
-                      {fmtUnit(committed, engine!.bb, unitMode)}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
+            )}
+            <span className="text-[9px] font-semibold uppercase tracking-widest text-white/25">
+              HoldemTools
+            </span>
+          </>
+        }
+      />
 
       {/* ───────── Action phase ───────── */}
       {phase === "action" && engine && (

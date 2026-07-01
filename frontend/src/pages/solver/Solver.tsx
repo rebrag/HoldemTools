@@ -1,6 +1,7 @@
 // src/components/Solver.tsx
 import { useState, useCallback, useLayoutEffect, useEffect, useMemo, useRef } from "react";
 import type { ChangeEvent } from "react";
+import { Info } from "lucide-react";
 import PlateGrid from "./PlateGrid";
 import { actionToNumberMap } from "@/lib/solver/constants";
 import { getInitialMapping } from "@/lib/solver/getInitialMapping";
@@ -161,7 +162,7 @@ const Solver = ({ user }: SolverProps) => {
   // Line ↔ PlateGrid alignment
   const [plateContentEl, setPlateContentEl] = useState<HTMLDivElement | null>(null);
   const lineWrapperRef = useRef<HTMLDivElement | null>(null);
-  const [linePad, setLinePad] = useState({ left: 0, right: 0 });
+  const [plateContentWidth, setPlateContentWidth] = useState(0);
 
   const tourBooted = useRef(localStorage.getItem("tourSeen") === "1");
   const lastClickRef = useRef<{ plate: string; action: string } | null>(null);
@@ -198,6 +199,26 @@ const Solver = ({ user }: SolverProps) => {
     if (playerCount === 2) return ["BTN", "BB"];
     return Object.keys(plateMapping);
   }, [playerCount, plateMapping]);
+
+  // Pre-flop acting order (UTG … BTN, SB, BB); positionOrder is SB/BB-first seat order.
+  const actingOrder = useMemo(
+    () =>
+      positionOrder.length <= 2
+        ? positionOrder
+        : [...positionOrder.slice(2), ...positionOrder.slice(0, 2)],
+    [positionOrder]
+  );
+
+  // Average starting stack, parsed from the folder name (e.g. "23UTG_23BB").
+  const avgStack = useMemo(() => {
+    const stacks: number[] = [];
+    folder.split("_").forEach((ch) => {
+      const m = ch.match(/^(\d+(?:\.\d+)?)([A-Z][A-Z0-9+]*)$/i);
+      if (m) stacks.push(Number(m[1]));
+    });
+    if (!stacks.length) return null;
+    return Math.round((stacks.reduce((s, v) => s + v, 0) / stacks.length) * 10) / 10;
+  }, [folder]);
 
   const isNarrow =
     positionOrder.length === 2 ? !(windowWidth * 1.3 < windowHeight) : windowWidth * 1.3 < windowHeight;
@@ -327,19 +348,12 @@ const Solver = ({ user }: SolverProps) => {
   useLayoutEffect(() => {
     const compute = () => {
       const plateEl = plateContentEl;
-      const lineEl = lineWrapperRef.current;
-      if (!plateEl || !lineEl) { setLinePad({ left: 0, right: 0 }); return; }
-      const pr = plateEl.getBoundingClientRect();
-      const lr = lineEl.getBoundingClientRect();
-      setLinePad({
-        left: Math.max(0, pr.left - lr.left),
-        right: Math.max(0, lr.right - pr.right),
-      });
+      if (!plateEl) { setPlateContentWidth(0); return; }
+      setPlateContentWidth(plateEl.getBoundingClientRect().width);
     };
     compute();
     const ro = new ResizeObserver(compute);
     if (plateContentEl) ro.observe(plateContentEl);
-    if (lineWrapperRef.current) ro.observe(lineWrapperRef.current);
     window.addEventListener("resize", compute);
     return () => { ro.disconnect(); window.removeEventListener("resize", compute); };
   }, [plateContentEl]);
@@ -1012,10 +1026,10 @@ const Solver = ({ user }: SolverProps) => {
 
           {/* Top row: Sim info button (small), FolderSelector (wide, with filter + SR buttons) */}
           <div className="px-2 sm:px-4 mt-1">
-            <div className="mx-auto w-full max-w-xl">
+            <div className="mx-auto w-full max-w-xl lg:max-w-3xl">
               <div className="relative z-50">
                 <div className="flex items-stretch gap-2">
-                  {/* Sim info: same footprint as filter/SR, always on the left */}
+                  {/* Solution info chip + popover, always on the left */}
                   {metadata?.name && (
                     <div className="flex-shrink-0">
                       <div className="relative group">
@@ -1023,69 +1037,80 @@ const Solver = ({ user }: SolverProps) => {
                           type="button"
                           onClick={() => setSimInfoOpen((o) => !o)}
                           className="
-                            h-9 w-9 sm:h-10 sm:w-10
-                            inline-flex flex-col items-center justify-center
-                            rounded-xl border border-gray-300 bg-white/90 shadow-md
+                            h-9 sm:h-10 px-2.5 gap-1.5 max-w-[9rem] sm:max-w-[15rem]
+                            inline-flex items-center justify-start
+                            rounded-xl border border-gray-300 bg-white/95 shadow-md
                             hover:bg-gray-100 text-gray-800
-                            focus:outline-none focus:ring
+                            focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60
                           "
-                          aria-label="Simulation info"
+                          aria-label="Solution info"
                           title={metadata.name}
                         >
-                          <span className="text-[9px] uppercase tracking-wide leading-tight">
-                            Sim
-                          </span>
-                          <span className="text-[8px] leading-tight truncate max-w-[2.4rem]">
+                          <Info size={16} strokeWidth={2.2} className="shrink-0 text-emerald-600" />
+                          <span className="truncate text-xs font-semibold">
                             {metadata.name}
                           </span>
                         </button>
 
-                        {/* Sim info panel on hover / click */}
+                        {/* Solution info popover on hover / click */}
                         <div
                           className={[
-                            "transition-opacity duration-150 absolute left-0 top-full mt-1 w-max max-w-xs sm:max-w-sm",
-                            "bg-slate-900 text-emerald-50 text-xs rounded-md shadow-lg border border-emerald-500/40 p-3 z-50",
+                            "transition-opacity duration-150 absolute left-0 top-full mt-1 z-50 w-64",
                             simInfoOpen
                               ? "opacity-100 pointer-events-auto"
                               : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto",
                           ].join(" ")}
                         >
-                          <div className="font-semibold text-xs mb-1 break-words">
-                            {metadata.name}
-                          </div>
+                          <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-xl">
+                            <div className="mb-2 break-words text-sm font-semibold text-gray-900">
+                              {metadata.name}
+                            </div>
 
-                          {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
-                            <div className="space-y-0.5">
-                              <div className="text-[11px] uppercase tracking-wide text-emerald-300">
-                                ICM Structure
+                            <div className="mb-2 flex flex-wrap gap-1.5">
+                              <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                                {playerCount} players
+                              </span>
+                              {avgStack != null && (
+                                <span className="inline-flex items-center rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700 ring-1 ring-sky-200">
+                                  {avgStack} bb avg
+                                </span>
+                              )}
+                              <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-amber-200">
+                                {metadata.ante > 0 ? `${metadata.ante} bb ante` : "No ante"}
+                              </span>
+                            </div>
+
+                            {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
+                              <div>
+                                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                                  ICM payouts
+                                </div>
+                                <div className="space-y-0.5">
+                                  {metadata.icm.map((value, idx) => {
+                                    const rank = idx + 1;
+                                    const suffix =
+                                      rank === 1 ? "st" : rank === 2 ? "nd" : rank === 3 ? "rd" : "th";
+                                    return (
+                                      <div
+                                        key={idx}
+                                        className="flex justify-between gap-2 text-xs text-gray-700"
+                                      >
+                                        <span>
+                                          {rank}
+                                          <sup>{suffix}</sup> place
+                                        </span>
+                                        <span className="font-medium tabular-nums">
+                                          ${value.toLocaleString()}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
                               </div>
-                              {metadata.icm.map((value, idx) => {
-                                const rank = idx + 1;
-                                const suffix =
-                                  rank === 1 ? "st" : rank === 2 ? "nd" : rank === 3 ? "rd" : "th";
-                                return (
-                                  <div key={idx} className="flex justify-between gap-2">
-                                    <span>
-                                      {rank}
-                                      <sup>{suffix}</sup> place
-                                    </span>
-                                    <span>${value.toLocaleString()}</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          ) : (
-                            <div className="text-[11px] text-gray-300">
-                              <span className="font-semibold text-emerald-300">ICM:</span> None
-                            </div>
-                          )}
-
-                          {/* {typeof metadata.ante === "number" && metadata.ante > 0 && (
-                            <div className="mt-2 text-[11px] text-gray-200">
-                              <span className="font-semibold text-emerald-300">Ante:</span>{" "}
-                              {metadata.ante} BB
-                            </div>
-                          )} */}
+                            ) : (
+                              <div className="text-xs text-gray-500">Chip EV · no ICM</div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1116,9 +1141,19 @@ const Solver = ({ user }: SolverProps) => {
           <div
             ref={lineWrapperRef}
             className="relative flex items-center mt-2 mb-2"
-            style={{ paddingLeft: linePad.left, paddingRight: linePad.right }}
           >
-            <Line line={preflopLine} onLineClick={handleLineClick} />
+            <Line
+              line={preflopLine}
+              onLineClick={handleLineClick}
+              positions={actingOrder}
+              activePlayer={activePlayer}
+              plateData={plateData}
+              plateMapping={plateMapping}
+              playerBets={playerBets}
+              alivePlayers={alivePlayers}
+              onActionClick={handleActionClick}
+              matchWidth={plateContentWidth}
+            />
           </div>
 
           {/* Current flop display */}

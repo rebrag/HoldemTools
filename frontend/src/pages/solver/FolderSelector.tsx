@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { LayoutGrid, Square } from "lucide-react";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "@/lib/firebase";
 import { logUserAction } from "@/lib/logEvent";
@@ -286,7 +287,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
       >
         {/* Input + filter + SR buttons */}
         <div className="flex items-stretch gap-1">
-          <div ref={inputWrapRef} className="relative flex-1 min-w-0">
+          <div ref={inputWrapRef} className="relative flex-1 min-w-0 lg:min-w-[18rem]">
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -438,7 +439,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
             )}
           </div>
 
-          {/* Single Range button, same size as filter, immediately to the right */}
+          {/* Single Range toggle — labeled pill (icon-only on the smallest screens) */}
           {onToggleSingleRange && (
             <button
               type="button"
@@ -446,22 +447,24 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
               aria-pressed={singleRangeView ?? false}
               data-intro-target="color-key-btn"
               className={[
-                "h-9 w-9 sm:h-10 sm:w-10",
-                "inline-flex flex-col items-center justify-center",
-                "rounded-xl border shadow-md focus:outline-none focus:ring",
+                "h-9 sm:h-10 px-2 sm:px-3 gap-1.5",
+                "inline-flex items-center justify-center whitespace-nowrap",
+                "rounded-xl border shadow-md transition-colors",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60",
                 singleRangeView
                   ? "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
                   : "border-gray-300 bg-white/95 text-gray-800 hover:bg-gray-100",
               ].join(" ")}
               title="Toggle Single Range View"
             >
-              <span className="text-[9px] uppercase tracking-wide leading-tight">SR</span>
-              <span
-                className={[
-                  "mt-0.5 h-1.5 w-1.5 rounded-full",
-                  singleRangeView ? "bg-white" : "bg-emerald-500/80",
-                ].join(" ")}
-              />
+              {singleRangeView ? (
+                <Square size={16} strokeWidth={2.2} />
+              ) : (
+                <LayoutGrid size={16} strokeWidth={2.2} />
+              )}
+              <span className="hidden sm:inline text-xs font-semibold">
+                Single Range
+              </span>
             </button>
           )}
         </div>

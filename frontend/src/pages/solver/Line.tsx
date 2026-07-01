@@ -1,19 +1,67 @@
 // src/components/Line.tsx
 import React, { useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, RotateCcw } from "lucide-react";
 import { getColorForAction, stringToColor } from "@/lib/solver/utils";
+import type { JsonData } from "@/lib/solver/utils";
 
 export interface LineProps {
+  /** Chronological line of actions (index 0 is "Root"); used for the Reset control. */
   line: string[];
   onLineClick: (idx: number) => void;
+
+  /** Seats in pre-flop acting order (UTG … BTN, SB, BB). */
+  positions: string[];
+  activePlayer: string;
+  plateData: Record<string, JsonData>;
+  plateMapping: Record<string, string>;
+  playerBets: Record<string, number>;
+  alivePlayers: Record<string, boolean>;
+  /** Same handler the plates use — clicking a seat's option navigates the tree. */
+  onActionClick: (action: string, file: string) => void;
+  /** Constrain the bar's total width to match the plate grid below (px). */
+  matchWidth?: number;
 }
 
-/* Soft-gray colour for the special “Reset” chip */
-const ROOT_COLOR = "#d1d5db"; // Tailwind gray-300-ish
+const fmt = (n: number, decimals = 1) =>
+  Math.abs(n % 1) > 1e-9 ? n.toFixed(decimals) : n.toFixed(0);
 
-const Line: React.FC<LineProps> = ({ line, onLineClick }) => {
+/* Order options top→bottom like the reference: Fold, Call, (Min), Raise…, Allin. */
+const seatRank = (act: string) =>
+  act === "Fold"
+    ? 0
+    : act === "Call"
+    ? 1
+    : act === "Min"
+    ? 2
+    : act.startsWith("Raise ")
+    ? 3
+    : act === "ALLIN"
+    ? 5
+    : 4;
+
+/** The betting options available at a seat's node, derived from its plate JSON. */
+const seatActions = (data?: JsonData): string[] => {
+  if (!data) return [];
+  const acts = Object.keys(data)
+    .filter((k) => k !== "Position" && k !== "bb")
+    .map((k) => (k === "c" ? "Call" : k));
+  return Array.from(new Set(acts)).sort((a, b) => seatRank(a) - seatRank(b));
+};
+
+const Line: React.FC<LineProps> = ({
+  line,
+  onLineClick,
+  positions,
+  activePlayer,
+  plateData,
+  plateMapping,
+  playerBets,
+  alivePlayers,
+  onActionClick,
+  matchWidth,
+}) => {
   const scrollerRef = useRef<HTMLDivElement>(null);
-  const [canLeft, setCanLeft]   = useState(false);
+  const [canLeft, setCanLeft] = useState(false);
   const [canRight, setCanRight] = useState(false);
 
   /* ───── helper to update arrow visibility ───── */
@@ -37,11 +85,10 @@ const Line: React.FC<LineProps> = ({ line, onLineClick }) => {
     };
   }, []);
 
-  /* run refresh whenever the line content changes */
+  /* run refresh whenever the seats / mapping change */
   useEffect(() => {
-    // wait one tick for the DOM to paint before measuring
     requestAnimationFrame(refresh);
-  }, [line]);
+  }, [positions, plateMapping, activePlayer]);
 
   /* smooth-scroll helper */
   const move = (delta: number) => {
@@ -50,8 +97,10 @@ const Line: React.FC<LineProps> = ({ line, onLineClick }) => {
 
   /* ───── render ───── */
   return (
-    <div className="relative w-full select-none">
-
+    <div
+      className="relative w-full select-none mx-auto"
+      style={{ maxWidth: matchWidth || undefined }}
+    >
       {/* ← chevron */}
       {canLeft && (
         <button
@@ -72,45 +121,112 @@ const Line: React.FC<LineProps> = ({ line, onLineClick }) => {
         </button>
       )}
 
-      {/* scroll strip */}
+      {/* seat strip */}
       <div
         ref={scrollerRef}
-        className="flex flex-nowrap overflow-x-auto scroll-smooth space-x-0.5 no-scrollbar w-full"
+        className="overflow-x-auto scroll-smooth no-scrollbar w-full"
       >
-        {/* “LINE:” label */}
-        <div
-          className="
-            flex items-center justify-center flex-shrink-0
-            px-1 py-1 font-semibold text-gray-200 whitespace-nowrap
-            text-[0.65rem]
-          "
-        >
-          LINE:
-        </div>
+        <div className="flex flex-nowrap items-stretch gap-1 w-full">
+        {/* Reset (back to root) */}
+        {line.length > 1 && (
+          <button
+            onClick={() => onLineClick(0)}
+            className="flex-shrink-0 flex flex-col items-center justify-center px-1.5 rounded-md border border-white/15 bg-white/5 hover:bg-white/10 text-gray-300 transition-colors"
+            title="Reset to start of hand"
+          >
+            <RotateCcw size={14} />
+            <span className="text-[0.5rem] mt-0.5 leading-none">Reset</span>
+          </button>
+        )}
 
-        {/* chips */}
-        {line.map((action, idx) => {
-          const display  = action === "Root" ? "Reset" : action;
-          const bgColor  =
-            action === "Root"
-              ? ROOT_COLOR
-              : getColorForAction(action) || stringToColor(action);
+        {/* seat cards */}
+        {positions.map((pos, idx) => {
+          const file = plateMapping[pos];
+          const data = file ? plateData[file] : undefined;
+          const isActive = pos === activePlayer;
+          const alive = alivePlayers[pos] ?? true;
+          const bet = playerBets[pos] ?? 0;
+          const stack = data ? (data.bb ?? 0) - bet : null;
+          const options = seatActions(data);
+
+          /* Clicking a card's empty area folds the seat that acts just
+             before it — but only when that previous seat is the one to
+             act, so the "fold to advance" transition is always valid. */
+          const prevPos = idx > 0 ? positions[idx - 1] : undefined;
+          const prevFile = prevPos ? plateMapping[prevPos] : undefined;
+          const canFoldPrev =
+            !!prevPos &&
+            prevPos === activePlayer &&
+            !!prevFile &&
+            seatActions(plateData[prevFile]).includes("Fold");
 
           return (
             <div
-              key={idx}
-              onClick={() => onLineClick(idx)}
-              style={{ backgroundColor: bgColor }}
-              className={`
-                flex items-center justify-center flex-shrink-0
-                px-2 py-1 rounded text-xs whitespace-nowrap cursor-pointer
-                ${action === "Root" ? "text-gray-800" : "text-white"}
-              `}
+              key={pos}
+              onClick={
+                canFoldPrev ? () => onActionClick("Fold", prevFile!) : undefined
+              }
+              className={`flex-1 flex flex-col rounded-md border px-1.5 py-1 min-w-[3.6rem] transition-colors ${
+                canFoldPrev ? "cursor-pointer" : ""
+              } ${
+                isActive
+                  ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_0_2px_rgba(16,185,129,0.35)]"
+                  : alive
+                  ? "border-white/15 bg-white/5"
+                  : "border-white/10 bg-white/5 opacity-40"
+              }`}
             >
-              {display}
+              <div className="flex items-baseline justify-between gap-1 mb-0.5">
+                <span
+                  className={`text-[0.7rem] font-bold leading-none ${
+                    isActive ? "text-emerald-300" : "text-gray-100"
+                  }`}
+                >
+                  {pos}
+                </span>
+                {stack != null && (
+                  <span className="text-[0.6rem] text-gray-300 tabular-nums leading-none">
+                    {fmt(stack)}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-0.5">
+                {options.length === 0 ? (
+                  <span className="text-[0.55rem] text-gray-400 italic leading-tight">
+                    {alive ? " " : "folded"}
+                  </span>
+                ) : (
+                  options.map((action) => {
+                    const color =
+                      getColorForAction(action) || stringToColor(action);
+                    return (
+                      <button
+                        key={action}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (file) onActionClick(action, file);
+                        }}
+                        disabled={!file}
+                        className="group flex items-center gap-1 rounded-sm px-1 py-0.5 text-left hover:bg-white/10 disabled:hover:bg-transparent transition-colors"
+                        title={`${pos}: ${action}`}
+                      >
+                        <span
+                          className="inline-block w-1.5 h-1.5 rounded-[2px] flex-shrink-0"
+                          style={{ backgroundColor: color }}
+                        />
+                        <span className="text-[0.55rem] leading-tight text-gray-200 whitespace-nowrap">
+                          {action}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
             </div>
           );
         })}
+        </div>
       </div>
     </div>
   );

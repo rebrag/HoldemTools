@@ -122,6 +122,7 @@ const CourseSection: React.FC<CourseSectionProps> = ({ user }) => {
         activeSection={id}
         completedSections={completedSections}
         isFree={isFree}
+        stickyTopClassName="top-[92px]"
       />
       <div className="min-w-0 flex-1 max-w-2xl mx-auto lg:mx-0 space-y-6">
       {/* Content card */}

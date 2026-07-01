@@ -4,10 +4,12 @@ import React, { useMemo, useState } from "react";
 import Plate, { PlateZoomPayload } from "./Plate";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import { generateSpiralOrder } from "@/lib/solver/gridUtils";
-import { JsonData } from "@/lib/solver/utils";
+import { JsonData, HandCellData, combineDataByHand } from "@/lib/solver/utils";
 import { LayoutGroup } from "framer-motion";
 import useElementSize from "@/hooks/useElementSize";
 import DecisionMatrix from "./DecisionMatrix";
+import ColorKey from "./ColorKey";
+import PokerTable, { type PokerTableSeat } from "@/components/PokerTable";
 
 type PlateGridProps = {
   files: string[];
@@ -183,6 +185,15 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     return { plateW, dmW: Math.round(dmW), sbW: Math.round(sbW) };
   }, [isNarrow, halfPlateWidth, gridRows, gridContainerHeight, remainingViewportH]);
 
+  /* ── Single-range view: data for the one active plate ── */
+  const activeIndex = positions.findIndex((p) => p === activePlayer);
+  const activeFile = activeIndex >= 0 ? files[activeIndex] : undefined;
+  const activeData = activeFile ? plateData[activeFile] : undefined;
+  const activeGrid: HandCellData[] = useMemo(
+    () => (activeData ? combineDataByHand(activeData) : []),
+    [activeData]
+  );
+
   const getZoomWidth = () => {
     const base = isNarrow
       ? narrowDims.plateW ?? 220
@@ -197,6 +208,105 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     (isNarrow
       ? "bg-white/60 px-0.5 py-0.5 text-[8px]"
       : "bg-white/60 px-2 py-0 text-xs");
+
+  /* ─────────────────────────────────────────────────────────────
+     Single-range view: a poker table beside (desktop) or above
+     (mobile) the active player's big range matrix.
+     ───────────────────────────────────────────────────────────── */
+  if (singleRangeView) {
+    const isWide = viewW >= 1024;
+    const vh = viewH || 640;
+
+    // Table and range widths need concrete pixel values — the PokerTable's
+    // aspect-ratio box collapses without a definite ancestor width.
+    const tableW = isWide
+      ? Math.round(Math.max(260, Math.min(baseW * 0.38, vh * 0.6, 460)))
+      : Math.round(Math.min(baseW * 0.7, 240));
+    const rangeW = isWide
+      ? Math.round(Math.max(300, Math.min(baseW - tableW - 24, vh * 0.85, 620)))
+      : Math.round(Math.max(240, Math.min(baseW - 16, vh * 0.5, 560)));
+
+    const tableSeats: PokerTableSeat[] = positions.map((pos, i) => {
+      const file = files[i];
+      const data = file ? plateData[file] : undefined;
+      const alive = alivePlayers[pos] ?? true;
+      const bet = playerBets[pos] ?? 0;
+      const stackBB = data ? (data.bb ?? 0) - bet : null;
+      return {
+        key: pos,
+        label: pos,
+        stackText: stackBB != null ? `${fmt(stackBB, 1)} bb` : undefined,
+        committedText: bet > 0 ? `${fmt(bet, 1)} bb` : undefined,
+        holeCards: alive ? [null, null] : undefined,
+        isButton: pos === "BTN",
+        isActive: pos === activePlayer,
+        folded: !alive,
+      };
+    });
+
+    return (
+      <div className="relative flex justify-center py-2 w-full">
+        <div
+          ref={container.ref}
+          className={`relative z-10 w-full flex ${
+            isWide ? "flex-row items-center justify-center" : "flex-col items-center"
+          } gap-3 sm:gap-5`}
+        >
+          {/* Loading */}
+          <div
+            className={`absolute inset-0 flex items-center justify-center z-50 transition-opacity duration-100 ${
+              loading ? "opacity-100" : "opacity-0 pointer-events-none"
+            }`}
+          >
+            <LoadingIndicator />
+          </div>
+
+          {/* Poker table (definite width so it doesn't collapse) */}
+          <div className="flex-shrink-0" style={{ width: tableW }}>
+            <PokerTable
+              size={positions.length}
+              seats={tableSeats}
+              className="w-full"
+              maxWidthClassName="max-w-none"
+              center={
+                pot != null ? (
+                  <span className="rounded-full bg-black/50 px-3 py-0.5 text-[11px] font-semibold text-white">
+                    Pot {fmt(Math.max(0, pot), 1)} bb
+                    {ante ? ` · Ante ${fmt(ante, 1)}` : ""}
+                  </span>
+                ) : null
+              }
+            />
+          </div>
+
+          {/* Active player's range */}
+          <div
+            ref={onPlateContentRef}
+            className="relative flex-shrink-0 border border-emerald-400 rounded-[9px] shadow-md p-2 bg-white/20"
+            style={{ width: rangeW }}
+          >
+            <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
+              <DecisionMatrix
+                gridData={activeGrid}
+                randomFillEnabled={randomFillEnabled && !!activeData}
+                isICMSim={isICMSim}
+              />
+            </div>
+
+            <div className="mt-1 w-full">
+              <ColorKey
+                data={activeGrid}
+                loading={!activeData}
+                onActionClick={(action) =>
+                  activeFile && onActionClick(action, activeFile)
+                }
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -300,6 +410,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
               }}
             >
               <div
+                ref={onPlateContentRef}
                 className="flex justify-center gap-3 w-full"
                 style={{ height: "100%" }}
               >

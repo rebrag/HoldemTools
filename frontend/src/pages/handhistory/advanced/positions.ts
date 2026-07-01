@@ -2,6 +2,10 @@
 // Poker position labels (relative to the button) and seat coordinates around
 // the oval table.
 
+// Seat geometry now lives in a shared module so the reusable <PokerTable>
+// component can consume it without importing from this feature folder.
+export { seatCoords, type SeatCoord } from "@/lib/pokerGeometry";
+
 const ORDER_FROM_BTN: Record<number, string[]> = {
   2: ["BTN", "BB"],
   3: ["BTN", "SB", "BB"],
@@ -21,23 +25,5 @@ export function positionLabels(size: number, buttonSeat: number): string[] {
   return Array.from({ length: size }, (_, i) => {
     const offset = (((i - buttonSeat) % size) + size) % size;
     return order[offset] ?? `P${i + 1}`;
-  });
-}
-
-export interface SeatCoord {
-  x: number; // percent of container width
-  y: number; // percent of container height
-}
-
-// Evenly distribute seats around an ellipse, seat 0 at bottom-center (hero).
-// Seat index increases clockwise so action (which follows seat order) visibly
-// moves clockwise, as at a real table.
-export function seatCoords(size: number): SeatCoord[] {
-  return Array.from({ length: size }, (_, i) => {
-    const angle = (i / size) * 2 * Math.PI;
-    return {
-      x: 50 - 46 * Math.sin(angle),
-      y: 50 + 43 * Math.cos(angle),
-    };
   });
 }
