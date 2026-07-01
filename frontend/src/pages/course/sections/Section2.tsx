@@ -362,9 +362,9 @@ const Section2: React.FC = () => (
       </p>
       <div className="space-y-7">
         <QuizQuestion
-          question="What is an 80 times stack in a NL25 ($0.25/$0.50) game?"
+          question="What is an 80BB stack in a NL25 ($0.10/$0.25) game?"
           options={[
-            { label: "$10", explanation: "80 times the big blind: $0.25 × 80 = $20, not $10." },
+            { label: "$10", explanation: "80BB the big blind: $0.25 × 80 = $20, not $10." },
             { label: "$20", explanation: "Correct! Big blind = $0.25. $0.25 × 80 = $20." },
             { label: "$40", explanation: "That would be 80× the $0.50 big blind in NL50. Here BB = $0.25, so 80× = $20." },
             { label: "$50", explanation: "80× the big blind: $0.25 × 80 = $20." },

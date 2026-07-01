@@ -5,6 +5,7 @@ import { useCurrentTier } from "@/context/TierContext";
 import { useCourseProgress } from "@/hooks/useCourseProgress";
 import { QuizTracker } from "./components/QuizTrackerContext";
 import ProUpsell from "@/components/ProUpsell";
+import CourseOutlineSidebar from "./components/CourseOutlineSidebar";
 import { useState } from "react";
 import Section1 from "./sections/Section1";
 import Section2 from "./sections/Section2";
@@ -89,7 +90,7 @@ const CourseSection: React.FC<CourseSectionProps> = ({ user }) => {
     <>
       {/* Course secondary navbar */}
       <div className="sticky top-12 z-40 bg-[#121418]/95 backdrop-blur-sm border-b border-white/10">
-        <div className="max-w-2xl mx-auto px-4 h-11 flex items-center gap-3">
+        <div className="max-w-5xl mx-auto px-4 h-11 flex items-center gap-3">
           <button
             onClick={() => navigate("/course")}
             className="inline-flex items-center gap-1 text-xs text-emerald-400 hover:text-emerald-300 transition-colors shrink-0"
@@ -115,7 +116,14 @@ const CourseSection: React.FC<CourseSectionProps> = ({ user }) => {
         </div>
       </div>
 
-      <div className="max-w-2xl mx-auto px-4 pb-12 pt-6 space-y-6">
+      <div className="max-w-5xl mx-auto px-4 pb-12 pt-6 lg:flex lg:items-start lg:gap-8">
+      <CourseOutlineSidebar
+        sections={SECTIONS}
+        activeSection={id}
+        completedSections={completedSections}
+        isFree={isFree}
+      />
+      <div className="min-w-0 flex-1 max-w-2xl mx-auto lg:mx-0 space-y-6">
       {/* Content card */}
       <div className="rounded-2xl border border-emerald-300/40 bg-white/95 shadow-lg shadow-emerald-500/20 overflow-hidden backdrop-blur-sm">
         {tierLoading ? (
@@ -175,6 +183,7 @@ const CourseSection: React.FC<CourseSectionProps> = ({ user }) => {
 
       {/* Upsell modal */}
       <ProUpsell open={upsellOpen} onClose={() => setUpsellOpen(false)} />
+    </div>
     </div>
     </>
   );

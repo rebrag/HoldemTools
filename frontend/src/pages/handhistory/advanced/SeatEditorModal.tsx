@@ -1,0 +1,213 @@
+// src/pages/handhistory/advanced/SeatEditorModal.tsx
+import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import PlayingCard from "@/components/PlayingCard";
+import CardPicker from "@/components/CardPicker";
+import type { HoleCards, Seat } from "./types";
+
+interface Props {
+  positionLabel: string;
+  seat: Seat;
+  isButton: boolean;
+  isHero: boolean;
+  otherUsed: Set<string>; // cards assigned elsewhere (other seats + board)
+  onSave: (seat: Seat, makeButton: boolean, makeHero: boolean) => void;
+  onClose: () => void;
+}
+
+const SeatEditorModal: React.FC<Props> = ({
+  positionLabel,
+  seat,
+  isButton,
+  isHero,
+  otherUsed,
+  onSave,
+  onClose,
+}) => {
+  const [name, setName] = useState(seat.name);
+  const [stack, setStack] = useState(seat.stack);
+  const [occupied, setOccupied] = useState(seat.occupied);
+  const [hole, setHole] = useState<HoleCards>(seat.holeCards);
+  const [makeButton, setMakeButton] = useState(isButton);
+  const [makeHero, setMakeHero] = useState(isHero);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+
+  if (typeof document === "undefined") return null;
+
+  const selected = hole.filter((c): c is string => !!c);
+  const gridUsed = new Set<string>([...otherUsed, ...selected]);
+
+  const handlePick = (code: string) => {
+    setHole((prev) => {
+      const arr = prev.filter((c): c is string => !!c);
+      if (arr.includes(code)) {
+        const next = arr.filter((c) => c !== code);
+        return [next[0] ?? null, next[1] ?? null];
+      }
+      if (otherUsed.has(code)) return prev; // used elsewhere
+      if (arr.length >= 2) return prev;
+      const next = [...arr, code];
+      return [next[0] ?? null, next[1] ?? null];
+    });
+  };
+
+  const save = () =>
+    onSave(
+      { occupied, name: name.trim(), stack: stack.trim(), holeCards: hole },
+      makeButton,
+      makeHero
+    );
+
+  return createPortal(
+    <div className="fixed inset-0 z-[1300] flex items-start justify-center overflow-y-auto p-4 sm:p-8">
+      <div className="absolute inset-0 bg-black/50" onPointerDown={onClose} aria-hidden="true" />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Edit seat ${positionLabel}`}
+        className="relative z-[1310] w-full max-w-md rounded-2xl border border-emerald-300/40 bg-white/95 p-4 shadow-2xl shadow-emerald-500/30 backdrop-blur-sm"
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 className="text-base font-semibold text-gray-900">
+            Seat · {positionLabel}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition"
+          >
+            <span className="text-sm">✕</span>
+          </button>
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <div className="flex-1 min-w-[140px] flex flex-col gap-1">
+            <label className="text-xs font-medium text-gray-700">
+              Name <span className="text-gray-400">(optional)</span>
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={positionLabel}
+              className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
+            />
+          </div>
+          <div className="w-[120px] flex flex-col gap-1">
+            <label className="text-xs font-medium text-gray-700">Stack</label>
+            <input
+              type="tel"
+              inputMode="decimal"
+              value={stack}
+              onChange={(e) => setStack(e.target.value)}
+              placeholder="100"
+              className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
+            />
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-4">
+          <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-700">
+            <input
+              type="checkbox"
+              checked={occupied}
+              onChange={(e) => setOccupied(e.target.checked)}
+              className="h-4 w-4 accent-emerald-600"
+            />
+            Seat occupied
+          </label>
+          <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-700">
+            <input
+              type="checkbox"
+              checked={makeButton}
+              onChange={(e) => setMakeButton(e.target.checked)}
+              className="h-4 w-4 accent-emerald-600"
+            />
+            Dealer button here
+          </label>
+          <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-700">
+            <input
+              type="checkbox"
+              checked={makeHero}
+              onChange={(e) => setMakeHero(e.target.checked)}
+              className="h-4 w-4 accent-emerald-600"
+            />
+            This is my hand (hero)
+          </label>
+        </div>
+
+        {/* Hole cards */}
+        <div className="mt-4">
+          <div className="mb-1 flex items-center justify-between">
+            <label className="text-xs font-medium text-gray-700">Hole cards</label>
+            {selected.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setHole([null, null])}
+                className="text-[11px] text-gray-500 underline underline-offset-2 hover:text-gray-700"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <div className="mb-2 flex gap-2">
+            {[0, 1].map((i) =>
+              hole[i] ? (
+                <PlayingCard key={i} code={hole[i]!} size="md" width={40} />
+              ) : (
+                <div
+                  key={i}
+                  className="flex aspect-[3/4] w-10 items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50 text-[10px] text-gray-400"
+                >
+                  ?
+                </div>
+              )
+            )}
+          </div>
+          <CardPicker
+            used={gridUsed}
+            onPick={handlePick}
+            minCardWidth={46}
+            size="md"
+            gapPx={5}
+            className="grid w-full rounded-xl border border-gray-300 bg-slate-700/80 p-2"
+          />
+        </div>
+
+        <div className="mt-4 flex items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-xs text-gray-500 underline underline-offset-2 hover:text-gray-700"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={save}
+            className="inline-flex items-center rounded-full bg-emerald-600 px-5 py-1.5 text-sm font-semibold text-white shadow-md shadow-emerald-500/40 transition-transform duration-150 hover:-translate-y-[1px] hover:bg-emerald-500 active:translate-y-[1px]"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+};
+
+export default SeatEditorModal;

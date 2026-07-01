@@ -1,5 +1,6 @@
 // src/pages/handhistory/HandHistoryTool.tsx
 import React, { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, type Variants } from "framer-motion";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import CopyButton from "@/components/CopyButton";
@@ -65,6 +66,7 @@ function previewOf(text: string): string {
 }
 
 const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
+  const navigate = useNavigate();
   const [items, setItems] = useState<HandHistory[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -302,7 +304,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
         </motion.div>
       ) : (
         <motion.ul
-          className="space-y-3"
+          className="space-y-1.5"
           variants={listVariants}
           initial="hidden"
           animate="visible"
@@ -317,7 +319,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                 variants={itemVariants}
                 exit="exit"
                 whileHover={{ y: -2 }}
-                className="rounded-2xl border border-emerald-300/40 bg-white/90 p-4 shadow-sm shadow-emerald-500/10 backdrop-blur-sm"
+                className="rounded-xl border border-emerald-300/40 bg-white/90 p-2.5 shadow-sm shadow-emerald-500/10 backdrop-blur-sm"
               >
                 <div className="flex items-start justify-between gap-3">
                   <button
@@ -326,15 +328,12 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                     className="min-w-0 flex-1 text-left"
                     aria-expanded={expanded}
                   >
-                    <div className="truncate text-sm font-semibold text-gray-900">
-                      Hand #{hh.id}
-                    </div>
                     {hh.sessionId && sessionsById.get(hh.sessionId) ? (
-                      <div className="mt-0.5 inline-flex max-w-full items-center gap-1 truncate rounded-full bg-emerald-50 px-2 py-[1px] text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                      <div className="inline-flex max-w-full items-center gap-1 truncate rounded-full bg-emerald-50 px-2 py-[1px] text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
                         🗓 {sessionLabel(sessionsById.get(hh.sessionId)!)}
                       </div>
                     ) : (
-                      <div className="mt-0.5 text-[11px] text-gray-500">
+                      <div className="text-[11px] text-gray-500">
                         {formatDate(hh.createdAt)}
                       </div>
                     )}
@@ -392,6 +391,10 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
         <HandHistoryEditorModal
           initialRawText={editing?.rawText ?? null}
           isEdit={!!editing}
+          onAdvanced={() => {
+            setEditorOpen(false);
+            navigate("/hand-history/advanced");
+          }}
           saving={saving}
           errorMessage={saveError}
           onSave={handleSave}

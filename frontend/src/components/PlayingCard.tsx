@@ -32,11 +32,17 @@ function toName(code: string) {
 // Default widths when no explicit width is provided
 const SIZE_WIDTH: Record<Size, number> = { sm: 40, md: 48, lg: 64 };
 
-// Font-size ratios relative to --card-w (card width)
-const RATIOS: Record<Size, { center: number; cornerRank: number; cornerSuit: number }> = {
-  sm: { center: 0.56, cornerRank: 0.34, cornerSuit: 0.26 }, // smaller center on small
-  md: { center: 0.50, cornerRank: 0.30, cornerSuit: 0.24 },
-  lg: { center: 0.56, cornerRank: 0.34, cornerSuit: 0.26 },
+// Font-size ratios relative to the card's own rendered width (via cqw
+// container query units). All corner/center sizing and offsets are
+// expressed as fractions of the card width so they stay proportionate at
+// any rendered size, not just the size the ratios were tuned at.
+const RATIOS: Record<
+  Size,
+  { center: number; cornerRank: number; cornerSuit: number; cornerInset: number }
+> = {
+  sm: { center: 0.62, cornerRank: 0.4, cornerSuit: 0.3, cornerInset: 0.07 },
+  md: { center: 0.58, cornerRank: 0.36, cornerSuit: 0.27, cornerInset: 0.07 },
+  lg: { center: 0.62, cornerRank: 0.4, cornerSuit: 0.3, cornerInset: 0.07 },
 };
 
 interface PlayingCardProps {
@@ -63,39 +69,57 @@ const PlayingCard: React.FC<PlayingCardProps> = ({ code, size = "md", width, cla
       )}
       style={{
         width: widthToken,
-        ["--card-w"]: widthToken,
+        containerType: "inline-size",
       } as React.CSSProperties}
       aria-label={toName(code)}
       role="img"
       title={toName(code)}
     >
-      {/* big center suit */}
+      {/* big center suit — sized in cqw (% of this element's own rendered
+          width) so it scales correctly whether `width` is a px number, a
+          percentage (grid fill-cell mode), or a clamp() expression. Using
+          a CSS var + calc() here breaks when width is a percentage, since
+          font-size percentages resolve against the parent's font-size, not
+          this element's width. */}
       <div
         className={clsx("pointer-events-none", suit.color)}
         aria-hidden="true"
-        style={{ fontSize: `calc(var(--card-w) * ${ratio.center})` }}
+        style={{ fontSize: `${ratio.center * 100}cqw` }}
       >
         {suit.symbol}
       </div>
 
-      {/* corner indices */}
-      <div className="absolute top-1 left-1 flex flex-col items-center leading-none">
+      {/* corner indices — offset scales with card width so it stays
+          proportionate whether the card is 30px or 130px wide */}
+      <div
+        className="absolute flex flex-col items-center leading-none"
+        style={{
+          top: `${ratio.cornerInset * 100}cqw`,
+          left: `${ratio.cornerInset * 100}cqw`,
+        }}
+      >
         <span className={clsx("font-semibold", suit.color)}
-              style={{ fontSize: `calc(var(--card-w) * ${ratio.cornerRank})` }}>
+              style={{ fontSize: `${ratio.cornerRank * 100}cqw` }}>
           {rankLabel(r)}
         </span>
         <span className={clsx(suit.color)}
-              style={{ fontSize: `calc(var(--card-w) * ${ratio.cornerSuit})` }}>
+              style={{ fontSize: `${ratio.cornerSuit * 100}cqw` }}>
           {suit.symbol}
         </span>
       </div>
-      <div className="absolute bottom-1 right-1 rotate-180 flex flex-col items-center leading-none">
+      <div
+        className="absolute flex rotate-180 flex-col items-center leading-none"
+        style={{
+          bottom: `${ratio.cornerInset * 100}cqw`,
+          right: `${ratio.cornerInset * 100}cqw`,
+        }}
+      >
         <span className={clsx("font-semibold", suit.color)}
-              style={{ fontSize: `calc(var(--card-w) * ${ratio.cornerRank})` }}>
+              style={{ fontSize: `${ratio.cornerRank * 100}cqw` }}>
           {rankLabel(r)}
         </span>
         <span className={clsx(suit.color)}
-              style={{ fontSize: `calc(var(--card-w) * ${ratio.cornerSuit})` }}>
+              style={{ fontSize: `${ratio.cornerSuit * 100}cqw` }}>
           {suit.symbol}
         </span>
       </div>

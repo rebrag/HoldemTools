@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import type { User } from "firebase/auth";
 import { useCurrentTier } from "@/context/TierContext";
 import { useCourseProgress } from "@/hooks/useCourseProgress";
+import CourseOutlineSidebar from "./components/CourseOutlineSidebar";
 
 const sections = [
   {
@@ -73,7 +74,13 @@ const Course: React.FC<CourseProps> = ({ user }) => {
   const completedCount = completedSections.size;
 
   return (
-    <div className="max-w-2xl mx-auto px-4 pb-12 pt-6 space-y-6">
+    <div className="max-w-5xl mx-auto px-4 pb-12 pt-6 lg:flex lg:items-start lg:gap-8">
+      <CourseOutlineSidebar
+        sections={sections}
+        completedSections={completedSections}
+        isFree={isFree}
+      />
+      <div className="min-w-0 flex-1 max-w-2xl mx-auto lg:mx-0 space-y-6">
       {/* Header */}
       <div className="space-y-1">
         <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">
@@ -182,6 +189,7 @@ const Course: React.FC<CourseProps> = ({ user }) => {
         <div className="border-t border-gray-100 px-4 py-3 text-center">
           <p className="text-xs text-gray-400">9 sections · Start with Section 1</p>
         </div>
+      </div>
       </div>
     </div>
   );

@@ -16,6 +16,9 @@ interface CardPickerProps {
   className?: string;
   /** NEW: if true, 13 cards auto-fill the full width using 1fr columns */
   fitToWidth?: boolean;
+  /** When set, cards flow with this minimum px width and wrap onto more rows —
+   *  keeps cards readable inside small regions instead of shrinking to fit. */
+  minCardWidth?: number;
 }
 
 const CardPicker: React.FC<CardPickerProps> = ({
@@ -27,6 +30,7 @@ const CardPicker: React.FC<CardPickerProps> = ({
   gapPx = 4,
   className,
   fitToWidth = false,
+  minCardWidth,
 }) => {
   const widthToken =
     typeof cardWidth === "number" ? `${cardWidth}px` : cardWidth;
@@ -34,7 +38,11 @@ const CardPicker: React.FC<CardPickerProps> = ({
   // 52 codes in suit-major order (spades, hearts, clubs, diamonds), 13 per row
   const codes = SUITS.flatMap((suit) => RANKS.map((r) => `${r}${suit}`));
 
-  const gridTemplateColumns = fitToWidth
+  const fillCell = fitToWidth || minCardWidth != null;
+
+  const gridTemplateColumns = minCardWidth
+    ? `repeat(auto-fill, minmax(${minCardWidth}px, 1fr))` // wrap; readable min size
+    : fitToWidth
     ? "repeat(13, minmax(0, 1fr))"   // split width into 13 equal fractions
     : "repeat(13, var(--card-w))";   // old behavior: explicit card width
 
@@ -72,7 +80,7 @@ const CardPicker: React.FC<CardPickerProps> = ({
             <PlayingCard
               code={code}
               size={size}
-              width={fitToWidth ? "100%" : widthToken}
+              width={fillCell ? "100%" : widthToken}
             />
           </button>
         );
