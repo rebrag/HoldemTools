@@ -2,14 +2,14 @@
 // Visual hand recorder. Setup phase: build the table (seats, cards, blinds).
 // Action phase: a client-side betting engine steps through each player's
 // action; on completion the hand is serialized to a plain-text string.
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { User } from "firebase/auth";
 import PlayingCard from "@/components/PlayingCard";
 import PokerTable, { CardBack, type PokerTableSeat } from "@/components/PokerTable";
 import CopyButton from "@/components/CopyButton";
 import { authedFetch } from "@/lib/api";
-import SeatEditorModal from "./SeatEditorModal";
+import SeatEditorModal, { type SeatEditResult } from "./SeatEditorModal";
 import BoardEditorModal from "./BoardEditorModal";
 import ActionPanel from "./ActionPanel";
 import { positionLabels } from "./positions";
@@ -23,14 +23,27 @@ import {
   type ActionKind,
   type Engine,
 } from "./engine";
-import { serializeHand } from "./serialize";
+import { serializeHand, type EquityInfo, type StreetEquity } from "./serialize";
+import { useShowdownEquity, type EquityRequest } from "./useShowdownEquity";
+import { evalWinners, exactEquity, type EvalGame } from "@/lib/handEval";
 import {
   createInitialState,
+  handSize,
+  resizeHoleCards,
   resizeSeats,
   usedCards,
   type AdvancedHandState,
-  type Seat,
+  type HoleCards,
 } from "./types";
+
+// Map the recorder's game label to the evaluator's game id (null = can't eval).
+function evalGameId(game: string): EvalGame | null {
+  if (game === "Holdem") return "texas-holdem";
+  if (game === "PLO") return "omaha4";
+  if (game === "PLO5") return "omaha5";
+  return null;
+}
+
 
 interface Props {
   user: User | null;
@@ -55,6 +68,7 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [unitMode, setUnitMode] = useState<"bb" | "chips">("bb");
+  const autoSavedRef = useRef(false);
 
   const labels = useMemo(
     () => positionLabels(state.tableSize, state.buttonSeat),
@@ -63,9 +77,76 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
 
   const occupiedCount = state.seats.filter((s) => s.occupied).length;
 
+  const evalGame = useMemo(() => evalGameId(state.game), [state.game]);
+  const cardsPerHand = handSize(state.game);
+
+  // Showdown analysis: which live players/boards can be auto-evaluated.
+  const showdown = useMemo(() => {
+    if (!engine || !engine.done) return null;
+    const live = engine.players
+      .map((p, i) => ({ p, i }))
+      .filter((x) => !x.p.folded);
+    if (live.length < 2) return null; // won by fold — engine already set the winner
+    const handsAssigned = live.map((x) => x.p.hole.filter((c): c is string => !!c));
+    const board1Full = state.board.filter((c): c is string => !!c);
+    const board2Full = state.board2.filter((c): c is string => !!c);
+    const canEval =
+      evalGame != null &&
+      handsAssigned.every((h) => h.length === cardsPerHand) &&
+      board1Full.length === 5 &&
+      (state.numBoards === 1 || board2Full.length === 5);
+    return { live, handsAssigned, board1Full, board2Full, canEval };
+  }, [engine, state, evalGame, cardsPerHand]);
+
+  // Flop and turn equity are exact and cheap to enumerate, so compute them
+  // synchronously. (Preflop is far larger, so it runs in the worker below.)
+  const postflopEquity = useMemo(() => {
+    if (!showdown || !showdown.canEval || !evalGame) return null;
+    const hands = showdown.handsAssigned;
+    const at = (cards: number) => {
+      const e1 = exactEquity(evalGame, showdown.board1Full.slice(0, cards), hands);
+      if (state.numBoards === 2) {
+        const e2 = exactEquity(evalGame, showdown.board2Full.slice(0, cards), hands);
+        return e1.map((v, k) => (v + e2[k]) / 2);
+      }
+      return e1;
+    };
+    return { flop: at(3), turn: at(4) };
+  }, [showdown, evalGame, state.numBoards]);
+
+  // Preflop equity via the Monte-Carlo worker (empty board).
+  const equityReq: EquityRequest | null = useMemo(() => {
+    if (!showdown || !showdown.canEval || !evalGame) return null;
+    const hands = showdown.handsAssigned.map((h) => h.join(" "));
+    return {
+      game: evalGame,
+      hands,
+      board1: "",
+      board2: state.numBoards === 2 ? "" : null,
+      key: JSON.stringify({ evalGame, hands, nb: state.numBoards }),
+    };
+  }, [showdown, evalGame, state.numBoards]);
+
+  const { pct: preEq, computing: equityComputing } = useShowdownEquity(equityReq);
+
+  // Assemble per-street equity keyed by engine player index for serialization.
+  const equityInfo: EquityInfo | undefined = useMemo(() => {
+    if (!showdown || !postflopEquity) return undefined;
+    const byPlayer: Record<number, StreetEquity> = {};
+    showdown.live.forEach((x, k) => {
+      byPlayer[x.i] = {
+        pre: preEq ? preEq[k] : undefined,
+        flop: postflopEquity.flop[k],
+        turn: postflopEquity.turn[k],
+      };
+    });
+    return { byPlayer };
+  }, [showdown, postflopEquity, preEq]);
+
   const serialized = useMemo(
-    () => (engine && engine.done && engine.winners ? serializeHand(state, engine) : ""),
-    [engine, state]
+    () =>
+      engine && engine.done && engine.winners ? serializeHand(state, engine, equityInfo) : "",
+    [engine, state, equityInfo]
   );
 
   const update = (partial: Partial<AdvancedHandState>) =>
@@ -80,13 +161,43 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
       heroSeat: Math.min(prev.heroSeat, size - 1),
     }));
 
-  const saveSeat = (index: number, seat: Seat, makeButton: boolean, makeHero: boolean) => {
+  // Changing the game resizes every seat's hole cards to the new hand size
+  // (2 = Hold'em, 4 = PLO, 5 = PLO5).
+  const onGameChange = (game: string) => {
+    const cards = handSize(game);
+    setState((prev) => ({
+      ...prev,
+      game,
+      seats: prev.seats.map((s) => ({ ...s, holeCards: resizeHoleCards(s.holeCards, cards) })),
+    }));
+  };
+
+  const saveSeat = (index: number, result: SeatEditResult) => {
+    const { seat, makeButton, makeHero, makeStraddle, straddleAmount } = result;
     setState((prev) => ({
       ...prev,
       seats: prev.seats.map((s, i) => (i === index ? seat : s)),
       buttonSeat: makeButton ? index : prev.buttonSeat,
       heroSeat: makeHero ? index : prev.heroSeat,
+      straddleSeat: makeStraddle ? index : prev.straddleSeat === index ? null : prev.straddleSeat,
+      straddleAmount: makeStraddle ? straddleAmount : prev.straddleAmount,
     }));
+    // Mid-hand edits (e.g. revealing hole cards at showdown) flow into the live
+    // engine so the serialized history reflects them. Betting is untouched.
+    if (engine) {
+      setEngine((prev) =>
+        prev
+          ? {
+              ...prev,
+              players: prev.players.map((p) =>
+                p.seat === index
+                  ? { ...p, hole: [...seat.holeCards] as HoleCards, name: seat.name || p.pos }
+                  : p
+              ),
+            }
+          : prev
+      );
+    }
     setEditingSeat(null);
   };
 
@@ -94,6 +205,9 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
     setState(createInitialState(state.tableSize));
     setEngine(null);
     setHistory([]);
+    setWinnerSel([]);
+    setSaveError(null);
+    autoSavedRef.current = false;
     setPhase("setup");
   };
 
@@ -145,6 +259,38 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
     }
   };
 
+  // Decide the winner(s) from the actual cards instead of asking the user.
+  // Falls back to the manual picker when cards/boards are incomplete (canEval).
+  useEffect(() => {
+    if (!engine || !engine.done || !showdown || !showdown.canEval || !evalGame) return;
+    const needB1 = engine.winners === null;
+    const needB2 = engine.numBoards === 2 && engine.winners2 === null;
+    if (!needB1 && !needB2) return;
+    const handsForEval = engine.players.map((p) =>
+      p.folded ? null : p.hole.filter((c): c is string => !!c)
+    );
+    let ne = engine;
+    if (needB1) ne = setWinners(ne, evalWinners(evalGame, showdown.board1Full, handsForEval), 1);
+    if (needB2) ne = setWinners(ne, evalWinners(evalGame, showdown.board2Full, handsForEval), 2);
+    setEngine(ne);
+  }, [engine, showdown, evalGame]);
+
+  // Once the hand is fully resolved (winners on every board) and any all-in
+  // equity has been computed, save it automatically. The ref guards re-firing.
+  useEffect(() => {
+    const isComplete =
+      !!engine &&
+      engine.done &&
+      !!engine.winners &&
+      (engine.numBoards === 1 || !!engine.winners2);
+    const equityReady = !equityReq || preEq != null;
+    if (isComplete && equityReady && serialized && !autoSavedRef.current && !saving) {
+      autoSavedRef.current = true;
+      void saveHand();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine, serialized, equityReq, preEq]);
+
   if (!user) {
     return (
       <div className="mx-auto max-w-3xl px-4 pt-20 pb-12">
@@ -180,12 +326,13 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
         ? `${fmtUnit(ep.stack, engine!.bb, unitMode)}${unitMode === "bb" ? " BB" : ""}`
         : seat.stack.trim();
       const committed = ep?.committed ?? 0;
+      const straddleBadge = !engine && state.straddleSeat === i ? "STR" : undefined;
       return {
         key: i,
         label,
         stackText: stackText || undefined,
         committedText:
-          committed > 0 ? fmtUnit(committed, engine!.bb, unitMode) : undefined,
+          committed > 0 ? fmtUnit(committed, engine!.bb, unitMode) : straddleBadge,
         holeCards: seat.holeCards,
         isButton: state.buttonSeat === i,
         isHero: state.heroSeat === i,
@@ -198,23 +345,11 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
 
   return (
     <div className="mx-auto max-w-2xl px-4 pt-6 pb-16">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={() => navigate("/hand-history")}
-          className="text-sm text-emerald-200 hover:text-white transition"
-        >
-          ← Hand Histories
-        </button>
-        <h1 className="text-lg font-semibold text-white">Hand Recorder</h1>
-        <span className="w-[110px]" />
-      </div>
-
       {/* ───────── Table ───────── */}
       <PokerTable
         size={state.tableSize}
         seats={tableSeats}
-        onSeatClick={phase === "setup" ? (i) => setEditingSeat(i) : undefined}
+        onSeatClick={(i) => setEditingSeat(i)}
         center={
           <>
             {engine ? (
@@ -227,39 +362,43 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
                 Tap a card to edit
               </span>
             )}
-            <button
-              type="button"
-              onClick={() => setEditingBoard(true)}
-              className="flex gap-1"
-              aria-label="Edit board"
-            >
-              {[0, 1, 2, 3, 4].map((i) => {
-                const revealed = !engine || i < revealCount;
-                const c = state.board[i];
-                return revealed && c ? (
-                  <PlayingCard key={i} code={c} size="sm" width={26} />
-                ) : (
-                  <CardBack key={i} w={26} />
-                );
-              })}
-            </button>
-            {state.numBoards === 2 && (
-              <button
-                type="button"
-                onClick={() => setEditingBoard2(true)}
-                className="flex gap-1"
-                aria-label="Edit board 2"
-              >
-                {[0, 1, 2, 3, 4].map((i) => {
-                  const revealed = !engine || i < revealCount;
-                  const c = state.board2[i];
-                  return revealed && c ? (
-                    <PlayingCard key={i} code={c} size="sm" width={22} />
-                  ) : (
-                    <CardBack key={i} w={22} />
-                  );
-                })}
-              </button>
+            <BoardRow
+              board={state.board}
+              revealCount={revealCount}
+              live={!!engine}
+              onEdit={() => setEditingBoard(true)}
+              ariaLabel="Edit board"
+            />
+            {state.numBoards === 2 ? (
+              <div className="flex items-center gap-1">
+                <BoardRow
+                  board={state.board2}
+                  revealCount={revealCount}
+                  live={!!engine}
+                  onEdit={() => setEditingBoard2(true)}
+                  ariaLabel="Edit board 2"
+                />
+                {!engine && (
+                  <button
+                    type="button"
+                    onClick={() => update({ numBoards: 1 })}
+                    aria-label="Remove second board"
+                    className="flex h-4 w-4 items-center justify-center rounded-full bg-rose-600/90 text-[10px] font-bold text-white hover:bg-rose-500"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            ) : (
+              !engine && (
+                <button
+                  type="button"
+                  onClick={() => update({ numBoards: 2 })}
+                  className="rounded-full border border-white/25 bg-black/40 px-2 py-0.5 text-[9px] font-semibold text-white/80 hover:bg-black/60"
+                >
+                  + 2nd board
+                </button>
+              )
             )}
             <span className="text-[9px] font-semibold uppercase tracking-widest text-white/25">
               HoldemTools
@@ -292,7 +431,16 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
             </>
           )}
 
-          {needWinner && (
+          {engine.done && !!showdown?.canEval && (needWinner || equityComputing) && (
+            <div className="mt-3 rounded-2xl border border-emerald-300/40 bg-slate-900/70 p-3 text-sm text-emerald-100">
+              <span className="inline-flex items-center gap-2">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+                {needWinner ? "Evaluating showdown…" : "Calculating equities…"}
+              </span>
+            </div>
+          )}
+
+          {needWinner && !showdown?.canEval && (
             <div className="mt-3 rounded-2xl border border-amber-300/40 bg-amber-950/40 p-3 text-sm text-amber-100">
               <p className="mb-2 font-semibold">
                 Showdown — who won?
@@ -399,7 +547,7 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
               </select>
             </Field>
             <Field label="Game">
-              <select className={inputCls} value={state.game} onChange={(e) => update({ game: e.target.value })}>
+              <select className={inputCls} value={state.game} onChange={(e) => onGameChange(e.target.value)}>
                 <option>Holdem</option>
                 <option>PLO</option>
                 <option>PLO5</option>
@@ -412,51 +560,10 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
             <Field label="Big blind">
               <input type="tel" inputMode="decimal" className={inputCls} value={state.bigBlind} onChange={(e) => update({ bigBlind: e.target.value })} />
             </Field>
-            <Field label="Ante (per player)">
+            <Field label="Ante (total)">
               <input type="tel" inputMode="decimal" className={inputCls} value={state.ante} onChange={(e) => update({ ante: e.target.value })} />
             </Field>
           </div>
-
-          <div className="mt-3 grid grid-cols-2 gap-3">
-            <Field label="Straddle seat">
-              <select
-                className={inputCls}
-                value={state.straddleSeat ?? ""}
-                onChange={(e) =>
-                  update({ straddleSeat: e.target.value === "" ? null : Number(e.target.value) })
-                }
-              >
-                <option value="">None</option>
-                {state.seats.map((seat, i) =>
-                  seat.occupied && labels[i] !== "BB" ? (
-                    <option key={i} value={i}>
-                      {seat.name.trim() || labels[i]}
-                    </option>
-                  ) : null
-                )}
-              </select>
-            </Field>
-            <Field label="Straddle amount">
-              <input
-                type="tel"
-                inputMode="decimal"
-                className={inputCls}
-                disabled={state.straddleSeat === null}
-                value={state.straddleAmount}
-                onChange={(e) => update({ straddleAmount: e.target.value })}
-              />
-            </Field>
-          </div>
-
-          <label className="mt-3 flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-medium text-gray-700 transition hover:bg-gray-100">
-            <input
-              type="checkbox"
-              className="h-4 w-4 accent-emerald-600"
-              checked={state.numBoards === 2}
-              onChange={(e) => update({ numBoards: e.target.checked ? 2 : 1 })}
-            />
-            Run it twice (2 boards)
-          </label>
 
           <div className="mt-3 flex flex-col gap-1">
             <label className="text-xs font-medium text-gray-700">Comment</label>
@@ -471,7 +578,8 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
 
           <p className="mt-3 text-[11px] text-gray-500">
             Tap each seat to set its name, stack, and hole cards. Mark the dealer
-            button and your own seat (hero). Then press Start to record the action.
+            button, your own seat (hero), or a straddle. Use the “+ 2nd board” chip
+            on the table to play a double board. Then press Start to record the action.
           </p>
 
           <div className="mt-3 flex items-center justify-between gap-3">
@@ -500,10 +608,13 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
           seat={state.seats[editingSeat]}
           isButton={state.buttonSeat === editingSeat}
           isHero={state.heroSeat === editingSeat}
+          isStraddle={state.straddleSeat === editingSeat}
+          straddleAmount={state.straddleAmount}
+          bigBlind={state.bigBlind}
+          canStraddle={labels[editingSeat] !== "BB"}
+          capacity={cardsPerHand}
           otherUsed={usedCards(state, state.seats[editingSeat].holeCards)}
-          onSave={(seat, makeButton, makeHero) =>
-            saveSeat(editingSeat, seat, makeButton, makeHero)
-          }
+          onSave={(result) => saveSeat(editingSeat, result)}
           onClose={() => setEditingSeat(null)}
         />
       )}
@@ -540,6 +651,28 @@ const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, 
     <label className="text-xs font-medium text-gray-700">{label}</label>
     {children}
   </div>
+);
+
+// A row of 5 board cards (face-up when revealed, else a card back) that opens
+// the board editor on tap. Both boards use the same card size.
+const BoardRow: React.FC<{
+  board: (string | null)[];
+  revealCount: number;
+  live: boolean;
+  onEdit: () => void;
+  ariaLabel: string;
+}> = ({ board, revealCount, live, onEdit, ariaLabel }) => (
+  <button type="button" onClick={onEdit} className="flex gap-1" aria-label={ariaLabel}>
+    {[0, 1, 2, 3, 4].map((i) => {
+      const revealed = !live || i < revealCount;
+      const c = board[i];
+      return revealed && c ? (
+        <PlayingCard key={i} code={c} size="sm" width={26} />
+      ) : (
+        <CardBack key={i} w={26} />
+      );
+    })}
+  </button>
 );
 
 export default AdvancedHandHistory;

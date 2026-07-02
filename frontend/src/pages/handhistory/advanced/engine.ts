@@ -25,6 +25,15 @@ export interface StreetMeta {
   players: number; // not folded at street start
 }
 
+// A single betting action, recorded structurally so serializers can render it
+// in any unit (the text format uses big blinds).
+export interface EngineAction {
+  player: number; // index into engine.players
+  kind: "fold" | "check" | "call" | "bet" | "raise";
+  amount: number; // call: chips added this action; bet/raise: total street commitment
+  allIn: boolean;
+}
+
 export interface Engine {
   players: EnginePlayer[]; // in seat order (only occupied seats)
   bb: number;
@@ -35,12 +44,14 @@ export interface Engine {
   numBoards: 1 | 2;
   street: number; // 0 preflop, 1 flop, 2 turn, 3 river
   reached: number; // highest street reached (for board display / serialization)
+  allInStreet: number | null; // street at which betting closed with <2 able to act
+
   currentBet: number;
   minRaise: number;
   toAct: number | null; // index into players, null when resolving/done
   acted: boolean[];
   pot: number;
-  streetTokens: string[][]; // formatted action strings, per street
+  streetActions: EngineAction[][]; // structured actions, per street
   streetMeta: StreetMeta[]; // index by street (1..3 populated)
   done: boolean;
   winners: number[] | null; // player indices for board 1; null = needs user selection
@@ -77,7 +88,7 @@ function clone(e: Engine): Engine {
     ...e,
     players: e.players.map((p) => ({ ...p, hole: [...p.hole] as HoleCards })),
     acted: [...e.acted],
-    streetTokens: e.streetTokens.map((t) => [...t]),
+    streetActions: e.streetActions.map((t) => t.map((a) => ({ ...a }))),
     streetMeta: e.streetMeta.map((m) => ({ ...m })),
     winners: e.winners ? [...e.winners] : null,
     winners2: e.winners2 ? [...e.winners2] : null,
@@ -101,7 +112,8 @@ function returnUncalled(e: Engine): void {
     p.totalCommitted -= excess;
     p.allIn = p.stack <= 0;
     e.pot -= excess;
-    e.streetTokens[e.street].push(`Uncalled bet (${fmtChips(excess)}) returned to ${p.name}`);
+    // The compact text format reflects returned chips in the final win amounts,
+    // so no explicit "uncalled bet returned" action is recorded here.
   }
 }
 
@@ -174,12 +186,13 @@ export function buildEngine(state: AdvancedHandState): Engine {
     numBoards: state.numBoards,
     street: 0,
     reached: 0,
+    allInStreet: null,
     currentBet: 0,
     minRaise: bb,
     toAct: null,
     acted: players.map(() => false),
     pot: 0,
-    streetTokens: [[], [], [], []],
+    streetActions: [[], [], [], []],
     streetMeta: [
       { potStart: 0, players: players.length },
       { potStart: 0, players: 0 },
@@ -195,16 +208,9 @@ export function buildEngine(state: AdvancedHandState): Engine {
   const heroIdx = players.findIndex((p) => p.seat === state.heroSeat);
   e.heroIndex = heroIdx >= 0 ? heroIdx : null;
 
-  // Antes (dead money — do not count toward the street bet).
-  if (ante > 0) {
-    for (const p of players) {
-      const a = Math.min(ante, p.stack);
-      p.stack -= a;
-      p.totalCommitted += a;
-      e.pot += a;
-      if (p.stack <= 0) p.allIn = true;
-    }
-  }
+  // Ante is a single total contribution of dead money added straight to the
+  // pot; it is not deducted from any player's stack.
+  if (ante > 0) e.pot += ante;
 
   // Blinds.
   const sbIdx = players.findIndex((p) => p.pos === "SB");
@@ -278,10 +284,14 @@ export function applyAction(prev: Engine, kind: ActionKind, amountTo?: number): 
   if (e.toAct == null || e.done) return e;
   const idx = e.toAct;
   const p = e.players[idx];
-  const tokens = e.streetTokens[e.street];
+  const actions = e.streetActions[e.street];
 
-  const pushAggressive = (to: number, verb: "bets" | "raises to") => {
-    const put = to - p.committed;
+  const record = (k: EngineAction["kind"], amount: number, allIn: boolean) =>
+    actions.push({ player: idx, kind: k, amount, allIn });
+
+  const pushAggressive = (to: number, k: "bet" | "raise") => {
+    const before = p.committed;
+    const put = to - before;
     commit(p, put);
     e.currentBet = p.committed;
     e.minRaise = Math.max(e.bb, put); // raise increment ≈ amount added
@@ -289,10 +299,8 @@ export function applyAction(prev: Engine, kind: ActionKind, amountTo?: number): 
     e.acted = e.players.map((pl, i) =>
       i === idx ? true : pl.folded || pl.allIn ? true : false
     );
-    const tail = p.allIn ? " and is all-in" : "";
-    const amt = fmtChips(p.committed);
-    const label = verb === "bets" ? `bets ${amt}` : `raises ${amt} to ${amt}`;
-    tokens.push(`${p.name} ${label}${tail}`);
+    e.pot += p.committed - before;
+    record(k, p.committed, p.allIn); // amount = total street commitment
   };
 
   switch (kind) {
@@ -300,47 +308,42 @@ export function applyAction(prev: Engine, kind: ActionKind, amountTo?: number): 
       p.folded = true;
       p.foldedStreet = e.street;
       e.acted[idx] = true;
-      tokens.push(`${p.name} folds`);
+      record("fold", 0, false);
       break;
     case "check":
       e.acted[idx] = true;
-      tokens.push(`${p.name} checks`);
+      record("check", 0, false);
       break;
     case "call": {
       const toCall = e.currentBet - p.committed;
       const put = commit(p, toCall);
       e.pot += put;
       e.acted[idx] = true;
-      const tail = p.allIn ? " and is all-in" : "";
-      tokens.push(`${p.name} calls ${fmtChips(put)}${tail}`);
+      record("call", put, p.allIn); // amount = chips added this action
       break;
     }
     case "bet": {
       const to = Math.max(amountTo ?? e.bb, p.committed + e.bb);
-      const before = p.committed;
-      pushAggressive(Math.min(to, p.committed + p.stack), "bets");
-      e.pot += p.committed - before;
+      pushAggressive(Math.min(to, p.committed + p.stack), "bet");
       break;
     }
     case "raise": {
       const to = amountTo ?? e.currentBet + e.minRaise;
-      const before = p.committed;
-      pushAggressive(Math.min(to, p.committed + p.stack), "raises to");
-      e.pot += p.committed - before;
+      pushAggressive(Math.min(to, p.committed + p.stack), "raise");
       break;
     }
     case "allin": {
       const to = p.committed + p.stack;
-      const before = p.committed;
       if (to > e.currentBet) {
-        pushAggressive(to, e.currentBet === 0 ? "bets" : "raises to");
+        pushAggressive(to, e.currentBet === 0 ? "bet" : "raise");
       } else {
         // short all-in call
+        const before = p.committed;
         commit(p, p.stack);
         e.acted[idx] = true;
-        tokens.push(`${p.name} calls ${fmtChips(p.committed - before)} and is all-in`);
+        e.pot += p.committed - before;
+        record("call", p.committed - before, true);
       }
-      e.pot += p.committed - before;
       break;
     }
   }
@@ -371,6 +374,12 @@ function canActCount(e: Engine): number {
 }
 
 function advanceStreet(e: Engine): Engine {
+  // If fewer than two players can still act, the money is all in as of the
+  // just-completed street; remaining streets are pure run-outs. Record that
+  // street so callers can compute all-in equity from the right board state.
+  if (e.allInStreet == null && canActCount(e) < 2 && e.players.filter((p) => !p.folded).length >= 2) {
+    e.allInStreet = e.street;
+  }
   // Reset per-street state.
   for (const p of e.players) p.committed = 0;
   e.currentBet = 0;

@@ -1,7 +1,16 @@
 // src/pages/handhistory/advanced/types.ts
 // State model for the Advanced Hand History recorder (visual hand entry).
 
-export type HoleCards = [string | null, string | null];
+// Hole cards for a seat. Length matches the game's hand size (2 for Hold'em,
+// 4 for PLO, 5 for PLO5); empty slots are null.
+export type HoleCards = (string | null)[];
+
+// Cards dealt to each player, by game.
+export function handSize(game: string): number {
+  if (game === "PLO") return 4;
+  if (game === "PLO5") return 5;
+  return 2; // Holdem / Other
+}
 
 export interface Seat {
   occupied: boolean;
@@ -27,8 +36,19 @@ export interface AdvancedHandState {
   board2: (string | null)[]; // second board, used when numBoards === 2
 }
 
-export function emptySeat(): Seat {
-  return { occupied: true, name: "", stack: "", holeCards: [null, null] };
+export function emptySeat(cards = 2): Seat {
+  return {
+    occupied: true,
+    name: "",
+    stack: "",
+    holeCards: Array.from({ length: cards }, () => null),
+  };
+}
+
+// Grow/shrink a seat's hole cards to a new hand size, keeping assigned cards.
+export function resizeHoleCards(hole: HoleCards, cards: number): HoleCards {
+  const assigned = hole.filter((c): c is string => !!c);
+  return Array.from({ length: cards }, (_, i) => assigned[i] ?? null);
 }
 
 export function createInitialState(tableSize = 9): AdvancedHandState {

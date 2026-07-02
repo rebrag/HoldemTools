@@ -10,7 +10,6 @@ import {
 } from "framer-motion";
 import { ArrowRight, ArrowDown, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { AuroraBackground } from "../shared/AuroraBackground";
 import { Meteors } from "../shared/Meteors";
 import { Marquee } from "../shared/Marquee";
 import { TiltCard } from "../shared/TiltCard";
@@ -37,8 +36,6 @@ export default function KineticArcade(): JSX.Element {
 
   return (
     <main className="relative min-h-screen overflow-clip text-slate-100">
-      <AuroraBackground variant="table" />
-
       {/* HERO */}
       <section className="relative">
         <Meteors count={16} />

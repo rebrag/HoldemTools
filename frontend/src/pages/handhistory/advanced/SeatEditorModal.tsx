@@ -5,13 +5,26 @@ import PlayingCard from "@/components/PlayingCard";
 import CardPicker from "@/components/CardPicker";
 import type { HoleCards, Seat } from "./types";
 
+export interface SeatEditResult {
+  seat: Seat;
+  makeButton: boolean;
+  makeHero: boolean;
+  makeStraddle: boolean;
+  straddleAmount: string;
+}
+
 interface Props {
   positionLabel: string;
   seat: Seat;
   isButton: boolean;
   isHero: boolean;
+  isStraddle: boolean;
+  straddleAmount: string; // current straddle amount in state
+  bigBlind: string; // used to default a fresh straddle to 2× BB
+  canStraddle: boolean; // false for the BB seat (already a forced bet)
+  capacity: number; // hole cards for this game (2 / 4 / 5)
   otherUsed: Set<string>; // cards assigned elsewhere (other seats + board)
-  onSave: (seat: Seat, makeButton: boolean, makeHero: boolean) => void;
+  onSave: (result: SeatEditResult) => void;
   onClose: () => void;
 }
 
@@ -20,6 +33,11 @@ const SeatEditorModal: React.FC<Props> = ({
   seat,
   isButton,
   isHero,
+  isStraddle,
+  straddleAmount,
+  bigBlind,
+  canStraddle,
+  capacity,
   otherUsed,
   onSave,
   onClose,
@@ -30,6 +48,14 @@ const SeatEditorModal: React.FC<Props> = ({
   const [hole, setHole] = useState<HoleCards>(seat.holeCards);
   const [makeButton, setMakeButton] = useState(isButton);
   const [makeHero, setMakeHero] = useState(isHero);
+  const [makeStraddle, setMakeStraddle] = useState(isStraddle);
+  const defaultStraddle = (() => {
+    const bb = parseFloat(bigBlind);
+    return Number.isFinite(bb) && bb > 0 ? (bb * 2).toString() : "2";
+  })();
+  const [straddleAmt, setStraddleAmt] = useState(
+    isStraddle && straddleAmount ? straddleAmount : defaultStraddle
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -49,26 +75,32 @@ const SeatEditorModal: React.FC<Props> = ({
   const selected = hole.filter((c): c is string => !!c);
   const gridUsed = new Set<string>([...otherUsed, ...selected]);
 
+  const pad = (arr: string[]): HoleCards =>
+    Array.from({ length: capacity }, (_, i) => arr[i] ?? null);
+
   const handlePick = (code: string) => {
     setHole((prev) => {
       const arr = prev.filter((c): c is string => !!c);
-      if (arr.includes(code)) {
-        const next = arr.filter((c) => c !== code);
-        return [next[0] ?? null, next[1] ?? null];
-      }
+      if (arr.includes(code)) return pad(arr.filter((c) => c !== code));
       if (otherUsed.has(code)) return prev; // used elsewhere
-      if (arr.length >= 2) return prev;
-      const next = [...arr, code];
-      return [next[0] ?? null, next[1] ?? null];
+      if (arr.length >= capacity) return prev;
+      return pad([...arr, code]);
     });
   };
 
   const save = () =>
-    onSave(
-      { occupied, name: name.trim(), stack: stack.trim(), holeCards: hole },
+    onSave({
+      seat: {
+        occupied,
+        name: name.trim(),
+        stack: stack.trim(),
+        holeCards: pad(hole.filter((c): c is string => !!c)),
+      },
       makeButton,
-      makeHero
-    );
+      makeHero,
+      makeStraddle: canStraddle && makeStraddle,
+      straddleAmount: straddleAmt.trim() || defaultStraddle,
+    });
 
   return createPortal(
     <div className="fixed inset-0 z-[1300] flex items-start justify-center overflow-y-auto p-4 sm:p-8">
@@ -148,7 +180,31 @@ const SeatEditorModal: React.FC<Props> = ({
             />
             This is my hand (hero)
           </label>
+          {canStraddle && (
+            <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-700">
+              <input
+                type="checkbox"
+                checked={makeStraddle}
+                onChange={(e) => setMakeStraddle(e.target.checked)}
+                className="h-4 w-4 accent-emerald-600"
+              />
+              Posts a straddle
+            </label>
+          )}
         </div>
+
+        {canStraddle && makeStraddle && (
+          <div className="mt-3 flex items-center gap-2">
+            <label className="text-xs font-medium text-gray-700">Straddle amount</label>
+            <input
+              type="tel"
+              inputMode="decimal"
+              value={straddleAmt}
+              onChange={(e) => setStraddleAmt(e.target.value)}
+              className="w-24 rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
+            />
+          </div>
+        )}
 
         {/* Hole cards */}
         <div className="mt-4">
@@ -164,10 +220,10 @@ const SeatEditorModal: React.FC<Props> = ({
               </button>
             )}
           </div>
-          <div className="mb-2 flex gap-2">
-            {[0, 1].map((i) =>
-              hole[i] ? (
-                <PlayingCard key={i} code={hole[i]!} size="md" width={40} />
+          <div className="mb-2 flex flex-wrap gap-2">
+            {Array.from({ length: capacity }, (_, i) => hole[i] ?? null).map((c, i) =>
+              c ? (
+                <PlayingCard key={i} code={c} size="md" width={40} />
               ) : (
                 <div
                   key={i}

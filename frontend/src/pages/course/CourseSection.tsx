@@ -10,23 +10,11 @@ import { useState } from "react";
 import Section1 from "./sections/Section1";
 import Section2 from "./sections/Section2";
 import Section3 from "./sections/Section3";
-import Section4 from "./sections/Section4";
-import Section5 from "./sections/Section5";
-import Section6 from "./sections/Section6";
-import Section7 from "./sections/Section7";
-import Section8 from "./sections/Section8";
-import Section9 from "./sections/Section9";
 
 const SECTIONS = [
-  { number: 1, title: "Why Math Matters" },
-  { number: 2, title: "Measurements" },
-  { number: 3, title: "Getting Started with Numbers" },
-  { number: 4, title: "Hit the Deck" },
-  { number: 5, title: "Putting it Together" },
-  { number: 6, title: "World of the Unknown" },
-  { number: 7, title: "Aggression" },
-  { number: 8, title: "At the Table" },
-  { number: 9, title: "Summary" },
+  { number: 1, title: "The Rules of Poker" },
+  { number: 2, title: "Texas Hold'em" },
+  { number: 3, title: "Other Poker Variants" },
 ];
 
 function getSectionContent(id: number): React.ReactNode {
@@ -34,12 +22,6 @@ function getSectionContent(id: number): React.ReactNode {
     case 1: return <Section1 />;
     case 2: return <Section2 />;
     case 3: return <Section3 />;
-    case 4: return <Section4 />;
-    case 5: return <Section5 />;
-    case 6: return <Section6 />;
-    case 7: return <Section7 />;
-    case 8: return <Section8 />;
-    case 9: return <Section9 />;
     default:
       return (
         <div className="text-center py-12 text-gray-400 text-sm">
@@ -72,7 +54,7 @@ const CourseSection: React.FC<CourseSectionProps> = ({ user }) => {
   const { completedSections, markComplete } = useCourseProgress(user?.uid ?? null);
   const [upsellOpen, setUpsellOpen] = useState(false);
 
-  const id = Math.max(1, Math.min(9, parseInt(sectionId ?? "1", 10) || 1));
+  const id = Math.max(1, Math.min(SECTIONS.length, parseInt(sectionId ?? "1", 10) || 1));
   const section = SECTIONS[id - 1];
   const isFirst = id === 1;
   const isLast = id === SECTIONS.length;
@@ -144,7 +126,7 @@ const CourseSection: React.FC<CourseSectionProps> = ({ user }) => {
             <div className="space-y-1">
               <p className="text-base font-semibold text-gray-900">Plus or Pro required</p>
               <p className="text-sm text-gray-500 max-w-xs">
-                Upgrade your plan to unlock all 9 course sections and track your progress.
+                Upgrade your plan to unlock all course sections and track your progress.
               </p>
             </div>
             <button

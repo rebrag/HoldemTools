@@ -25,12 +25,17 @@ const ActionPanel: React.FC<Props> = ({ engine, unitMode, onAction, onUndo, canU
   const value = raiseTo ?? la.minRaiseTo;
   const callAmt = la.callAmount;
   const potAfterCall = engine.pot + callAmt;
-  const potRaiseTo = Math.min(engine.currentBet + potAfterCall, la.maxTo);
   const isBet = la.canBet;
 
   const clamp = (v: number) => Math.max(la.minRaiseTo, Math.min(v, la.maxTo));
   const disp = (chips: number) => `${fmtUnit(chips, bb, unitMode)}${unitMode === "bb" ? " BB" : ""}`;
   const displayValue = unitMode === "chips" ? clamp(value) : Math.round((clamp(value) / bb) * 100) / 100;
+
+  // A pot-fraction raise/bet "to" amount: call the current bet, then add a
+  // fraction of the resulting pot. f = 1 is a full pot-sized bet/raise.
+  const fracRaiseTo = (f: number) => clamp(engine.currentBet + f * potAfterCall);
+  // Nudge step: one displayed unit (1 chip, or 1 BB worth of chips).
+  const step = unitMode === "chips" ? 1 : bb;
 
   const submitAggressive = () => {
     const to = clamp(value);
@@ -90,52 +95,92 @@ const ActionPanel: React.FC<Props> = ({ engine, unitMode, onAction, onUndo, canU
 
       {/* Raise/bet sizing */}
       {(la.canBet || la.canRaise) && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <input
-            type="tel"
-            inputMode="decimal"
-            value={displayValue}
-            onChange={(e) => {
-              const raw = Number(e.target.value);
-              setRaiseTo(unitMode === "chips" ? raw : raw * bb);
-            }}
-            className="w-24 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-          />
-          <span className="text-[11px] text-emerald-100/60">
-            {unitMode === "chips" ? "chips (to)" : "BB (to)"}
-          </span>
-          <div className="ml-auto flex gap-1.5">
+        <>
+          <div className="mt-2 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setRaiseTo(clamp(value - step))}
+              aria-label="Decrease by one"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-slate-700 text-lg font-bold leading-none hover:bg-slate-600 active:translate-y-[1px]"
+            >
+              −
+            </button>
+            <input
+              type="tel"
+              inputMode="decimal"
+              value={displayValue}
+              onChange={(e) => {
+                const raw = Number(e.target.value);
+                setRaiseTo(unitMode === "chips" ? raw : raw * bb);
+              }}
+              className="w-full min-w-0 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-center text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            <button
+              type="button"
+              onClick={() => setRaiseTo(clamp(value + step))}
+              aria-label="Increase by one"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-slate-700 text-lg font-bold leading-none hover:bg-slate-600 active:translate-y-[1px]"
+            >
+              +
+            </button>
+            <span className="shrink-0 text-[11px] text-emerald-100/60">
+              {unitMode === "chips" ? "chips" : "BB"}
+            </span>
+          </div>
+
+          <div className="mt-2 grid grid-cols-3 gap-1.5 sm:grid-cols-6">
             <button
               type="button"
               onClick={() => setRaiseTo(la.minRaiseTo)}
-              className="rounded-md bg-slate-700 px-2 py-1 text-[11px] font-medium hover:bg-slate-600"
+              className="rounded-md bg-slate-700 px-2 py-1.5 text-[11px] font-medium hover:bg-slate-600"
             >
               Min
             </button>
             <button
               type="button"
-              onClick={() => setRaiseTo(clamp(potRaiseTo))}
-              className="rounded-md bg-slate-700 px-2 py-1 text-[11px] font-medium hover:bg-slate-600"
+              onClick={() => setRaiseTo(fracRaiseTo(1 / 3))}
+              className="rounded-md bg-slate-700 px-2 py-1.5 text-[11px] font-medium hover:bg-slate-600"
+            >
+              ⅓ Pot
+            </button>
+            <button
+              type="button"
+              onClick={() => setRaiseTo(fracRaiseTo(1 / 2))}
+              className="rounded-md bg-slate-700 px-2 py-1.5 text-[11px] font-medium hover:bg-slate-600"
+            >
+              ½ Pot
+            </button>
+            <button
+              type="button"
+              onClick={() => setRaiseTo(fracRaiseTo(3 / 4))}
+              className="rounded-md bg-slate-700 px-2 py-1.5 text-[11px] font-medium hover:bg-slate-600"
+            >
+              ¾ Pot
+            </button>
+            <button
+              type="button"
+              onClick={() => setRaiseTo(fracRaiseTo(1))}
+              className="rounded-md bg-slate-700 px-2 py-1.5 text-[11px] font-medium hover:bg-slate-600"
             >
               Pot
             </button>
             <button
               type="button"
               onClick={() => onAction("allin")}
-              className="rounded-md bg-amber-600 px-2 py-1 text-[11px] font-semibold hover:bg-amber-500"
+              className="rounded-md bg-amber-600 px-2 py-1.5 text-[11px] font-semibold hover:bg-amber-500"
             >
-              All-in {disp(la.maxTo)}
+              All-in
             </button>
           </div>
-        </div>
+        </>
       )}
 
-      <div className="mt-2 flex justify-end">
+      <div className="mt-3 flex justify-end">
         <button
           type="button"
           disabled={!canUndo}
           onClick={onUndo}
-          className="text-[11px] text-emerald-200/80 underline underline-offset-2 hover:text-white disabled:opacity-40"
+          className="inline-flex items-center gap-1 rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-emerald-100 transition hover:bg-slate-600 active:translate-y-[1px] disabled:opacity-40"
         >
           ↩ Undo
         </button>

@@ -1,355 +1,466 @@
 import React, { useState } from "react";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Legend,
-} from "recharts";
+import CardRow from "@/components/CardRow";
+import PlayingCard from "@/components/PlayingCard";
+import { evalWinners5 } from "@/lib/handEval";
+import { tokenize } from "@/lib/cards";
 import QuizQuestion from "../components/QuizQuestion";
 
-/* EV per flip: 0.50 × $6 + 0.50 × (−$5) = +$0.50 */
-const FLIP_EV = 0.5;
+/* ────────────────────────────────────────────────────────────────────────
+   Hand-ranking ladder — click a rank to expand a real example.
+   These "standard high" rankings are shared by nearly every poker variant.
+   ──────────────────────────────────────────────────────────────────────── */
+type Rank = { name: string; nick?: string; example: string; blurb: string };
 
-type Pt = { flip: number; ev: number; real: number };
+const RANKINGS: Rank[] = [
+  { name: "Royal Flush", example: "As Ks Qs Js Ts", blurb: "The best hand there is: A-K-Q-J-10, all the same suit. Almost never happens." },
+  { name: "Straight Flush", example: "9h 8h 7h 6h 5h", blurb: "Five cards in a row, all the same suit." },
+  { name: "Four of a Kind", nick: "Quads", example: "Kc Kd Kh Ks 3c", blurb: "All four cards of one rank." },
+  { name: "Full House", nick: "Boat", example: "Qc Qd Qh 8s 8c", blurb: "Three of one rank plus a pair. This one is 'queens full of eights'." },
+  { name: "Flush", example: "Ah Jh 8h 5h 2h", blurb: "Five cards of the same suit, in any order." },
+  { name: "Straight", example: "Ts 9d 8c 7h 6s", blurb: "Five cards in a row of mixed suits." },
+  { name: "Three of a Kind", nick: "Trips / Set", example: "7c 7d 7h Ks 2c", blurb: "Three cards of the same rank." },
+  { name: "Two Pair", example: "As Ad 9c 9h 4s", blurb: "Two different pairs at once." },
+  { name: "One Pair", example: "Jc Jd As 8h 3c", blurb: "Just two cards that match in rank." },
+  { name: "High Card", example: "Ah Kd 9c 6s 2h", blurb: "Nothing matches. Your single highest card decides it." },
+];
 
-const ChartTip = ({
-  active,
-  payload,
-  label,
-}: {
-  active?: boolean;
-  payload?: Array<{ name: string; value: number; color: string }>;
-  label?: number;
-}) => {
-  if (!active || !payload?.length) return null;
+const HandRankLadder: React.FC = () => {
+  const [open, setOpen] = useState<number | null>(0);
   return (
-    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm text-xs space-y-0.5">
-      <p className="font-semibold text-gray-600 mb-1">Flip {label}</p>
-      {payload.map((p, i) => (
-        <p key={i} style={{ color: p.color }}>
-          {p.name}: <strong>${p.value.toFixed(2)}</strong>
-        </p>
-      ))}
-    </div>
-  );
-};
-
-const CoinSimulator: React.FC = () => {
-  const [data, setData] = useState<Pt[]>([{ flip: 0, ev: 0, real: 0 }]);
-  const [profit, setProfit] = useState(0);
-  const [n, setN] = useState(0);
-  const [lastResult, setLastResult] = useState<"heads" | "tails" | null>(null);
-
-  const handleFlip = () => {
-    const heads = Math.random() < 0.5;
-    const gain = heads ? 6 : -5;
-    const newN = n + 1;
-    const newProfit = profit + gain;
-    setLastResult(heads ? "heads" : "tails");
-    setN(newN);
-    setProfit(newProfit);
-    setData(prev => [
-      ...prev,
-      {
-        flip: newN,
-        ev: Math.round(newN * FLIP_EV * 100) / 100,
-        real: newProfit,
-      },
-    ]);
-  };
-
-  const handleReset = () => {
-    setData([{ flip: 0, ev: 0, real: 0 }]);
-    setProfit(0);
-    setN(0);
-    setLastResult(null);
-  };
-
-  const evProfit = n * FLIP_EV;
-  const diff = profit - evProfit;
-
-  return (
-    <div className="space-y-5 rounded-xl border border-emerald-200/60 bg-emerald-50/30 p-4">
-      <div>
-        <p className="text-xs font-bold uppercase tracking-widest text-emerald-700 mb-2">
-          Coin Flip Simulator — Heads +$6, Tails −$5
-        </p>
-        <p className="text-xs text-gray-600 leading-relaxed">
-          This is a fair 50/50 coin — but because heads pays more than tails costs, every flip is
-          worth{" "}
-          <strong className="text-emerald-700">+$0.50 on average</strong>. Flip to watch your
-          real results chase the EV line over time.
-        </p>
-      </div>
-
-      <div className="flex items-center gap-3 flex-wrap">
-        <button
-          onClick={handleFlip}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 active:scale-95 transition-all shadow-sm"
-        >
-          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2}>
-            <circle cx="12" cy="12" r="9" />
-            <path strokeLinecap="round" d="M12 7v5l3 3" />
-          </svg>
-          Flip Coin
-        </button>
-
-        {lastResult && (
-          <span
-            className={`inline-flex items-center px-3 py-1 rounded-lg border text-sm font-bold ${
-              lastResult === "heads"
-                ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                : "bg-red-50 border-red-200 text-red-700"
+    <div className="space-y-1.5">
+      {RANKINGS.map((r, i) => {
+        const isOpen = open === i;
+        return (
+          <div
+            key={r.name}
+            className={`rounded-xl border transition-all duration-200 overflow-hidden ${
+              isOpen
+                ? "border-emerald-300 bg-emerald-50/60 shadow-sm scale-[1.01]"
+                : "border-gray-200 bg-white hover:border-emerald-200 hover:bg-emerald-50/30"
             }`}
           >
-            {lastResult === "heads" ? "Heads — +$6" : "Tails — −$5"}
-          </span>
-        )}
+            <button
+              onClick={() => setOpen(isOpen ? null : i)}
+              className="w-full flex items-center gap-3 px-3 py-2.5 text-left"
+            >
+              <span
+                className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold ${
+                  isOpen ? "bg-emerald-600 text-white" : "bg-emerald-100 text-emerald-700"
+                }`}
+              >
+                {i + 1}
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="text-sm font-semibold text-gray-900">{r.name}</span>
+                {r.nick && (
+                  <span className="ml-2 text-xs text-gray-400">"{r.nick}"</span>
+                )}
+              </span>
+              <svg
+                className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${isOpen ? "rotate-90" : ""}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+            <div
+              className={`grid transition-all duration-300 ease-out ${
+                isOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+              }`}
+            >
+              <div className="overflow-hidden">
+                <div className="px-3 pb-3 pt-0.5 space-y-2">
+                  <CardRow cardsStr={r.example} size="sm" />
+                  <p className="text-xs text-gray-600 leading-relaxed">{r.blurb}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+      <p className="text-[11px] text-gray-400 pt-1 text-center">
+        Higher on the list beats everything below it.
+      </p>
+    </div>
+  );
+};
 
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-gray-500">Flips:</span>
-          <span className="font-bold text-gray-800 tabular-nums w-8">{n}</span>
-        </div>
+/* ────────────────────────────────────────────────────────────────────────
+   Five-card showdown — two finished 5-card hands, which wins? Variant-neutral:
+   it's purely about the shared hand rankings. The real evaluator decides.
+   ──────────────────────────────────────────────────────────────────────── */
+type FiveSpot = {
+  hands: { cards: string; label: string }[];
+  lesson: string;
+};
 
-        {n > 0 && (
-          <button
-            onClick={handleReset}
-            className="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 text-xs font-medium hover:bg-gray-100 transition-colors"
-          >
-            Reset
-          </button>
-        )}
+const FIVE_SPOTS: FiveSpot[] = [
+  {
+    hands: [
+      { cards: "Ah Qh 8h 5h 2h", label: "Flush" },
+      { cards: "9c 8d 7h 6s 5c", label: "Straight" },
+    ],
+    lesson: "A flush beats a straight - five of one suit is rarer than five in a row.",
+  },
+  {
+    hands: [
+      { cards: "Kh Kd Ks 4c 4h", label: "Full house" },
+      { cards: "As Js 8s 5s 2s", label: "Flush" },
+    ],
+    lesson: "A full house beats a flush, even an ace-high one. Trips-plus-a-pair is the rarer shape.",
+  },
+  {
+    hands: [
+      { cards: "7c 7d 7h Ks 2c", label: "Three of a kind" },
+      { cards: "As Ad 9c 9h 4s", label: "Two pair" },
+    ],
+    lesson: "Three of a kind beats two pair - don't let the two aces fool you.",
+  },
+  {
+    hands: [
+      { cards: "As Ah Kd Kc Qs", label: "Two pair (A & K), Q kicker" },
+      { cards: "Ac Ad Kh Ks 9c", label: "Two pair (A & K), 9 kicker" },
+    ],
+    lesson: "Same two pair! The fifth card - the 'kicker' - breaks the tie. Queen beats nine.",
+  },
+];
+
+const FiveCardShowdown: React.FC = () => {
+  const [idx, setIdx] = useState(0);
+  const [revealed, setRevealed] = useState(false);
+  const spot = FIVE_SPOTS[idx];
+  const winners = revealed ? evalWinners5(spot.hands.map((h) => tokenize(h.cards))) : [];
+
+  const next = () => {
+    setRevealed(false);
+    setIdx((i) => (i + 1) % FIVE_SPOTS.length);
+  };
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {spot.hands.map((h, i) => {
+          const isWinner = winners.includes(i);
+          return (
+            <div
+              key={i}
+              className={`rounded-xl border p-3 text-center space-y-2 transition-all duration-300 ${
+                !revealed
+                  ? "border-gray-200 bg-gray-50"
+                  : isWinner
+                  ? "border-emerald-400 bg-emerald-50 ring-2 ring-emerald-300 scale-[1.02]"
+                  : "border-gray-200 bg-gray-50 opacity-60"
+              }`}
+            >
+              <p className="text-xs font-semibold text-gray-500">Hand {i + 1}</p>
+              <div className="flex justify-center">
+                <CardRow cardsStr={h.cards} size="sm" />
+              </div>
+              {revealed && (
+                <div className="space-y-0.5">
+                  <p className="text-xs font-medium text-gray-700">{h.label}</p>
+                  {isWinner && <p className="text-xs font-bold text-emerald-600">Wins!</p>}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
-      {n > 0 && (
-        <div className="grid grid-cols-3 gap-2 text-xs">
-          <div className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-center">
-            <p className="text-emerald-600 font-semibold">EV profit</p>
-            <p className="text-emerald-800 font-bold text-base tabular-nums">
-              ${evProfit.toFixed(2)}
-            </p>
-            <p className="text-emerald-500">expected</p>
+      {revealed ? (
+        <div className="space-y-3">
+          <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2.5">
+            <p className="text-xs text-emerald-800 leading-relaxed">{spot.lesson}</p>
           </div>
-          <div className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-center">
-            <p className="text-blue-600 font-semibold">Actual profit</p>
-            <p className={`font-bold text-base tabular-nums ${profit >= 0 ? "text-blue-800" : "text-red-700"}`}>
-              {profit >= 0 ? "+" : ""}${profit.toFixed(2)}
-            </p>
-            <p className="text-blue-500">real results</p>
-          </div>
-          <div className={`rounded-lg border bg-white px-3 py-2 text-center ${diff >= 0 ? "border-emerald-200" : "border-red-200"}`}>
-            <p className={`font-semibold ${diff >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-              {diff >= 0 ? "Running good" : "Running bad"}
-            </p>
-            <p className={`font-bold text-base tabular-nums ${diff >= 0 ? "text-emerald-700" : "text-red-700"}`}>
-              {diff >= 0 ? "+" : ""}${diff.toFixed(2)}
-            </p>
-            <p className={`${diff >= 0 ? "text-emerald-500" : "text-red-400"}`}>vs EV</p>
-          </div>
+          <button
+            onClick={next}
+            className="w-full px-4 py-2 rounded-lg border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-100 transition-colors"
+          >
+            Next matchup →
+          </button>
         </div>
-      )}
-
-      {data.length > 1 && (
-        <div className="rounded-xl border border-gray-200 bg-white p-3 pt-4">
-          <p className="text-xs font-bold text-gray-600 mb-3 text-center">
-            Cumulative Profit — EV (expected) vs Actual
-          </p>
-          <ResponsiveContainer width="100%" height={230}>
-            <LineChart data={data} margin={{ top: 5, right: 20, bottom: 10, left: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-              <XAxis
-                dataKey="flip"
-                type="number"
-                domain={[0, "dataMax"]}
-                tick={{ fontSize: 10, fill: "#9ca3af" }}
-                tickLine={false}
-                axisLine={false}
-              />
-              <YAxis
-                tick={{ fontSize: 10, fill: "#9ca3af" }}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(v: number) => `$${v}`}
-                label={{
-                  value: "$ Profit",
-                  angle: -90,
-                  position: "insideLeft",
-                  offset: 5,
-                  fontSize: 10,
-                  fill: "#9ca3af",
-                }}
-              />
-              <Tooltip content={<ChartTip />} />
-              <Legend
-                verticalAlign="top"
-                wrapperStyle={{ fontSize: 11, paddingBottom: 6 }}
-                iconType="line"
-              />
-              <Line
-                type="monotone"
-                dataKey="ev"
-                name="EV (expected profit)"
-                stroke="#10b981"
-                strokeWidth={2.5}
-                dot={false}
-                isAnimationActive={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="real"
-                name="Actual profit"
-                stroke="#3b82f6"
-                strokeWidth={1.5}
-                strokeDasharray="5 3"
-                dot={false}
-                isAnimationActive={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-          <p className="text-xs text-gray-400 text-center mt-0">Number of flips</p>
-          <p className="text-xs text-gray-400 text-center mt-1">
-            {n < 20
-              ? "Keep flipping — the lines converge as the sample grows."
-              : n < 60
-              ? "The real line is stabilizing around the EV line."
-              : "Over many flips, actual results track the EV line closely."}
-          </p>
-        </div>
+      ) : (
+        <button
+          onClick={() => setRevealed(true)}
+          className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 active:scale-95 transition-all shadow-sm"
+        >
+          Which hand wins?
+        </button>
       )}
     </div>
   );
 };
 
+/* ────────────────────────────────────────────────────────────────────────
+   Small helper: a single betting-action definition row.
+   ──────────────────────────────────────────────────────────────────────── */
+const ActionRow: React.FC<{ term: string; def: string; example: string }> = ({
+  term,
+  def,
+  example,
+}) => (
+  <div className="flex gap-3 px-3 py-2.5 border-b border-gray-100 last:border-0">
+    <span className="shrink-0 w-16 text-sm font-bold text-emerald-700">{term}</span>
+    <span className="flex-1 min-w-0">
+      <span className="text-sm text-gray-700">{def}</span>
+      <span className="block text-xs text-gray-400 mt-0.5 italic">{example}</span>
+    </span>
+  </div>
+);
+
+/* ════════════════════════════════════════════════════════════════════════ */
 const Section1: React.FC = () => (
   <div className="space-y-6">
-    {/* Explanation */}
+    {/* ── What is poker? ── */}
     <div className="space-y-4 text-sm text-gray-700 leading-relaxed">
+      <h3 className="font-bold text-gray-900 text-base">What is poker, really?</h3>
       <p>
-        Poker is a game of incomplete information. You never know exactly what cards your opponents
-        hold, which means every decision is made under uncertainty. As you play more, you'll certianly
-        get better at having an idea of what hands people are playing, but overall, this should be the cherry on top,
-        not the cake itself. Having some <em> simple</em> math in your back pocket can seriously help a lot.
+        Poker is a family of card games where players bet chips (which stand in for money) on who
+        has the best hand. Here's the twist that makes it fun: you can't see anyone else's cards,
+        and they can't see yours. Every decision is a bit of a guess.
       </p>
-
+      <p>
+        There are many <em>variants</em> of poker, and they can look pretty different. But almost
+        all of them share the same skeleton, and that's what this first section is about - the parts
+        that never change. There are two ways to win the chips in the middle of the table, called
+        the <strong>pot</strong>:
+      </p>
       <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-2">
         <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">
-          The Two Keys to Making Money
+          The Two Ways to Win a Hand
         </p>
         <ol className="list-decimal list-inside space-y-1.5 text-sm text-emerald-900">
           <li>
-            <strong>Make accurate assumptions</strong> about your opponent's cards and tendencies
+            <strong>Have the best hand</strong> when everyone shows their cards at the end.
           </li>
           <li>
-            <strong>Make the best mathematical decisions</strong>
+            <strong>Be the last player standing</strong> because everyone else gave up (folded).
           </li>
         </ol>
       </div>
-
       <p>
-        The idea of winning poker in the long run is that you'll attempt to get into situations over and
-        over where you're the one with the equity lead on average. About an equal amount of the time you'll win
-        with your AA vs their KK as the time they have KK and you have AA. The real edge/skill in the game is in the
-        <em>medium-strength hands</em> - that's the difficult part of playing the game. Having some fundamental math
-        in your back pocket will leave you in a situation where you're not second guessing your feelings, though
-        admittedly, there are going to be times where the decision is fairly close. With some basic math,
-        you don't have to beat yourself up too much for bad decisions, because you know in the long run your decision
-        was at least <em>decent</em>. A goal of yours should be to play in games where you SEE OTHERS making 
-        clearly bad mathematical decisions (for example straddling, calling preflop instead of 3betting hands like AK,
-        or raising/playing 70% of hands).
-      </p>
-
-      <p>
-        Consider a simple analogy: imagine a fair coin — exactly 50/50. Heads, you win $6. Tails,
-        you lose $5. Should you flip? Most people shrug. But math gives you a clear answer: half
-        the time you win $6, half the time you lose $5, so on average each flip earns you $0.50.
-        You should always flip, even though you'll lose half the time. Poker can work the same way —
-        you won't win every hand, but making the right decision every time adds up.
-      </p>
-
-      <p>
-        The good news: the math in poker isn't complicated. You won't need algebra or calculus.
-        Most of it comes down to basic addition, subtraction, multiplication, and division.
-      </p>
-
-      <p>
-        A player who makes <em>worse</em> assumptions but <em>better</em> decisions can still
-        outperform a player who has <em>better</em> assumptions but makes <em>worse</em> decisions.
-        Both keys matter, and they work together. The goal of this course is to sharpen both.
+        That second way is important: you don't always need the best cards. If you can convince
+        everyone else to quit, it doesn't matter what you were holding. Think of it like a
+        schoolyard bet - "I bet you a dollar my hand is better." If the other kid backs down, you
+        win the dollar without ever flipping your cards over.
       </p>
     </div>
 
-    {/* Coin Simulator */}
-    <div className="border-t border-gray-200 pt-5">
-      <p className="text-xs font-semibold uppercase tracking-widest text-emerald-600 mb-3">
-        See It For Yourself — The Coin Flip
+    {/* ── The deck ── */}
+    <div className="border-t border-gray-200 pt-5 space-y-4 text-sm text-gray-700 leading-relaxed">
+      <h3 className="font-bold text-gray-900 text-base">The deck: 52 cards</h3>
+      <p>
+        Most poker games use one standard deck. That's <strong>52 cards</strong>, split into{" "}
+        <strong>4 suits</strong> with <strong>13 cards</strong> each:
       </p>
-      <p className="text-sm text-gray-600 mb-4 leading-relaxed">
-        The chart below shows the key lesson: in the short run, real results bounce around wildly.
-        In the long run, they converge toward the expected profit line. This is exactly what happens
-        at the poker table — individual hands are noisy, but the math wins over time.
+      <div className="flex justify-center gap-2 py-1">
+        {["As", "Kh", "Qd", "Jc"].map((c) => (
+          <PlayingCard key={c} code={c} size="sm" />
+        ))}
+      </div>
+      <p className="text-xs text-gray-500 text-center -mt-1">
+        Spades ♠, Hearts ♥, Diamonds ♦, and Clubs ♣ - all four suits are worth exactly the same.
       </p>
-      <CoinSimulator />
+      <p>
+        Within each suit, the cards run from the lowest, a <strong>2</strong>, up through 10, then
+        the picture cards - Jack, Queen, King - and finally the highest card, the{" "}
+        <strong>Ace</strong>. So the order from weakest to strongest is:
+      </p>
+      <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-center font-mono text-sm text-gray-700">
+        2 · 3 · 4 · 5 · 6 · 7 · 8 · 9 · 10 · J · Q · K · A
+      </div>
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2">
+        <p className="text-xs font-bold uppercase tracking-wide text-amber-700">One quirk</p>
+        <p className="text-sm text-amber-900">
+          The Ace is usually the <em>highest</em> card, but it can also act as the lowest to make
+          the smallest straight, called the "wheel": A-2-3-4-5.
+        </p>
+        <div className="flex gap-1.5 pt-1">
+          {["5c", "4d", "3h", "2s", "Ac"].map((c) => (
+            <PlayingCard key={c} code={c} size="sm" />
+          ))}
+        </div>
+      </div>
     </div>
 
-    {/* Quiz */}
+    {/* ── Hand rankings ── */}
+    <div className="border-t border-gray-200 pt-5 space-y-3">
+      <h3 className="font-bold text-gray-900 text-base">Which hands beat which?</h3>
+      <p className="text-sm text-gray-700 leading-relaxed">
+        A poker hand is always <strong>exactly 5 cards</strong>, and every hand fits into one of 10
+        categories. The rarer a hand is, the more it's worth. This ranking is the same in almost
+        every version of poker, so learning it once pays off forever. Tap any rank below to see a
+        real example - they run from strongest at the top to weakest at the bottom.
+      </p>
+      <HandRankLadder />
+      <p className="text-xs text-gray-500 leading-relaxed">
+        (A few "lowball" variants flip this upside-down, where the <em>lowest</em> hand wins - more
+        on those later. Unless a game says otherwise, assume these standard rankings.)
+      </p>
+    </div>
+
+    {/* ── Five-card showdown ── */}
+    <div className="border-t border-gray-200 pt-5 space-y-3">
+      <h3 className="font-bold text-gray-900 text-base">Put it to the test</h3>
+      <p className="text-sm text-gray-700 leading-relaxed">
+        Here are two finished 5-card hands. Using the rankings above, decide which one wins before
+        you reveal the answer - the computer works out the real result.
+      </p>
+      <FiveCardShowdown />
+    </div>
+
+    {/* ── Betting ── */}
+    <div className="border-t border-gray-200 pt-5 space-y-3">
+      <h3 className="font-bold text-gray-900 text-base">Betting: how the pot grows</h3>
+      <p className="text-sm text-gray-700 leading-relaxed">
+        Poker is played in <strong>betting rounds</strong>. Between rounds, more information comes
+        out (new cards are dealt or revealed), and players get another chance to put chips in or
+        get out. When the action reaches you, you always pick from a small set of options - which
+        ones are available depends on whether anyone has bet yet.
+      </p>
+      <div className="rounded-xl border border-gray-200 overflow-hidden">
+        <ActionRow
+          term="Fold"
+          def="Give up your hand and throw your cards away. You can't win the pot, but you don't lose any more chips."
+          example="You have 7♦ 2♣ and someone bets big - just fold."
+        />
+        <ActionRow
+          term="Check"
+          def="Pass the action along without betting. Only allowed if nobody has bet yet this round."
+          example="Nobody has bet, and you'd like to see the next card for free."
+        />
+        <ActionRow
+          term="Call"
+          def="Match the amount someone else bet so you can stay in the hand."
+          example="A player bets $5, you put in $5 to keep playing."
+        />
+        <ActionRow
+          term="Bet"
+          def="Put chips in when no one else has yet, making others pay to continue."
+          example="You like your hand, so you bet $5 into the pot."
+        />
+        <ActionRow
+          term="Raise"
+          def="Someone already bet - you increase the amount, forcing them to match your bigger number or fold."
+          example="They bet $5, you make it $15."
+        />
+      </div>
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-1.5">
+        <p className="text-xs font-bold uppercase tracking-wide text-blue-700">The showdown</p>
+        <p className="text-sm text-blue-900 leading-relaxed">
+          If two or more players make it through the final betting round without folding, everyone
+          left reveals their cards. This is the <strong>showdown</strong>, and the best 5-card hand
+          wins the pot. If everyone else folds before then, the last player standing wins - no need
+          to show anything.
+        </p>
+      </div>
+    </div>
+
+    {/* ── Many variants ── */}
+    <div className="border-t border-gray-200 pt-5 space-y-3 text-sm text-gray-700 leading-relaxed">
+      <h3 className="font-bold text-gray-900 text-base">One game, many flavors</h3>
+      <p>
+        Everything above is shared by nearly every poker game: the deck, the hand rankings, betting
+        rounds, and the showdown. What actually <em>changes</em> from one variant to another is
+        usually just three things:
+      </p>
+      <ul className="space-y-1.5">
+        <li className="flex gap-2"><span className="text-emerald-600 font-bold">•</span><span><strong>How many cards you get</strong> and how many you keep.</span></li>
+        <li className="flex gap-2"><span className="text-emerald-600 font-bold">•</span><span><strong>How the cards are dealt</strong> - face-down and private, face-up for all to see, or shared in the middle.</span></li>
+        <li className="flex gap-2"><span className="text-emerald-600 font-bold">•</span><span><strong>How you build your 5-card hand</strong> from what you're given.</span></li>
+      </ul>
+      <p>
+        In the next section we'll dive deep into the most popular variant in the world -{" "}
+        <strong>Texas Hold'em</strong>. After that, we'll tour the rest of the poker world and see
+        how new variants get invented.
+      </p>
+    </div>
+
+    {/* ── Quiz ── */}
     <div className="border-t border-gray-200 pt-6">
       <p className="text-xs font-semibold uppercase tracking-widest text-emerald-600 mb-5">
         Check Your Understanding
       </p>
       <div className="space-y-7">
         <QuizQuestion
-          question="What are the two keys to consistently making money at poker?"
+          question="What are the two ways to win the pot in a hand of poker?"
           options={[
             {
-              label: "Bluffing often and playing aggressively",
+              label: "Have the best hand at showdown, or make everyone else fold",
               explanation:
-                "Aggression is a useful tool, but without accurate assumptions it becomes reckless. Mindless aggression doesn't define a winning framework.",
+                "Correct! You either show down the best 5-card hand, or you're the last player left because everyone else gave up.",
             },
             {
-              label: "Making accurate assumptions and choosing the highest-EV decision",
+              label: "Have the best hand, or bluff on the river",
               explanation:
-                "Exactly. Accurate assumptions let you model the situation correctly; choosing the highest-EV option ensures you exploit it optimally. These two keys underpin every profitable poker decision.",
+                "A bluff is one way to make people fold, but it's not a separate way to win. The two ways are: best hand at showdown, or everyone else folds.",
             },
             {
-              label: "Playing tight preflop and value betting rivers",
+              label: "Bet the most chips, or have the most chips",
               explanation:
-                "These are good tactics in many spots, but they don't define the underlying framework for all profitable decisions across all streets and situations.",
+                "Betting a lot doesn't win a pot by itself. You win by having the best hand at showdown, or by getting everyone else to fold.",
             },
             {
-              label: "Reading physical tells and having strong instincts",
+              label: "Get four of a kind, or a flush",
               explanation:
-                "Tells exist, but they're unreliable and impossible to quantify. Math provides a repeatable, scalable foundation that doesn't depend on live reads.",
+                "Those are strong hands, but you don't need any particular hand. You win with the best hand at showdown, or when everyone else folds.",
             },
           ]}
-          correctIndex={1}
+          correctIndex={0}
         />
 
         <QuizQuestion
-          question="A player always makes accurate assumptions and picks the highest-EV decision. Will they always win each individual hand?"
+          question="You have a flush and your opponent has a straight. Who wins?"
           options={[
             {
-              label: "No — correct decisions guarantee long-run profit, not individual hand outcomes",
+              label: "The flush wins",
               explanation:
-                "Exactly. Variance is unavoidable: even a mathematically perfect call loses when the opponent hits their 20% draw. What math guarantees is profit over a large enough sample — not on any single hand.",
+                "Correct! A flush (5 cards of one suit) is rarer than a straight (5 in a row), so it ranks higher and wins.",
             },
             {
-              label: "Yes — correct decisions always produce winning outcomes",
+              label: "The straight wins",
               explanation:
-                "Not true. Even the best decision loses to bad luck in the short run. The math guarantees long-run expectation, not individual results.",
+                "Not quite. A straight is easier to make than a flush, so it's worth less. The flush beats it.",
             },
             {
-              label: "Only if they have the best hand going in",
+              label: "It depends on the suits",
               explanation:
-                "Having the best hand and making the best decision are separate things. A mathematically correct fold is still a losing hand, and a correct call with the best hand can still lose to a draw.",
+                "No - all four suits are equal in poker. A flush always beats a straight regardless of which suit it is.",
             },
             {
-              label: "Only in cash games, not tournaments",
+              label: "They split the pot",
               explanation:
-                "EV applies in both formats. Tournaments add ICM complexity (chip EV ≠ dollar EV), but the fundamental framework of accurate assumptions + best decisions holds in all forms of poker.",
+                "No - a flush and a straight are different categories with a clear winner. The flush is higher, so it takes the whole pot.",
+            },
+          ]}
+          correctIndex={0}
+        />
+
+        <QuizQuestion
+          question="A player bets $10. You want to stay in the hand but not put in more than you have to. What action matches $10 exactly?"
+          options={[
+            {
+              label: "Call",
+              explanation:
+                "Correct! Calling means matching the current bet exactly - here, putting in $10 to keep playing.",
+            },
+            {
+              label: "Raise",
+              explanation:
+                "A raise means putting in more than $10 to increase the bet. You'd only do that if you wanted to apply pressure.",
+            },
+            {
+              label: "Check",
+              explanation:
+                "You can't check once someone has bet - checking is only for passing when there's no bet to match.",
+            },
+            {
+              label: "Fold",
+              explanation:
+                "Folding gives up your hand entirely. You wanted to stay in, so calling the $10 is the right move.",
             },
           ]}
           correctIndex={0}

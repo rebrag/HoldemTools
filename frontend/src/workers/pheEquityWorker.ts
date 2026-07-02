@@ -1,20 +1,8 @@
 /// <reference lib="webworker" />
 // A Vite module worker. No DOM APIs here.
-import * as PHE from "phe";
-
-/* ---------- evaluator adapter ---------- */
-type Eval5 = (cards: string[]) => number;
-function resolveEval5(): Eval5 {
-  const mod = PHE as Record<string, unknown>;
-  const cand1 = mod.evaluateCards;
-  if (typeof cand1 === "function") return cand1 as Eval5;
-  const cand2 = mod.evaluate;
-  if (typeof cand2 === "function") return cand2 as Eval5;
-  throw new Error("Could not find evaluateCards(cards) in 'phe' inside worker.");
-}
-const eval5: Eval5 = resolveEval5();
-// In PHE, lower value is better (1 = Best, ...). 
-// The existing `better` helper (a < b ? -1) confirms this.
+// Hand evaluation lives in the shared src/lib/handEval module so the same logic
+// backs both this worker and the synchronous main-thread callers.
+import { evalWinners } from "../lib/handEval";
 
 /* ---------- cards ---------- */
 const RANKS = ["A","K","Q","J","T","9","8","7","6","5","4","3","2"];
@@ -43,43 +31,6 @@ function draw5Halton(avail: string[], qIndex: number, shifts: number[]) {
     out.push(a[t]);
   }
   return out;
-}
-
-/* ---------- best-of-7 NLH ---------- */
-function bestHoldem(board5: string[], hole2: string[]): number {
-  const seven = [hole2[0], hole2[1], ...board5];
-  let best = Number.POSITIVE_INFINITY;
-  for (let i = 0; i < 6; i++) {
-    for (let j = i + 1; j < 7; j++) {
-      const hand5: string[] = [];
-      for (let k = 0; k < 7; k++) {
-        if (k !== i && k !== j) hand5.push(seven[k]);
-      }
-      const v = eval5(hand5);
-      if (v < best) best = v;
-    }
-  }
-  return best;
-}
-
-/* ---------- best-of-5 Omaha (2-from-hand, 3-from-board) for PLO4/5 ---------- */
-function bestOmaha(board5: string[], hole: string[]): number {
-  const k = hole.length; // 4 or 5
-  let best = Number.POSITIVE_INFINITY;
-  for (let i = 0; i < k - 1; i++) {
-    for (let j = i + 1; j < k; j++) {
-      const h0 = hole[i], h1 = hole[j];
-      for (let a = 0; a < 3; a++) {
-        for (let b = a + 1; b < 4; b++) {
-          for (let c = b + 1; c < 5; c++) {
-            const v = eval5([h0, h1, board5[a], board5[b], board5[c]]);
-            if (v < best) best = v;
-          }
-        }
-      }
-    }
-  }
-  return best;
 }
 
 type GameType = "texas-holdem" | "omaha4" | "omaha5";
@@ -139,31 +90,6 @@ let canceled = false;
 
 const postInc = (m: IncMsg) => self.postMessage(m);
 const postExact = (m: ExactOut) => self.postMessage(m);
-
-/* ---------- N-Player Evaluation ---------- */
-// Returns indices of winners (multiple indices = tie)
-function evalWinners(game: GameType, board5: string[], hands: string[][]): number[] {
-  // 1. Calculate score for each hand
-  const scores = new Array(hands.length);
-  let bestScore = Number.POSITIVE_INFINITY;
-
-  for (let i = 0; i < hands.length; i++) {
-    const s = game === "texas-holdem" 
-      ? bestHoldem(board5, hands[i]) 
-      : bestOmaha(board5, hands[i]);
-    scores[i] = s;
-    if (s < bestScore) bestScore = s;
-  }
-
-  // 2. Identify all players who have the best score
-  const winners: number[] = [];
-  for (let i = 0; i < hands.length; i++) {
-    if (scores[i] === bestScore) {
-      winners.push(i);
-    }
-  }
-  return winners;
-}
 
 /* ---------- worker entry ---------- */
 self.onmessage = (ev: MessageEvent<InMsg>) => {

@@ -8,57 +8,21 @@ import CourseOutlineSidebar from "./components/CourseOutlineSidebar";
 const sections = [
   {
     number: 1,
-    title: "Why Math Matters",
+    title: "The Rules of Poker",
     description:
-      "Understand why poker is a game of incomplete information and how mathematical thinking separates winning players from the rest.",
+      "Start from zero - what poker is, the deck, the hand rankings every game shares, betting, and the showdown. No variant-specific rules yet.",
   },
   {
     number: 2,
-    title: "Measurements",
+    title: "Texas Hold'em",
     description:
-      "Learn the fundamental units poker players use — pot odds, equity, expected value — and how to measure every situation accurately.",
+      "The world's most popular variant, in depth - hole cards and community cards, the betting rounds, why the blinds matter, and reading tricky showdowns.",
   },
   {
     number: 3,
-    title: "Getting Started with Numbers",
+    title: "Other Poker Variants",
     description:
-      "Build your number fluency: counting outs, estimating percentages, and doing quick mental math at the table.",
-  },
-  {
-    number: 4,
-    title: "Hit the Deck",
-    description:
-      "A deep dive into the deck itself — card combinations, hand frequencies, and how often different board textures appear.",
-  },
-  {
-    number: 5,
-    title: "Putting it Together",
-    description:
-      "Combine math and board reading to make informed decisions on every street from preflop through the river.",
-  },
-  {
-    number: 6,
-    title: "World of the Unknown",
-    description:
-      "Explore ranges, ranges vs. ranges, and how to think probabilistically when you can't see your opponent's cards.",
-  },
-  {
-    number: 7,
-    title: "Aggression",
-    description:
-      "Discover why aggression is mathematically profitable, when to bet, and how bet sizing shapes your opponents' decisions.",
-  },
-  {
-    number: 8,
-    title: "At the Table",
-    description:
-      "Translate theory into live play: reading timing tells, managing tilt, and applying GTO concepts under pressure.",
-  },
-  {
-    number: 9,
-    title: "Summary",
-    description:
-      "Review the core concepts, build a study plan, and take the next steps toward thinking like a poker professional.",
+      "Tour the rest of the poker world from most to least popular - Omaha, Stud, Draw, Short Deck, lowball and more - and how brand-new variants get invented.",
   },
 ];
 
@@ -104,7 +68,7 @@ const Course: React.FC<CourseProps> = ({ user }) => {
             <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
           </svg>
           <p className="text-xs text-amber-200/90 leading-relaxed">
-            Section content requires a <strong>Plus or Pro</strong> subscription. Upgrade to track your progress and unlock all 9 sections.
+            Section content requires a <strong>Plus or Pro</strong> subscription. Upgrade to track your progress and unlock all sections.
           </p>
         </div>
       )}
@@ -187,7 +151,7 @@ const Course: React.FC<CourseProps> = ({ user }) => {
           })}
         </div>
         <div className="border-t border-gray-100 px-4 py-3 text-center">
-          <p className="text-xs text-gray-400">9 sections · Start with Section 1</p>
+          <p className="text-xs text-gray-400">{sections.length} sections · Start with Section 1</p>
         </div>
       </div>
       </div>

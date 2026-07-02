@@ -20,8 +20,8 @@ export interface PokerTableSeat {
   label: string; // position name or player name
   stackText?: string; // preformatted, e.g. "22 BB"
   committedText?: string; // preformatted bet badge, e.g. "2 bb"
-  /** omit = no card row; a null slot renders a CardBack. */
-  holeCards?: [string | null, string | null];
+  /** omit = no card row; a null slot renders a CardBack. Length varies by game. */
+  holeCards?: (string | null)[];
   isButton?: boolean;
   isActive?: boolean;
   isHero?: boolean;
@@ -98,18 +98,19 @@ const PokerTable: React.FC<PokerTableProps> = ({
               >
                 {seat.holeCards && (
                   <div className="relative flex gap-0.5">
-                    {[0, 1].map((h) =>
-                      seat.holeCards![h] ? (
-                        <PlayingCard
-                          key={h}
-                          code={seat.holeCards![h]!}
-                          size="sm"
-                          width={cardBackWidth}
-                        />
+                    {seat.holeCards.map((c, h) => {
+                      // Shrink cards a little for 4-5 card (PLO) hands so the
+                      // row still fits the seat footprint.
+                      const w =
+                        seat.holeCards!.length >= 4
+                          ? Math.round(cardBackWidth * 0.72)
+                          : cardBackWidth;
+                      return c ? (
+                        <PlayingCard key={h} code={c} size="sm" width={w} />
                       ) : (
-                        <CardBack key={h} w={cardBackWidth} />
-                      )
-                    )}
+                        <CardBack key={h} w={w} />
+                      );
+                    })}
                     {seat.isButton && (
                       <span className="absolute -right-3 -bottom-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-white text-[9px] font-bold text-gray-800 shadow ring-1 ring-gray-300">
                         D

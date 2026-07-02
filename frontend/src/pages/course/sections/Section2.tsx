@@ -1,397 +1,533 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import CardRow from "@/components/CardRow";
+import PlayingCard from "@/components/PlayingCard";
+import { evalWinners } from "@/lib/handEval";
+import { tokenize } from "@/lib/cards";
 import QuizQuestion from "../components/QuizQuestion";
-import ChipStack from "@/components/ChipStack";
 
-/* ── Bet-sizing drill ── */
-const BET_FRACTIONS = [
-  { label: "¼ pot", pct: "25%", value: 0.25 },
-  { label: "⅓ pot", pct: "33%", value: 0.333 },
-  { label: "½ pot", pct: "50%", value: 0.5 },
-  { label: "⅔ pot", pct: "67%", value: 0.667 },
-  { label: "¾ pot", pct: "75%", value: 0.75 },
-  { label: "Pot", pct: "100%", value: 1.0 },
-  { label: "2× pot", pct: "200%", value: 2.0 },
+/* ────────────────────────────────────────────────────────────────────────
+   A card that fades + scales in when it mounts, so each new board card feels
+   like it's being turned over.
+   ──────────────────────────────────────────────────────────────────────── */
+const RevealCard: React.FC<{ code: string; size?: "sm" | "md" | "lg" }> = ({
+  code,
+  size = "md",
+}) => {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setShown(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return (
+    <div
+      className={`transition-all duration-300 ease-out ${
+        shown ? "opacity-100 translate-y-0 scale-100" : "opacity-0 translate-y-2 scale-90"
+      }`}
+    >
+      <PlayingCard code={code} size={size} />
+    </div>
+  );
+};
+
+/* ────────────────────────────────────────────────────────────────────────
+   Deal-the-board walkthrough — reveals one street at a time.
+   ──────────────────────────────────────────────────────────────────────── */
+const HERO = "Ac Kh";
+const FULL_BOARD = ["Ah", "7c", "2d", "Kd", "Qs"];
+const STREETS = [
+  { count: 0, name: "Preflop", caption: "You're dealt A♣ K♥ - a strong starting hand nicknamed \"Big Slick.\" The first betting round happens with just your two hole cards, before any community cards appear." },
+  { count: 3, name: "The Flop", caption: "The first three community cards are dealt face-up at once. You now have a pair of aces (your A♣ plus the A♥). A second betting round begins." },
+  { count: 4, name: "The Turn", caption: "A single fourth card is added. It pairs your king, so now you hold two pair - aces and kings. Another betting round follows." },
+  { count: 5, name: "The River", caption: "The fifth and final community card lands. Your best five cards are A A K K Q: two pair. After the last betting round, it's showdown time." },
 ];
 
-const BetSizingDrill: React.FC = () => {
-  const [selected, setSelected] = useState<number | null>(null);
-  const pot = 100;
+const DealTheBoard: React.FC = () => {
+  const [step, setStep] = useState(0);
+  const street = STREETS[step];
+  const shownBoard = FULL_BOARD.slice(0, street.count);
+  const isLast = step === STREETS.length - 1;
+
   return (
-    <div className="space-y-3">
-      <p className="text-sm font-medium text-gray-800">
-        Practice: the pot is <strong>${pot}</strong>. Click a sizing to see the exact dollar amount.
-      </p>
-      <div className="flex flex-wrap gap-2">
-        {BET_FRACTIONS.map((f, i) => (
-          <button
-            key={i}
-            onClick={() => setSelected(selected === i ? null : i)}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-              selected === i
-                ? "bg-emerald-600 border-emerald-600 text-white"
-                : "border-gray-200 bg-gray-50 text-gray-700 hover:bg-emerald-50 hover:border-emerald-300"
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
+    <div className="rounded-xl border border-emerald-200/70 bg-emerald-50/30 p-4 space-y-4">
+      {/* Your hand */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-xs font-semibold text-gray-500 w-20 shrink-0">Your cards</span>
+        <CardRow cardsStr={HERO} size="sm" />
       </div>
-      {selected !== null && (
-        <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 flex items-end gap-4">
-          <ChipStack
-            amount={Math.round(pot * BET_FRACTIONS[selected].value)}
-            showBreakdown={false}
-            showLabel={false}
-          />
-          <div>
-            <p className="text-sm text-emerald-800">
-              <span className="font-bold">{BET_FRACTIONS[selected].label}</span> of a ${pot} pot ={" "}
-              <span className="font-bold text-lg text-emerald-700">
-                ${(pot * BET_FRACTIONS[selected].value).toFixed(0)}
-              </span>
-            </p>
-            <p className="text-xs text-emerald-600 mt-0.5 font-mono">
-              ${pot} × {BET_FRACTIONS[selected].pct} = ${(pot * BET_FRACTIONS[selected].value).toFixed(0)}
-            </p>
-          </div>
+
+      {/* Board */}
+      <div className="flex items-start gap-3 flex-wrap">
+        <span className="text-xs font-semibold text-gray-500 w-20 shrink-0 mt-2">The board</span>
+        <div className="flex items-center gap-1.5 min-h-[3.5rem]">
+          {shownBoard.length === 0 ? (
+            <span className="text-xs text-gray-400 italic mt-2">No community cards yet…</span>
+          ) : (
+            shownBoard.map((c) => <RevealCard key={c} code={c} size="sm" />)
+          )}
         </div>
+      </div>
+
+      {/* Caption */}
+      <div className="rounded-lg bg-white border border-emerald-200 px-3 py-2.5">
+        <p className="text-xs font-bold uppercase tracking-wide text-emerald-700 mb-1">
+          {street.name}
+        </p>
+        <p className="text-xs text-gray-700 leading-relaxed">{street.caption}</p>
+      </div>
+
+      {/* Controls */}
+      <div className="flex items-center gap-2">
+        {!isLast ? (
+          <button
+            onClick={() => setStep((s) => s + 1)}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 active:scale-95 transition-all shadow-sm"
+          >
+            Deal {STREETS[step + 1].name}
+          </button>
+        ) : (
+          <button
+            onClick={() => setStep(0)}
+            className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-100 transition-colors"
+          >
+            Deal again
+          </button>
+        )}
+        <div className="flex items-center gap-1 ml-auto">
+          {STREETS.map((_, i) => (
+            <span
+              key={i}
+              className={`w-1.5 h-1.5 rounded-full transition-colors ${
+                i <= step ? "bg-emerald-500" : "bg-gray-200"
+              }`}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ────────────────────────────────────────────────────────────────────────
+   Who-wins mini-game — the winner is decided by the real hand evaluator.
+   Every spot below is a deliberately tricky Hold'em showdown.
+   ──────────────────────────────────────────────────────────────────────── */
+type Spot = {
+  board: string;
+  hands: { hole: string; label: string }[];
+  lesson: string;
+};
+
+const SPOTS: Spot[] = [
+  {
+    board: "8h 7h 3h Ts 2c",
+    hands: [
+      { hole: "9c 6d", label: "Straight (ten-high)" },
+      { hole: "Ah 2h", label: "Flush (ace-high)" },
+    ],
+    lesson: "A flush beats a straight. Even a scrappy low flush tops the prettiest straight.",
+  },
+  {
+    board: "As Kd 7c 4h 2s",
+    hands: [
+      { hole: "Ah Kh", label: "Two pair (aces & kings)" },
+      { hole: "Ac Qd", label: "One pair (aces)" },
+    ],
+    lesson: "Both players paired their ace, but two pair beats one pair - the extra king pair wins it.",
+  },
+  {
+    board: "Ah 9d 6c 3s 2h",
+    hands: [
+      { hole: "Ac Kd", label: "Pair of aces, king kicker" },
+      { hole: "As Qc", label: "Pair of aces, queen kicker" },
+    ],
+    lesson: "Identical pair of aces, so the kicker decides. A king outranks a queen, so the first player wins by a single card.",
+  },
+  {
+    board: "8h 8d 5c 5s 2h",
+    hands: [
+      { hole: "Ac Kc", label: "Two pair (board), ace kicker" },
+      { hole: "Qd Jd", label: "Two pair (board), queen kicker" },
+    ],
+    lesson: "The two pair (eights and fives) is sitting on the board - both players share it. The fifth card is the tiebreaker, and the ace beats the queen.",
+  },
+  {
+    board: "9h 8c 7d 2s 3h",
+    hands: [
+      { hole: "Jd Ts", label: "Straight (jack-high)" },
+      { hole: "6c 5d", label: "Straight (nine-high)" },
+    ],
+    lesson: "Both flopped a straight, so the higher one wins. J-10-9-8-7 beats 9-8-7-6-5.",
+  },
+  {
+    board: "Qh 9h 4h Qs 4d",
+    hands: [
+      { hole: "Ah 2h", label: "Flush (ace-high)" },
+      { hole: "Qc 7c", label: "Full house (queens over fours)" },
+    ],
+    lesson: "The board is paired (two queens, two fours). That makes a full house possible - and a full house beats even the nut flush.",
+  },
+  {
+    board: "As Ks Qd Jc Th",
+    hands: [
+      { hole: "2c 2d", label: "Plays the board" },
+      { hole: "3h 3s", label: "Plays the board" },
+    ],
+    lesson: "The A-K-Q-J-10 straight is already on the board, so both players' best hand is identical. The pot is split - a \"chop.\"",
+  },
+];
+
+const WhoWinsGame: React.FC = () => {
+  const [spotIdx, setSpotIdx] = useState(0);
+  const [revealed, setRevealed] = useState(false);
+  const spot = SPOTS[spotIdx];
+
+  const board5 = tokenize(spot.board);
+  const winners = revealed
+    ? evalWinners(
+        "texas-holdem",
+        board5,
+        spot.hands.map((h) => tokenize(h.hole))
+      )
+    : [];
+  const isChop = winners.length > 1;
+
+  const next = () => {
+    setRevealed(false);
+    setSpotIdx((i) => (i + 1) % SPOTS.length);
+  };
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-4">
+      {/* Progress */}
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold text-gray-400">
+          Showdown {spotIdx + 1} of {SPOTS.length}
+        </p>
+        <div className="flex items-center gap-1">
+          {SPOTS.map((_, i) => (
+            <span
+              key={i}
+              className={`w-1.5 h-1.5 rounded-full ${i === spotIdx ? "bg-emerald-500" : "bg-gray-200"}`}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Board */}
+      <div className="text-center space-y-1.5">
+        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">The board</p>
+        <div className="flex justify-center">
+          <CardRow cardsStr={spot.board} size="sm" />
+        </div>
+      </div>
+
+      {/* Two players */}
+      <div className="grid grid-cols-2 gap-3">
+        {spot.hands.map((h, i) => {
+          const isWinner = winners.includes(i);
+          return (
+            <div
+              key={i}
+              className={`rounded-xl border p-3 text-center space-y-2 transition-all duration-300 ${
+                !revealed
+                  ? "border-gray-200 bg-gray-50"
+                  : isWinner
+                  ? "border-emerald-400 bg-emerald-50 ring-2 ring-emerald-300 scale-[1.02]"
+                  : "border-gray-200 bg-gray-50 opacity-60"
+              }`}
+            >
+              <p className="text-xs font-semibold text-gray-500">Player {i + 1}</p>
+              <div className="flex justify-center">
+                <CardRow cardsStr={h.hole} size="sm" />
+              </div>
+              {revealed && (
+                <div className="space-y-0.5">
+                  <p className="text-xs font-medium text-gray-700">{h.label}</p>
+                  {isWinner && (
+                    <p className="text-xs font-bold text-emerald-600">
+                      {isChop ? "Splits the pot" : "Wins!"}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Reveal / lesson */}
+      {revealed ? (
+        <div className="space-y-3">
+          <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2.5">
+            <p className="text-xs text-emerald-800 leading-relaxed">{spot.lesson}</p>
+          </div>
+          <button
+            onClick={next}
+            className="w-full px-4 py-2 rounded-lg border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-100 transition-colors"
+          >
+            Next showdown →
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => setRevealed(true)}
+          className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 active:scale-95 transition-all shadow-sm"
+        >
+          Reveal the winner
+        </button>
       )}
     </div>
   );
 };
 
-/* ── Pot-size raise calculator ── */
-const PotRaiseCalc: React.FC = () => {
-  const [pot, setPot] = useState(100);
-  const [bet, setBet] = useState(50);
-  const step1 = bet * 2;
-  const step2 = step1 + (pot + bet);
-  return (
-    <div className="space-y-4">
-      <p className="text-sm font-medium text-gray-800">
-        Pot-size raise calculator — adjust pot and villain's bet:
-      </p>
-      <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3">
-        <div className="space-y-1">
-          <label className="text-xs font-semibold text-gray-600">Dead money (pot before bet): ${pot}</label>
-          <input type="range" min={0} max={500} step={5} value={pot}
-            onChange={(e) => setPot(Number(e.target.value))} className="w-full accent-emerald-600" />
-        </div>
-        <div className="space-y-1">
-          <label className="text-xs font-semibold text-gray-600">Villain's bet: ${bet}</label>
-          <input type="range" min={5} max={300} step={5} value={bet}
-            onChange={(e) => setBet(Number(e.target.value))} className="w-full accent-blue-600" />
-        </div>
-      </div>
-      <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 space-y-3">
-        <p className="font-bold text-sm text-emerald-700">Two-step calculation:</p>
-        <div className="flex items-end justify-around pb-3 border-b border-emerald-200">
-          <div className="flex flex-col items-center gap-1">
-            <ChipStack amount={pot || 5} showBreakdown={false} showLabel={false} />
-            <span className="text-[10px] text-gray-500 font-medium">Dead pot</span>
-          </div>
-          <div className="flex flex-col items-center gap-1">
-            <ChipStack amount={bet} showBreakdown={false} showLabel={false} />
-            <span className="text-[10px] text-gray-500 font-medium">Villain bet</span>
-          </div>
-          <div className="flex flex-col items-center gap-1">
-            <ChipStack amount={step2} showBreakdown={false} showLabel={false} />
-            <span className="text-[10px] text-gray-500 font-medium">Your raise</span>
-          </div>
-        </div>
-        <div className="font-mono text-xs text-emerald-800 space-y-1">
-          <p>Step 1: call × 2 = ${bet} × 2 = <strong>${step1}</strong></p>
-          <p>Step 2: ${step1} + (pot ${pot} + bet ${bet}) = ${step1} + ${pot + bet}</p>
-          <p className="text-base font-bold text-emerald-700">= ${step2} total raise</p>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-/* ── Hourly earn calculator ── */
-const HourlyEarnCalc: React.FC = () => {
-  const [handsPerHour, setHandsPerHour] = useState(100);
-  const [bigBlind, setBigBlind] = useState(0.10);
-  const [winRate, setWinRate] = useState(5);
-  const hourly = (handsPerHour / 100) * bigBlind * winRate;
-  const bbOptions = [
-    { label: "NL10 ($0.10)", value: 0.10 },
-    { label: "NL25 ($0.25)", value: 0.25 },
-    { label: "NL50 ($0.50)", value: 0.50 },
-    { label: "NL100 ($1.00)", value: 1.00 },
-    { label: "NL200 ($2.00)", value: 2.00 },
-  ];
-  return (
-    <div className="space-y-3">
-      <p className="text-sm font-medium text-gray-800">
-        Hourly earn calculator:
-      </p>
-      <div className="grid grid-cols-3 gap-3">
-        <div className="space-y-1">
-          <label className="text-xs font-semibold text-gray-600">Hands/hour</label>
-          <input type="range" min={50} max={600} step={50} value={handsPerHour}
-            onChange={(e) => setHandsPerHour(Number(e.target.value))} className="w-full accent-emerald-600" />
-          <p className="text-xs text-gray-500 text-center">{handsPerHour}</p>
-        </div>
-        <div className="space-y-1">
-          <label className="text-xs font-semibold text-gray-600">Game</label>
-          <select value={bigBlind} onChange={(e) => setBigBlind(Number(e.target.value))}
-            className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white">
-            {bbOptions.map(o => <option key={o.label} value={o.value}>{o.label}</option>)}
-          </select>
-        </div>
-        <div className="space-y-1">
-          <label className="text-xs font-semibold text-gray-600">Win rate (bb/100)</label>
-          <input type="range" min={-5} max={15} step={0.5} value={winRate}
-            onChange={(e) => setWinRate(Number(e.target.value))} className="w-full accent-blue-600" />
-          <p className="text-xs text-gray-500 text-center">{winRate}</p>
-        </div>
-      </div>
-      <div className={`rounded-lg border px-4 py-3 text-center ${hourly > 0 ? "bg-emerald-50 border-emerald-200" : "bg-red-50 border-red-200"}`}>
-        <p className="text-xs text-gray-500">Hourly earn</p>
-        <p className={`text-2xl font-bold ${hourly > 0 ? "text-emerald-700" : "text-red-600"}`}>
-          {hourly >= 0 ? "+" : ""}${hourly.toFixed(2)}/hr
-        </p>
-        <p className="text-xs text-gray-400 mt-0.5 font-mono">
-          ({handsPerHour}/100) × ${bigBlind} × {winRate} = {hourly.toFixed(2)}
-        </p>
-      </div>
-    </div>
-  );
-};
-
+/* ════════════════════════════════════════════════════════════════════════ */
 const Section2: React.FC = () => (
   <div className="space-y-6">
-
-    {/* ── Part 1: Your Surroundings ── */}
+    {/* ── Intro ── */}
     <div className="space-y-4 text-sm text-gray-700 leading-relaxed">
-      <h3 className="font-bold text-gray-900 text-base">Your Surroundings</h3>
+      <h3 className="font-bold text-gray-900 text-base">Texas Hold'em: the world's game</h3>
       <p>
-        Most measurements in no-limit hold'em are based on the <strong>big blind (bb)</strong>.
-        The amount of chips a player has in front of them is their <strong>stack</strong>. Stack
-        sizes are described in multiples of the big blind.
+        Of all the poker variants, <strong>Texas Hold'em</strong> is by far the most popular. It's
+        the game you see on TV, the one played for millions at the World Series of Poker, and the
+        default on nearly every poker app. If someone says "let's play poker" without naming a
+        variant, they almost always mean Hold'em.
       </p>
+      <p>
+        It became so popular for a simple reason: it's easy to learn but endlessly deep. Because
+        five of the cards are shared by everyone, you always have a lot of information to reason
+        about - and a lot of room to outplay your opponents.
+      </p>
+    </div>
 
-      {/* Table 1 */}
-      <div className="overflow-hidden rounded-xl border border-gray-200">
-        <div className="bg-gray-50 border-b border-gray-200 px-4 py-2">
-          <p className="text-xs font-bold uppercase tracking-wide text-gray-600">Table 1 — Common Stack Size Descriptions</p>
+    {/* ── The setup ── */}
+    <div className="border-t border-gray-200 pt-5 space-y-4 text-sm text-gray-700 leading-relaxed">
+      <h3 className="font-bold text-gray-900 text-base">The setup: 2 + 5 = your best 5</h3>
+      <ul className="space-y-2">
+        <li className="flex gap-2">
+          <span className="text-emerald-600 font-bold">1.</span>
+          <span>
+            Each player gets <strong>2 private cards</strong>, called your{" "}
+            <strong>hole cards</strong>. Only you can see them.
+          </span>
+        </li>
+        <li className="flex gap-2">
+          <span className="text-emerald-600 font-bold">2.</span>
+          <span>
+            <strong>5 shared cards</strong>, the <strong>community cards</strong>, are dealt
+            face-up in the middle for everyone to use.
+          </span>
+        </li>
+        <li className="flex gap-2">
+          <span className="text-emerald-600 font-bold">3.</span>
+          <span>
+            You make the best <strong>5-card hand</strong> you can from those 7 cards (your 2 plus
+            the 5 shared).
+          </span>
+        </li>
+      </ul>
+      <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3">
+        <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Example</p>
+        <div className="flex flex-wrap gap-4">
+          <div>
+            <p className="text-xs text-gray-500 mb-1">Your hole cards</p>
+            <CardRow cardsStr="As Kd" size="sm" />
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 mb-1">The 5 community cards</p>
+            <CardRow cardsStr="Ah Kh 7c 2d 9s" size="sm" />
+          </div>
         </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-gray-50 border-b border-gray-100">
-              <th className="text-left px-4 py-2 text-xs font-bold uppercase tracking-wide text-gray-500">Times the BB</th>
-              <th className="text-left px-4 py-2 text-xs font-bold uppercase tracking-wide text-gray-500">Description</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {[["1 – 40", "Short Stack"], ["41 – 80", "Medium Stack"], ["81 – 100+", "Deep Stack"]].map(([range, desc]) => (
-              <tr key={range} className="hover:bg-gray-50">
-                <td className="px-4 py-2 font-mono text-gray-700">{range}</td>
-                <td className="px-4 py-2 font-semibold text-gray-800">{desc}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <p className="text-sm text-gray-700">
+          Your ace pairs the board ace and your king pairs the board king, so your best hand is{" "}
+          <strong>two pair - aces and kings</strong>. The 7♣, 2♦, and 9♠ don't help, so you ignore
+          them.
+        </p>
       </div>
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-1.5">
+        <p className="text-xs font-bold uppercase tracking-wide text-amber-700">Handy detail</p>
+        <p className="text-sm text-amber-900 leading-relaxed">
+          You can use <strong>two, one, or even zero</strong> of your hole cards. If the five
+          community cards already make the best hand, you're "playing the board" - and so is
+          everyone else, which usually means the pot gets split.
+        </p>
+      </div>
+    </div>
 
+    {/* ── The button and the blinds ── */}
+    <div className="border-t border-gray-200 pt-5 space-y-4 text-sm text-gray-700 leading-relaxed">
+      <h3 className="font-bold text-gray-900 text-base">The button and the blinds</h3>
       <p>
-        The <strong>effective stack</strong> for a hand is the <em>smallest</em> stack involved.
-        If you have $200 but your opponent has $50, the effective stack is $50 — that's the maximum
-        that can be wagered. Always mention effective stack size when discussing a hand.
+        Before any cards are dealt, two players are forced to put chips in. These forced bets are
+        called the <strong>blinds</strong>:
       </p>
-
+      <ul className="space-y-2">
+        <li className="flex gap-2">
+          <span className="text-emerald-600 font-bold">•</span>
+          <span>
+            The <strong>small blind</strong> - a small forced bet from the player just left of the
+            dealer.
+          </span>
+        </li>
+        <li className="flex gap-2">
+          <span className="text-emerald-600 font-bold">•</span>
+          <span>
+            The <strong>big blind</strong> - usually double the small blind, posted by the next
+            player to the left.
+          </span>
+        </li>
+      </ul>
       <p>
-        Swings (upswings and downswings) are measured in <strong>buy-ins</strong>. A 7–10 buy-in
-        downswing is common for professional players. Some have experienced 40 buy-in downswings.
-        This leads to the concept of <strong>bankroll management</strong>. A bankroll isn't the same
-        as a budget — it's for a <em>winning</em> player. General guidelines:
+        A marker called the <strong>button</strong> (or "the dealer") shows whose turn it is to be
+        in the dealer's seat. After every hand it moves one seat to the left, so the blinds rotate
+        around the table and everyone pays their fair share over time.
       </p>
-
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2">
-        <p className="text-xs font-bold uppercase tracking-wide text-amber-700">Bankroll Guidelines</p>
-        <ul className="list-disc list-inside space-y-1 text-sm text-amber-900">
-          <li><strong>Amateur:</strong> at least 30 buy-ins for your game</li>
-          <li><strong>Going pro:</strong> at least 100 buy-ins + 6–12 months of living expenses</li>
-          <li>If you drop below your buy-in threshold, <strong>move down in stakes</strong></li>
-          <li>"If you don't stress your bankroll, it will stress you!"</li>
+      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-2">
+        <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">
+          Why blinds matter so much
+        </p>
+        <ul className="list-disc list-inside space-y-1.5 text-sm text-emerald-900">
+          <li>
+            <strong>They create something to fight for.</strong> Without blinds, everyone could fold
+            forever for free and nothing would ever happen. The blinds seed a pot every single hand.
+          </li>
+          <li>
+            <strong>They force action.</strong> Because you slowly bleed chips by paying blinds, you
+            can't just wait for aces all night - you have to play.
+          </li>
+          <li>
+            <strong>They set the unit of measurement.</strong> Nearly everything in Hold'em is
+            measured in big blinds (bb): your stack, your bets, your win rate. A "100bb stack" means
+            100 times the big blind.
+          </li>
+          <li>
+            <strong>They shape position.</strong> The blinds act <em>last</em> before the flop but
+            <em> first</em> on every later round - a positional disadvantage that makes those seats
+            the toughest to play.
+          </li>
         </ul>
       </div>
-
-      <p>
-        <strong>Win rates</strong> are measured in <em>bb/100</em> — big blinds won per 100 hands
-        played. Note: <strong>bb</strong> (lowercase) = big blind; <strong>BB</strong> (uppercase) =
-        big bet, which is <em>twice</em> the big blind (1 BB/100 = 2 bb/100).
-      </p>
-
-      {/* Table 2 */}
-      <div className="overflow-hidden rounded-xl border border-gray-200">
-        <div className="bg-gray-50 border-b border-gray-200 px-4 py-2">
-          <p className="text-xs font-bold uppercase tracking-wide text-gray-600">Table 2 — Win Rate Descriptions</p>
-        </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-gray-50 border-b border-gray-100">
-              <th className="text-left px-4 py-2 text-xs font-bold uppercase tracking-wide text-gray-500">bb/100</th>
-              <th className="text-left px-4 py-2 text-xs font-bold uppercase tracking-wide text-gray-500">Description</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {[["0 – 4", "Marginal winner"], ["4 – 7", "Nice win rate"], ["7+", "Crushing the game"]].map(([range, desc]) => (
-              <tr key={range} className="hover:bg-gray-50">
-                <td className="px-4 py-2 font-mono text-gray-700">{range}</td>
-                <td className="px-4 py-2 text-gray-800">{desc}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <p className="text-xs text-gray-500 italic">
-        Note: Online micro-stakes games have high rake — often accounting for 10 bb/100 of your earn.
-        Breaking even over 10,000 hands of micro-stakes is actually beating the game at ~10 bb/100.
-      </p>
     </div>
 
-    {/* ── Part 2: Thinking About Bets ── */}
-    <div className="border-t border-gray-200 pt-5 space-y-4 text-sm text-gray-700 leading-relaxed">
-      <h3 className="font-bold text-gray-900 text-base">Thinking About Bets in No-Limit Hold'em</h3>
-      <p>
-        Good NLHE players <em>never</em> think about bets in absolute dollar amounts. A $100 bet
-        tells you nothing on its own — if the pot is $1,000 it's tiny; if the pot is $5 it's
-        enormous. Bets are always expressed as a <strong>fraction of the pot</strong>.
+    {/* ── The betting rounds ── */}
+    <div className="border-t border-gray-200 pt-5 space-y-3">
+      <h3 className="font-bold text-gray-900 text-base">The four betting rounds</h3>
+      <p className="text-sm text-gray-700 leading-relaxed">
+        A hand of Hold'em unfolds over four rounds of betting, with community cards revealed a few
+        at a time. Walk through a full hand below - hit "Deal" to reveal each stage.
       </p>
-
-      {/* Table 3 style */}
-      <div className="overflow-hidden rounded-xl border border-gray-200">
-        <div className="bg-gray-50 border-b border-gray-200 px-4 py-2">
-          <p className="text-xs font-bold uppercase tracking-wide text-gray-600">Table 3 — Bet Sizing Terminology (into a $100 pot)</p>
-        </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-gray-50 border-b border-gray-100">
-              <th className="text-left px-4 py-2 text-xs font-bold uppercase tracking-wide text-gray-500">Dollar Amount</th>
-              <th className="text-left px-4 py-2 text-xs font-bold uppercase tracking-wide text-gray-500">Understood As</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {[["$25","¼ pot bet"],["$33","⅓ pot bet"],["$50","½ pot bet"],["$66","⅔ pot bet"],
-              ["$75","¾ pot bet"],["$100","Pot bet"],["$200","2× pot bet"]].map(([amt, label]) => (
-              <tr key={amt} className="hover:bg-gray-50">
-                <td className="px-4 py-2 font-mono font-bold text-gray-800">{amt}</td>
-                <td className="px-4 py-2 text-gray-700">{label}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
-        <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">Pot-Size Raise — Two-Step Formula</p>
-        <p className="text-sm text-emerald-900">
-          The <strong>min-raise</strong> is simply double the villain's bet. The{" "}
-          <strong>pot-size raise</strong> requires two steps:
-        </p>
-        <ol className="list-decimal list-inside space-y-1.5 text-sm text-emerald-900">
-          <li>Take the amount you must call and <strong>double it</strong></li>
-          <li>Add the result to the size of the pot <em>(including villain's bet)</em></li>
-        </ol>
-        <div className="bg-white rounded-lg border border-emerald-200 p-3 text-xs font-mono text-emerald-800 space-y-0.5">
-          <p className="font-bold text-sm font-sans text-emerald-700">Example: Pot $100, villain bets $50</p>
-          <p>Step 1: $50 × 2 = $100</p>
-          <p>Step 2: $100 + ($100 + $50) = $100 + $150 = <strong>$250 total</strong></p>
-        </div>
-        <p className="text-xs text-emerald-600">
-          Why it works: if you called $50, the pot becomes $200. To then raise pot-size ($200) you'd
-          bet $200 more. $50 + $200 = $250. Both methods give the same answer.
-        </p>
+      <DealTheBoard />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+        {[
+          ["Preflop", "After hole cards. Action starts left of the big blind; the blinds act last."],
+          ["Flop", "Three community cards at once, then a betting round. From here on, the small blind acts first."],
+          ["Turn", "A fourth community card, then another betting round."],
+          ["River", "The fifth and final card, one last betting round, then the showdown."],
+        ].map(([name, desc]) => (
+          <div key={name} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+            <p className="text-xs font-bold text-emerald-700">{name}</p>
+            <p className="text-xs text-gray-600 leading-relaxed">{desc}</p>
+          </div>
+        ))}
       </div>
     </div>
 
-    {/* ── Part 3: Your Expectations ── */}
-    <div className="border-t border-gray-200 pt-5 space-y-4 text-sm text-gray-700 leading-relaxed">
-      <h3 className="font-bold text-gray-900 text-base">Your Expectations</h3>
-      <p>
-        To calculate your expected earnings, you need four pieces of information:
+    {/* ── Tricky showdowns ── */}
+    <div className="border-t border-gray-200 pt-5 space-y-3">
+      <h3 className="font-bold text-gray-900 text-base">Reading tricky showdowns</h3>
+      <p className="text-sm text-gray-700 leading-relaxed">
+        Because everyone shares the five community cards, working out who actually won can be
+        sneaky. Kickers, paired boards, and hands that "play the board" all trip up beginners. Try
+        each showdown below - guess the winner, then reveal the real answer (worked out by the same
+        engine that runs the rest of this site).
       </p>
-      <ol className="list-decimal list-inside space-y-1 text-sm text-gray-700">
-        <li>Hands played per hour</li>
-        <li>Hours played</li>
-        <li>Size of the big blind</li>
-        <li>Your estimated win rate (bb/100)</li>
-      </ol>
-
-      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2">
-        <p className="text-xs font-bold uppercase tracking-wide text-blue-700">Formula</p>
-        <div className="text-xs font-mono text-blue-900 space-y-0.5">
-          <p>1. hands/hour × hours played = total hands</p>
-          <p>2. total hands ÷ 100 = 100-hand sections</p>
-          <p>3. big blind size × bb/100 = money per 100-hand section</p>
-          <p>4. sections × money per section = total earnings</p>
-        </div>
-        <div className="bg-white rounded-lg border border-blue-200 p-3 text-xs font-mono text-blue-800 space-y-0.5 mt-2">
-          <p className="font-bold text-sm font-sans text-blue-700">Example: 4 tables of NL10 online, 30 hrs/wk, 7 bb/100</p>
-          <p>1. 400 × 30 = 12,000 total hands</p>
-          <p>2. 12,000 ÷ 100 = 120 sections</p>
-          <p>3. $0.10 × 7 = $0.70 per section</p>
-          <p>4. 120 × $0.70 = <strong>$84/week</strong></p>
-        </div>
-        <p className="text-xs text-blue-600 mt-1">
-          The take-away: micro-stakes earnings are very modest. Treat those stakes as a{" "}
-          <strong>stepping stone</strong> — pay for your education cheaply before moving up.
-        </p>
-      </div>
+      <WhoWinsGame />
     </div>
 
-    {/* Interactives */}
-    <div className="border-t border-gray-200 pt-5">
-      <BetSizingDrill />
-    </div>
-    <div className="border-t border-gray-200 pt-5">
-      <PotRaiseCalc />
-    </div>
-    <div className="border-t border-gray-200 pt-5">
-      <HourlyEarnCalc />
-    </div>
-
-    {/* Quiz */}
-    <div className="border-t border-gray-200 pt-5">
+    {/* ── Quiz ── */}
+    <div className="border-t border-gray-200 pt-6">
       <p className="text-xs font-semibold uppercase tracking-widest text-emerald-600 mb-5">
         Check Your Understanding
       </p>
       <div className="space-y-7">
         <QuizQuestion
-          question="What is an 80BB stack in a NL25 ($0.10/$0.25) game?"
+          question="In Texas Hold'em, how many cards make up your final hand?"
           options={[
-            { label: "$10", explanation: "80BB the big blind: $0.25 × 80 = $20, not $10." },
-            { label: "$20", explanation: "Correct! Big blind = $0.25. $0.25 × 80 = $20." },
-            { label: "$40", explanation: "That would be 80× the $0.50 big blind in NL50. Here BB = $0.25, so 80× = $20." },
-            { label: "$50", explanation: "80× the big blind: $0.25 × 80 = $20." },
+            {
+              label: "Your best 5 cards out of the 7 available",
+              explanation:
+                "Correct! You have 2 hole cards plus 5 community cards - 7 total - and your hand is the best 5-card combination from them.",
+            },
+            {
+              label: "All 7 cards (2 hole + 5 community)",
+              explanation:
+                "No - a poker hand is always exactly 5 cards. You pick the best 5 of the 7 and ignore the other 2.",
+            },
+            {
+              label: "Exactly your 2 hole cards plus 3 community cards",
+              explanation:
+                "That's an Omaha-style rule. In Hold'em you can use any mix, even zero hole cards if the board is best.",
+            },
+            {
+              label: "Only your 2 hole cards",
+              explanation:
+                "Your 2 hole cards alone are rarely a full hand. You combine them with the shared community cards.",
+            },
           ]}
-          correctIndex={1}
+          correctIndex={0}
         />
 
         <QuizQuestion
-          question="If you wanted a 40 buy-in bankroll for NL50 ($0.25/$0.50), how much money do you need?"
+          question="Why do Texas Hold'em games use blinds?"
           options={[
-            { label: "$1,000", explanation: "A standard buy-in at NL50 is $50 (100× the BB). $50 × 40 = $2,000." },
-            { label: "$1,500", explanation: "NL50 buy-in = $50. $50 × 40 = $2,000." },
-            { label: "$2,000", explanation: "Correct! NL50 standard buy-in = $50. 40 buy-ins = 40 × $50 = $2,000." },
-            { label: "$2,500", explanation: "NL50 buy-in = $50 (not $62.50). $50 × 40 = $2,000." },
+            {
+              label: "To seed a pot every hand and force players into action over time",
+              explanation:
+                "Correct! Blinds guarantee there's always something to play for and cost you chips slowly, so you can't just fold forever waiting for premium hands.",
+            },
+            {
+              label: "To decide who deals the cards",
+              explanation:
+                "The button marker handles the dealer position. Blinds are forced bets that create a pot and force action.",
+            },
+            {
+              label: "To pay the casino its cut of the pot",
+              explanation:
+                "The casino's cut is called the 'rake', which is separate. Blinds are forced bets between players that seed the pot.",
+            },
+            {
+              label: "To make sure everyone has the same number of chips",
+              explanation:
+                "Blinds don't equalize stacks. They seed a pot each hand and pressure players to get involved rather than folding indefinitely.",
+            },
           ]}
-          correctIndex={2}
+          correctIndex={0}
         />
 
         <QuizQuestion
-          question="The pot is $80 and villain bets $50. How much do you put in to make a pot-size raise?"
+          question="The board is 8♥ 8♦ 5♣ 5♠ 2♥. Player A holds A♣ K♣ and Player B holds Q♦ J♦. Who wins?"
           options={[
-            { label: "$130", explanation: "Formula: (call × 2) + (pot + bet) = ($50 × 2) + ($80 + $50) = $100 + $130 = $230." },
-            { label: "$180", explanation: "Formula: ($50 × 2) + ($80 + $50) = $100 + $130 = $230." },
-            { label: "$230", explanation: "Correct! Step 1: $50 × 2 = $100. Step 2: $100 + ($80 + $50) = $100 + $130 = $230." },
-            { label: "$290", explanation: "Formula: ($50 × 2) + ($80 + $50) = $100 + $130 = $230, not $290." },
+            {
+              label: "Player A - the ace is the deciding kicker",
+              explanation:
+                "Correct! Both players use the board's two pair (eights and fives). The fifth card breaks the tie, and A beats Q, so Player A wins.",
+            },
+            {
+              label: "Player B - jacks and queens make a higher two pair",
+              explanation:
+                "Neither player pairs the board with their hole cards. Both play the board's eights-and-fives; the highest single card is the kicker, and A beats Q. Player A wins.",
+            },
+            {
+              label: "It's a split pot - both play the board",
+              explanation:
+                "Not quite. They share the two pair on the board, but each adds a different fifth card. A♣ is a higher kicker than Q♦, so Player A wins outright.",
+            },
+            {
+              label: "Player A - two pair beats Player B's one pair",
+              explanation:
+                "Both actually have the same two pair (from the board). What separates them is the kicker: A beats Q, so Player A wins - but not because of a pair difference.",
+            },
           ]}
-          correctIndex={2}
+          correctIndex={0}
         />
       </div>
     </div>
