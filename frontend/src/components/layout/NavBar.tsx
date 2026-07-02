@@ -1,5 +1,5 @@
 // src/components/NavBar.tsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
 import AccountMenu from "@/components/layout/AccountMenu";
@@ -74,6 +74,43 @@ const NavBar: React.FC<NavBarProps> = () => {
   const toolsBtnRef = useRef<HTMLButtonElement>(null);
   const toolsMenuRef = useRef<HTMLDivElement>(null);
 
+  // Desktop brand placement: keep the logo at the toolbar's true center, but slide
+  // it left just enough to never overlap the right-aligned tool buttons.
+  const navRowRef = useRef<HTMLDivElement>(null);
+  const brandRef = useRef<HTMLAnchorElement>(null);
+  const toolsRowRef = useRef<HTMLDivElement>(null);
+  const [brandLeft, setBrandLeft] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    const compute = () => {
+      const row = navRowRef.current;
+      const brand = brandRef.current;
+      const tools = toolsRowRef.current;
+      if (!row || !brand || !tools) return;
+      // Only clamp when the inline (desktop) tools are actually shown.
+      if (getComputedStyle(tools).display === "none") {
+        setBrandLeft(null);
+        return;
+      }
+      const rowRect = row.getBoundingClientRect();
+      const toolsLeft = tools.getBoundingClientRect().left - rowRect.left;
+      const brandW = brand.offsetWidth;
+      const gap = 16; // breathing room between brand and tools
+      const trueCenter = rowRect.width / 2;
+      const maxCenter = toolsLeft - gap - brandW / 2;
+      const center = Math.min(trueCenter, maxCenter);
+      setBrandLeft(Math.max(0, center - brandW / 2));
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    if (navRowRef.current) ro.observe(navRowRef.current);
+    window.addEventListener("resize", compute);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", compute);
+    };
+  }, []);
+
   const [user, setUser] = useState<User | null>(null);
   const [billingBusy, setBillingBusy] = useState(false);
 
@@ -143,11 +180,15 @@ const NavBar: React.FC<NavBarProps> = () => {
     };
   }, [toolsOpen]);
 
-  const goEquity = () => { navigate("/equity"); setToolsOpen(false); };
-  const goSolutions = () => { navigate("/solutions"); setToolsOpen(false); };
-  const goBankrollPage = () => { navigate("/bankroll"); setToolsOpen(false); };
-  const goHandHistoryPage = () => { navigate("/hand-history"); setToolsOpen(false); };
-  const goCoursePage = () => { navigate("/course"); setToolsOpen(false); };
+  const go = (path: string) => { navigate(path); setToolsOpen(false); };
+
+  const tools: { label: string; path: string; section: string }[] = [
+    { label: "Course", path: "/course", section: "course" },
+    { label: "Equity Calculator", path: "/equity", section: "equity" },
+    { label: "Bankroll Tracker", path: "/bankroll", section: "bankroll" },
+    { label: "Hand Histories", path: "/hand-history", section: "handHistory" },
+    { label: "Solutions", path: "/solutions", section: "solver" },
+  ];
 
   // Optional: ring color on navbar based on tier
   const tierRing =
@@ -162,7 +203,10 @@ const NavBar: React.FC<NavBarProps> = () => {
       className={`fixed top-0 left-0 right-0 bg-white shadow-md z-80 ring-1 ${tierRing}`}
       aria-busy={loading || undefined}
     >
-      <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 flex items-center justify-between h-12">
+      <div
+        ref={navRowRef}
+        className="relative w-full px-2 sm:px-6 lg:px-4 flex items-center justify-between h-12"
+      >
         {/* left: hamburger */}
         <button
           onPointerDown={(e) => {
@@ -182,8 +226,34 @@ const NavBar: React.FC<NavBarProps> = () => {
           </svg>
         </button>
 
-        {/* center brand */}
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        {/* brand (desktop): absolutely centered, but nudged left by JS when the
+            tools would otherwise overlap it (see the layout effect above) */}
+        <a
+          ref={brandRef}
+          href="/"
+          className="hidden lg:flex absolute top-1/2 -translate-y-1/2 items-center gap-2 select-none whitespace-nowrap"
+          style={{ left: brandLeft ?? undefined }}
+          aria-label="HoldemTools Home"
+        >
+          <img
+            src="/vite5.svg"
+            alt=""
+            className="h-[24px] w-[24px] block select-none"
+            draggable="false"
+            style={{
+              WebkitTransform: "translateZ(0)",
+              backfaceVisibility: "hidden",
+              WebkitBackfaceVisibility: "hidden",
+              WebkitMaskImage: "-webkit-radial-gradient(white, black)",
+            }}
+          />
+          <span className="text-base font-semibold tracking-wide text-gray-900 whitespace-nowrap">
+            HoldemTools
+          </span>
+        </a>
+
+        {/* center brand (mobile / tablet) */}
+        <div className="lg:hidden absolute inset-0 flex items-center justify-center pointer-events-none">
           <a
             href="/"
             className="pointer-events-auto inline-flex items-center gap-2 select-none"
@@ -207,87 +277,70 @@ const NavBar: React.FC<NavBarProps> = () => {
           </a>
         </div>
 
-        {/* right: Tools dropdown */}
-        <div className="relative">
-          <button
-            ref={toolsBtnRef}
-            onPointerDown={(e) => {
-              e.preventDefault();
-              setToolsOpen((v) => !v);
-            }}
-            className="inline-flex items-center gap-1 rounded-md bg-gray-100 px-2.5 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-200 shadow"
-            aria-haspopup="menu"
-            aria-expanded={toolsOpen}
-          >
-            Tools
-            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <path
-                fillRule="evenodd"
-                d="M5.23 7.21a.75.75 0 011.06.02L10 11.188l3.71-3.957a.75.75 0 111.08 1.04l-4.24 4.52a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z"
-                clipRule="evenodd"
-              />
-            </svg>
-          </button>
+        {/* right: inline tool links on desktop, dropdown on smaller screens */}
+        <div className="relative z-10">
+          {/* Inline links (desktop) */}
+          <div ref={toolsRowRef} className="hidden lg:flex items-center gap-2">
+            {tools.map((t) => (
+              <button
+                key={t.path}
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  go(t.path);
+                }}
+                className="rounded-lg px-3 py-1.5 text-sm font-medium ring-1 shadow-sm transition-all active:scale-95 bg-gray-50 text-gray-700 ring-gray-200 hover:bg-white hover:text-gray-900 hover:ring-gray-300 hover:shadow"
+                aria-current={section === t.section ? "page" : undefined}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
 
-          {toolsOpen && (
-            <div
-              ref={toolsMenuRef}
-              className="absolute right-0 mt-2 w-48 rounded-lg bg-white shadow-lg ring-1 ring-black/5 z-50"
+          {/* Dropdown (mobile / tablet) */}
+          <div className="lg:hidden">
+            <button
+              ref={toolsBtnRef}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                setToolsOpen((v) => !v);
+              }}
+              className="inline-flex items-center gap-1 rounded-md bg-gray-100 px-2.5 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-200 shadow"
+              aria-haspopup="menu"
+              aria-expanded={toolsOpen}
             >
-              <div className="py-1">
-                <button
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    goCoursePage();
-                  }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
-                  aria-current={section === "course" ? "page" : undefined}
-                >
-                  Course
-                </button>
-                <button
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    goEquity();
-                  }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
-                  aria-current={section === "equity" ? "page" : undefined}
-                >
-                  Equity Calculator
-                </button>
-                <button
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    goBankrollPage();
-                  }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
-                  aria-current={section === "bankroll" ? "page" : undefined}
-                >
-                  Bankroll Tracker
-                </button>
-                <button
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    goHandHistoryPage();
-                  }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
-                  aria-current={section === "handHistory" ? "page" : undefined}
-                >
-                  Hand Histories
-                </button>
-                <button
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    goSolutions();
-                  }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
-                  aria-current={section === "solver" ? "page" : undefined}
-                >
-                  Solutions
-                </button>
+              Tools
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                <path
+                  fillRule="evenodd"
+                  d="M5.23 7.21a.75.75 0 011.06.02L10 11.188l3.71-3.957a.75.75 0 111.08 1.04l-4.24 4.52a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </button>
+
+            {toolsOpen && (
+              <div
+                ref={toolsMenuRef}
+                className="absolute right-0 mt-2 w-48 rounded-lg bg-white shadow-lg ring-1 ring-black/5 z-50"
+              >
+                <div className="py-1">
+                  {tools.map((t) => (
+                    <button
+                      key={t.path}
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        go(t.path);
+                      }}
+                      className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
+                      aria-current={section === t.section ? "page" : undefined}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
 

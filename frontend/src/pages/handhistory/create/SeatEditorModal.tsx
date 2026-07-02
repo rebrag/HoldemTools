@@ -1,4 +1,4 @@
-// src/pages/handhistory/advanced/SeatEditorModal.tsx
+// src/pages/handhistory/create/SeatEditorModal.tsx
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import PlayingCard from "@/components/PlayingCard";

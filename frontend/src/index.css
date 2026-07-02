@@ -2,7 +2,6 @@
 
 @plugin "tailwindcss-animate";
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
-@import url("https://fonts.googleapis.com/css2?family=Unica+One&display=swap");
 @import "tailwindcss";
 @import "tw-animate-css";
 
@@ -29,191 +28,15 @@ body {
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
   }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
 }
 
-/* === Poker table layout ================================================== */
-
-.poker-table-bg {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 0;
-  pointer-events: none;
-  overflow: visible; /* allow the 3D tilt + shadow to extend */
-}
-
-.poker-table-shell {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  padding: min(2vh, 16px) min(3vh, 24px); /* a bit more room bottom than top */
-  box-sizing: border-box;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
-/* === TABLE RAIL ========================================================== */
-/* - constant aspect ratio (roughly like your screenshot)
-   - grows to fill the container while preserving that ratio
-   - subtle 3-D tilt via perspective + rotateX
-*/
-.poker-rail {
-  position: relative;
-  height: 100%;
-  max-width: 100%;
-  aspect-ratio: 15 / 10;
-  border-radius: 9999px;
-  padding: clamp(10px, 10%, 40px);
-  box-sizing: border-box;
-
-  transform-style: preserve-3d;
-  transform-origin: 50% 115%;
-  transform: perspective(1200px) rotateX(18deg) translateY(-3%);
-
-  box-shadow:
-    0 42px 80px rgba(0, 0, 0, 0.7),
-    0 18px 32px rgba(0, 0, 0, 0.5);
-
-  /* base leather – no sharp bands, just a smooth vertical gradient */
-  background: linear-gradient(
-    to bottom,
-    #4b4441 0%,
-    #403a37 35%,
-    #322d2a 65%,
-    #241f1c 100%
-  );
-}
-
-/* optional: slightly more tilt for tall containers */
-.poker-rail.portrait {
-  transform: perspective(1200px) rotateX(22deg) translateY(-2%);
-}
-
-.poker-rail::after {
-  content: "";
-  position: absolute;
-  inset: 18px;              /* tucked inside to make rail feel thick */
-  border-radius: inherit;
-  pointer-events: none;
-  background: radial-gradient(
-    ellipse at center,
-    rgba(40, 232, 169, 0.24) 0%,
-    rgba(40, 232, 169, 0) 78%
-  );
-  filter: blur(9px);
-  opacity: 0.55;
-  transition: opacity 0.35s ease;
-}
-
-.poker-rail.led-on::after {
-  opacity: 0.95;
-}
-
-/* soft, fluffy 3D lighting over the whole rail – NO inset */
-.poker-rail::before {
-  content: "";
-  position: absolute;
-  inset: 0;                 /* ← fills the entire rail, no inner ring */
-  border-radius: inherit;
-  pointer-events: none;
-
-  /* top highlight + bottom shadow, all semi-transparent */
-  background:
-    /* broad soft highlight across the top curvature */
-    radial-gradient(
-      130% 150% at 50% -10%,             /* origin slightly above the rail */
-      rgba(255, 255, 255, 0.35) 0%,
-      rgba(255, 255, 255, 0.14) 22%,
-      rgba(255, 255, 255, 0.03) 45%,
-      transparent 70%
-    ),
-    /* gentle darkening toward the near edge (bottom) */
-    radial-gradient(
-      140% 190% at 50% 130%,             /* origin below the rail */
-      rgba(0, 0, 0, 0.7) 0%,
-      rgba(0, 0, 0, 0.2) 45%,
-      transparent 72%
-    );
-
-  /* subtle inner shading so it feels padded, not metal */
-  box-shadow:
-    0 3px 7px rgba(0, 0, 0, 0.6) inset,
-    0 -2px 4px rgba(255, 255, 255, 0.11) inset;
-
-  /* tiny blur so there’s no crisp “line” anywhere */
-  filter: blur(0.3px);
-  opacity: 0.96;
-}
-
-/* === FELT ================================================================ */
-
-.poker-felt {
-  width: 100%;
-  height: 100%;
-  box-sizing: content-box;
-  border-radius: inherit;
-  position: relative;
-  background: radial-gradient(
-    120% 160% at 50% 35%,
-    #2b8c3b 0%,
-    #0f6328 55%,
-    #06361a 100%
-  );
-  box-shadow:
-    inset 0 0 28px rgba(0,0,0,0.8),
-    inset 0 18px 36px rgba(255,255,255,0.06);
-  overflow: hidden;
-}
-
-/* stitch line just inside the rail */
-.poker-felt::before {
-  content: "";
-  position: absolute;
-  inset: 12px;
-  border-radius: inherit;
-  pointer-events: none;
-  box-shadow:
-    0 0 0 2px rgba(0,0,0,0.4) inset,
-    0 0 0 1px rgba(255,255,255,0.05) inset;
-  background:
-    radial-gradient(circle, rgba(0,0,0,0.35) 1px, transparent 3px) left top / 25px 25px repeat,
-    transparent;
-  -webkit-mask: radial-gradient(closest-side, black calc(100% - 9px), transparent calc(100% - 8px));
-          mask: radial-gradient(closest-side, black calc(100% - 9px), transparent calc(100% - 8px));
-  opacity: 0.55;
-}
-
-/* subtle center logo */
-.poker-felt::after {
-  content: "HOLDEMTOOLS";
-  font-family: "Unica One", system-ui, sans-serif;
-  letter-spacing: 4px;
-  position: absolute;
-  left: 50%;
-  top: 55%;
-  transform: translate(-50%, -50%);
-  font-size: clamp(18px, 3.6vw, 42px);
-  color: rgba(255,255,255,0.06);
-  text-shadow: 0 1px 0 rgba(0,0,0,0.55);
-  pointer-events: none;
-}
-
-/* seat pips around the edge */
-.poker-rail .pips {
-  position: absolute;
-  inset: 6px;
-  border-radius: inherit;
-  pointer-events: none;
-  background:
-    radial-gradient(circle at 50% 2.5%, rgba(255,255,255,0.3) 0 2px, transparent 3px) 50% 0 / 24px 24px repeat-x,
-    radial-gradient(circle at 97.5% 50%, rgba(255,255,255,0.3) 0 2px, transparent 3px) 100% 50% / 24px 24px repeat-y,
-    radial-gradient(circle at 50% 97.5%, rgba(255,255,255,0.3) 0 2px, transparent 3px) 50% 100% / 24px 24px repeat-x,
-    radial-gradient(circle at 2.5% 50%, rgba(255,255,255,0.3) 0 2px, transparent 3px) 0 50% / 24px 24px repeat-y;
-  opacity: 0.15;
-}
 
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
@@ -294,6 +117,7 @@ body {
   --animate-gradient-pan: gradient-pan 6s ease infinite;
   --animate-float: float 7s ease-in-out infinite;
   --animate-aurora: aurora 18s ease-in-out infinite;
+  --animate-card-drift: card-drift 22s linear infinite;
 
   @keyframes marquee {
     to { transform: translateX(-50%); }
@@ -320,6 +144,20 @@ body {
     33% { transform: translate3d(4%, -6%, 0) scale(1.1); }
     66% { transform: translate3d(-5%, 4%, 0) scale(0.95); }
   }
+  /* Slowly drift a decorative card diagonally upward while it fades in and
+     out and lists around its seeded tilt (--card-rotate). Used by FlyingCards. */
+  @keyframes card-drift {
+    0% {
+      transform: translate3d(0, 0, 0) rotate(var(--card-rotate, 0deg)) scale(1);
+      opacity: 0;
+    }
+    15% { opacity: 1; }
+    85% { opacity: 1; }
+    100% {
+      transform: translate3d(60px, -120px, 0) rotate(calc(var(--card-rotate, 0deg) + 18deg)) scale(1.05);
+      opacity: 0;
+    }
+  }
 }
 
 @layer base {
@@ -345,6 +183,7 @@ body {
   [class*="animate-meteor"],
   [class*="animate-float"],
   [class*="animate-aurora"],
+  [class*="animate-card-drift"],
   [class*="animate-gradient-pan"] {
     animation: none !important;
   }

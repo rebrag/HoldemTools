@@ -8,12 +8,14 @@
 // Hands are associated with the session, so they inherit its date/time rather
 // than carrying their own.
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { User } from "firebase/auth";
 import { AnimatePresence, motion } from "framer-motion";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import CopyButton from "@/components/CopyButton";
 import { authedFetch } from "@/lib/api";
 import HandHistoryEditorModal from "@/pages/handhistory/HandHistoryEditorModal";
+import CreateHandHistory from "@/pages/handhistory/create/CreateHandHistory";
 import type { HandHistory } from "@/pages/handhistory/types";
 
 // A hand typed against an unsaved (draft) session — no server id yet.
@@ -36,6 +38,14 @@ interface Props {
   // draft mode
   draftHands?: LocalHand[];
   onDraftChange?: (next: LocalHand[]) => void;
+  // The session's free-form "Game" string (e.g. "2/5 NL"); seeds the visual
+  // builder's blinds/ante/game when creating a hand.
+  sessionGame?: string;
+  // The session's location; used as the site name in the serialized hand header.
+  sessionLocation?: string | null;
+  // Session mode only: called after a hand from the "Create HH" builder is
+  // successfully saved, so the parent can auto-persist the session.
+  onCreatedHandSaved?: () => void;
 }
 
 function makeLocalId(): string {
@@ -55,6 +65,9 @@ const SessionHandHistories: React.FC<Props> = ({
   sessionId,
   draftHands,
   onDraftChange,
+  sessionGame,
+  sessionLocation,
+  onCreatedHandSaved,
 }) => {
   const [items, setItems] = useState<HandHistory[]>([]); // session mode only
   const [loading, setLoading] = useState(false);
@@ -66,6 +79,7 @@ const SessionHandHistories: React.FC<Props> = ({
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [builderOpen, setBuilderOpen] = useState(false);
 
   const itemsRef = useRef<HandHistory[]>([]);
   itemsRef.current = items;
@@ -183,6 +197,29 @@ const SessionHandHistories: React.FC<Props> = ({
     }
   };
 
+  // A hand produced by the visual builder overlay. Always a new hand (never an
+  // edit), so it doesn't go through the editor's editingKey path.
+  const saveCreatedHand = async (rawText: string) => {
+    if (mode === "draft") {
+      onDraftChange?.([{ localId: makeLocalId(), rawText }, ...(draftHands ?? [])]);
+      return;
+    }
+    try {
+      const res = await authedFetch("/api/handhistory", {
+        method: "POST",
+        body: JSON.stringify({ rawText, sessionId }),
+      });
+      if (!res.ok) throw new Error(`Failed to save hand. (${res.status})`);
+      const saved = (await res.json()) as HandHistory;
+      setItems((prev) => [saved, ...prev]);
+      onCreatedHandSaved?.();
+    } catch (e: unknown) {
+      setError(
+        e instanceof Error ? e.message : "Something went wrong while saving."
+      );
+    }
+  };
+
   const handleDelete = async (key: string) => {
     if (!window.confirm("Delete this hand? This can't be undone.")) return;
 
@@ -215,13 +252,22 @@ const SessionHandHistories: React.FC<Props> = ({
             </span>
           )}
         </h3>
-        <button
-          type="button"
-          onClick={openCreate}
-          className="inline-flex items-center rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white shadow-sm shadow-emerald-500/40 transition-transform duration-150 hover:-translate-y-[1px] hover:bg-emerald-500 active:translate-y-[1px]"
-        >
-          + Add hand
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={openCreate}
+            className="inline-flex items-center rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 shadow-sm transition-transform duration-150 hover:-translate-y-[1px] hover:bg-emerald-50 active:translate-y-[1px]"
+          >
+            Enter HH
+          </button>
+          <button
+            type="button"
+            onClick={() => setBuilderOpen(true)}
+            className="inline-flex items-center rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white shadow-sm shadow-emerald-500/40 transition-transform duration-150 hover:-translate-y-[1px] hover:bg-emerald-500 active:translate-y-[1px]"
+          >
+            Create HH
+          </button>
+        </div>
       </div>
 
       {mode === "draft" && (
@@ -327,6 +373,20 @@ const SessionHandHistories: React.FC<Props> = ({
           onCancel={closeEditor}
         />
       )}
+
+      {builderOpen &&
+        createPortal(
+          <div className="fixed inset-0 z-[1300] overflow-y-auto bg-slate-950/95 backdrop-blur-sm">
+            <CreateHandHistory
+              user={user ?? null}
+              onComplete={(rawText) => void saveCreatedHand(rawText)}
+              onClose={() => setBuilderOpen(false)}
+              defaultGameString={sessionGame}
+              location={sessionLocation}
+            />
+          </div>,
+          document.body
+        )}
     </div>
   );
 };

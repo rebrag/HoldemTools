@@ -4,12 +4,13 @@
 // badge for the solver's single-range view).
 import React from "react";
 import PlayingCard from "@/components/PlayingCard";
-import { seatCoords } from "@/lib/pokerGeometry";
+import PokerTableSurface from "@/components/PokerTableSurface";
+import { seatCoords, type SeatCoord } from "@/lib/pokerGeometry";
 
 /** Back of a playing card (unknown / face-down). */
-export const CardBack: React.FC<{ w?: number }> = ({ w = 22 }) => (
+export const CardBack: React.FC<{ w?: number }> = ({ w = 30 }) => (
   <div
-    className="aspect-[3/4] rounded-[4px] border border-rose-900/50 bg-gradient-to-br from-rose-600 to-rose-800 shadow-sm"
+    className="aspect-[3/4] rounded-[5px] border border-rose-950/60 bg-gradient-to-br from-rose-600 to-rose-800 shadow-md ring-1 ring-white/10"
     style={{ width: w }}
     aria-hidden="true"
   />
@@ -28,6 +29,15 @@ export interface PokerTableSeat {
   folded?: boolean;
   /** skip rendering entirely (e.g. an empty seat during a live hand). */
   hidden?: boolean;
+  /** render null holeCards slots as dashed empty placeholders instead of face-down CardBacks. */
+  emptySlotsAsPlaceholders?: boolean;
+  /** index into holeCards to decorate with the pulsing "NEXT" ring (card-picker target). */
+  nextSlotIndex?: number;
+  /** emerald ring around the whole seat: marks the seat selected for editing. */
+  highlighted?: boolean;
+  /** extra node rendered below the badges (e.g. an equity readout).
+   *  Must not contain interactive elements: the seat root is a <button>. */
+  extra?: React.ReactNode;
 }
 
 export interface PokerTableProps {
@@ -36,17 +46,25 @@ export interface PokerTableProps {
   center?: React.ReactNode; // caller injects center content (board/pot/etc.)
   onSeatClick?: (index: number) => void;
   feltStyle?: React.CSSProperties; // override the default teal gradient
-  aspectClassName?: string; // default "aspect-[4/5]"
+  aspectClassName?: string; // default "aspect-[7/5]" (landscape oval)
   maxWidthClassName?: string; // default "max-w-sm"
   cardBackWidth?: number; // hole-card width, default 22
   className?: string;
+  /** override seatCoords(size), e.g. to pull side seats inward. */
+  coordsOverride?: SeatCoord[];
 }
 
-const DEFAULT_FELT: React.CSSProperties = {
-  background:
-    "radial-gradient(ellipse at 50% 42%, #0e7490 0%, #0c5566 55%, #083344 100%)",
-  boxShadow: "inset 0 6px 30px rgba(0,0,0,0.45)",
-};
+/** Pulsing ring + "NEXT" chip marking the slot the card picker will fill. */
+export const NextSlotHighlight: React.FC = () => (
+  <>
+    <div className="pointer-events-none absolute -inset-1 rounded-[9px] ring-2 ring-emerald-400/80 shadow-[0_0_0_6px_rgba(16,185,129,0.18)] animate-pulse z-10" />
+    <div className="absolute -top-3 -right-1 z-20">
+      <span className="text-[10px] bg-emerald-600 text-white rounded px-1.5 py-0.5 shadow">
+        NEXT
+      </span>
+    </div>
+  </>
+);
 
 const PokerTable: React.FC<PokerTableProps> = ({
   size,
@@ -54,24 +72,21 @@ const PokerTable: React.FC<PokerTableProps> = ({
   center,
   onSeatClick,
   feltStyle,
-  aspectClassName = "aspect-[4/5]",
+  aspectClassName = "aspect-[7/5]",
   maxWidthClassName = "max-w-sm",
-  cardBackWidth = 22,
+  cardBackWidth = 30,
   className,
+  coordsOverride,
 }) => {
-  const coords = seatCoords(size);
+  const coords = coordsOverride ?? seatCoords(size);
 
   return (
-    <div className={`rounded-3xl bg-slate-950/70 p-2 shadow-2xl shadow-emerald-900/40 ${className ?? ""}`}>
-      <div className="rounded-[40px] bg-gradient-to-b from-slate-800 to-slate-900 p-2">
-        <div className={`relative mx-auto w-full ${aspectClassName} ${maxWidthClassName}`}>
-          {/* felt */}
-          <div
-            className="absolute inset-[6%] rounded-[46%] ring-4 ring-slate-950/60"
-            style={feltStyle ?? DEFAULT_FELT}
-          />
-
-          {/* center slot */}
+    <PokerTableSurface
+      className={className}
+      feltStyle={feltStyle}
+      innerClassName={`relative mx-auto w-full ${aspectClassName} ${maxWidthClassName}`}
+    >
+      {/* center slot */}
           {center != null && (
             <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1.5">
               {center}
@@ -92,7 +107,11 @@ const PokerTable: React.FC<PokerTableProps> = ({
                 onClick={clickable ? () => onSeatClick!(i) : undefined}
                 className={`absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5 ${
                   clickable ? "cursor-pointer" : "cursor-default"
-                } ${seat.folded ? "opacity-40 grayscale" : ""}`}
+                } ${seat.folded ? "opacity-40 grayscale" : ""} ${
+                  seat.highlighted
+                    ? "rounded-lg ring-2 ring-emerald-400 ring-offset-1 ring-offset-transparent"
+                    : ""
+                }`}
                 style={{ left: `${coord.x}%`, top: `${coord.y}%` }}
                 aria-label={`Seat ${seat.label}`}
               >
@@ -105,14 +124,17 @@ const PokerTable: React.FC<PokerTableProps> = ({
                         seat.holeCards!.length >= 4
                           ? Math.round(cardBackWidth * 0.72)
                           : cardBackWidth;
-                      return c ? (
-                        <PlayingCard key={h} code={c} size="sm" width={w} />
-                      ) : (
-                        <CardBack key={h} w={w} />
+                      if (c) return <PlayingCard key={h} code={c} size="sm" width={w} />;
+                      if (!seat.emptySlotsAsPlaceholders) return <CardBack key={h} w={w} />;
+                      return (
+                        <div key={h} className="relative" style={{ width: w }}>
+                          <div className="aspect-[3/4] rounded-[4px] border border-dashed border-white/30 bg-black/15" />
+                          {seat.nextSlotIndex === h && <NextSlotHighlight />}
+                        </div>
                       );
                     })}
                     {seat.isButton && (
-                      <span className="absolute -right-3 -bottom-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-white text-[9px] font-bold text-gray-800 shadow ring-1 ring-gray-300">
+                      <span className="absolute -right-3 -bottom-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-b from-amber-200 to-amber-500 text-[10px] font-bold text-amber-950 shadow-md ring-1 ring-amber-700/70">
                         D
                       </span>
                     )}
@@ -120,19 +142,19 @@ const PokerTable: React.FC<PokerTableProps> = ({
                 )}
 
                 <span
-                  className={`max-w-[80px] truncate rounded px-1.5 py-[1px] text-[10px] font-semibold ring-1 ${
+                  className={`max-w-[88px] truncate rounded-md px-1.5 py-[1px] text-[10px] font-semibold shadow-md ring-1 ${
                     seat.isActive
-                      ? "bg-emerald-500 text-white ring-emerald-200"
+                      ? "bg-gradient-to-b from-emerald-400 to-emerald-600 text-white ring-emerald-300/70"
                       : seat.isHero
-                      ? "bg-amber-500/90 text-white ring-amber-200"
-                      : "bg-slate-900/80 text-sky-100 ring-slate-700"
+                      ? "bg-gradient-to-b from-amber-400 to-amber-600 text-white ring-amber-300/70"
+                      : "bg-gradient-to-b from-slate-800 to-slate-950 text-sky-100 ring-slate-600/70"
                   }`}
                 >
                   {seat.label}
                 </span>
 
                 {seat.stackText && (
-                  <span className="rounded bg-black/50 px-1.5 text-[10px] font-semibold text-emerald-100">
+                  <span className="-mt-px rounded-b-md bg-black/60 px-1.5 text-[10px] font-semibold text-emerald-100 shadow-sm ring-1 ring-black/40">
                     {seat.stackText}
                   </span>
                 )}
@@ -142,12 +164,12 @@ const PokerTable: React.FC<PokerTableProps> = ({
                     {seat.committedText}
                   </span>
                 )}
+
+                {seat.extra}
               </button>
             );
           })}
-        </div>
-      </div>
-    </div>
+    </PokerTableSurface>
   );
 };
 

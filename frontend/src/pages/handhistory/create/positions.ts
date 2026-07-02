@@ -1,4 +1,4 @@
-// src/pages/handhistory/advanced/positions.ts
+// src/pages/handhistory/create/positions.ts
 // Poker position labels (relative to the button) and seat coordinates around
 // the oval table.
 

@@ -10,6 +10,7 @@ import useElementSize from "@/hooks/useElementSize";
 import DecisionMatrix from "./DecisionMatrix";
 import ColorKey from "./ColorKey";
 import PokerTable, { type PokerTableSeat } from "@/components/PokerTable";
+import { PokerTableBackdrop } from "@/components/PokerTableSurface";
 
 type PlateGridProps = {
   files: string[];
@@ -50,7 +51,6 @@ const LR_GAP_PX = 4;
 const EXTRA_PLATE_V_PX = 2;
 const MIN_DM_W = 80;
 const MIN_SIDEBAR_W = 40;
-const MAX_PLATE_W = 640;
 
 const PlateGrid: React.FC<PlateGridProps> = ({
   files,
@@ -79,8 +79,6 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
 
   const baseW = container.width || windowWidth;
-  const baseHForFit =
-    windowHeight > 0 ? windowHeight : container.height || windowHeight;
 
   const viewW = windowWidth;
   const viewH = windowHeight;
@@ -130,10 +128,8 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   const canonicalPlateWidth = !isNarrow
     ? (() => {
         const wAvail = Math.max(0, baseW - (gridCols - 1) * gapPx);
-        const hAvail = Math.max(0, baseHForFit - (gridRows - 1) * gapPx);
         const fitByW = wAvail / gridCols;
-        const fitByH = hAvail / (gridRows + 2);
-        return Math.max(170, Math.min(fitByW, fitByH));
+        return Math.max(170, fitByW);
       })()
     : undefined;
 
@@ -181,7 +177,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
       Math.min(dmLimitByHeight, dmLimitByHalfWidth)
     );
     const sbW = Math.max(MIN_SIDEBAR_W, halfPlateWidth - LR_GAP_PX - dmW);
-    const plateW = Math.min(MAX_PLATE_W, halfPlateWidth);
+    const plateW = halfPlateWidth;
     return { plateW, dmW: Math.round(dmW), sbW: Math.round(sbW) };
   }, [isNarrow, halfPlateWidth, gridRows, gridContainerHeight, remainingViewportH]);
 
@@ -268,6 +264,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
               seats={tableSeats}
               className="w-full"
               maxWidthClassName="max-w-none"
+              aspectClassName="aspect-[4/5]"
               center={
                 pot != null ? (
                   <span className="rounded-full bg-black/50 px-3 py-0.5 text-[11px] font-semibold text-white">
@@ -314,15 +311,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
         isNarrow ? "items-start py-0 px-0.5" : "items-center py-2"
       } overflow-visible`}
     >
-      <div className="poker-table-bg pointer-events-none absolute inset-0 flex justify-center items-center z-10">
-        <div
-          className={`poker-rail ${
-            gridRows > gridCols ? "portrait" : ""
-          } overflow-visible relative`}
-        >
-          <div className="poker-felt overflow-hidden" />
-        </div>
-      </div>
+      <PokerTableBackdrop className="z-10" />
 
       <LayoutGroup id="plate-zoom">
         <div

@@ -3,6 +3,7 @@ import React, { createContext, useContext, useMemo } from "react";
 import type { User } from "firebase/auth";
 import { useTier } from "@/hooks/useTier";
 import type { Tier } from "@/lib/stripe/stripeTiers";
+import { DEV_AUTH_BYPASS, DEV_TIER } from "@/lib/devAuth";
 
 type TierContextValue = {
   tier: Tier;
@@ -18,7 +19,16 @@ export const TierProvider: React.FC<{ user: User | null; children: React.ReactNo
   const { tier, loading, isFree, isPlus, isPro } = useTier(user?.uid ?? null);
 
   const value = useMemo(
-    () => ({ tier, loading, isFree, isPlus, isPro }),
+    () =>
+      DEV_AUTH_BYPASS
+        ? {
+            tier: DEV_TIER,
+            loading: false,
+            isFree: DEV_TIER === "free",
+            isPlus: DEV_TIER === "plus",
+            isPro: DEV_TIER === "pro",
+          }
+        : { tier, loading, isFree, isPlus, isPro },
     [tier, loading, isFree, isPlus, isPro]
   );
 

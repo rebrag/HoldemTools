@@ -1,4 +1,4 @@
-// src/components/EquityCalc.tsx
+// src/pages/equity/EquityCalc.tsx
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, {
   useMemo,
@@ -7,19 +7,17 @@ import React, {
   useRef,
   useEffect,
 } from "react";
-import PokerBackground from "@/components/PokerBackground";
 import { buildDeck, sampleN, tokenize, sortCardsDesc } from "@/lib/cards";
 import { useEquitySimulation } from "@/hooks/useEquitySimulation";
-import CardPicker from "@/components/CardPicker";
+import RankSuitKeypad from "@/components/RankSuitKeypad";
 import PlayingCard from "@/components/PlayingCard";
+import { NextSlotHighlight } from "@/components/PokerTable";
 import ploOpenRangeCSV from "@/data/ploOpenRangeCSV.txt?raw";
 import ploCallRangeCSV from "@/data/ploCallRangeCSV.txt?raw";
 import { SlidingNumber } from "@/components/ui/shadcn-io/sliding-number";
 import { useLocalStorageState } from "@/hooks/useLocalStorageState";
 
 /* ===== Shared helpers & constants ===== */
-const CARD_W = "clamp(34px, 4.8vw, 64px)";
-const SLOT_GAP = "5px";
 
 type PloRangeEntry = {
   cards: string[];
@@ -141,309 +139,214 @@ const TrashIcon: React.FC<{ className?: string }> = ({ className }) => (
     viewBox="0 0 20 20"
     fill="currentColor"
     aria-hidden="true"
-    className={className ?? "h-6 w-6"}
+    className={className ?? "h-5 w-5"}
   >
     <path d="M7.5 3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1h3a.75.75 0 1 1 0 1.5h-.69l-.77 10.01A2.5 2.5 0 0 1 11.55 17h-3.1a2.5 2.5 0 0 1-2.99-2.49L4.69 4.5H4a.75.75 0 0 1 0-1.5h3.5Zm-1.7 1.5.74 9.6a1 1 0 0 0 .99.9h3.14a1 1 0 0 0 .99-.9l.74-9.6H5.8Z" />
   </svg>
 );
 
-/* ===== SeatPanel ===== */
-type SeatPanelProps = {
-  id: number;
+const RefreshIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    className={className ?? "w-5 h-5"}
+    fill="none"
+    viewBox="0 0 24 24"
+    stroke="currentColor"
+    aria-hidden="true"
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+    />
+  </svg>
+);
+
+/* ===== Panels (replace the oval poker table) — glass surfaces from the
+   design-kit technique, wired to the app's emerald / slate / blue theme. ===== */
+
+const panelBase =
+  "group relative flex flex-col gap-2 rounded-lg border p-2.5 backdrop-blur-md transition-all cursor-pointer";
+const panelClass = (selected: boolean) =>
+  selected
+    ? `${panelBase} border-accent bg-surface/80 shadow-glow ring-1 ring-accent`
+    : `${panelBase} border-hairline bg-surface/60 hover:border-accent/40 hover:shadow-glow`;
+
+const iconBtn =
+  "p-1 rounded text-slate-400 hover:text-emerald-300 hover:bg-white/10 transition-colors";
+
+/** Face-up cards + dashed empty slots, with the pulsing "NEXT" ring on the
+ *  first empty slot when this panel is the active fill target. */
+const CardSlots: React.FC<{
+  cards: string[];
+  max: number;
+  cardW: number;
+  isNext: boolean;
+  onRemoveCard: (code: string) => void;
+}> = ({ cards, max, cardW, isNext, onRemoveCard }) => (
+  <div className="flex flex-wrap gap-1">
+    {cards.map((c) => (
+      <button
+        key={c}
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemoveCard(c);
+        }}
+        className="transition-transform hover:-translate-y-0.5"
+      >
+        <PlayingCard code={c} width={cardW} />
+      </button>
+    ))}
+    {Array.from({ length: Math.max(0, max - cards.length) }).map((_, i) => (
+      <div key={`slot-${i}`} className="relative" style={{ width: cardW }}>
+        <div className="aspect-[3/4] rounded-[4px] border border-dashed border-white/25 bg-black/20" />
+        {isNext && i === 0 && <NextSlotHighlight />}
+      </div>
+    ))}
+  </div>
+);
+
+/* ===== PlayerPanel: one hand's cards, equity readout, and controls ===== */
+const PlayerPanel: React.FC<{
+  idx: number;
+  tokens: string[];
+  cap: number;
   value: string;
-  onChange: (s: string) => void;
+  selected: boolean;
+  isNext: boolean;
+  ev?: number;
+  win1?: number;
+  win2?: number;
+  dual: boolean;
+  canRemove: boolean;
+  onSelect: () => void;
+  onChange: (v: string) => void;
+  onRemoveCard: (code: string) => void;
+  onRandomize: () => void;
   onClear: () => void;
   onRemoveSeat: () => void;
-  canRemove: boolean;
-  cards: string[];
-  emptySlots: number;
-  onRandomize: () => void;
-  totalEV?: number;
-  breakdowns: { label: string; winPct?: number }[];
-  cap: 2 | 4 | 5;
-  cardWidth: string;
-  slotGap: string;
-  randFlag: boolean;
-  computing: boolean;
-  highlightFirstEmpty?: boolean;
-};
-
-const SeatPanel: React.FC<SeatPanelProps> = React.memo(
-  ({
-    id,
-    value,
-    onChange,
-    onClear,
-    onRemoveSeat,
-    canRemove,
-    cards,
-    emptySlots,
-    onRandomize,
-    totalEV,
-    breakdowns,
-    cardWidth,
-    slotGap,
-    highlightFirstEmpty = false,
-  }) => {
-    const slotVars: React.CSSProperties = {
-      ["--card-w" as any]: cardWidth,
-      ["--slot-gap" as any]: slotGap,
-    };
-
-    const isActive = cards.length > 0;
-
-    return (
-      <div
-        className={`relative w-full h-full flex flex-col justify-between bg-white/90 backdrop-blur-sm border border-gray-300 shadow-sm rounded-lg p-1.5 transition-all
-          ${
-            highlightFirstEmpty
-              ? "ring-2 ring-emerald-400 ring-offset-1 ring-offset-emerald-900"
-              : ""
-          }`}
-        style={slotVars}
-      >
-        <div className="flex items-center gap-1 mb-1">
-          <div className="flex items-center justify-center w-5 h-5 rounded bg-gray-200 text-[10px] font-bold text-gray-700 shrink-0">
-            {id + 1}
-          </div>
-          <input
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder="Hand..."
-            className="flex-1 min-w-0 bg-transparent text-xs font-medium text-gray-800 placeholder-gray-400 outline-none border-b border-gray-200 focus:border-emerald-500 py-0.5"
-          />
-          <div className="flex items-center gap-0.5">
+}> = React.memo((p) => {
+  const holeW = p.cap >= 4 ? 34 : 44;
+  const stop = (fn: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    fn();
+  };
+  return (
+    <div onClick={p.onSelect} className={panelClass(p.selected)}>
+      <span className="absolute left-0 top-0 h-0.5 w-0 bg-accent transition-all duration-300 group-hover:w-full" />
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-accent">
+          Seat {p.idx + 1}
+        </span>
+        <div className="flex items-center gap-0.5">
+          <button type="button" onClick={stop(p.onRandomize)} className={iconBtn} title="Randomize">
+            <RefreshIcon className="h-4 w-4" />
+          </button>
+          <button type="button" onClick={stop(p.onClear)} className={iconBtn} title="Clear">
+            <TrashIcon className="h-4 w-4" />
+          </button>
+          {p.canRemove && (
             <button
-              onClick={onRandomize}
-              className="p-1 hover:bg-gray-200 rounded text-gray-500"
+              type="button"
+              onClick={stop(p.onRemoveSeat)}
+              className="rounded p-1 text-xs font-bold text-slate-400 hover:bg-white/10 hover:text-red-400"
+              title="Remove seat"
             >
-              <svg
-                className="w-6 h-6"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                />
-              </svg>
+              ✕
             </button>
-            {isActive ? (
-              <button
-                onClick={onClear}
-                className="p-1 hover:bg-red-100 rounded text-gray-500 hover:text-red-600"
-              >
-                <TrashIcon />
-              </button>
-            ) : (
-              canRemove && (
-                <button
-                  onClick={onRemoveSeat}
-                  className="p-1 hover:bg-red-100 rounded text-gray-400 hover:text-red-600"
-                  title="Remove Seat"
-                >
-                  <span className="text-s font-bold">✕</span>
-                </button>
-              )
-            )}
-          </div>
-        </div>
-
-        <div
-          className="flex-1 flex items-center justify-center py-1"
-          style={{ gap: "var(--slot-gap)" }}
-        >
-          {cards.map((c) => (
-            <button
-              key={`p${id}-${c}`}
-              onPointerDown={(e) => {
-                e.preventDefault();
-                onChange(
-                  sortCardsDesc(tokenize(value).filter((x) => x !== c)).join(" ")
-                );
-              }}
-              className="hover:-translate-y-0.5 transition-transform"
-            >
-              <PlayingCard code={c} width={cardWidth} />
-            </button>
-          ))}
-          {Array.from({ length: emptySlots }).map((_, i) => {
-            const isNext = highlightFirstEmpty && i === 0;
-            return (
-              <div
-                key={`p${id}-slot-${i}`}
-                className="relative"
-                style={{ width: "var(--card-w)", aspectRatio: "3/4" }}
-              >
-                <div className="w-full h-full border border-dashed rounded bg-gray-50/50 border-gray-300" />
-                {isNext && (
-                  <>
-                    <div className="pointer-events-none absolute -inset-1 rounded-[9px] ring-2 ring-emerald-400/80 shadow-[0_0_0_6px_rgba(16,185,129,0.18)] animate-pulse z-10" />
-                    <div className="absolute -top-3 -right-1 z-20">
-                      <span className="text-[10px] bg-emerald-600 text-white rounded px-1.5 py-0.5 shadow">
-                        NEXT
-                      </span>
-                    </div>
-                  </>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="mt-auto pt-1 border-t border-gray-200">
-          <div className="flex justify-between items-end leading-none">
-            <div className="flex flex-col text-[9px] text-gray-500 gap-0.5">
-              {breakdowns.map((b) => (
-                <div key={b.label} className="flex gap-1 items-baseline">
-                  <span className="opacity-70">{b.label}:</span>
-                  {b.winPct === undefined ? (
-                    <span className="text-gray-400">—</span>
-                  ) : (
-                    <span
-                      className={`inline-flex items-baseline ${
-                        b.winPct > 50 ? "font-bold text-gray-800" : ""
-                      }`}
-                    >
-                      <SlidingNumber
-                        number={b.winPct}
-                        decimalPlaces={1}
-                        inView={true}
-                      />
-                      <span className="ml-0.5 text-[9px]">%</span>
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <div className="text-right">
-              <div className="text-[10px] text-gray-400 uppercase tracking-tighter">
-                Equity
-              </div>
-              <div className="text-sm font-bold text-emerald-700 inline-flex items-baseline">
-                {totalEV === undefined ? (
-                  <span className="text-gray-400">—</span>
-                ) : (
-                  <>
-                    <SlidingNumber
-                      number={totalEV}
-                      decimalPlaces={1}
-                      inView={true}
-                    />
-                    <span className="ml-0.5 text-[10px]">%</span>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
+          )}
         </div>
       </div>
-    );
-  }
-);
 
-/* ===== BoardPanel ===== */
+      <CardSlots cards={p.tokens} max={p.cap} cardW={holeW} isNext={p.isNext} onRemoveCard={p.onRemoveCard} />
+
+      <div className="flex items-baseline gap-2">
+        <span className="inline-flex items-baseline text-2xl font-extrabold tabular-nums text-emerald-300">
+          {p.ev === undefined ? (
+            <span className="text-white/30">–</span>
+          ) : (
+            <>
+              <SlidingNumber number={p.ev} decimalPlaces={1} inView />
+              <span className="ml-0.5 text-sm">%</span>
+            </>
+          )}
+        </span>
+        {p.dual ? (
+          <span className="text-[11px] text-sky-300">
+            B1 {p.win1 === undefined ? "–" : p.win1.toFixed(1)} · B2{" "}
+            {p.win2 === undefined ? "–" : p.win2.toFixed(1)}
+          </span>
+        ) : (
+          p.win1 !== undefined && (
+            <span className="text-[11px] text-sky-300">Win {p.win1.toFixed(1)}%</span>
+          )
+        )}
+      </div>
+
+      <input
+        value={p.value}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => p.onChange(e.target.value)}
+        placeholder="e.g. As Kd"
+        className="w-full min-w-0 rounded border border-hairline bg-black/30 px-2 py-1 text-xs font-medium text-slate-100 placeholder-slate-500 outline-none focus:border-accent/60"
+      />
+    </div>
+  );
+});
+
+/* ===== BoardPanel: community cards for one board ===== */
 const BoardPanel: React.FC<{
-  label: string;
+  idx: number;
+  cards: string[];
   value: string;
-  onChange: (s: string) => void;
+  selected: boolean;
+  isNext: boolean;
+  dual: boolean;
+  onSelect: () => void;
+  onChange: (v: string) => void;
+  onRemoveCard: (code: string) => void;
   onRandomize: () => void;
   onClear: () => void;
-  cards: string[];
-  emptySlots: number;
-  cardWidth: string;
-  slotGap: string;
-  highlightFirstEmpty?: boolean;
-}> = React.memo(
-  ({
-    label,
-    value,
-    onChange,
-    onRandomize,
-    onClear,
-    cards,
-    emptySlots,
-    cardWidth,
-    slotGap,
-    highlightFirstEmpty,
-  }) => (
-    <div className="bg-white/90 backdrop-blur border border-gray-300 rounded-lg px-2 py-1.5 shadow-sm flex flex-col items-center min-w-[160px]">
-      <div className="w-full flex justify-between items-center mb-1">
-        <span className="text-[10px] font-bold text-gray-500 uppercase">
-          {label}
+}> = React.memo((p) => {
+  const stop = (fn: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    fn();
+  };
+  return (
+    <div onClick={p.onSelect} className={panelClass(p.selected)}>
+      <span className="absolute left-0 top-0 h-0.5 w-0 bg-accent-2 transition-all duration-300 group-hover:w-full" />
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-sky-300">
+          {p.dual ? `Board ${p.idx + 1}` : "Board"}
         </span>
-        <div className="flex gap-1">
-          <button
-            onClick={onRandomize}
-            className="text-gray-400 hover:text-emerald-600"
-          >
-            <svg
-              className="w-6 h-6"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
-            </svg>
+        <div className="flex items-center gap-0.5">
+          <span className="mr-1 text-[10px] font-semibold tabular-nums text-white/40">
+            {p.cards.length}/5
+          </span>
+          <button type="button" onClick={stop(p.onRandomize)} className={iconBtn} title="Randomize">
+            <RefreshIcon className="h-4 w-4" />
           </button>
-          <button
-            onClick={onClear}
-            className="text-gray-400 hover:text-red-600"
-          >
-            <TrashIcon />
+          <button type="button" onClick={stop(p.onClear)} className={iconBtn} title="Clear">
+            <TrashIcon className="h-4 w-4" />
           </button>
         </div>
       </div>
-      <div className="flex" style={{ gap: slotGap }}>
-        {cards.map((c) => (
-          <button
-            key={c}
-            onPointerDown={(e) => {
-              e.preventDefault();
-              onChange(
-                encodeBoard(tokenize(value).filter((x) => x !== c)).join(" ")
-              );
-            }}
-          >
-            <PlayingCard code={c} width={cardWidth} />
-          </button>
-        ))}
-        {Array.from({ length: emptySlots }).map((_, i) => {
-          const isNext = highlightFirstEmpty && i === 0;
 
-          return (
-            <div
-              key={i}
-              className="relative"
-              style={{ width: cardWidth, aspectRatio: "3/4" }}
-            >
-              <div className="w-full h-full border border-dashed rounded bg-gray-50/50 border-gray-300" />
-              {isNext && (
-                <>
-                  <div className="pointer-events-none absolute -inset-1 rounded-[9px] ring-2 ring-emerald-400/80 shadow-[0_0_0_6px_rgba(16,185,129,0.18)] animate-pulse z-10" />
-                  <div className="absolute -top-3 -right-1 z-20">
-                    <span className="text-[10px] bg-emerald-600 text-white rounded px-1.5 py-0.5 shadow">
-                      NEXT
-                    </span>
-                  </div>
-                </>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <CardSlots cards={p.cards} max={5} cardW={48} isNext={p.isNext} onRemoveCard={p.onRemoveCard} />
+
+      <input
+        value={p.value}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => p.onChange(e.target.value)}
+        placeholder="e.g. Ah 7d 2c"
+        className="w-full min-w-0 rounded border border-hairline bg-black/30 px-2 py-1 text-xs font-medium text-slate-100 placeholder-slate-500 outline-none focus:border-accent/60"
+      />
     </div>
-  )
-);
+  );
+});
+
+type Selection = { type: "hand" | "board"; idx: number };
 
 const EquityCalc: React.FC = () => {
   const [mode, setMode] = useLocalStorageState<Mode>(
@@ -455,7 +358,7 @@ const EquityCalc: React.FC = () => {
   const [board2, setBoard2] = useState("");
   const [hands, setHands] = useState<string[]>(["", ""]);
   const [boardsCount, setBoardsCount] = useState<1 | 2>(1);
-  const [randFlag, setRandFlag] = useState(false);
+  const [selected, setSelected] = useState<Selection | null>(null);
 
   const sim1 = useEquitySimulation();
   const sim2 = useEquitySimulation();
@@ -511,7 +414,6 @@ const EquityCalc: React.FC = () => {
       const encoded = encodeBoard(sample).join(" ");
       if (idx === 0) setBoard1(encoded);
       else setBoard2(encoded);
-      setRandFlag((f) => !f);
     },
     [board1, board2, usedSetFrom]
   );
@@ -531,7 +433,6 @@ const EquityCalc: React.FC = () => {
             n[seatIdx] = sample.join(" ");
             return n;
           });
-          setRandFlag((f) => !f);
           return;
         }
       }
@@ -544,7 +445,6 @@ const EquityCalc: React.FC = () => {
         n[seatIdx] = sample.join(" ");
         return n;
       });
-      setRandFlag((f) => !f);
     },
     [usedSetFrom, cap, mode, pickRandomPloOpenHand, pickRandomPloCallHand]
   );
@@ -571,6 +471,54 @@ const EquityCalc: React.FC = () => {
     return null;
   };
 
+  const handTokens = useMemo(
+    () => hands.map((h) => sortCardsDesc(tokenize(h))),
+    [hands]
+  );
+  const b1Cards = useMemo(() => tokenize(board1), [board1]);
+  const b2Cards = useMemo(() => tokenize(board2), [board2]);
+
+  /** The manually selected slot wins while it still has space; otherwise fall
+   *  back to the automatic fill order. */
+  const effectiveTarget = useMemo(() => {
+    if (selected) {
+      if (
+        selected.type === "hand" &&
+        (handTokens[selected.idx]?.length ?? cap) < cap
+      )
+        return selected;
+      if (selected.type === "board") {
+        const len = selected.idx === 0 ? b1Cards.length : b2Cards.length;
+        if (len < 5 && (selected.idx === 0 || boardsCount === 2))
+          return selected;
+      }
+    }
+    return nextAddTarget(
+      boardsCount,
+      cap,
+      handTokens,
+      b1Cards.length,
+      b2Cards.length
+    );
+  }, [selected, boardsCount, cap, handTokens, b1Cards.length, b2Cards.length]);
+
+  /** All cards currently placed anywhere (for greying out keypad combos). */
+  const usedSet = useMemo(() => {
+    const s = new Set<string>();
+    b1Cards.forEach((c) => s.add(c));
+    b2Cards.forEach((c) => s.add(c));
+    handTokens.forEach((t) => t.forEach((c) => s.add(c)));
+    return s;
+  }, [b1Cards, b2Cards, handTokens]);
+
+  /** Human label for the slot the next picked card will fill. */
+  const targetLabel = useMemo(() => {
+    const t = effectiveTarget;
+    if (!t) return undefined;
+    if (t.type === "hand") return `Seat ${t.idx + 1}`;
+    return boardsCount === 2 ? `Board ${t.idx + 1}` : "Board";
+  }, [effectiveTarget, boardsCount]);
+
   const onPickCard = (code: string) => {
     const hT = hands.map((h) => tokenize(h));
     const b1T = tokenize(board1);
@@ -593,7 +541,7 @@ const EquityCalc: React.FC = () => {
       return;
     }
 
-    const t = nextAddTarget(boardsCount, cap, hT, b1T.length, b2T.length);
+    const t = effectiveTarget;
     if (!t) return;
     if (t.type === "hand") {
       const n = [...hands];
@@ -605,14 +553,7 @@ const EquityCalc: React.FC = () => {
     }
   };
 
-  const handTokens = useMemo(
-    () => hands.map((h) => sortCardsDesc(tokenize(h))),
-    [hands]
-  );
-  const b1Cards = useMemo(() => tokenize(board1), [board1]);
-  const b2Cards = useMemo(() => tokenize(board2), [board2]);
-
-  // ✅ NEW: validity-driven clearing (hands + boards)
+  // ✅ validity-driven clearing (hands + boards)
   const handsComplete = useMemo(
     () => handTokens.every((t) => t.length === cap),
     [handTokens, cap]
@@ -685,14 +626,6 @@ const EquityCalc: React.FC = () => {
     );
   }, [isFresh, s1, s2, boardsCount, hands]); // s1/s2 are memoized so this won't loop
 
-  const target = nextAddTarget(
-    boardsCount,
-    cap,
-    handTokens,
-    b1Cards.length,
-    b2Cards.length
-  );
-
   const handleCompute = useCallback(() => {
     if (boardsCount === 1) {
       sim2.cancelAll();
@@ -733,12 +666,39 @@ const EquityCalc: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [board1, board2, hands, boardsCount, cap, mode]);
 
+  /* --- Seat / board interaction --- */
+  const toggleSeatSelect = (i: number) =>
+    setSelected((s) =>
+      s?.type === "hand" && s.idx === i ? null : { type: "hand", idx: i }
+    );
+
+  const toggleBoardSelect = (idx: number) =>
+    setSelected((s) =>
+      s?.type === "board" && s.idx === idx ? null : { type: "board", idx }
+    );
+
+  const removeSeat = (i: number) => {
+    if (hands.length <= 2) return;
+    const n = [...hands];
+    n.splice(i, 1);
+    setHands(n);
+    setDisplayWinPcts1((prev) => prev.filter((_, idx) => idx !== i));
+    setDisplayWinPcts2((prev) => prev.filter((_, idx) => idx !== i));
+    setDisplayTotalEVs((prev) => prev.filter((_, idx) => idx !== i));
+    lastComputedKeyRef.current = null;
+    setSelected(null);
+  };
+
+  const chipBtn =
+    "px-2 py-1.5 rounded bg-slate-800 text-xs font-bold text-slate-200 whitespace-nowrap hover:bg-slate-700 transition-colors";
+
   return (
-    <div className="flex flex-col h-[calc(100dvh-100px)] w-full overflow-hidden">
-      <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2 shadow-sm z-20">
+    <div className="flex flex-col h-[calc(100dvh-48px)] w-full overflow-hidden">
+      {/* ── Top toolbar ── */}
+      <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2 border-b border-hairline z-20">
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
           <select
-            className="bg-gray-100 border-none rounded text-xs font-bold text-gray-700 py-1.5 pl-2 pr-6"
+            className="bg-slate-800 border-none rounded text-xs font-bold text-slate-200 py-1.5 pl-2 pr-6"
             value={mode}
             onChange={(e) => {
               setMode(e.target.value as Mode);
@@ -751,13 +711,18 @@ const EquityCalc: React.FC = () => {
           </select>
 
           <button
-            onClick={() => setBoardsCount((b) => (b === 1 ? 2 : 1))}
-            className="px-2 py-1.5 rounded bg-gray-100 text-xs font-bold text-gray-700 whitespace-nowrap"
+            onClick={() => {
+              setBoardsCount((b) => (b === 1 ? 2 : 1));
+              setSelected((s) =>
+                s?.type === "board" && s.idx === 1 ? null : s
+              );
+            }}
+            className={chipBtn}
           >
             {boardsCount} Board{boardsCount > 1 ? "s" : ""}
           </button>
 
-          <div className="flex items-center rounded px-1">
+          <div className="flex items-center rounded bg-slate-800 px-1">
             <button
               onClick={() => {
                 if (hands.length > 2) {
@@ -768,14 +733,17 @@ const EquityCalc: React.FC = () => {
                   setDisplayWinPcts2((prev) => prev.slice(0, -1));
                   setDisplayTotalEVs((prev) => prev.slice(0, -1));
                   lastComputedKeyRef.current = null;
+                  setSelected((s) =>
+                    s?.type === "hand" && s.idx >= hands.length - 1 ? null : s
+                  );
                 }
               }}
               disabled={hands.length <= 2}
-              className="px-2 py-1 text-gray-500 hover:text-red-600 disabled:opacity-30 text-xs font-bold"
+              className="px-2 py-1 text-slate-400 hover:text-red-400 disabled:opacity-30 text-xs font-bold"
             >
               -
             </button>
-            <span className="text-[10px] font-bold text-gray-400 px-1">
+            <span className="text-[10px] font-bold text-slate-400 px-1">
               {hands.length}P
             </span>
             <button
@@ -783,7 +751,7 @@ const EquityCalc: React.FC = () => {
                 if (hands.length < 4) setHands([...hands, ""]);
               }}
               disabled={hands.length >= 4}
-              className="px-2 py-1 text-gray-500 hover:text-emerald-600 disabled:opacity-30 text-xs font-bold"
+              className="px-2 py-1 text-slate-400 hover:text-emerald-400 disabled:opacity-30 text-xs font-bold"
             >
               +
             </button>
@@ -799,7 +767,7 @@ const EquityCalc: React.FC = () => {
         <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={handleClear}
-            className="text-xs font-medium text-gray-500 hover:text-red-500 px-2"
+            className="text-xs font-medium text-slate-400 hover:text-red-400 px-2"
           >
             Clear
           </button>
@@ -824,111 +792,126 @@ const EquityCalc: React.FC = () => {
         </div>
       </div>
 
-      <div className="relative flex-1 min-h-0 w-full">
-        <div className="absolute inset-0 z-0">
-          <PokerBackground />
-        </div>
-
-        <div className="absolute inset-0 z-10 overflow-y-auto overflow-x-hidden p-2 flex flex-col items-center">
-          <div className="w-full max-w-4xl flex flex-col gap-2 h-full justify-center">
-            <div className="flex justify-center gap-2 shrink-0">
+      {/* ── Main: panels scroll above, card keypad docked below (mobile-first) ── */}
+      <div className="flex-1 min-h-0 flex flex-col">
+        {/* ── Player + board panels ── */}
+        <div className="relative flex-1 min-h-0 w-full overflow-y-auto px-3 py-3 sm:px-5">
+          <div className="mx-auto w-full max-w-3xl space-y-3">
+            {/* Board(s) — on top; one full-width, or two side-by-side when space allows */}
+            <div
+              className="grid gap-3"
+              style={{
+                gridTemplateColumns:
+                  boardsCount === 2
+                    ? "repeat(auto-fit, minmax(260px, 1fr))"
+                    : "1fr",
+              }}
+            >
               <BoardPanel
-                label="Board 1"
+                idx={0}
+                cards={b1Cards}
                 value={board1}
+                dual={boardsCount === 2}
+                selected={selected?.type === "board" && selected.idx === 0}
+                isNext={
+                  effectiveTarget?.type === "board" && effectiveTarget.idx === 0
+                }
+                onSelect={() => toggleBoardSelect(0)}
                 onChange={setBoard1}
+                onRemoveCard={(c) =>
+                  setBoard1(encodeBoard(b1Cards.filter((x) => x !== c)).join(" "))
+                }
                 onRandomize={() => randomizeBoard(0)}
                 onClear={() => setBoard1("")}
-                cards={b1Cards}
-                emptySlots={Math.max(0, 5 - b1Cards.length)}
-                cardWidth={CARD_W}
-                slotGap={SLOT_GAP}
-                highlightFirstEmpty={target?.type === "board" && target.idx === 0}
               />
               {boardsCount === 2 && (
                 <BoardPanel
-                  label="Board 2"
+                  idx={1}
+                  cards={b2Cards}
                   value={board2}
+                  dual
+                  selected={selected?.type === "board" && selected.idx === 1}
+                  isNext={
+                    effectiveTarget?.type === "board" &&
+                    effectiveTarget.idx === 1
+                  }
+                  onSelect={() => toggleBoardSelect(1)}
                   onChange={setBoard2}
+                  onRemoveCard={(c) =>
+                    setBoard2(
+                      encodeBoard(b2Cards.filter((x) => x !== c)).join(" ")
+                    )
+                  }
                   onRandomize={() => randomizeBoard(1)}
                   onClear={() => setBoard2("")}
-                  cards={b2Cards}
-                  emptySlots={Math.max(0, 5 - b2Cards.length)}
-                  cardWidth={CARD_W}
-                  slotGap={SLOT_GAP}
-                  highlightFirstEmpty={target?.type === "board" && target.idx === 1}
                 />
               )}
             </div>
 
+            {/* Hole cards — below the board; auto-fit so 2–4 seats pack the row */}
             <div
-              className={`grid grid-cols-2 gap-2 w-full mt-2 ${
-                hands.length > 2 ? "flex-1" : ""
-              }`}
+              className="grid gap-3"
+              style={{ gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}
             >
-              {hands.map((h, i) => (
-                <SeatPanel
+              {hands.map((_, i) => (
+                <PlayerPanel
                   key={i}
-                  id={i}
-                  value={h}
-                  onChange={(v) => {
-                    const n = [...hands];
-                    n[i] = v;
-                    setHands(n);
-                  }}
-                  onClear={() => {
-                    const n = [...hands];
-                    n[i] = "";
-                    setHands(n);
-                  }}
-                  onRemoveSeat={() => {
-                    if (hands.length > 2) {
-                      const n = [...hands];
-                      n.splice(i, 1);
-                      setHands(n);
-                      setDisplayWinPcts1((prev) => prev.filter((_, idx) => idx !== i));
-                      setDisplayWinPcts2((prev) => prev.filter((_, idx) => idx !== i));
-                      setDisplayTotalEVs((prev) => prev.filter((_, idx) => idx !== i));
-                      lastComputedKeyRef.current = null;
-                    }
-                  }}
-                  canRemove={hands.length > 2}
-                  cards={handTokens[i]}
-                  emptySlots={Math.max(0, cap - handTokens[i].length)}
-                  onRandomize={() => randomizeHand(i)}
-                  totalEV={displayTotalEVs[i]}
-                  breakdowns={[
-                    { label: "B1", winPct: displayWinPcts1[i] },
-                    ...(boardsCount === 2
-                      ? [{ label: "B2", winPct: displayWinPcts2[i] }]
-                      : []),
-                  ]}
+                  idx={i}
+                  tokens={handTokens[i]}
                   cap={cap}
-                  cardWidth={CARD_W}
-                  slotGap={SLOT_GAP}
-                  randFlag={randFlag}
-                  computing={computing}
-                  highlightFirstEmpty={target?.type === "hand" && target.idx === i}
+                  value={hands[i]}
+                  selected={selected?.type === "hand" && selected.idx === i}
+                  isNext={
+                    effectiveTarget?.type === "hand" && effectiveTarget.idx === i
+                  }
+                  ev={displayTotalEVs[i]}
+                  win1={displayWinPcts1[i]}
+                  win2={displayWinPcts2[i]}
+                  dual={boardsCount === 2}
+                  canRemove={hands.length > 2}
+                  onSelect={() => toggleSeatSelect(i)}
+                  onChange={(v) =>
+                    setHands((p) => {
+                      const n = [...p];
+                      n[i] = v;
+                      return n;
+                    })
+                  }
+                  onRemoveCard={(c) =>
+                    setHands((p) => {
+                      const n = [...p];
+                      n[i] = removeCode(p[i], c);
+                      return n;
+                    })
+                  }
+                  onRandomize={() => randomizeHand(i)}
+                  onClear={() =>
+                    setHands((p) => {
+                      const n = [...p];
+                      n[i] = "";
+                      return n;
+                    })
+                  }
+                  onRemoveSeat={() => removeSeat(i)}
                 />
               ))}
             </div>
+
+            {computing && (
+              <p className="text-center text-[11px] font-medium text-emerald-300/80 animate-pulse">
+                simulating…
+              </p>
+            )}
           </div>
         </div>
-      </div>
 
-      <div className="shrink-0 z-20 pb-safe">
-        <div className="w-full max-w-6xl mx-auto p-1 flex justify-center">
-          <CardPicker
-            used={useMemo(() => {
-              const s = new Set<string>();
-              tokenize(board1).forEach((c) => s.add(c));
-              tokenize(board2).forEach((c) => s.add(c));
-              hands.forEach((h) => tokenize(h).forEach((c) => s.add(c)));
-              return s;
-            }, [board1, board2, hands])}
+        {/* ── Card keypad — docked in the thumb zone (rank → suit) ── */}
+        <div className="shrink-0 z-20 border-t border-hairline bg-surface/70 backdrop-blur-md px-3 pt-2.5 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <RankSuitKeypad
+            used={usedSet}
             onPick={onPickCard}
-            size="sm"
-            cardWidth="clamp(28px, 4.5vw, 42px)"
-            gapPx={4}
+            targetLabel={targetLabel}
+            className="mx-auto w-full max-w-xl"
           />
         </div>
       </div>

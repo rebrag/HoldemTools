@@ -1,4 +1,4 @@
-// src/pages/handhistory/advanced/useShowdownEquity.ts
+// src/pages/handhistory/create/useShowdownEquity.ts
 // Computes all-in equity for a recorded showdown by reusing the project's
 // Monte-Carlo / exact-enumeration equity engine (useEquitySimulation). Handles
 // one or two boards; for a double board each player's equity is the average of

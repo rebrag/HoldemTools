@@ -1,4 +1,4 @@
-// src/pages/handhistory/advanced/serialize.ts
+// src/pages/handhistory/create/serialize.ts
 // Renders a recorded hand (state + engine) as a compact, tracker-style text
 // history: position-labelled seats, one comma-separated line of action per
 // street, showdown hand descriptions, and optional per-street equity.
@@ -91,7 +91,8 @@ function splitAmounts(total: number, n: number): number[] {
 export function serializeHand(
   state: AdvancedHandState,
   e: Engine,
-  equity?: EquityInfo
+  equity?: EquityInfo,
+  opts?: { location?: string | null }
 ): string {
   const lines: string[] = [];
   const isHero = (i: number) => e.heroIndex === i;
@@ -118,9 +119,11 @@ export function serializeHand(
 
   const limit = state.game === "Holdem" ? "NL" : "PL";
 
-  // Header
+  // Header. Use the session's location when available (e.g. from the bankroll
+  // session that spawned this hand); fall back to the generic site name.
+  const site = opts?.location?.trim() || "Yatahay Network";
   lines.push(
-    `Yatahay Network - ${money(e.bb)} ${limit} - ${gameName(state.game)} - ${e.players.length} players`
+    `${site} - ${money(e.bb)} ${limit} - ${gameName(state.game)} - ${e.players.length} players`
   );
   lines.push("Hand converted by HoldemTools: http://www.holdemtools.com/");
   if (state.numBoards === 2) lines.push("(Double board)");

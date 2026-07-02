@@ -11,7 +11,6 @@ interface Props {
   errorMessage?: string | null;
   onSave: (draft: HandHistoryDraft) => void;
   onCancel: () => void;
-  onAdvanced?: () => void; // when provided, shows the "Advanced HH" entry point
 }
 
 const HandHistoryEditorModal: React.FC<Props> = ({
@@ -21,7 +20,6 @@ const HandHistoryEditorModal: React.FC<Props> = ({
   errorMessage,
   onSave,
   onCancel,
-  onAdvanced,
 }) => {
   const [rawText, setRawText] = useState(initialRawText ?? "");
 
@@ -76,23 +74,9 @@ const HandHistoryEditorModal: React.FC<Props> = ({
           </button>
         </div>
 
-        {onAdvanced && !isEdit && (
-          <button
-            type="button"
-            onClick={onAdvanced}
-            className="mb-3 flex w-full items-center justify-between gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-left text-sm font-medium text-emerald-800 transition hover:bg-emerald-100"
-          >
-            <span className="flex items-center gap-2">
-              <span aria-hidden="true">✦</span>
-              Advanced HH — build it visually
-            </span>
-            <span aria-hidden="true">→</span>
-          </button>
-        )}
-
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-gray-700">
-            Or paste the hand history
+            Paste the hand history
           </label>
           <textarea
             value={rawText}

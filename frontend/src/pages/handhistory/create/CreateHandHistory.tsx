@@ -1,7 +1,14 @@
-// src/pages/handhistory/advanced/AdvancedHandHistory.tsx
+// src/pages/handhistory/create/CreateHandHistory.tsx
 // Visual hand recorder. Setup phase: build the table (seats, cards, blinds).
 // Action phase: a client-side betting engine steps through each player's
 // action; on completion the hand is serialized to a plain-text string.
+//
+// Two modes:
+//   - Page mode (default, standalone route): the finished hand is saved to the
+//     server and the user is routed back to the hand-history list.
+//   - Embedded mode (onComplete provided): the finished hand's text is handed
+//     back to the caller instead of being saved directly. Used by the bankroll
+//     session modal, which links the hand to its session on save.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { User } from "firebase/auth";
@@ -26,6 +33,7 @@ import {
 import { serializeHand, type EquityInfo, type StreetEquity } from "./serialize";
 import { useShowdownEquity, type EquityRequest } from "./useShowdownEquity";
 import { evalWinners, exactEquity, type EvalGame } from "@/lib/handEval";
+import { parseGameString } from "./parseGameString";
 import {
   createInitialState,
   handSize,
@@ -47,6 +55,18 @@ function evalGameId(game: string): EvalGame | null {
 
 interface Props {
   user: User | null;
+  // Embedded mode: when provided, the finished hand's serialized text is handed
+  // back to the caller instead of being saved to the server. Enables reuse
+  // inside the bankroll session modal as an overlay.
+  onComplete?: (rawText: string) => void;
+  // Called when the user leaves the recorder in embedded mode.
+  onClose?: () => void;
+  // Free-form game string (e.g. a bankroll session's "2/5 NL") used to seed the
+  // setup's blinds/ante/game. Unrecognized tokens are ignored.
+  defaultGameString?: string;
+  // Session location shown as the site name in the serialized header. Falls
+  // back to a generic site name when absent (standalone builder).
+  location?: string | null;
 }
 
 const TABLE_SIZES = [9, 8, 7, 6, 5, 4, 3, 2];
@@ -54,9 +74,22 @@ const TABLE_SIZES = [9, 8, 7, 6, 5, 4, 3, 2];
 const inputCls =
   "w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition";
 
-const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
+const CreateHandHistory: React.FC<Props> = ({
+  user,
+  onComplete,
+  onClose,
+  defaultGameString,
+  location,
+}) => {
   const navigate = useNavigate();
-  const [state, setState] = useState<AdvancedHandState>(() => createInitialState());
+  const embedded = !!onComplete;
+  const setupDefaults = useMemo(
+    () => (defaultGameString ? parseGameString(defaultGameString) : undefined),
+    [defaultGameString]
+  );
+  const [state, setState] = useState<AdvancedHandState>(() =>
+    createInitialState(9, setupDefaults)
+  );
   const [editingSeat, setEditingSeat] = useState<number | null>(null);
   const [editingBoard, setEditingBoard] = useState(false);
   const [editingBoard2, setEditingBoard2] = useState(false);
@@ -145,8 +178,10 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
 
   const serialized = useMemo(
     () =>
-      engine && engine.done && engine.winners ? serializeHand(state, engine, equityInfo) : "",
-    [engine, state, equityInfo]
+      engine && engine.done && engine.winners
+        ? serializeHand(state, engine, equityInfo, { location })
+        : "",
+    [engine, state, equityInfo, location]
   );
 
   const update = (partial: Partial<AdvancedHandState>) =>
@@ -202,7 +237,7 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
   };
 
   const reset = () => {
-    setState(createInitialState(state.tableSize));
+    setState(createInitialState(state.tableSize, setupDefaults));
     setEngine(null);
     setHistory([]);
     setWinnerSel([]);
@@ -243,6 +278,13 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
 
   const saveHand = async () => {
     if (!serialized) return;
+    // Embedded: hand the text back to the caller (e.g. the bankroll session
+    // modal), which is responsible for persisting/linking it.
+    if (onComplete) {
+      onComplete(serialized);
+      onClose?.();
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
@@ -277,7 +319,9 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
 
   // Once the hand is fully resolved (winners on every board) and any all-in
   // equity has been computed, save it automatically. The ref guards re-firing.
+  // Skipped in embedded mode, where the user confirms with an explicit button.
   useEffect(() => {
+    if (embedded) return;
     const isComplete =
       !!engine &&
       engine.done &&
@@ -291,10 +335,12 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, serialized, equityReq, preEq]);
 
-  if (!user) {
+  // Embedded mode hands its result back to the caller and never touches the
+  // server, so it doesn't require a signed-in user of its own.
+  if (!user && !embedded) {
     return (
       <div className="mx-auto max-w-3xl px-4 pt-20 pb-12">
-        <h1 className="text-xl font-semibold text-white">Advanced Hand History</h1>
+        <h1 className="text-xl font-semibold text-white">Create Hand History</h1>
         <p className="mt-3 text-sm text-emerald-100/80">
           Sign in to record hand histories.
         </p>
@@ -344,12 +390,28 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
   );
 
   return (
-    <div className="mx-auto max-w-2xl px-4 pt-6 pb-16">
-      {/* ───────── Table ───────── */}
+    <div className="mx-auto max-w-6xl px-4 pt-6 pb-16">
+      {embedded && (
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h1 className="text-lg font-semibold text-white">Create Hand History</h1>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/25 bg-black/30 text-white/80 transition hover:bg-black/50 hover:text-white"
+          >
+            <span className="text-sm">✕</span>
+          </button>
+        </div>
+      )}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-8">
+      {/* ───────── Table (left column) ───────── */}
+      <div className="w-full lg:flex-1 lg:min-w-0 lg:sticky lg:top-20">
       <PokerTable
         size={state.tableSize}
         seats={tableSeats}
         onSeatClick={(i) => setEditingSeat(i)}
+        maxWidthClassName="max-w-2xl"
         center={
           <>
             {engine ? (
@@ -406,7 +468,10 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
           </>
         }
       />
+      </div>
 
+      {/* ───────── Controls (right column) ───────── */}
+      <div className="w-full lg:w-[400px] lg:flex-shrink-0">
       {/* ───────── Action phase ───────── */}
       {phase === "action" && engine && (
         <>
@@ -510,7 +575,7 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
                   onClick={saveHand}
                   className="inline-flex items-center rounded-full bg-emerald-600 px-5 py-1.5 text-sm font-semibold text-white shadow-md shadow-emerald-500/40 transition hover:bg-emerald-500 disabled:opacity-60"
                 >
-                  {saving ? "Saving…" : "Save hand history"}
+                  {embedded ? "Add to session" : saving ? "Saving…" : "Save hand history"}
                 </button>
               </div>
             </div>
@@ -601,6 +666,8 @@ const AdvancedHandHistory: React.FC<Props> = ({ user }) => {
           </div>
         </div>
       )}
+      </div>
+      </div>
 
       {editingSeat !== null && (
         <SeatEditorModal
@@ -667,12 +734,12 @@ const BoardRow: React.FC<{
       const revealed = !live || i < revealCount;
       const c = board[i];
       return revealed && c ? (
-        <PlayingCard key={i} code={c} size="sm" width={26} />
+        <PlayingCard key={i} code={c} size="sm" width={36} />
       ) : (
-        <CardBack key={i} w={26} />
+        <CardBack key={i} w={36} />
       );
     })}
   </button>
 );
 
-export default AdvancedHandHistory;
+export default CreateHandHistory;

@@ -10,9 +10,10 @@ import Solver from "@/pages/solver/Solver";
 import EquityCalc from "@/pages/equity/EquityCalc";
 import BankrollTracker from "@/pages/bankroll/BankrollTracker";
 import HandHistoryTool from "@/pages/handhistory/HandHistoryTool";
-import AdvancedHandHistory from "@/pages/handhistory/advanced/AdvancedHandHistory";
+import CreateHandHistory from "@/pages/handhistory/create/CreateHandHistory";
 import Course from "@/pages/course/Course";
 import CourseSection from "@/pages/course/CourseSection";
+import { DEV_AUTH_BYPASS, mockDevUser } from "@/lib/devAuth";
 import "./index.css";
 
 function App() {
@@ -34,6 +35,9 @@ function App() {
     );
   }
 
+  // Dev-only: stand in a mock signed-in user when nobody is authenticated.
+  const effectiveUser = user ?? (DEV_AUTH_BYPASS ? mockDevUser : null);
+
   return (
     <div className="min-h-screen flex flex-col">
       <div className="flex-grow">
@@ -42,21 +46,25 @@ function App() {
           <Route
             element={
               <AppProvider>
-                <AppShell user={user} />
+                <AppShell user={effectiveUser} />
               </AppProvider>
             }
           >
             <Route path="/" element={<Homepage />} />
-            <Route path="/solutions" element={<Solver user={user} />} />
+            <Route path="/solutions" element={<Solver user={effectiveUser} />} />
             <Route path="/equity" element={<EquityCalc />} />
-            <Route path="/bankroll" element={<BankrollTracker user={user} />} />
-            <Route path="/hand-history" element={<HandHistoryTool user={user} />} />
+            <Route path="/bankroll" element={<BankrollTracker user={effectiveUser} />} />
+            <Route path="/hand-history" element={<HandHistoryTool user={effectiveUser} />} />
+            <Route
+              path="/hand-history/create"
+              element={<CreateHandHistory user={effectiveUser} />}
+            />
             <Route
               path="/hand-history/advanced"
-              element={<AdvancedHandHistory user={user} />}
+              element={<Navigate to="/hand-history/create" replace />}
             />
-            <Route path="/course" element={<Course user={user} />} />
-            <Route path="/course/:sectionId" element={<CourseSection user={user} />} />
+            <Route path="/course" element={<Course user={effectiveUser} />} />
+            <Route path="/course/:sectionId" element={<CourseSection user={effectiveUser} />} />
           </Route>
         </Routes>
       </div>

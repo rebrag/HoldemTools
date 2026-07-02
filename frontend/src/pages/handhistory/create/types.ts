@@ -1,4 +1,4 @@
-// src/pages/handhistory/advanced/types.ts
+// src/pages/handhistory/create/types.ts
 // State model for the Advanced Hand History recorder (visual hand entry).
 
 // Hole cards for a seat. Length matches the game's hand size (2 for Hold'em,
@@ -51,20 +51,31 @@ export function resizeHoleCards(hole: HoleCards, cards: number): HoleCards {
   return Array.from({ length: cards }, (_, i) => assigned[i] ?? null);
 }
 
-export function createInitialState(tableSize = 9): AdvancedHandState {
+// Optional overrides let callers seed the setup (e.g. from a bankroll session's
+// game/blinds). The game determines each seat's hole-card count.
+export type InitialStateOverrides = Partial<
+  Pick<AdvancedHandState, "game" | "smallBlind" | "bigBlind" | "ante">
+>;
+
+export function createInitialState(
+  tableSize = 9,
+  overrides?: InitialStateOverrides
+): AdvancedHandState {
+  const game = overrides?.game ?? "Holdem";
+  const cards = handSize(game);
   return {
     tableSize,
-    game: "Holdem",
-    smallBlind: "0.5",
-    bigBlind: "1",
-    ante: "0",
+    game,
+    smallBlind: overrides?.smallBlind ?? "0.5",
+    bigBlind: overrides?.bigBlind ?? "1",
+    ante: overrides?.ante ?? "0",
     straddleSeat: null,
     straddleAmount: "2",
     numBoards: 1,
     comment: "",
     buttonSeat: 0,
     heroSeat: 0,
-    seats: Array.from({ length: tableSize }, emptySeat),
+    seats: Array.from({ length: tableSize }, () => emptySeat(cards)),
     board: [null, null, null, null, null],
     board2: [null, null, null, null, null],
   };

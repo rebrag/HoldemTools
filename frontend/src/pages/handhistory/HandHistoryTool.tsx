@@ -6,6 +6,8 @@ import LoadingIndicator from "@/components/LoadingIndicator";
 import CopyButton from "@/components/CopyButton";
 import { authedFetch } from "@/lib/api";
 import HandHistoryEditorModal from "./HandHistoryEditorModal";
+import HandHistorySecondaryNav from "./HandHistorySecondaryNav";
+import FlyingCards from "./FlyingCards";
 import type { HandHistory, HandHistoryDraft, HandHistoryToolProps } from "./types";
 import type { BankrollSession } from "@/pages/bankroll/types";
 
@@ -234,32 +236,13 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-4 pt-16 pb-12">
-      <motion.div
-        initial={{ opacity: 0, y: -12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ type: "spring", stiffness: 260, damping: 24 }}
-        className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-emerald-300/40 bg-white/90 px-5 py-4 shadow-sm shadow-emerald-500/10 backdrop-blur-sm"
-      >
-        <div>
-          <h1 className="bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-xl font-bold text-transparent">
-            Hand Histories
-          </h1>
-          {/* <p className="text-xs text-gray-500">
-            Paste in hands you've played and keep them in one place.
-          </p> */}
-        </div>
-        <motion.button
-          type="button"
-          onClick={openCreate}
-          whileHover={{ y: -2, scale: 1.03 }}
-          whileTap={{ scale: 0.96 }}
-          transition={{ type: "spring", stiffness: 400, damping: 17 }}
-          className="inline-flex items-center rounded-full bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white shadow-md shadow-emerald-500/40 hover:bg-emerald-500"
-        >
-          + Add hand history
-        </motion.button>
-      </motion.div>
+    <div className="mx-auto max-w-3xl px-4 pt-4 pb-12">
+      <FlyingCards />
+
+      <HandHistorySecondaryNav
+        onEnter={openCreate}
+        onCreate={() => navigate("/hand-history/create")}
+      />
 
       <AnimatePresence>
         {error && (
@@ -304,7 +287,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
         </motion.div>
       ) : (
         <motion.ul
-          className="space-y-1.5"
+          className="divide-y divide-emerald-100 overflow-hidden rounded-2xl border border-emerald-300/40 bg-white/90 shadow-sm shadow-emerald-500/10 backdrop-blur-sm"
           variants={listVariants}
           initial="hidden"
           animate="visible"
@@ -318,8 +301,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                 layout
                 variants={itemVariants}
                 exit="exit"
-                whileHover={{ y: -2 }}
-                className="rounded-xl border border-emerald-300/40 bg-white/90 p-2.5 shadow-sm shadow-emerald-500/10 backdrop-blur-sm"
+                className="p-2.5 transition-colors hover:bg-emerald-50/60"
               >
                 <div className="flex items-start justify-between gap-3">
                   <button
@@ -391,10 +373,6 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
         <HandHistoryEditorModal
           initialRawText={editing?.rawText ?? null}
           isEdit={!!editing}
-          onAdvanced={() => {
-            setEditorOpen(false);
-            navigate("/hand-history/advanced");
-          }}
           saving={saving}
           errorMessage={saveError}
           onSave={handleSave}

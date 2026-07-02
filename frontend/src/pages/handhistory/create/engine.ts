@@ -1,4 +1,4 @@
-// src/pages/handhistory/advanced/engine.ts
+// src/pages/handhistory/create/engine.ts
 // Client-side no-limit hold'em betting engine for the hand recorder.
 // Tracks stacks/pot/street/turn order and records action tokens for the text
 // serializer. Simplifications (documented for future work): single main pot
