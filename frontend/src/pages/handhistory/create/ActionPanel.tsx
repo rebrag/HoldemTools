@@ -1,5 +1,5 @@
 // src/pages/handhistory/create/ActionPanel.tsx
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { fmtUnit, legalActions, type ActionKind, type Engine } from "./engine";
 
 interface Props {
@@ -29,6 +29,18 @@ const ActionPanel: React.FC<Props> = ({ engine, unitMode, onAction, onUndo, canU
 
   const [raiseTo, setRaiseTo] = useState<number | null>(null);
   const [activeFrac, setActiveFrac] = useState<number | null>(null);
+  // Free-text override of the sizing input so users can type ANY amount,
+  // including an invalid one. null = mirror the derived numeric value.
+  const [raiseText, setRaiseText] = useState<string | null>(null);
+  // Set when the user submits a bet/raise that's outside the legal range.
+  const [showInvalid, setShowInvalid] = useState(false);
+
+  useEffect(() => {
+    // Drop any typed override / invalid flag when the actor, street, or display
+    // unit changes so a stale value or error can't carry into the next decision.
+    setRaiseText(null);
+    setShowInvalid(false);
+  }, [engine.toAct, engine.street, unitMode]);
 
   if (!la || !player) return null;
 
@@ -42,6 +54,24 @@ const ActionPanel: React.FC<Props> = ({ engine, unitMode, onAction, onUndo, canU
   const disp = (chips: number) => `${fmtUnit(chips, bb, unitMode)}${unitMode === "bb" ? " BB" : ""}`;
   const displayValue = unitMode === "chips" ? clamp(value) : Math.round((clamp(value) / bb) * 100) / 100;
 
+  // Sizing input is free text: show the user's raw entry when they've typed,
+  // otherwise the derived numeric value. Validation happens only on submit.
+  const EPS = 1e-6;
+  const inputText = raiseText ?? String(displayValue);
+  // Parse the current entry into chips; NaN when empty / non-numeric.
+  const enteredChips =
+    raiseText === null
+      ? clamp(value)
+      : raiseText.trim() === "" || !Number.isFinite(Number(raiseText))
+      ? NaN
+      : unitMode === "chips"
+      ? Number(raiseText)
+      : Number(raiseText) * bb;
+  const enteredValid =
+    Number.isFinite(enteredChips) &&
+    enteredChips >= la.minRaiseTo - EPS &&
+    enteredChips <= la.maxTo + EPS;
+
   // A pot-fraction raise/bet "to" amount: call the current bet, then add a
   // fraction of the resulting pot. f = 1 is a full pot-sized bet/raise.
   const fracRaiseTo = (f: number) => clamp(engine.currentBet + f * potAfterCall);
@@ -51,14 +81,21 @@ const ActionPanel: React.FC<Props> = ({ engine, unitMode, onAction, onUndo, canU
   const setSize = (chips: number, frac: number | null) => {
     setRaiseTo(chips);
     setActiveFrac(frac);
+    setRaiseText(null);
+    setShowInvalid(false);
   };
 
   const submitAggressive = () => {
-    const to = clamp(value);
-    if (to >= la.maxTo) onAction("allin");
-    else onAction(isBet ? "bet" : "raise", to);
-    setSize(la.minRaiseTo, null);
+    if (!enteredValid) {
+      setShowInvalid(true);
+      return;
+    }
+    if (enteredChips >= la.maxTo - EPS) onAction("allin");
+    else onAction(isBet ? "bet" : "raise", enteredChips);
     setRaiseTo(null);
+    setRaiseText(null);
+    setActiveFrac(null);
+    setShowInvalid(false);
   };
 
   return (
@@ -97,12 +134,23 @@ const ActionPanel: React.FC<Props> = ({ engine, unitMode, onAction, onUndo, canU
           <input
             type="tel"
             inputMode="decimal"
-            value={displayValue}
+            value={inputText}
             onChange={(e) => {
-              const raw = Number(e.target.value);
-              setSize(unitMode === "chips" ? raw : raw * bb, null);
+              const t = e.target.value;
+              setRaiseText(t);
+              setActiveFrac(null);
+              setShowInvalid(false);
+              const parsed = Number(t);
+              if (t.trim() !== "" && Number.isFinite(parsed)) {
+                setRaiseTo(unitMode === "chips" ? parsed : parsed * bb);
+              }
             }}
-            className="w-20 min-w-0 flex-1 rounded-md border border-hairline bg-slate-800/70 px-2 py-1 text-center text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            aria-invalid={showInvalid || undefined}
+            className={`w-20 min-w-0 flex-1 rounded-md border bg-slate-800/70 px-2 py-1 text-center text-sm font-semibold text-white focus:outline-none focus:ring-2 ${
+              showInvalid
+                ? "border-rose-500 focus:ring-rose-500"
+                : "border-hairline focus:ring-emerald-500"
+            }`}
           />
 
           <div className="flex gap-1">
@@ -164,11 +212,20 @@ const ActionPanel: React.FC<Props> = ({ engine, unitMode, onAction, onUndo, canU
           {isBet ? "Bet" : "Raise"}
           {(la.canBet || la.canRaise) && (
             <span className="block text-[11px] font-semibold normal-case tracking-normal opacity-90">
-              {disp(clamp(value))}
+              {Number.isFinite(enteredChips) ? disp(enteredChips) : "—"}
             </span>
           )}
         </button>
       </div>
+
+      {showInvalid && (
+        <p
+          role="alert"
+          className="mt-2 text-center text-xs font-semibold text-rose-400 animate-in fade-in-0 slide-in-from-top-1 duration-200"
+        >
+          Invalid bet — enter {disp(la.minRaiseTo)}–{disp(la.maxTo)}.
+        </p>
+      )}
 
       <div className="mt-3 flex justify-end">
         <button
