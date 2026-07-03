@@ -27,6 +27,36 @@ function App() {
     });
   }, []);
 
+  // Site-wide: when a field with existing text is focused, highlight its
+  // contents so it's easy to overwrite. Registered once at the document level
+  // (focusin bubbles, so this also covers inputs rendered inside modals/portals).
+  useEffect(() => {
+    const TYPES_TO_SKIP = new Set([
+      "checkbox", "radio", "range", "color", "file",
+      "date", "datetime-local", "month", "week", "time",
+      "button", "submit", "reset", "image",
+    ]);
+    const handleFocusIn = (e: FocusEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (!el) return;
+      const isTextArea = el instanceof HTMLTextAreaElement;
+      const isInput = el instanceof HTMLInputElement;
+      if (!isTextArea && !isInput) return;
+      if (isInput && TYPES_TO_SKIP.has(el.type)) return;
+      if (!el.value) return; // nothing to highlight
+      // Defer so mobile Safari doesn't clear the selection on the trailing tap.
+      requestAnimationFrame(() => {
+        try {
+          el.select();
+        } catch {
+          /* some input types disallow select() */
+        }
+      });
+    };
+    document.addEventListener("focusin", handleFocusIn);
+    return () => document.removeEventListener("focusin", handleFocusIn);
+  }, []);
+
   if (loading) {
     return (
       <div className="absolute inset-0 z-10 flex items-center justify-center transition-opacity duration-300">
