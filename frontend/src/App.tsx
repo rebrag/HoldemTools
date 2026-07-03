@@ -1,18 +1,21 @@
-import { useEffect, useState } from "react";
+import { lazy, useEffect, useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import { AppProvider } from "@/components/AppContext";
 import AppShell from "@/components/layout/AppShell";
-import Homepage from "@/pages/home/Homepage";
-import Solver from "@/pages/solver/Solver";
-import EquityCalc from "@/pages/equity/EquityCalc";
-import BankrollTracker from "@/pages/bankroll/BankrollTracker";
-import HandHistoryTool from "@/pages/handhistory/HandHistoryTool";
-import CreateHandHistory from "@/pages/handhistory/create/CreateHandHistory";
-import Course from "@/pages/course/Course";
-import CourseSection from "@/pages/course/CourseSection";
+// Route components are code-split (React.lazy) so each page ships its own chunk
+// instead of loading the whole app up front. AppShell/NavBar stay eager so the
+// shell paints immediately; a <Suspense> inside AppShell covers the page area.
+const Homepage = lazy(() => import("@/pages/home/Homepage"));
+const Solver = lazy(() => import("@/pages/solver/Solver"));
+const EquityCalc = lazy(() => import("@/pages/equity/EquityCalc"));
+const BankrollTracker = lazy(() => import("@/pages/bankroll/BankrollTracker"));
+const HandHistoryTool = lazy(() => import("@/pages/handhistory/HandHistoryTool"));
+const CreateHandHistory = lazy(() => import("@/pages/handhistory/create/CreateHandHistory"));
+const Course = lazy(() => import("@/pages/course/Course"));
+const CourseSection = lazy(() => import("@/pages/course/CourseSection"));
 import { DEV_AUTH_BYPASS, mockDevUser } from "@/lib/devAuth";
 import "./index.css";
 
@@ -25,6 +28,36 @@ function App() {
       setUser(u);
       setLoading(false);
     });
+  }, []);
+
+  // Site-wide: when a field with existing text is focused, highlight its
+  // contents so it's easy to overwrite. Registered once at the document level
+  // (focusin bubbles, so this also covers inputs rendered inside modals/portals).
+  useEffect(() => {
+    const TYPES_TO_SKIP = new Set([
+      "checkbox", "radio", "range", "color", "file",
+      "date", "datetime-local", "month", "week", "time",
+      "button", "submit", "reset", "image",
+    ]);
+    const handleFocusIn = (e: FocusEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (!el) return;
+      const isTextArea = el instanceof HTMLTextAreaElement;
+      const isInput = el instanceof HTMLInputElement;
+      if (!isTextArea && !isInput) return;
+      if (isInput && TYPES_TO_SKIP.has(el.type)) return;
+      if (!el.value) return; // nothing to highlight
+      // Defer so mobile Safari doesn't clear the selection on the trailing tap.
+      requestAnimationFrame(() => {
+        try {
+          el.select();
+        } catch {
+          /* some input types disallow select() */
+        }
+      });
+    };
+    document.addEventListener("focusin", handleFocusIn);
+    return () => document.removeEventListener("focusin", handleFocusIn);
   }, []);
 
   if (loading) {

@@ -236,7 +236,7 @@ const NavBar: React.FC<NavBarProps> = () => {
           aria-label="HoldemTools Home"
         >
           <img
-            src="/vite5.svg"
+            src="/logo-icon.png"
             alt=""
             className="h-[24px] w-[24px] block select-none"
             draggable="false"
@@ -260,7 +260,7 @@ const NavBar: React.FC<NavBarProps> = () => {
             aria-label="HoldemTools Home"
           >
             <img
-              src="/vite5.svg"
+              src="/logo-icon.png"
               alt=""
               className="h-[24px] w-[24px] block select-none"
               draggable="false"

@@ -70,7 +70,7 @@ const LoadingIndicator: React.FC<Props> = ({ size = 100, spin = true, durationMs
           }}
         >
           <img
-            src="/holdemtools-logo.png"
+            src="/logo-loader.png"
             alt="Loading…"
             style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
           />
