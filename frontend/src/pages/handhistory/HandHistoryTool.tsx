@@ -6,12 +6,10 @@ import LoadingIndicator from "@/components/LoadingIndicator";
 import CopyButton from "@/components/CopyButton";
 import { authedFetch } from "@/lib/api";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
-import HandHistoryEditorModal from "./HandHistoryEditorModal";
 import HandHistorySecondaryNav from "./HandHistorySecondaryNav";
 import FlyingCards from "./FlyingCards";
 import type {
   HandHistory,
-  HandHistoryDraft,
   HandHistoryToolProps,
   LocalHandHistory,
 } from "./types";
@@ -92,11 +90,6 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   const [error, setError] = useState<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
 
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editing, setEditing] = useState<ToolRow | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [sessionsById, setSessionsById] = useState<Map<string, BankrollSession>>(
     new Map()
@@ -104,8 +97,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
 
   // Local (signed-out) store. When signed in these are migrated to the server
   // and cleared (see the migration effect below).
-  const { localHands, addLocal, updateLocal, removeLocal, setLocal } =
-    useLocalHandHistories();
+  const { localHands, removeLocal, setLocal } = useLocalHandHistories();
   const localHandsRef = useRef<LocalHandHistory[]>(localHands);
   localHandsRef.current = localHands;
 
@@ -249,63 +241,6 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     );
   }, [user, items, localHands]);
 
-  const openCreate = () => {
-    setEditing(null);
-    setSaveError(null);
-    setEditorOpen(true);
-  };
-
-  const openEdit = (row: ToolRow) => {
-    setEditing(row);
-    setSaveError(null);
-    setEditorOpen(true);
-  };
-
-  const handleSave = async ({ rawText }: HandHistoryDraft) => {
-    // Signed out: persist to the device-local store instead of the server.
-    if (!user) {
-      if (editing) updateLocal(editing.key, rawText);
-      else addLocal(rawText);
-      setEditorOpen(false);
-      setEditing(null);
-      return;
-    }
-    setSaving(true);
-    setSaveError(null);
-    try {
-      const isEdit = !!editing?.server;
-      const res = await authedFetch(
-        isEdit ? `/api/handhistory/${editing!.server!.id}` : "/api/handhistory",
-        {
-          method: isEdit ? "PUT" : "POST",
-          body: JSON.stringify({
-            rawText,
-            sessionId: editing?.server?.sessionId ?? null,
-          }),
-        }
-      );
-      if (!res.ok) {
-        throw new Error(
-          `Failed to ${isEdit ? "update" : "save"} hand history. (${res.status})`
-        );
-      }
-      const saved = (await res.json()) as HandHistory;
-      setItems((prev) =>
-        sortByNewest(
-          isEdit ? prev.map((i) => (i.id === saved.id ? saved : i)) : [saved, ...prev]
-        )
-      );
-      setEditorOpen(false);
-      setEditing(null);
-    } catch (e: unknown) {
-      setSaveError(
-        e instanceof Error ? e.message : "Something went wrong while saving."
-      );
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const handleDelete = async (row: ToolRow) => {
     if (!window.confirm("Delete this hand history? This can't be undone.")) return;
     // Signed out: delete from the device-local store.
@@ -331,7 +266,6 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
       <FlyingCards />
 
       <HandHistorySecondaryNav
-        onEnter={openCreate}
         onCreate={() => navigate("/hand-history/create")}
       />
 
@@ -385,7 +319,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
           <p className="text-sm text-gray-600">No hand histories yet.</p>
           <button
             type="button"
-            onClick={openCreate}
+            onClick={() => navigate("/hand-history/create")}
             className="mt-3 text-sm font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-600"
           >
             Add your first one
@@ -439,13 +373,6 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                     />
                     <button
                       type="button"
-                      onClick={() => openEdit(row)}
-                      className="rounded-md border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
                       onClick={() => handleDelete(row)}
                       className="rounded-md border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
                     >
@@ -475,20 +402,6 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
         </motion.ul>
       )}
 
-      {editorOpen && (
-        <HandHistoryEditorModal
-          initialRawText={editing?.rawText ?? null}
-          isEdit={!!editing}
-          saving={saving}
-          errorMessage={saveError}
-          onSave={handleSave}
-          onCancel={() => {
-            if (saving) return;
-            setEditorOpen(false);
-            setEditing(null);
-          }}
-        />
-      )}
     </div>
   );
 };

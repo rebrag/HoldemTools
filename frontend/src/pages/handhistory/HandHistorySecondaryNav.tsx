@@ -2,8 +2,6 @@ import React from "react";
 import { motion } from "framer-motion";
 
 interface Props {
-  /** Open the paste-in-text editor ("Enter HH"). */
-  onEnter: () => void;
   /** Go to the visual hand recorder ("Create HH"). */
   onCreate: () => void;
 }
@@ -15,7 +13,7 @@ interface Props {
  * (felt gradient + fanned cards + suit watermark) — no image asset, so it
  * stays lightweight and theme-consistent with AuroraBackground.
  */
-const HandHistorySecondaryNav: React.FC<Props> = ({ onEnter, onCreate }) => {
+const HandHistorySecondaryNav: React.FC<Props> = ({ onCreate }) => {
   return (
     <div className="sticky top-12 z-30 -mx-4 mb-5 overflow-hidden rounded-b-2xl border-b border-emerald-400/30 shadow-lg shadow-emerald-950/30 sm:mx-0 sm:rounded-2xl sm:border">
       {/* ── Coded poker banner background ────────────────────────────── */}
@@ -33,14 +31,6 @@ const HandHistorySecondaryNav: React.FC<Props> = ({ onEnter, onCreate }) => {
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <motion.button
-            type="button"
-            onClick={onEnter}
-            whileTap={{ scale: 0.96 }}
-            className="inline-flex items-center rounded-full border border-emerald-300/60 bg-emerald-950/40 px-4 py-1.5 text-sm font-semibold text-emerald-100 backdrop-blur-sm transition-colors hover:bg-emerald-900/60"
-          >
-            Enter HH
-          </motion.button>
           <motion.button
             type="button"
             onClick={onCreate}
