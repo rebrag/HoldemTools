@@ -1,17 +1,35 @@
 // src/pages/handhistory/HandHistoryTool.tsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, type Variants } from "framer-motion";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import CopyButton from "@/components/CopyButton";
 import { authedFetch } from "@/lib/api";
+import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import HandHistoryEditorModal from "./HandHistoryEditorModal";
 import HandHistorySecondaryNav from "./HandHistorySecondaryNav";
 import FlyingCards from "./FlyingCards";
-import type { HandHistory, HandHistoryDraft, HandHistoryToolProps } from "./types";
+import type {
+  HandHistory,
+  HandHistoryDraft,
+  HandHistoryToolProps,
+  LocalHandHistory,
+} from "./types";
 import type { BankrollSession } from "@/pages/bankroll/types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
+
+// A unified row for the list: server hands carry a numeric `id`, local
+// (signed-out) hands carry a string `localId`. Normalizing both to a string
+// `key` keeps rendering/expansion/editing free of id-type collisions.
+type ToolRow = {
+  key: string;
+  isLocal: boolean;
+  rawText: string;
+  createdAt: string;
+  sessionId: string | null;
+  server?: HandHistory; // present only for server-backed rows
+};
 
 // A hand linked to a session shows that session's date/location/blinds
 // (the hand's "time" is the session's), instead of its own saved-at stamp.
@@ -72,16 +90,24 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   const [items, setItems] = useState<HandHistory[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   const [editorOpen, setEditorOpen] = useState(false);
-  const [editing, setEditing] = useState<HandHistory | null>(null);
+  const [editing, setEditing] = useState<ToolRow | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [sessionsById, setSessionsById] = useState<Map<string, BankrollSession>>(
     new Map()
   );
+
+  // Local (signed-out) store. When signed in these are migrated to the server
+  // and cleared (see the migration effect below).
+  const { localHands, addLocal, updateLocal, removeLocal, setLocal } =
+    useLocalHandHistories();
+  const localHandsRef = useRef<LocalHandHistory[]>(localHands);
+  localHandsRef.current = localHands;
 
   const itemsRef = useRef<HandHistory[]>([]);
   itemsRef.current = items;
@@ -126,7 +152,47 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     return () => {
       cancelled = true;
     };
-  }, [user]);
+    // reloadNonce lets the migration effect force a refetch after uploading.
+  }, [user, reloadNonce]);
+
+  // Auto-migrate device-saved (signed-out) hands to the account on sign-in.
+  // Runs once when `user` becomes set (or on mount if already signed in with a
+  // non-empty store). Any hands that fail to upload stay in localStorage; we
+  // don't auto-retry here to avoid hammering the API on a persistent failure.
+  const migratingRef = useRef(false);
+  useEffect(() => {
+    if (!user || migratingRef.current) return;
+    const pending = localHandsRef.current;
+    if (pending.length === 0) return;
+    migratingRef.current = true;
+    let cancelled = false;
+    (async () => {
+      const failed: LocalHandHistory[] = [];
+      for (const h of pending) {
+        try {
+          const res = await authedFetch("/api/handhistory", {
+            method: "POST",
+            body: JSON.stringify({ rawText: h.rawText, sessionId: null }),
+          });
+          if (!res.ok) throw new Error();
+        } catch {
+          failed.push(h);
+        }
+      }
+      migratingRef.current = false;
+      if (cancelled) return;
+      setLocal(failed); // keep only failures; clears to [] on full success
+      if (failed.length > 0) {
+        setError(
+          "We couldn't sync some hands saved on this device. They're still saved here."
+        );
+      }
+      setReloadNonce((n) => n + 1); // refetch so migrated hands appear
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, setLocal]);
 
   // Load the user's bankroll sessions so linked hands can show their
   // session's date/location. Best-effort: labels are an enhancement, so
@@ -158,31 +224,63 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     };
   }, [user]);
 
+  // Signed in → show server hands; signed out → show device-local hands.
+  // (After sign-in the local store is migrated + cleared, so there's never a
+  // lasting "both" state to reconcile.)
+  const rows: ToolRow[] = useMemo(() => {
+    const base: ToolRow[] = user
+      ? items.map((hh) => ({
+          key: String(hh.id),
+          isLocal: false,
+          rawText: hh.rawText,
+          createdAt: hh.createdAt,
+          sessionId: hh.sessionId,
+          server: hh,
+        }))
+      : localHands.map((h) => ({
+          key: h.localId,
+          isLocal: true,
+          rawText: h.rawText,
+          createdAt: h.createdAt,
+          sessionId: null,
+        }));
+    return base.sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }, [user, items, localHands]);
+
   const openCreate = () => {
     setEditing(null);
     setSaveError(null);
     setEditorOpen(true);
   };
 
-  const openEdit = (hh: HandHistory) => {
-    setEditing(hh);
+  const openEdit = (row: ToolRow) => {
+    setEditing(row);
     setSaveError(null);
     setEditorOpen(true);
   };
 
   const handleSave = async ({ rawText }: HandHistoryDraft) => {
-    if (!user) return;
+    // Signed out: persist to the device-local store instead of the server.
+    if (!user) {
+      if (editing) updateLocal(editing.key, rawText);
+      else addLocal(rawText);
+      setEditorOpen(false);
+      setEditing(null);
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
-      const isEdit = !!editing;
+      const isEdit = !!editing?.server;
       const res = await authedFetch(
-        isEdit ? `/api/handhistory/${editing!.id}` : "/api/handhistory",
+        isEdit ? `/api/handhistory/${editing!.server!.id}` : "/api/handhistory",
         {
           method: isEdit ? "PUT" : "POST",
           body: JSON.stringify({
             rawText,
-            sessionId: editing?.sessionId ?? null,
+            sessionId: editing?.server?.sessionId ?? null,
           }),
         }
       );
@@ -208,13 +306,17 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     }
   };
 
-  const handleDelete = async (hh: HandHistory) => {
-    if (!user) return;
+  const handleDelete = async (row: ToolRow) => {
     if (!window.confirm("Delete this hand history? This can't be undone.")) return;
+    // Signed out: delete from the device-local store.
+    if (!user) {
+      removeLocal(row.key);
+      return;
+    }
     const prev = itemsRef.current;
-    setItems((p) => p.filter((i) => i.id !== hh.id));
+    setItems((p) => p.filter((i) => String(i.id) !== row.key));
     try {
-      const res = await authedFetch(`/api/handhistory/${hh.id}`, {
+      const res = await authedFetch(`/api/handhistory/${row.server!.id}`, {
         method: "DELETE",
       });
       if (!res.ok) throw new Error();
@@ -224,17 +326,6 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     }
   };
 
-  if (!user) {
-    return (
-      <div className="mx-auto max-w-3xl px-4 pt-20 pb-12">
-        <h1 className="text-xl font-semibold text-gray-900">Hand Histories</h1>
-        <p className="mt-3 text-sm text-gray-600">
-          Sign in to save and review your hand histories.
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div className="mx-auto max-w-3xl px-4 pt-4 pb-12">
       <FlyingCards />
@@ -243,6 +334,21 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
         onEnter={openCreate}
         onCreate={() => navigate("/hand-history/create")}
       />
+
+      <AnimatePresence>
+        {!user && localHands.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mb-4 overflow-hidden rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
+          >
+            Saved on this device.{" "}
+            <span className="font-semibold">Sign in</span> to sync your hand
+            histories across devices.
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {error && (
@@ -261,7 +367,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
         <div className="flex items-center justify-center py-16">
           <LoadingIndicator />
         </div>
-      ) : items.length === 0 ? (
+      ) : rows.length === 0 ? (
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -293,11 +399,11 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
           animate="visible"
         >
           <AnimatePresence initial={false}>
-          {items.map((hh) => {
-            const expanded = expandedId === hh.id;
+          {rows.map((row) => {
+            const expanded = expandedKey === row.key;
             return (
               <motion.li
-                key={hh.id}
+                key={row.key}
                 layout
                 variants={itemVariants}
                 exit="exit"
@@ -306,41 +412,41 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                 <div className="flex items-start justify-between gap-3">
                   <button
                     type="button"
-                    onClick={() => setExpandedId(expanded ? null : hh.id)}
+                    onClick={() => setExpandedKey(expanded ? null : row.key)}
                     className="min-w-0 flex-1 text-left"
                     aria-expanded={expanded}
                   >
-                    {hh.sessionId && sessionsById.get(hh.sessionId) ? (
+                    {row.sessionId && sessionsById.get(row.sessionId) ? (
                       <div className="inline-flex max-w-full items-center gap-1 truncate rounded-full bg-emerald-50 px-2 py-[1px] text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                        🗓 {sessionLabel(sessionsById.get(hh.sessionId)!)}
+                        🗓 {sessionLabel(sessionsById.get(row.sessionId)!)}
                       </div>
                     ) : (
                       <div className="text-[11px] text-gray-500">
-                        {formatDate(hh.createdAt)}
+                        {formatDate(row.createdAt)}
                       </div>
                     )}
                     {!expanded && (
                       <div className="mt-1 truncate font-mono text-[11px] text-gray-500">
-                        {previewOf(hh.rawText)}
+                        {previewOf(row.rawText)}
                       </div>
                     )}
                   </button>
 
                   <div className="flex shrink-0 items-center gap-2">
                     <CopyButton
-                      text={hh.rawText}
+                      text={row.rawText}
                       className="rounded-md border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100"
                     />
                     <button
                       type="button"
-                      onClick={() => openEdit(hh)}
+                      onClick={() => openEdit(row)}
                       className="rounded-md border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100"
                     >
                       Edit
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleDelete(hh)}
+                      onClick={() => handleDelete(row)}
                       className="rounded-md border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
                     >
                       Delete
@@ -358,7 +464,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                       transition={{ duration: 0.22, ease: "easeInOut" }}
                       className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-[11px] leading-relaxed text-gray-800"
                     >
-                      {hh.rawText}
+                      {row.rawText}
                     </motion.pre>
                   )}
                 </AnimatePresence>
