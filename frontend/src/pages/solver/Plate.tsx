@@ -459,4 +459,10 @@ const Plate: React.FC<PlateProps> = ({
   );
 };
 
-export default Plate;
+/* Memoized: PlateGrid re-renders on every zoom open/close (its `zoom` state),
+ * but a plate's own inputs rarely change on that tap. Without this, each of the
+ * on-screen plates re-rendered its full 13×13 DecisionMatrix on every zoom
+ * toggle. All callback props reaching Plate are stable (`handleActionClick` is
+ * useCallback'd; `setZoom` is a state setter passed directly), so the default
+ * shallow comparison is safe. */
+export default React.memo(Plate);

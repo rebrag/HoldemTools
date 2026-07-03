@@ -51,14 +51,15 @@ const PokerTableSurface: React.FC<PokerTableSurfaceProps> = ({
 }) => (
   <div className={`relative ${fill ? "h-full" : ""} ${className ?? ""}`}>
     <div className={innerClassName ?? "relative h-full w-full"}>
-      {/* soft cast shadow beneath the table */}
+      {/* soft cast shadow beneath the table.
+          `filter: blur` is one of the most expensive things to composite on
+          mobile GPUs, so keep it light on phones and full-strength on ≥sm. */}
       <div
-        className={LAYER}
+        className={`${LAYER} blur-[2px] sm:blur-[7px]`}
         style={{
           inset: "2% 1%",
           transform: "translateY(3.5%)",
           background: "rgba(0,0,0,0.45)",
-          filter: "blur(7px)",
         }}
         aria-hidden="true"
       />
