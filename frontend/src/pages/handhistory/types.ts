@@ -10,6 +10,14 @@ export interface HandHistory {
   updatedAt: string | null; // ISO
 }
 
+// A hand created while signed out. Persisted only in the browser
+// (localStorage) and auto-migrated to the server once the user signs in.
+export interface LocalHandHistory {
+  localId: string; // client-generated (see makeLocalId)
+  rawText: string;
+  createdAt: string; // ISO — lets local hands sort alongside server hands
+}
+
 export interface HandHistoryToolProps {
   user: User | null;
 }

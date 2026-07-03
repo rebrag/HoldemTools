@@ -21,6 +21,20 @@ body {
   color: #111827;
 }
 
+/* iOS Safari auto-zooms when a focused form field's font-size is < 16px,
+   forcing users to pinch back out after every input. Enforce a 16px floor on
+   touch devices so focusing a field never triggers the zoom. This rule is
+   intentionally left unlayered so it wins over Tailwind's `text-sm`/`text-xs`
+   utilities (which live in `@layer utilities`) without needing `!important`.
+   Pinch-to-zoom stays fully enabled — we don't touch the viewport meta. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 /* Utilities */
 @layer utilities {
   .text-gradient {

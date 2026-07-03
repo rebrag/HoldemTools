@@ -48,7 +48,7 @@ interface Props {
   onCreatedHandSaved?: () => void;
 }
 
-function makeLocalId(): string {
+export function makeLocalId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `lh-${Date.now()}-${Math.random().toString(36).slice(2)}`;

@@ -16,6 +16,7 @@ import PlayingCard from "@/components/PlayingCard";
 import PokerTable, { CardBack, type PokerTableSeat } from "@/components/PokerTable";
 import CopyButton from "@/components/CopyButton";
 import { authedFetch } from "@/lib/api";
+import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import SeatEditorModal, { type SeatEditResult } from "./SeatEditorModal";
 import BoardEditorModal from "./BoardEditorModal";
 import ActionPanel from "./ActionPanel";
@@ -83,6 +84,8 @@ const CreateHandHistory: React.FC<Props> = ({
 }) => {
   const navigate = useNavigate();
   const embedded = !!onComplete;
+  // Signed-out saves go to the device-local store (migrated on sign-in).
+  const { addLocal } = useLocalHandHistories();
   const setupDefaults = useMemo(
     () => (defaultGameString ? parseGameString(defaultGameString) : undefined),
     [defaultGameString]
@@ -285,6 +288,13 @@ const CreateHandHistory: React.FC<Props> = ({
       onClose?.();
       return;
     }
+    // Signed out: save to the device-local store instead of the server. It's
+    // synchronous, so we skip the saving/error state and route to the list.
+    if (!user) {
+      addLocal(serialized);
+      navigate("/hand-history");
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
@@ -334,19 +344,6 @@ const CreateHandHistory: React.FC<Props> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, serialized, equityReq, preEq]);
-
-  // Embedded mode hands its result back to the caller and never touches the
-  // server, so it doesn't require a signed-in user of its own.
-  if (!user && !embedded) {
-    return (
-      <div className="mx-auto max-w-3xl px-4 pt-20 pb-12">
-        <h1 className="text-xl font-semibold text-white">Create Hand History</h1>
-        <p className="mt-3 text-sm text-emerald-100/80">
-          Sign in to record hand histories.
-        </p>
-      </div>
-    );
-  }
 
   const revealCount = engine ? revealedBoardCount(engine.street) : 0;
   const needWinner =
