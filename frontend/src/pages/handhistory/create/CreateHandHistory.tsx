@@ -541,7 +541,7 @@ const CreateHandHistory: React.FC<Props> = ({
       )}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-8">
       {/* ───────── Table (left column) ───────── */}
-      <div className="w-full lg:flex-1 lg:min-w-0 sticky top-14 lg:top-20 z-20">
+      <div className="w-full lg:flex-1 lg:min-w-0 py-4">
       <PokerTable
         size={state.tableSize}
         seats={tableSeats}
