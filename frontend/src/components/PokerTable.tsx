@@ -5,6 +5,7 @@
 import React from "react";
 import PlayingCard from "@/components/PlayingCard";
 import PokerTableSurface from "@/components/PokerTableSurface";
+import ChipStack from "@/components/ChipStack";
 import { seatCoords, type SeatCoord } from "@/lib/pokerGeometry";
 
 /** Back of a playing card (unknown / face-down). */
@@ -20,7 +21,11 @@ export interface PokerTableSeat {
   key: string | number;
   label: string; // position name or player name
   stackText?: string; // preformatted, e.g. "22 BB"
-  committedText?: string; // preformatted bet badge, e.g. "2 bb"
+  committedText?: string; // preformatted bet label, e.g. "2 bb" / "SB 0.5"
+  /** Numeric bet (real chip amount). When set, the bet renders as a ChipStack
+   *  pushed toward the table center with committedText as a small label under
+   *  it. When omitted, committedText falls back to a badge below the seat. */
+  committedAmount?: number;
   /** omit = no card row; a null slot renders a CardBack. Length varies by game. */
   holeCards?: (string | null)[];
   isButton?: boolean;
@@ -100,9 +105,40 @@ const PokerTable: React.FC<PokerTableProps> = ({
             if (!coord) return null;
             const clickable = !!onSeatClick;
 
+            // Bet pushed toward the table center: interpolate ~30% from the
+            // seat's rim position toward the middle (50,50).
+            const t = 0.3;
+            const betX = coord.x + (50 - coord.x) * t;
+            const betY = coord.y + (50 - coord.y) * t;
+            const hasBet = seat.committedAmount != null && seat.committedAmount > 0;
+            const showChips = hasBet && Math.round(seat.committedAmount!) >= 1;
+
             return (
+              <React.Fragment key={seat.key}>
+              {hasBet && (
+                <div
+                  className="pointer-events-none absolute z-30 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5"
+                  style={{ left: `${betX}%`, top: `${betY}%` }}
+                  aria-hidden="true"
+                >
+                  {showChips && (
+                    <div style={{ transform: "scale(0.5)", transformOrigin: "center bottom" }}>
+                      <ChipStack
+                        amount={seat.committedAmount!}
+                        showLabel={false}
+                        showBreakdown={false}
+                        showAmount={false}
+                      />
+                    </div>
+                  )}
+                  {seat.committedText && (
+                    <span className="rounded-full bg-black/70 px-1.5 py-[1px] text-[9px] font-bold text-amber-200 shadow ring-1 ring-amber-500/40">
+                      {seat.committedText}
+                    </span>
+                  )}
+                </div>
+              )}
               <button
-                key={seat.key}
                 type="button"
                 onClick={clickable ? () => onSeatClick!(i) : undefined}
                 className={`absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5 ${
@@ -159,7 +195,9 @@ const PokerTable: React.FC<PokerTableProps> = ({
                   </span>
                 )}
 
-                {seat.committedText && (
+                {/* Legacy below-seat bet badge (used where no committedAmount is
+                    supplied, e.g. the solver view). */}
+                {seat.committedAmount == null && seat.committedText && (
                   <span className="mt-0.5 rounded-full bg-amber-400/90 px-1.5 text-[9px] font-bold text-amber-950">
                     {seat.committedText}
                   </span>
@@ -167,6 +205,7 @@ const PokerTable: React.FC<PokerTableProps> = ({
 
                 {seat.extra}
               </button>
+              </React.Fragment>
             );
           })}
     </PokerTableSurface>

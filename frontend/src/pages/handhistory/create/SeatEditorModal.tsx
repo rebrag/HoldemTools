@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import PlayingCard from "@/components/PlayingCard";
-import CardPicker from "@/components/CardPicker";
+import RankSuitKeypad from "@/components/RankSuitKeypad";
 import type { HoleCards, Seat } from "./types";
 
 export interface SeatEditResult {
@@ -104,12 +104,13 @@ const SeatEditorModal: React.FC<Props> = ({
 
   return createPortal(
     <div className="fixed inset-0 z-[1300] flex items-start justify-center overflow-y-auto p-4 sm:p-8">
-      <div className="absolute inset-0 bg-black/50" onPointerDown={onClose} aria-hidden="true" />
+      {/* Clicking the backdrop commits the edit (same as "Done"), not discard. */}
+      <div className="absolute inset-0 bg-black/50" onPointerDown={save} aria-hidden="true" />
       <div
         role="dialog"
         aria-modal="true"
         aria-label={`Edit seat ${positionLabel}`}
-        className="relative z-[1310] w-full max-w-md rounded-2xl border border-emerald-300/40 bg-white/95 p-4 shadow-2xl shadow-emerald-500/30 backdrop-blur-sm"
+        className="relative z-[1310] w-full max-w-sm rounded-2xl border border-emerald-300/40 bg-white/95 p-4 shadow-2xl shadow-emerald-500/30 backdrop-blur-sm"
         onPointerDown={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between gap-2">
@@ -135,6 +136,7 @@ const SeatEditorModal: React.FC<Props> = ({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              onFocus={(e) => e.currentTarget.select()}
               placeholder={positionLabel}
               className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
             />
@@ -146,6 +148,7 @@ const SeatEditorModal: React.FC<Props> = ({
               inputMode="decimal"
               value={stack}
               onChange={(e) => setStack(e.target.value)}
+              onFocus={(e) => e.currentTarget.select()}
               placeholder="100"
               className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
             />
@@ -223,7 +226,15 @@ const SeatEditorModal: React.FC<Props> = ({
           <div className="mb-2 flex flex-wrap gap-2">
             {Array.from({ length: capacity }, (_, i) => hole[i] ?? null).map((c, i) =>
               c ? (
-                <PlayingCard key={i} code={c} size="md" width={40} />
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => handlePick(c)}
+                  aria-label={`Remove ${c}`}
+                  className="transition-transform hover:-translate-y-[1px] active:scale-95"
+                >
+                  <PlayingCard code={c} size="md" width={40} />
+                </button>
               ) : (
                 <div
                   key={i}
@@ -234,13 +245,13 @@ const SeatEditorModal: React.FC<Props> = ({
               )
             )}
           </div>
-          <CardPicker
+          <RankSuitKeypad
             used={gridUsed}
             onPick={handlePick}
-            minCardWidth={46}
-            size="md"
-            gapPx={5}
-            className="grid w-full rounded-xl border border-gray-300 bg-slate-700/80 p-2"
+            targetLabel={
+              selected.length < capacity ? name.trim() || positionLabel : undefined
+            }
+            className="rounded-xl border border-slate-700 bg-slate-900 p-2.5"
           />
         </div>
 

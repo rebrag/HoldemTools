@@ -96,9 +96,19 @@ export function serializeHand(
 ): string {
   const lines: string[] = [];
   const isHero = (i: number) => e.heroIndex === i;
+  // A seat has a real name when it differs from its position label (the engine
+  // falls back to the position when no name was typed). Names take priority over
+  // positions everywhere; the position is only a fallback for unnamed seats.
+  const custom = (i: number) => e.players[i].name !== e.players[i].pos;
+  const nameOf = (i: number) => (custom(i) ? e.players[i].name : displayPos(e.players[i].pos));
   const seatLabel = (i: number) =>
-    isHero(i) ? `Hero (${displayPos(e.players[i].pos)})` : displayPos(e.players[i].pos);
-  const actLabel = (i: number) => (isHero(i) ? "Hero" : displayPos(e.players[i].pos));
+    isHero(i)
+      ? custom(i)
+        ? `${e.players[i].name} (Hero)`
+        : "Hero"
+      : nameOf(i);
+  const actLabel = (i: number) =>
+    isHero(i) ? (custom(i) ? e.players[i].name : "Hero") : nameOf(i);
 
   const actionText = (a: EngineAction): string => {
     const lab = actLabel(a.player);

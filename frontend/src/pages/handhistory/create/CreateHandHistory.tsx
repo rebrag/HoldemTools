@@ -35,6 +35,8 @@ import { serializeHand, type EquityInfo, type StreetEquity } from "./serialize";
 import { useShowdownEquity, type EquityRequest } from "./useShowdownEquity";
 import { evalWinners, exactEquity, type EvalGame } from "@/lib/handEval";
 import { parseGameString } from "./parseGameString";
+import { parseHandDefaults, type HandDefaults } from "./parseHandDefaults";
+import type { HandHistory } from "../types";
 import {
   createInitialState,
   handSize,
@@ -44,6 +46,39 @@ import {
   type AdvancedHandState,
   type HoleCards,
 } from "./types";
+
+// Merge parsed setup defaults (from the most recent saved hand, or app defaults
+// on Clear/Reset) into a state: blinds/ante/game/table size and each seat's
+// name + stack. Hand-specific fields (button, hero, hole cards, action) are left
+// untouched. Hole cards are only resized to match the (possibly new) game.
+function applyDefaults(base: AdvancedHandState, d: HandDefaults): AdvancedHandState {
+  const next: AdvancedHandState = { ...base };
+  if (d.game) next.game = d.game;
+  if (d.smallBlind != null) next.smallBlind = d.smallBlind;
+  if (d.bigBlind != null) next.bigBlind = d.bigBlind;
+  if (d.ante != null) next.ante = d.ante;
+  const size =
+    d.tableSize && d.tableSize >= 2 && d.tableSize <= 9 ? d.tableSize : next.tableSize;
+  next.tableSize = size;
+  const cards = handSize(next.game);
+  let seats = resizeSeats(next.seats, size).map((s) => ({
+    ...s,
+    holeCards: resizeHoleCards(s.holeCards, cards),
+  }));
+  if (d.seats) {
+    seats = seats.map((s, i) => {
+      const ds = d.seats![i];
+      return ds ? { ...s, name: ds.name, stack: ds.stack, occupied: true } : s;
+    });
+  }
+  next.seats = seats;
+  next.buttonSeat = Math.min(next.buttonSeat, size - 1);
+  next.heroSeat = Math.min(next.heroSeat, size - 1);
+  return next;
+}
+
+// Compact numeric label for preview badges: "0.5", "1", "2.5" (no trailing zeros).
+const fmtNum = (n: number) => (Number.isFinite(n) ? String(n) : "");
 
 // Map the recorder's game label to the evaluator's game id (null = can't eval).
 function evalGameId(game: string): EvalGame | null {
@@ -84,8 +119,9 @@ const CreateHandHistory: React.FC<Props> = ({
 }) => {
   const navigate = useNavigate();
   const embedded = !!onComplete;
-  // Signed-out saves go to the device-local store (migrated on sign-in).
-  const { addLocal } = useLocalHandHistories();
+  // Signed-out saves go to the device-local store (migrated on sign-in). We also
+  // read localHands to seed defaults from the most recent hand when signed out.
+  const { addLocal, localHands } = useLocalHandHistories();
   const setupDefaults = useMemo(
     () => (defaultGameString ? parseGameString(defaultGameString) : undefined),
     [defaultGameString]
@@ -103,8 +139,14 @@ const CreateHandHistory: React.FC<Props> = ({
   const [winnerSel, setWinnerSel] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [unitMode, setUnitMode] = useState<"bb" | "chips">("bb");
+  const [unitMode, setUnitMode] = useState<"bb" | "chips">("chips");
   const autoSavedRef = useRef(false);
+  // Defaults seeding (standalone mode): copy the most recent saved hand's setup
+  // once, unless the user has already touched the form or hit Clear all.
+  const seededRef = useRef(false);
+  const touchedRef = useRef(false);
+  const clearedRef = useRef(false);
+  const rememberedRef = useRef<HandDefaults | null>(null);
 
   const labels = useMemo(
     () => positionLabels(state.tableSize, state.buttonSeat),
@@ -187,10 +229,13 @@ const CreateHandHistory: React.FC<Props> = ({
     [engine, state, equityInfo, location]
   );
 
-  const update = (partial: Partial<AdvancedHandState>) =>
+  const update = (partial: Partial<AdvancedHandState>) => {
+    touchedRef.current = true;
     setState((prev) => ({ ...prev, ...partial }));
+  };
 
-  const onTableSizeChange = (size: number) =>
+  const onTableSizeChange = (size: number) => {
+    touchedRef.current = true;
     setState((prev) => ({
       ...prev,
       tableSize: size,
@@ -198,10 +243,12 @@ const CreateHandHistory: React.FC<Props> = ({
       buttonSeat: Math.min(prev.buttonSeat, size - 1),
       heroSeat: Math.min(prev.heroSeat, size - 1),
     }));
+  };
 
   // Changing the game resizes every seat's hole cards to the new hand size
   // (2 = Hold'em, 4 = PLO, 5 = PLO5).
   const onGameChange = (game: string) => {
+    touchedRef.current = true;
     const cards = handSize(game);
     setState((prev) => ({
       ...prev,
@@ -211,6 +258,7 @@ const CreateHandHistory: React.FC<Props> = ({
   };
 
   const saveSeat = (index: number, result: SeatEditResult) => {
+    touchedRef.current = true;
     const { seat, makeButton, makeHero, makeStraddle, straddleAmount } = result;
     setState((prev) => ({
       ...prev,
@@ -240,7 +288,11 @@ const CreateHandHistory: React.FC<Props> = ({
   };
 
   const reset = () => {
-    setState(createInitialState(state.tableSize, setupDefaults));
+    // Restart the hand, but keep the remembered setup (blinds/game/seats) from
+    // the most recent saved hand where we have it, so the table isn't wiped.
+    const base = createInitialState(state.tableSize, setupDefaults);
+    const remembered = rememberedRef.current;
+    setState(!embedded && remembered ? applyDefaults(base, remembered) : base);
     setEngine(null);
     setHistory([]);
     setWinnerSel([]);
@@ -248,6 +300,63 @@ const CreateHandHistory: React.FC<Props> = ({
     autoSavedRef.current = false;
     setPhase("setup");
   };
+
+  // "Clear all": wipe the fields the setup remembers - blinds, ante, table size,
+  // game, and every seat's name + stack - back to app defaults, and forget the
+  // remembered last hand so it doesn't repopulate. Hole cards / board / comment
+  // are left in place.
+  const clearAll = () => {
+    touchedRef.current = true;
+    clearedRef.current = true;
+    rememberedRef.current = null;
+    setState((prev) =>
+      applyDefaults(prev, {
+        smallBlind: "0.5",
+        bigBlind: "1",
+        ante: "0",
+        game: "Holdem",
+        tableSize: 9,
+        seats: Array.from({ length: 9 }, () => ({ name: "", stack: "" })),
+      })
+    );
+  };
+
+  // Standalone mode: seed the setup from the most recent saved hand (blinds,
+  // ante, game, table size, seat names + stacks) so the user doesn't re-enter a
+  // similar table each time. Candidates come from the device-local store (works
+  // signed out) and, when signed in, the server; the newest across both wins.
+  // Runs once; skipped if the user has already touched the form or hit Clear all.
+  // Embedded mode keeps using defaultGameString.
+  useEffect(() => {
+    if (embedded || seededRef.current) return;
+    let cancelled = false;
+    void (async () => {
+      const candidates: { rawText: string; createdAt: string }[] = [...localHands];
+      if (user) {
+        try {
+          const res = await authedFetch("/api/handhistory");
+          if (res.ok) {
+            const data = (await res.json()) as HandHistory[];
+            if (Array.isArray(data)) candidates.push(...data);
+          }
+        } catch {
+          // Best-effort: server defaults are a convenience, so failures are silent.
+        }
+      }
+      const newest = candidates
+        .filter((h) => h?.rawText && h?.createdAt)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+      if (cancelled || !newest) return;
+      const parsed = parseHandDefaults(newest.rawText);
+      rememberedRef.current = parsed;
+      if (cancelled || seededRef.current || touchedRef.current || clearedRef.current) return;
+      seededRef.current = true;
+      setState((prev) => applyDefaults(prev, parsed));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [embedded, user, localHands]);
 
   const start = () => {
     if (occupiedCount < 2) return;
@@ -357,6 +466,27 @@ const CreateHandHistory: React.FC<Props> = ({
     !!engine.winners &&
     (engine.numBoards === 1 || !!engine.winners2);
 
+  // Forced-bet preview shown during setup (before the engine exists). Derived
+  // from the same position labels as buildEngine's blind assignment, so the
+  // SB/BB/straddle badges land on the right seats and follow the dealer button.
+  const setupPosts: Record<number, { amount: number; label: string }> = {};
+  if (!engine) {
+    const sb = parseFloat(state.smallBlind);
+    const bb = parseFloat(state.bigBlind);
+    const str = parseFloat(state.straddleAmount);
+    const occ = (pos: string) =>
+      state.seats.findIndex((s, i) => s.occupied && labels[i] === pos);
+    const bbIdx = occ("BB");
+    if (bbIdx >= 0 && bb > 0) setupPosts[bbIdx] = { amount: bb, label: `BB ${fmtNum(bb)}` };
+    const sbIdx = occ("SB") >= 0 ? occ("SB") : occ("BTN"); // heads-up: button posts SB
+    if (sbIdx >= 0 && sb > 0 && !(sbIdx in setupPosts))
+      setupPosts[sbIdx] = { amount: sb, label: `SB ${fmtNum(sb)}` };
+    const strSeat = state.straddleSeat;
+    if (strSeat != null && state.seats[strSeat]?.occupied && str > 0) {
+      setupPosts[strSeat] = { amount: str, label: `Str ${fmtNum(str)}` }; // straddle wins over a blind badge
+    }
+  }
+
   const tableSeats: PokerTableSeat[] = Array.from(
     { length: state.tableSize },
     (_, i): PokerTableSeat => {
@@ -369,13 +499,21 @@ const CreateHandHistory: React.FC<Props> = ({
         ? `${fmtUnit(ep.stack, engine!.bb, unitMode)}${unitMode === "bb" ? " BB" : ""}`
         : seat.stack.trim();
       const committed = ep?.committed ?? 0;
-      const straddleBadge = !engine && state.straddleSeat === i ? "STR" : undefined;
+      const post = setupPosts[i];
+      // Bet shown on the table: live committed chips during the hand, or the
+      // forced-bet preview (SB/BB/straddle) during setup. Both render as a
+      // ChipStack pushed toward center, labelled per the current unit mode.
+      const committedAmount = committed > 0 ? committed : post?.amount;
+      const committedText =
+        committed > 0
+          ? `${fmtUnit(committed, engine!.bb, unitMode)}${unitMode === "bb" ? " BB" : ""}`
+          : post?.label;
       return {
         key: i,
         label,
         stackText: stackText || undefined,
-        committedText:
-          committed > 0 ? fmtUnit(committed, engine!.bb, unitMode) : straddleBadge,
+        committedAmount,
+        committedText,
         holeCards: seat.holeCards,
         isButton: state.buttonSeat === i,
         isHero: state.heroSeat === i,
@@ -419,6 +557,11 @@ const CreateHandHistory: React.FC<Props> = ({
             ) : (
               <span className="rounded-full bg-black/40 px-2 py-0.5 text-[10px] font-medium text-white/80">
                 Tap a card to edit
+              </span>
+            )}
+            {!engine && parseFloat(state.ante) > 0 && (
+              <span className="rounded-full bg-amber-400/90 px-2 py-0.5 text-[9px] font-bold text-amber-950">
+                Ante ${fmtNum(parseFloat(state.ante))}
               </span>
             )}
             <BoardRow
@@ -594,6 +737,15 @@ const CreateHandHistory: React.FC<Props> = ({
       {/* ───────── Setup phase: config form ───────── */}
       {phase === "setup" && (
         <div className="mt-4 rounded-2xl border border-emerald-300/40 bg-white/95 p-4 shadow-lg shadow-emerald-500/20 backdrop-blur-sm">
+          <div className="mb-2 flex items-center justify-end">
+            <button
+              type="button"
+              onClick={clearAll}
+              className="text-[11px] text-gray-400 underline underline-offset-2 transition hover:text-gray-600"
+            >
+              Clear all
+            </button>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Table size">
               <select
@@ -616,6 +768,8 @@ const CreateHandHistory: React.FC<Props> = ({
                 <option>Other</option>
               </select>
             </Field>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-3">
             <Field label="Small blind">
               <input type="tel" inputMode="decimal" className={inputCls} value={state.smallBlind} onChange={(e) => update({ smallBlind: e.target.value })} />
             </Field>

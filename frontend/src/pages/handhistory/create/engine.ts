@@ -64,9 +64,11 @@ export function fmtBB(chips: number, bb: number): string {
   return (Math.round(v * 100) / 100).toString();
 }
 
-// Literal chip amount, formatted like a currency figure ("96000.00").
+// Literal chip amount as a currency figure. Whole amounts drop the decimals
+// ("96000"); fractional amounts keep two places ("0.50", "2.75").
 export function fmtChips(chips: number): string {
-  return (Math.round(chips * 100) / 100).toFixed(2);
+  const rounded = Math.round(chips * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
 }
 
 export function fmtUnit(chips: number, bb: number, unit: "bb" | "chips"): string {
