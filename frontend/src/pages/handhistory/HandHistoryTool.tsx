@@ -9,6 +9,7 @@ import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import HandHistoryEditorModal from "./HandHistoryEditorModal";
 import HandHistorySecondaryNav from "./HandHistorySecondaryNav";
 import FlyingCards from "./FlyingCards";
+import { TEST_HAND_ID, buildTestHandText } from "./create/testHand";
 import type {
   HandHistory,
   HandHistoryDraft,
@@ -29,6 +30,7 @@ type ToolRow = {
   createdAt: string;
   sessionId: string | null;
   server?: HandHistory; // present only for server-backed rows
+  synthetic?: boolean; // dev-only "test" fixture row; not persisted
 };
 
 // A hand linked to a session shows that session's date/location/blinds
@@ -227,6 +229,13 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   // Signed in → show server hands; signed out → show device-local hands.
   // (After sign-in the local store is migrated + cleared, so there's never a
   // lasting "both" state to reconcile.)
+  // Dev-only "test" fixture: rendered through the live serializer so it tracks
+  // any change to the output format. Computed once (recomputes on HMR reload).
+  const testRawText = useMemo(
+    () => (import.meta.env.DEV ? buildTestHandText() : ""),
+    []
+  );
+
   const rows: ToolRow[] = useMemo(() => {
     const base: ToolRow[] = user
       ? items.map((hh) => ({
@@ -244,10 +253,22 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
           createdAt: h.createdAt,
           sessionId: null,
         }));
-    return base.sort(
+    base.sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
-  }, [user, items, localHands]);
+    if (import.meta.env.DEV) {
+      // Always first, regardless of dates. Not persisted anywhere.
+      base.unshift({
+        key: TEST_HAND_ID,
+        isLocal: false,
+        rawText: testRawText,
+        createdAt: "2020-01-01T00:00:00.000Z",
+        sessionId: null,
+        synthetic: true,
+      });
+    }
+    return base;
+  }, [user, items, localHands, testRawText]);
 
   const openCreate = () => {
     setEditing(null);
@@ -256,6 +277,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   };
 
   const openEdit = (row: ToolRow) => {
+    if (row.synthetic) return; // the test fixture isn't editable
     setEditing(row);
     setSaveError(null);
     setEditorOpen(true);
@@ -307,6 +329,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   };
 
   const handleDelete = async (row: ToolRow) => {
+    if (row.synthetic) return; // the test fixture isn't deletable
     if (!window.confirm("Delete this hand history? This can't be undone.")) return;
     // Signed out: delete from the device-local store.
     if (!user) {
@@ -437,20 +460,24 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                       text={row.rawText}
                       className="rounded-md border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100"
                     />
-                    <button
-                      type="button"
-                      onClick={() => openEdit(row)}
-                      className="rounded-md border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(row)}
-                      className="rounded-md border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
-                    >
-                      Delete
-                    </button>
+                    {!row.synthetic && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => openEdit(row)}
+                          className="rounded-md border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(row)}
+                          className="rounded-md border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                        >
+                          Delete
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
 
