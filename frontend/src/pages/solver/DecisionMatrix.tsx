@@ -54,11 +54,16 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
   onMatrixClick,
   ...rest
 }) => {
-  /* ---------------- ORDERED DATA  ---------------- */
+  /* ---------------- ORDERED DATA  ----------------
+   * Substitute the blank-cell fallback here (inside the memo) so every cell —
+   * real or blank — keeps a stable object reference across re-renders. HandCell's
+   * memo compares `data.actions`/`data.evs` by reference, so minting a fresh blank
+   * cell on each render would force those cells to re-render needlessly. */
   const orderedGridData = useMemo(
     () =>
       HAND_ORDER.map(
-        (hand) => gridData.find((item) => item.hand === hand) || null
+        (hand) =>
+          gridData.find((item) => item.hand === hand) ?? makeBlankCell(hand)
       ),
     [gridData]
   );
@@ -99,8 +104,7 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
       onClick={onMatrixClick}
       className="relative grid grid-cols-13 gap-0 w-full aspect-square rounded-md overflow-hidden"
     >
-      {orderedGridData.map((handData, idx) => {
-        const cellData = handData ?? makeBlankCell(HAND_ORDER[idx]);
+      {orderedGridData.map((cellData) => {
         return (
           <HandCell
             key={cellData.hand}

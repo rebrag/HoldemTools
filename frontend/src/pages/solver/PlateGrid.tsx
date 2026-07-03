@@ -428,7 +428,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                           dmWidthPx={narrowDims.dmW}
                           sidebarWidthPx={narrowDims.sbW}
                           compact
-                          onPlateZoom={(payload) => setZoom(payload)}
+                          onPlateZoom={setZoom}
                           singleRangeView={singleRangeView}
                         />
                       ))}
@@ -466,7 +466,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                         isActive={posKey === activePlayer}
                         pot={pot}
                         maxBet={maxBet}
-                        onPlateZoom={(payload) => setZoom(payload)}
+                        onPlateZoom={setZoom}
                         singleRangeView={singleRangeView}
                       />
                       ))}
