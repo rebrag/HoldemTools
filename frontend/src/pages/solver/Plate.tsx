@@ -170,7 +170,7 @@ const Plate: React.FC<PlateProps> = ({
         >
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <img
-              src="/vite5.svg"
+              src="/logo-icon.png"
               alt=""
               draggable="false"
               style={{ width: w * logoScale, height: "auto", opacity: 0.9 }}
@@ -190,7 +190,7 @@ const Plate: React.FC<PlateProps> = ({
         >
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <img
-              src="/vite5.svg"
+              src="/logo-icon.png"
               alt=""
               draggable="false"
               style={{ width: w * logoScale, height: "auto", opacity: 0.9 }}
