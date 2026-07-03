@@ -9,7 +9,7 @@ import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import HandHistoryEditorModal from "./HandHistoryEditorModal";
 import HandHistorySecondaryNav from "./HandHistorySecondaryNav";
 import FlyingCards from "./FlyingCards";
-import { TEST_HAND_ID, buildTestHandText } from "./create/testHand";
+import { TEST_HAND_ID, buildTestHandText, SHOW_TEST_HAND } from "./create/testHand";
 import type {
   HandHistory,
   HandHistoryDraft,
@@ -232,7 +232,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   // Dev-only "test" fixture: rendered through the live serializer so it tracks
   // any change to the output format. Computed once (recomputes on HMR reload).
   const testRawText = useMemo(
-    () => (import.meta.env.DEV ? buildTestHandText() : ""),
+    () => (SHOW_TEST_HAND ? buildTestHandText() : ""),
     []
   );
 
@@ -256,7 +256,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     base.sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
-    if (import.meta.env.DEV) {
+    if (SHOW_TEST_HAND) {
       // Always first, regardless of dates. Not persisted anywhere.
       base.unshift({
         key: TEST_HAND_ID,

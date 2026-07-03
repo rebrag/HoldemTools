@@ -12,6 +12,12 @@ import { serializeHand, type EquityInfo } from "./serialize";
 // a UUID, so this non-numeric literal can never collide with a real hand.
 export const TEST_HAND_ID = "__test-hand__";
 
+// When to surface the fixture: the local dev server (import.meta.env.DEV) or any
+// Vercel *preview* (branch) deployment. Hidden on production. VITE_VERCEL_ENV is
+// bridged from Vercel's build-time VERCEL_ENV in vite.config.ts.
+export const SHOW_TEST_HAND =
+  import.meta.env.DEV || import.meta.env.VITE_VERCEL_ENV === "preview";
+
 // 8-max, $1/$3 NL Hold'em, Hero on the button. With buttonSeat = heroSeat = 0 the
 // position order is [BTN, SB, BB, UTG, UTG+1, MP, HJ, CO] (see positions.ts), so
 // seat index == engine player index and the printed order matches the sample.
