@@ -15,6 +15,12 @@ export default defineConfig(({ mode }) => ({
     port: Number(loadEnv(mode, process.cwd(), '').VITE_DEV_PORT) || 5173,
     strictPort: true,
   },
+  define: {
+    // Bridge Vercel's build-time VERCEL_ENV (production | preview | development)
+    // into the client bundle so dev-only fixtures can detect preview deploys.
+    // Empty string locally (where import.meta.env.DEV already applies).
+    "import.meta.env.VITE_VERCEL_ENV": JSON.stringify(process.env.VERCEL_ENV ?? ""),
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
