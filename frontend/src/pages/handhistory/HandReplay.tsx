@@ -25,6 +25,7 @@ import { positionLabels } from "./create/positions";
 import { buildTableSeats, TableCenter } from "./create/tableView";
 import { parseReplay, reconstructFrames, stripReplay } from "./create/replay";
 import { TEST_HAND_ID, buildTestHandText, SHOW_TEST_HAND } from "./create/testHand";
+import { fetchSharedHand } from "@/lib/shareApi";
 import type { HandHistory } from "./types";
 
 const STEP_MS = 2000;
@@ -34,20 +35,43 @@ type LoadState =
   | { status: "missing" }
   | { status: "ready"; rawText: string };
 
-const HandReplay: React.FC<{ user: User | null }> = ({ user }) => {
-  const { key } = useParams<{ key: string }>();
+const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
+  user,
+  shared = false,
+}) => {
+  const { key, token } = useParams<{ key: string; token: string }>();
   const navigate = useNavigate();
   const { localHands } = useLocalHandHistories();
   const reduce = useReducedMotion();
 
   const [load, setLoad] = useState<LoadState>({ status: "loading" });
 
-  // Resolve the hand's rawText from the route key. Signed in → look it up in the
-  // server list (same source as the hand-history page); signed out → the
-  // device-local store. Either way we match on the row's string key.
+  // Resolve the hand's rawText. Shared mode → fetch the public endpoint by
+  // token (works for anyone, signed in or not). Owner mode → the dev fixture,
+  // then the signed-in server list, then the device-local store, matched on the
+  // row's string key.
   useEffect(() => {
     let cancelled = false;
     setLoad({ status: "loading" });
+
+    if (shared) {
+      if (!token) {
+        setLoad({ status: "missing" });
+        return;
+      }
+      void (async () => {
+        try {
+          const rawText = await fetchSharedHand(token);
+          if (!cancelled) setLoad({ status: "ready", rawText });
+        } catch {
+          if (!cancelled) setLoad({ status: "missing" });
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+
     if (!key) {
       setLoad({ status: "missing" });
       return;
@@ -80,7 +104,7 @@ const HandReplay: React.FC<{ user: User | null }> = ({ user }) => {
     return () => {
       cancelled = true;
     };
-  }, [key, user, localHands]);
+  }, [key, token, shared, user, localHands]);
 
   const rawText = load.status === "ready" ? load.rawText : "";
   const data = useMemo(
@@ -141,16 +165,18 @@ const HandReplay: React.FC<{ user: User | null }> = ({ user }) => {
         <div aria-hidden className="mb-3 text-4xl">🂠</div>
         <h1 className="text-lg font-semibold text-white">Replay unavailable</h1>
         <p className="mt-2 text-sm text-white/70">
-          {load.status === "missing"
+          {shared
+            ? "This shared link is invalid or has been revoked."
+            : load.status === "missing"
             ? "We couldn't find that hand."
             : "This hand was saved before replays were supported, so there's no action data to play back."}
         </p>
         <button
           type="button"
-          onClick={() => navigate("/hand-history")}
+          onClick={() => navigate(shared ? "/" : "/hand-history")}
           className="mt-5 inline-flex items-center rounded-full bg-emerald-600 px-5 py-1.5 text-sm font-semibold text-white shadow-md shadow-emerald-500/40 transition hover:bg-emerald-500"
         >
-          ← Back to hand histories
+          {shared ? "Go to HoldemTools" : "← Back to hand histories"}
         </button>
       </div>
     );
@@ -213,14 +239,21 @@ const HandReplay: React.FC<{ user: User | null }> = ({ user }) => {
         <div className="min-w-0">
           <button
             type="button"
-            onClick={() => navigate("/hand-history")}
+            onClick={() => navigate(shared ? "/" : "/hand-history")}
             className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-emerald-200/80 transition hover:text-white"
           >
-            <ChevronLeft className="h-3.5 w-3.5" /> Hand histories
+            <ChevronLeft className="h-3.5 w-3.5" /> {shared ? "HoldemTools" : "Hand histories"}
           </button>
-          <h1 className="truncate text-sm font-semibold text-white sm:text-base">
-            {title || "Hand replay"}
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="truncate text-sm font-semibold text-white sm:text-base">
+              {title || "Hand replay"}
+            </h1>
+            {shared && (
+              <span className="shrink-0 rounded-full bg-sky-500/90 px-2 py-[1px] text-[10px] font-bold text-white">
+                Shared
+              </span>
+            )}
+          </div>
         </div>
         <button
           type="button"

@@ -101,6 +101,10 @@ function App() {
               path="/hand-history/replay/:key"
               element={<HandReplay user={effectiveUser} />}
             />
+            <Route
+              path="/hand-history/shared/:token"
+              element={<HandReplay user={effectiveUser} shared />}
+            />
             <Route path="/course" element={<Course user={effectiveUser} />} />
             <Route path="/course/:sectionId" element={<CourseSection user={effectiveUser} />} />
           </Route>

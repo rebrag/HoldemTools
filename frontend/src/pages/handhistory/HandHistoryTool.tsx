@@ -2,11 +2,14 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, type Variants } from "framer-motion";
+import { Play, Share2, Copy, Check, Trash2 } from "lucide-react";
 import LoadingIndicator from "@/components/LoadingIndicator";
-import CopyButton from "@/components/CopyButton";
 import { authedFetch } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
+import { SHARE_ENABLED, createShareToken, shareUrl } from "@/lib/shareApi";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import HandHistorySecondaryNav from "./HandHistorySecondaryNav";
+import RowActionButton from "./RowActionButton";
 import FlyingCards from "./FlyingCards";
 import { parseReplay, stripReplay } from "./create/replay";
 import { TEST_HAND_ID, buildTestHandText, SHOW_TEST_HAND } from "./create/testHand";
@@ -99,6 +102,12 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   const [sessionsById, setSessionsById] = useState<Map<string, BankrollSession>>(
     new Map()
   );
+  // Transient per-row confirmation ("copied"/"shared") shown on the action
+  // buttons for ~1.5s, and the row whose share request is in flight.
+  const [flash, setFlash] = useState<{ key: string; kind: "copied" | "shared" } | null>(
+    null
+  );
+  const [sharingKey, setSharingKey] = useState<string | null>(null);
 
   // Local (signed-out) store. When signed in these are migrated to the server
   // and cleared (see the migration effect below).
@@ -273,6 +282,47 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     return base;
   }, [user, items, localHands, testRawText]);
 
+  // Flash a transient "copied"/"shared" confirmation on a row's button.
+  const flashRow = (key: string, kind: "copied" | "shared") => {
+    setFlash({ key, kind });
+    window.setTimeout(
+      () => setFlash((f) => (f && f.key === key ? null : f)),
+      1500
+    );
+  };
+
+  const handleCopy = async (row: ToolRow) => {
+    if (await copyText(row.clean)) flashRow(row.key, "copied");
+  };
+
+  // Mint a public share link for a server-backed hand and offer it via the
+  // native share sheet (mobile) or the clipboard (desktop).
+  const handleShare = async (row: ToolRow) => {
+    if (!row.server) return;
+    setSharingKey(row.key);
+    setError(null);
+    try {
+      const token = await createShareToken(row.server.id);
+      const url = shareUrl(token);
+      if (navigator.share) {
+        try {
+          await navigator.share({ title: "Poker hand replay", url });
+          flashRow(row.key, "shared");
+        } catch {
+          /* user dismissed the share sheet — no-op */
+        }
+      } else if (await copyText(url)) {
+        flashRow(row.key, "shared");
+      }
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "We couldn't create a share link."
+      );
+    } finally {
+      setSharingKey(null);
+    }
+  };
+
   const handleDelete = async (row: ToolRow) => {
     if (row.synthetic) return; // the test fixture isn't deletable
     if (!window.confirm("Delete this hand history? This can't be undone.")) return;
@@ -399,28 +449,55 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                     )}
                   </button>
 
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex shrink-0 items-center gap-1.5">
                     {row.replayable && (
-                      <button
-                        type="button"
+                      <RowActionButton
+                        tone="replay"
+                        label="Replay hand"
+                        icon={<Play className="h-4 w-4" fill="currentColor" />}
                         onClick={() => navigate(`/hand-history/replay/${row.key}`)}
-                        className="rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
-                      >
-                        ▷ Replay
-                      </button>
+                      />
                     )}
-                    <CopyButton
-                      text={row.clean}
-                      className="rounded-md border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100"
+                    {SHARE_ENABLED &&
+                      row.replayable &&
+                      !row.isLocal &&
+                      !row.synthetic &&
+                      !!row.server && (
+                        <RowActionButton
+                          tone="share"
+                          label="Share replay link"
+                          disabled={sharingKey === row.key}
+                          success={flash?.key === row.key && flash.kind === "shared"}
+                          icon={
+                            flash?.key === row.key && flash.kind === "shared" ? (
+                              <Check className="h-4 w-4" />
+                            ) : (
+                              <Share2 className="h-4 w-4" />
+                            )
+                          }
+                          onClick={() => handleShare(row)}
+                        />
+                      )}
+                    <RowActionButton
+                      tone="copy"
+                      label="Copy hand text"
+                      success={flash?.key === row.key && flash.kind === "copied"}
+                      icon={
+                        flash?.key === row.key && flash.kind === "copied" ? (
+                          <Check className="h-4 w-4" />
+                        ) : (
+                          <Copy className="h-4 w-4" />
+                        )
+                      }
+                      onClick={() => handleCopy(row)}
                     />
                     {!row.synthetic && (
-                      <button
-                        type="button"
+                      <RowActionButton
+                        tone="delete"
+                        label="Delete hand"
+                        icon={<Trash2 className="h-4 w-4" />}
                         onClick={() => handleDelete(row)}
-                        className="rounded-md border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
-                      >
-                        Delete
-                      </button>
+                      />
                     )}
                   </div>
                 </div>
