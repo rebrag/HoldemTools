@@ -8,6 +8,7 @@ import { authedFetch } from "@/lib/api";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import HandHistorySecondaryNav from "./HandHistorySecondaryNav";
 import FlyingCards from "./FlyingCards";
+import { parseReplay, stripReplay } from "./create/replay";
 import { TEST_HAND_ID, buildTestHandText, SHOW_TEST_HAND } from "./create/testHand";
 import type {
   HandHistory,
@@ -25,6 +26,8 @@ type ToolRow = {
   key: string;
   isLocal: boolean;
   rawText: string;
+  clean: string; // rawText with the embedded replay payload stripped (for display/copy)
+  replayable: boolean; // has an embedded replay payload → the Replay button is shown
   createdAt: string;
   sessionId: string | null;
   server?: HandHistory; // present only for server-backed rows
@@ -234,6 +237,8 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
           key: String(hh.id),
           isLocal: false,
           rawText: hh.rawText,
+          clean: stripReplay(hh.rawText),
+          replayable: parseReplay(hh.rawText) != null,
           createdAt: hh.createdAt,
           sessionId: hh.sessionId,
           server: hh,
@@ -242,6 +247,8 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
           key: h.localId,
           isLocal: true,
           rawText: h.rawText,
+          clean: stripReplay(h.rawText),
+          replayable: parseReplay(h.rawText) != null,
           createdAt: h.createdAt,
           sessionId: null,
         }));
@@ -254,6 +261,8 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
         key: TEST_HAND_ID,
         isLocal: false,
         rawText: testRawText,
+        clean: stripReplay(testRawText),
+        replayable: false, // not persisted → not resolvable by key on the replay route
         createdAt: "2020-01-01T00:00:00.000Z",
         sessionId: null,
         synthetic: true,
@@ -383,14 +392,23 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                     )}
                     {!expanded && (
                       <div className="mt-1 truncate font-mono text-[11px] text-gray-500">
-                        {previewOf(row.rawText)}
+                        {previewOf(row.clean)}
                       </div>
                     )}
                   </button>
 
                   <div className="flex shrink-0 items-center gap-2">
+                    {row.replayable && (
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/hand-history/replay/${row.key}`)}
+                        className="rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                      >
+                        ▷ Replay
+                      </button>
+                    )}
                     <CopyButton
-                      text={row.rawText}
+                      text={row.clean}
                       className="rounded-md border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100"
                     />
                     {!row.synthetic && (
@@ -415,7 +433,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                       transition={{ duration: 0.22, ease: "easeInOut" }}
                       className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-[11px] leading-relaxed text-gray-800"
                     >
-                      {row.rawText}
+                      {row.clean}
                     </motion.pre>
                   )}
                 </AnimatePresence>
