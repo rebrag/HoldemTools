@@ -24,6 +24,7 @@ import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import { positionLabels } from "./create/positions";
 import { buildTableSeats, TableCenter } from "./create/tableView";
 import { parseReplay, reconstructFrames, stripReplay } from "./create/replay";
+import { TEST_HAND_ID, buildTestHandText, SHOW_TEST_HAND } from "./create/testHand";
 import type { HandHistory } from "./types";
 
 const STEP_MS = 2000;
@@ -49,6 +50,12 @@ const HandReplay: React.FC<{ user: User | null }> = ({ user }) => {
     setLoad({ status: "loading" });
     if (!key) {
       setLoad({ status: "missing" });
+      return;
+    }
+    // Dev-only sample fixture: it isn't persisted anywhere, so resolve it by
+    // rebuilding its text on demand (works on direct load / hard refresh).
+    if (key === TEST_HAND_ID && SHOW_TEST_HAND) {
+      setLoad({ status: "ready", rawText: buildTestHandText() });
       return;
     }
     if (!user) {
@@ -224,8 +231,10 @@ const HandReplay: React.FC<{ user: User | null }> = ({ user }) => {
         </button>
       </div>
 
-      {/* Table */}
-      <div className="flex flex-1 items-center justify-center py-2">
+      {/* Table — must be a block wrapper with a definite width so PokerTable's
+          aspect-ratio box derives a real height (a flex-centered wrapper
+          collapses it and piles every seat into the center). */}
+      <div className="w-full py-2">
         <PokerTable
           size={data.state.tableSize}
           seats={buildTableSeats({ state: data.state, engine: frame, labels, unitMode })}
@@ -285,8 +294,8 @@ const HandReplay: React.FC<{ user: User | null }> = ({ user }) => {
         </div>
       </div>
 
-      {/* Transport bar */}
-      <div className="mt-3 flex items-center justify-center gap-2 rounded-2xl border border-emerald-300/30 bg-slate-900/70 p-2 shadow-lg shadow-emerald-950/30">
+      {/* Transport bar — pinned to the bottom (mobile thumb-zone) */}
+      <div className="mt-auto flex items-center justify-center gap-2 rounded-2xl border border-emerald-300/30 bg-slate-900/70 p-2 shadow-lg shadow-emerald-950/30">
         <TransportButton label="First action" onClick={goFirst} disabled={atStart} tap={tap}>
           <SkipBack className="h-5 w-5" />
         </TransportButton>

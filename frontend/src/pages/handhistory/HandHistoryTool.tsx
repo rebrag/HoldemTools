@@ -262,7 +262,9 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
         isLocal: false,
         rawText: testRawText,
         clean: stripReplay(testRawText),
-        replayable: false, // not persisted → not resolvable by key on the replay route
+        // Carries an embedded payload and is resolved by TEST_HAND_ID on the
+        // replay route (rebuilt on demand since it isn't persisted).
+        replayable: parseReplay(testRawText) != null,
         createdAt: "2020-01-01T00:00:00.000Z",
         sessionId: null,
         synthetic: true,

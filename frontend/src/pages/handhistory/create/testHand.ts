@@ -7,6 +7,7 @@
 import { createInitialState } from "./types";
 import { buildEngine, applyAction, setWinners } from "./engine";
 import { serializeHand, type EquityInfo } from "./serialize";
+import { buildReplayData, encodeReplay } from "./replay";
 
 // Sentinel row key. Server rows key on String(id) (numeric) and local rows key on
 // a UUID, so this non-numeric literal can never collide with a real hand.
@@ -82,6 +83,8 @@ export function buildTestHandText(): string {
     },
   };
 
-  // No opts → site name defaults to "Yatahay Network".
-  return serializeHand(state, e, equity);
+  // No opts → site name defaults to "Yatahay Network". Append the embedded
+  // replay payload so the fixture is replayable just like a real saved hand
+  // (HandHistoryTool strips it from the on-screen text via stripReplay).
+  return serializeHand(state, e, equity) + encodeReplay(buildReplayData(state, e));
 }
