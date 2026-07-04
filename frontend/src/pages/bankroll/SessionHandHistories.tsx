@@ -14,7 +14,6 @@ import { AnimatePresence, motion } from "framer-motion";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import CopyButton from "@/components/CopyButton";
 import { authedFetch } from "@/lib/api";
-import HandHistoryEditorModal from "@/pages/handhistory/HandHistoryEditorModal";
 import CreateHandHistory from "@/pages/handhistory/create/CreateHandHistory";
 import type { HandHistory } from "@/pages/handhistory/types";
 
@@ -73,11 +72,6 @@ const SessionHandHistories: React.FC<Props> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [builderOpen, setBuilderOpen] = useState(false);
 
@@ -129,76 +123,7 @@ const SessionHandHistories: React.FC<Props> = ({
           rawText: h.rawText,
         }));
 
-  const editingRawText =
-    editingKey != null
-      ? rows.find((r) => r.key === editingKey)?.rawText ?? null
-      : null;
-
-  const openCreate = () => {
-    setEditingKey(null);
-    setSaveError(null);
-    setEditorOpen(true);
-  };
-
-  const openEdit = (key: string) => {
-    setEditingKey(key);
-    setSaveError(null);
-    setEditorOpen(true);
-  };
-
-  const closeEditor = () => {
-    if (saving) return;
-    setEditorOpen(false);
-    setEditingKey(null);
-  };
-
-  const handleSave = async (rawText: string) => {
-    const isEdit = editingKey != null;
-
-    if (mode === "draft") {
-      const list = draftHands ?? [];
-      const next = isEdit
-        ? list.map((h) => (h.localId === editingKey ? { ...h, rawText } : h))
-        : [{ localId: makeLocalId(), rawText }, ...list];
-      onDraftChange?.(next);
-      setEditorOpen(false);
-      setEditingKey(null);
-      return;
-    }
-
-    // session mode → server CRUD
-    setSaving(true);
-    setSaveError(null);
-    try {
-      const res = await authedFetch(
-        isEdit ? `/api/handhistory/${editingKey}` : "/api/handhistory",
-        {
-          method: isEdit ? "PUT" : "POST",
-          body: JSON.stringify({ rawText, sessionId }),
-        }
-      );
-      if (!res.ok) {
-        throw new Error(
-          `Failed to ${isEdit ? "update" : "save"} hand. (${res.status})`
-        );
-      }
-      const saved = (await res.json()) as HandHistory;
-      setItems((prev) =>
-        isEdit ? prev.map((i) => (i.id === saved.id ? saved : i)) : [saved, ...prev]
-      );
-      setEditorOpen(false);
-      setEditingKey(null);
-    } catch (e: unknown) {
-      setSaveError(
-        e instanceof Error ? e.message : "Something went wrong while saving."
-      );
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // A hand produced by the visual builder overlay. Always a new hand (never an
-  // edit), so it doesn't go through the editor's editingKey path.
+  // A hand produced by the visual builder overlay — always a new hand.
   const saveCreatedHand = async (rawText: string) => {
     if (mode === "draft") {
       onDraftChange?.([{ localId: makeLocalId(), rawText }, ...(draftHands ?? [])]);
@@ -253,13 +178,6 @@ const SessionHandHistories: React.FC<Props> = ({
           )}
         </h3>
         <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={openCreate}
-            className="inline-flex items-center rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 shadow-sm transition-transform duration-150 hover:-translate-y-[1px] hover:bg-emerald-50 active:translate-y-[1px]"
-          >
-            Enter HH
-          </button>
           <button
             type="button"
             onClick={() => setBuilderOpen(true)}
@@ -327,13 +245,6 @@ const SessionHandHistories: React.FC<Props> = ({
                       />
                       <button
                         type="button"
-                        onClick={() => openEdit(row.key)}
-                        className="rounded-md border border-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-700 hover:bg-gray-100"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
                         onClick={() => handleDelete(row.key)}
                         className="rounded-md border border-rose-200 px-2 py-0.5 text-[11px] font-medium text-rose-600 hover:bg-rose-50"
                       >
@@ -361,17 +272,6 @@ const SessionHandHistories: React.FC<Props> = ({
             })}
           </AnimatePresence>
         </ul>
-      )}
-
-      {editorOpen && (
-        <HandHistoryEditorModal
-          initialRawText={editingRawText}
-          isEdit={editingKey != null}
-          saving={saving}
-          errorMessage={saveError}
-          onSave={({ rawText }) => void handleSave(rawText)}
-          onCancel={closeEditor}
-        />
       )}
 
       {builderOpen &&
