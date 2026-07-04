@@ -14,6 +14,7 @@ const EquityCalc = lazy(() => import("@/pages/equity/EquityCalc"));
 const BankrollTracker = lazy(() => import("@/pages/bankroll/BankrollTracker"));
 const HandHistoryTool = lazy(() => import("@/pages/handhistory/HandHistoryTool"));
 const CreateHandHistory = lazy(() => import("@/pages/handhistory/create/CreateHandHistory"));
+const HandReplay = lazy(() => import("@/pages/handhistory/HandReplay"));
 const Course = lazy(() => import("@/pages/course/Course"));
 const CourseSection = lazy(() => import("@/pages/course/CourseSection"));
 import { DEV_AUTH_BYPASS, mockDevUser } from "@/lib/devAuth";
@@ -95,6 +96,10 @@ function App() {
             <Route
               path="/hand-history/advanced"
               element={<Navigate to="/hand-history/create" replace />}
+            />
+            <Route
+              path="/hand-history/replay/:key"
+              element={<HandReplay user={effectiveUser} />}
             />
             <Route path="/course" element={<Course user={effectiveUser} />} />
             <Route path="/course/:sectionId" element={<CourseSection user={effectiveUser} />} />

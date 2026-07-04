@@ -12,8 +12,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { User } from "firebase/auth";
-import PlayingCard from "@/components/PlayingCard";
-import PokerTable, { CardBack, type PokerTableSeat } from "@/components/PokerTable";
+import PokerTable from "@/components/PokerTable";
 import CopyButton from "@/components/CopyButton";
 import { authedFetch } from "@/lib/api";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
@@ -24,13 +23,12 @@ import { positionLabels } from "./positions";
 import {
   applyAction,
   buildEngine,
-  fmtUnit,
-  revealedBoardCount,
   setWinners,
-  STREET_NAMES,
   type ActionKind,
   type Engine,
 } from "./engine";
+import { buildTableSeats, TableCenter } from "./tableView";
+import { buildReplayData, encodeReplay } from "./replay";
 import { serializeHand, type EquityInfo, type StreetEquity } from "./serialize";
 import { useShowdownEquity, type EquityRequest } from "./useShowdownEquity";
 import { evalWinners, exactEquity, type EvalGame } from "@/lib/handEval";
@@ -76,9 +74,6 @@ function applyDefaults(base: AdvancedHandState, d: HandDefaults): AdvancedHandSt
   next.heroSeat = Math.min(next.heroSeat, size - 1);
   return next;
 }
-
-// Compact numeric label for preview badges: "0.5", "1", "2.5" (no trailing zeros).
-const fmtNum = (n: number) => (Number.isFinite(n) ? String(n) : "");
 
 // Map the recorder's game label to the evaluator's game id (null = can't eval).
 function evalGameId(game: string): EvalGame | null {
@@ -389,18 +384,23 @@ const CreateHandHistory: React.FC<Props> = ({
   };
 
   const saveHand = async () => {
-    if (!serialized) return;
+    if (!serialized || !engine) return;
+    // The persisted text carries an invisible, machine-readable replay payload
+    // appended after the human-readable history. It rides through both the
+    // server API and localStorage unchanged, and is stripped from every
+    // user-facing display. Only the on-screen `serialized` stays clean.
+    const toSave = serialized + encodeReplay(buildReplayData(state, engine));
     // Embedded: hand the text back to the caller (e.g. the bankroll session
     // modal), which is responsible for persisting/linking it.
     if (onComplete) {
-      onComplete(serialized);
+      onComplete(toSave);
       onClose?.();
       return;
     }
     // Signed out: save to the device-local store instead of the server. It's
     // synchronous, so we skip the saving/error state and route to the list.
     if (!user) {
-      addLocal(serialized);
+      addLocal(toSave);
       navigate("/hand-history");
       return;
     }
@@ -409,7 +409,7 @@ const CreateHandHistory: React.FC<Props> = ({
     try {
       const res = await authedFetch("/api/handhistory", {
         method: "POST",
-        body: JSON.stringify({ rawText: serialized, sessionId: null }),
+        body: JSON.stringify({ rawText: toSave, sessionId: null }),
       });
       if (!res.ok) throw new Error(`Save failed (${res.status})`);
       navigate("/hand-history");
@@ -454,7 +454,6 @@ const CreateHandHistory: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, serialized, equityReq, preEq]);
 
-  const revealCount = engine ? revealedBoardCount(engine.street) : 0;
   const needWinner =
     !!engine &&
     engine.done &&
@@ -466,63 +465,7 @@ const CreateHandHistory: React.FC<Props> = ({
     !!engine.winners &&
     (engine.numBoards === 1 || !!engine.winners2);
 
-  // Forced-bet preview shown during setup (before the engine exists). Derived
-  // from the same position labels as buildEngine's blind assignment, so the
-  // SB/BB/straddle badges land on the right seats and follow the dealer button.
-  const setupPosts: Record<number, { amount: number; label: string }> = {};
-  if (!engine) {
-    const sb = parseFloat(state.smallBlind);
-    const bb = parseFloat(state.bigBlind);
-    const str = parseFloat(state.straddleAmount);
-    const occ = (pos: string) =>
-      state.seats.findIndex((s, i) => s.occupied && labels[i] === pos);
-    const bbIdx = occ("BB");
-    if (bbIdx >= 0 && bb > 0) setupPosts[bbIdx] = { amount: bb, label: `BB ${fmtNum(bb)}` };
-    const sbIdx = occ("SB") >= 0 ? occ("SB") : occ("BTN"); // heads-up: button posts SB
-    if (sbIdx >= 0 && sb > 0 && !(sbIdx in setupPosts))
-      setupPosts[sbIdx] = { amount: sb, label: `SB ${fmtNum(sb)}` };
-    const strSeat = state.straddleSeat;
-    if (strSeat != null && state.seats[strSeat]?.occupied && str > 0) {
-      setupPosts[strSeat] = { amount: str, label: `Str ${fmtNum(str)}` }; // straddle wins over a blind badge
-    }
-  }
-
-  const tableSeats: PokerTableSeat[] = Array.from(
-    { length: state.tableSize },
-    (_, i): PokerTableSeat => {
-      const seat = state.seats[i];
-      const label = seat.name.trim() || labels[i];
-      const ep = engine?.players.find((p) => p.seat === i) ?? null;
-      const isActive =
-        !!engine && engine.toAct != null && engine.players[engine.toAct]?.seat === i;
-      const stackText = ep
-        ? `${fmtUnit(ep.stack, engine!.bb, unitMode)}${unitMode === "bb" ? " BB" : ""}`
-        : seat.stack.trim();
-      const committed = ep?.committed ?? 0;
-      const post = setupPosts[i];
-      // Bet shown on the table: live committed chips during the hand, or the
-      // forced-bet preview (SB/BB/straddle) during setup. Both render as a
-      // ChipStack pushed toward center, labelled per the current unit mode.
-      const committedAmount = committed > 0 ? committed : post?.amount;
-      const committedText =
-        committed > 0
-          ? `${fmtUnit(committed, engine!.bb, unitMode)}${unitMode === "bb" ? " BB" : ""}`
-          : post?.label;
-      return {
-        key: i,
-        label,
-        stackText: stackText || undefined,
-        committedAmount,
-        committedText,
-        holeCards: seat.holeCards,
-        isButton: state.buttonSeat === i,
-        isHero: state.heroSeat === i,
-        isActive,
-        folded: ep?.folded ?? false,
-        hidden: !!engine && !ep, // seat empty during a live hand
-      };
-    }
-  );
+  const tableSeats = buildTableSeats({ state, engine, labels, unitMode });
 
   return (
     <div className="mx-auto max-w-6xl px-4 pt-6 pb-16">
@@ -548,64 +491,16 @@ const CreateHandHistory: React.FC<Props> = ({
         onSeatClick={(i) => setEditingSeat(i)}
         maxWidthClassName="max-w-2xl"
         center={
-          <>
-            {engine ? (
-              <span className="rounded-full bg-black/50 px-3 py-0.5 text-[11px] font-semibold text-white">
-                {STREET_NAMES[engine.street]} · Pot {fmtUnit(engine.pot, engine.bb, unitMode)}
-                {unitMode === "bb" ? " BB" : ""}
-              </span>
-            ) : (
-              <span className="rounded-full bg-black/40 px-2 py-0.5 text-[10px] font-medium text-white/80">
-                Tap a card to edit
-              </span>
-            )}
-            {!engine && parseFloat(state.ante) > 0 && (
-              <span className="rounded-full bg-amber-400/90 px-2 py-0.5 text-[9px] font-bold text-amber-950">
-                Ante ${fmtNum(parseFloat(state.ante))}
-              </span>
-            )}
-            <BoardRow
-              board={state.board}
-              revealCount={revealCount}
-              live={!!engine}
-              onEdit={() => setEditingBoard(true)}
-              ariaLabel="Edit board"
-            />
-            {state.numBoards === 2 ? (
-              <div className="flex items-center gap-1">
-                <BoardRow
-                  board={state.board2}
-                  revealCount={revealCount}
-                  live={!!engine}
-                  onEdit={() => setEditingBoard2(true)}
-                  ariaLabel="Edit board 2"
-                />
-                {!engine && (
-                  <button
-                    type="button"
-                    onClick={() => update({ numBoards: 1 })}
-                    aria-label="Remove second board"
-                    className="flex h-4 w-4 items-center justify-center rounded-full bg-rose-600/90 text-[10px] font-bold text-white hover:bg-rose-500"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            ) : (
-              !engine && (
-                <button
-                  type="button"
-                  onClick={() => update({ numBoards: 2 })}
-                  className="rounded-full border border-white/25 bg-black/40 px-2 py-0.5 text-[9px] font-semibold text-white/80 hover:bg-black/60"
-                >
-                  + 2nd board
-                </button>
-              )
-            )}
-            <span className="text-[9px] font-semibold uppercase tracking-widest text-white/25">
-              HoldemTools
-            </span>
-          </>
+          <TableCenter
+            state={state}
+            engine={engine}
+            unitMode={unitMode}
+            editable
+            onEditBoard={() => setEditingBoard(true)}
+            onEditBoard2={() => setEditingBoard2(true)}
+            onAddBoard={() => update({ numBoards: 2 })}
+            onRemoveBoard={() => update({ numBoards: 1 })}
+          />
         }
       />
       </div>
@@ -869,28 +764,6 @@ const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, 
     <label className="text-xs font-medium text-gray-700">{label}</label>
     {children}
   </div>
-);
-
-// A row of 5 board cards (face-up when revealed, else a card back) that opens
-// the board editor on tap. Both boards use the same card size.
-const BoardRow: React.FC<{
-  board: (string | null)[];
-  revealCount: number;
-  live: boolean;
-  onEdit: () => void;
-  ariaLabel: string;
-}> = ({ board, revealCount, live, onEdit, ariaLabel }) => (
-  <button type="button" onClick={onEdit} className="flex gap-1" aria-label={ariaLabel}>
-    {[0, 1, 2, 3, 4].map((i) => {
-      const revealed = !live || i < revealCount;
-      const c = board[i];
-      return revealed && c ? (
-        <PlayingCard key={i} code={c} size="sm" width={36} />
-      ) : (
-        <CardBack key={i} w={36} />
-      );
-    })}
-  </button>
 );
 
 export default CreateHandHistory;
