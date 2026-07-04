@@ -41,6 +41,15 @@ namespace PokerRangeAPI2.Data
                 entity.HasIndex(e => e.UserId);
                 entity.HasIndex(e => e.SessionId);
 
+                // Public share token: bounded so it can be indexed, and uniquely
+                // indexed for fast token -> hand lookups on the public GET route.
+                // Filtered so many unshared hands (ShareToken == null) don't collide.
+                entity.Property(e => e.ShareToken)
+                    .HasMaxLength(64);
+                entity.HasIndex(e => e.ShareToken)
+                    .IsUnique()
+                    .HasFilter("[ShareToken] IS NOT NULL");
+
                 // Optional FK to a bankroll session. Deleting a session unlinks its
                 // hands (sets SessionId null) rather than deleting the hands.
                 entity.HasOne(e => e.Session)

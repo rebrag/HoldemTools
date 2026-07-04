@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using PokerRangeAPI2.Data;
 using PokerRangeAPI2.Models;
+using PokerRangeAPI2.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -181,6 +182,73 @@ namespace PokerRangeAPI2.Controllers
 
             _db.HandHistories.Remove(entity);
             await _db.SaveChangesAsync();
+            return NoContent();
+        }
+
+        public class ShareTokenResponse
+        {
+            public string Token { get; set; } = default!;
+        }
+
+        // POST /api/handhistory/{id}/share
+        // Create (or return the existing) public share token for a hand the caller owns.
+        // Idempotent: repeat calls for the same hand return the same token.
+        [HttpPost("{id:int}/share")]
+        public async Task<ActionResult<ShareTokenResponse>> CreateShare(int id)
+        {
+            var uid = CurrentUid();
+            if (string.IsNullOrWhiteSpace(uid))
+            {
+                return Unauthorized();
+            }
+
+            var entity = await _db.HandHistories.FindAsync(id);
+            if (entity == null)
+            {
+                return NotFound();
+            }
+            if (entity.UserId != uid && !IsAdmin())
+            {
+                // Owner-only. Contract requires 403 (not 404) here.
+                return Forbid();
+            }
+
+            if (string.IsNullOrEmpty(entity.ShareToken))
+            {
+                entity.ShareToken = ShareTokenGenerator.NewToken();
+                await _db.SaveChangesAsync();
+            }
+
+            return Ok(new ShareTokenResponse { Token = entity.ShareToken });
+        }
+
+        // DELETE /api/handhistory/{id}/share
+        // Revoke the share token so GET /api/shared/{token} returns 404 afterwards.
+        [HttpDelete("{id:int}/share")]
+        public async Task<IActionResult> DeleteShare(int id)
+        {
+            var uid = CurrentUid();
+            if (string.IsNullOrWhiteSpace(uid))
+            {
+                return Unauthorized();
+            }
+
+            var entity = await _db.HandHistories.FindAsync(id);
+            if (entity == null)
+            {
+                return NotFound();
+            }
+            if (entity.UserId != uid && !IsAdmin())
+            {
+                return Forbid();
+            }
+
+            if (!string.IsNullOrEmpty(entity.ShareToken))
+            {
+                entity.ShareToken = null;
+                await _db.SaveChangesAsync();
+            }
+
             return NoContent();
         }
     }

@@ -63,6 +63,68 @@ All endpoints return `200 OK` with JSON (or raw text) or `404 Not Found` if t
 
 ---
 
+\## Hand History & Public Sharing
+
+Hand-history CRUD requires a **Firebase ID token** (`Authorization: Bearer <token>`);
+every hand is scoped to the caller's Firebase uid.
+
+| Method | Route                            | Auth        | Description                                                 |
+| ------ | -------------------------------- | ----------- | ---------------------------------------------------------- |
+| GET    | `/api/handhistory`               | Bearer      | List the caller's hands (`?sessionId=` / admin `?userId=`) |
+| GET    | `/api/handhistory/{id}`          | Bearer      | Get a single hand the caller owns                          |
+| POST   | `/api/handhistory`               | Bearer      | Create a hand                                              |
+| PUT    | `/api/handhistory/{id}`          | Bearer      | Update a hand the caller owns                              |
+| DELETE | `/api/handhistory/{id}`          | Bearer      | Delete a hand the caller owns                              |
+| POST   | `/api/handhistory/{id}/share`    | Bearer      | Create (or return the existing) public share token — **idempotent** per hand |
+| DELETE | `/api/handhistory/{id}/share`    | Bearer      | Revoke the share token (`204`)                             |
+| GET    | `/api/shared/{token}`            | **None**    | Public replay: return the shared hand's `rawText`          |
+
+### Sharing a hand
+
+`POST /api/handhistory/{id}/share` — owner only. Returns `403` for a non-owner and
+`404` when no such hand exists. Repeat calls return the **same** token, so it is
+safe to call every time the user opens the share dialog.
+
+```jsonc
+// 200 OK
+{ "token": "aZ09kLmN3pQ7rS1tUvWx2y" }   // 22 url-safe base62 chars, ~130 bits of entropy
+```
+
+`GET /api/shared/{token}` — **no auth**. Anyone holding the link can read the hand.
+Returns the stored text **verbatim** (the client decodes an embedded payload, so
+the API never modifies or strips it). Returns `404` if the token is unknown or has
+been revoked. CORS is enabled for the web app's origins on this route.
+
+```jsonc
+// 200 OK
+{ "rawText": "<the hand's stored text, exactly as saved>" }
+```
+
+`DELETE /api/handhistory/{id}/share` — owner only. Revokes the token so the public
+`GET /api/shared/{token}` immediately returns `404`. Responds `204 No Content`
+(`403` for a non-owner, `404` when no such hand exists).
+
+> **Token security:** the share token is the *only* access control on the public
+> route, so it is generated from a cryptographic RNG and is never derived from the
+> numeric hand id — it cannot be guessed or enumerated.
+
+---
+
+\## Tests
+
+xUnit tests for the sharing endpoints live in `Tests/` and run against an EF Core
+in-memory database:
+
+```bash
+$ dotnet test Tests/HoldemToolsAPI.Tests.csproj
+```
+
+They cover: owner creates a token, repeat `POST` returns the same token, a
+non-owner gets `403`, the public `GET` returns `rawText` with no auth, and the
+public `GET` returns `404` after a `DELETE`.
+
+---
+
 \## Configuration
 
 | Setting                       | Local (user‑secrets)            | Azure (App Settings)             | Example                                                                   |

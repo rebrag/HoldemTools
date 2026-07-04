@@ -7,6 +7,14 @@
     <UserSecretsId>d5c0ddca-bfb7-4c2d-8251-f8116ba30a95</UserSecretsId>
   </PropertyGroup>
 
+  <!-- The xUnit test project lives under Tests/; keep it out of the web build. -->
+  <ItemGroup>
+    <Compile Remove="Tests/**/*.cs" />
+    <Content Remove="Tests/**/*" />
+    <None Remove="Tests/**/*" />
+    <EmbeddedResource Remove="Tests/**/*" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Azure.Storage.Files.DataLake" Version="12.21.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.22" />
