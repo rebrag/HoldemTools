@@ -16,6 +16,7 @@ import {
   fmtChips,
   setWinners,
   type Engine,
+  type EnginePlayer,
 } from "./engine";
 
 // A single betting action, ready to feed back to applyAction. `to` (the total
@@ -166,4 +167,51 @@ export function reconstructFrames(data: ReplayData): {
   frames[frames.length - 1] = last;
 
   return { frames, captions };
+}
+
+// ───────────────────────── list preview ─────────────────────────
+
+export interface HandPreview {
+  /** Hero's hole cards, or null when no hero was designated for the hand. */
+  heroCards: (string | null)[] | null;
+  /** Known community cards, in dealt order (may be empty for preflop-only hands). */
+  board: string[];
+  /** Cards of the opponent who committed the most chips, or null when there is
+   *  no opposing player. Individual entries may be null (cards never recorded). */
+  villainCards: (string | null)[] | null;
+  /** Display name of that opponent (custom name or position label). */
+  villainName: string | null;
+}
+
+// Fold the recorded actions into a single final engine, without retaining the
+// per-action frames reconstructFrames keeps — cheaper for rendering a list of
+// hands where only end-of-hand totals (totalCommitted) and cards are needed.
+export function finalEngine(data: ReplayData): Engine {
+  let e = buildEngine(data.state);
+  for (const a of data.actions) e = applyAction(e, a.kind, a.to);
+  return e;
+}
+
+// Extract the pieces the hand-history list preview renders: the hero's cards,
+// the board, and the biggest-committing opponent's cards + name.
+export function buildHandPreview(data: ReplayData): HandPreview {
+  const e = finalEngine(data);
+  const heroIdx = e.heroIndex;
+  const heroCards = heroIdx != null ? e.players[heroIdx].hole : null;
+
+  // Villain = the non-hero seat with the most chips in the pot (folded players
+  // included: they still "put the most money in").
+  let villain: EnginePlayer | null = null;
+  for (let i = 0; i < e.players.length; i++) {
+    if (i === heroIdx) continue;
+    const p = e.players[i];
+    if (!villain || p.totalCommitted > villain.totalCommitted) villain = p;
+  }
+
+  return {
+    heroCards,
+    board: data.state.board.filter((c): c is string => !!c),
+    villainCards: villain ? villain.hole : null,
+    villainName: villain ? villain.name : null,
+  };
 }

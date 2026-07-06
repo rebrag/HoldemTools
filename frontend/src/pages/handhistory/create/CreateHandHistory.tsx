@@ -27,7 +27,7 @@ import {
   type ActionKind,
   type Engine,
 } from "./engine";
-import { buildTableSeats, TableCenter } from "./tableView";
+import { buildTableSeats, potView, TableCenter } from "./tableView";
 import { buildReplayData, encodeReplay } from "./replay";
 import { serializeHand, type EquityInfo, type StreetEquity } from "./serialize";
 import { useShowdownEquity, type EquityRequest } from "./useShowdownEquity";
@@ -466,6 +466,7 @@ const CreateHandHistory: React.FC<Props> = ({
     (engine.numBoards === 1 || !!engine.winners2);
 
   const tableSeats = buildTableSeats({ state, engine, labels, unitMode });
+  const pot = potView(engine, unitMode);
 
   return (
     <div className="mx-auto max-w-6xl px-4 pt-6 pb-16">
@@ -490,11 +491,13 @@ const CreateHandHistory: React.FC<Props> = ({
         seats={tableSeats}
         onSeatClick={(i) => setEditingSeat(i)}
         maxWidthClassName="max-w-2xl"
+        potAmount={pot?.amount}
+        potLabel={pot?.label}
+        potWinnerSeatIndex={pot?.winnerSeatIndex}
         center={
           <TableCenter
             state={state}
             engine={engine}
-            unitMode={unitMode}
             editable
             onEditBoard={() => setEditingBoard(true)}
             onEditBoard2={() => setEditingBoard2(true)}

@@ -49,6 +49,13 @@ export interface PokerTableProps {
   size: number; // seat count -> seatCoords(size)
   seats: PokerTableSeat[];
   center?: React.ReactNode; // caller injects center content (board/pot/etc.)
+  /** Pot chip amount rendered as its own movable stack above the table center.
+   *  Omit (or <1) to show no pot. */
+  potAmount?: number;
+  /** Text label shown under the pot chips, e.g. "Flop · Pot 22 BB". */
+  potLabel?: string;
+  /** When set, the pot slides partway toward this seat index (winner award). */
+  potWinnerSeatIndex?: number | null;
   onSeatClick?: (index: number) => void;
   feltStyle?: React.CSSProperties; // override the default teal gradient
   aspectClassName?: string; // default "aspect-[7/5]" (landscape oval)
@@ -75,6 +82,9 @@ const PokerTable: React.FC<PokerTableProps> = ({
   size,
   seats,
   center,
+  potAmount,
+  potLabel,
+  potWinnerSeatIndex,
   onSeatClick,
   feltStyle,
   aspectClassName = "aspect-[7/5]",
@@ -84,6 +94,24 @@ const PokerTable: React.FC<PokerTableProps> = ({
   coordsOverride,
 }) => {
   const coords = coordsOverride ?? seatCoords(size);
+
+  // Pot layer: the label is centered at (POT_BASE_X, POT_BASE_Y) with the chip
+  // stack floating just above it. POT_BASE_Y sits above the board cards (~41% of
+  // the table height) so neither the label nor the chips cover them. When a
+  // winner is set the pot slides ~45% of the way toward that seat; animating
+  // left/top gives a smooth "chips pushed to the winner" motion.
+  const showPot = potAmount != null && Math.round(potAmount) >= 1;
+  const potWinnerCoord =
+    potWinnerSeatIndex != null ? coords[potWinnerSeatIndex] : null;
+  const POT_BASE_X = 50;
+  const POT_BASE_Y = 36; // label center, just above the board
+  const POT_SLIDE = 0.45;
+  const potX = potWinnerCoord
+    ? POT_BASE_X + (potWinnerCoord.x - POT_BASE_X) * POT_SLIDE
+    : POT_BASE_X;
+  const potY = potWinnerCoord
+    ? POT_BASE_Y + (potWinnerCoord.y - POT_BASE_Y) * POT_SLIDE
+    : POT_BASE_Y;
 
   return (
     <PokerTableSurface
@@ -95,6 +123,40 @@ const PokerTable: React.FC<PokerTableProps> = ({
           {center != null && (
             <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1.5">
               {center}
+            </div>
+          )}
+
+          {/* pot layer — its own positioned element so it can slide to the winner.
+              The layer is anchored on the small label; the chip stack floats
+              absolutely ABOVE it so its (transform-scaled) box never inflates the
+              anchor or covers the board below. */}
+          {showPot && (
+            <div
+              className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-1/2"
+              style={{
+                left: `${potX}%`,
+                top: `${potY}%`,
+                transition: "left 0.6s ease, top 0.6s ease",
+              }}
+              aria-hidden="true"
+            >
+              <div className="relative flex flex-col items-center">
+                <div className="absolute bottom-full left-1/2 mb-0.5 -translate-x-1/2">
+                  <div style={{ transform: "scale(0.6)", transformOrigin: "center bottom" }}>
+                    <ChipStack
+                      amount={potAmount!}
+                      showLabel={false}
+                      showBreakdown={false}
+                      showAmount={false}
+                    />
+                  </div>
+                </div>
+                {potLabel && (
+                  <span className="whitespace-nowrap rounded-full bg-black/50 px-3 py-0.5 text-[11px] font-semibold text-white shadow">
+                    {potLabel}
+                  </span>
+                )}
+              </div>
             </div>
           )}
 
