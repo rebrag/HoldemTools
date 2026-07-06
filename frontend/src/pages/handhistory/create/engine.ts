@@ -441,4 +441,17 @@ export function revealedBoardCount(street: number): number {
   return [0, 3, 4, 5][Math.max(0, Math.min(3, street))];
 }
 
+// The pot as it should be *displayed*: chips only count as "in the pot" once the
+// street they were wagered on is complete. While a street is live, each player's
+// current-street commitment still sits in front of them as chips (see
+// buildTableSeats), so it is excluded here to avoid double-counting. When the
+// street ends, `advanceStreet` zeroes `committed` (the pot keeps the chips), so
+// the collected amount folds into this figure exactly then. At showdown the hand
+// is resolved and the whole pot is shown.
+export function displayedPot(e: Engine): number {
+  if (e.done) return e.pot;
+  const live = e.players.reduce((s, p) => s + p.committed, 0);
+  return Math.max(0, e.pot - live);
+}
+
 export { STREET_NAMES, displayName };

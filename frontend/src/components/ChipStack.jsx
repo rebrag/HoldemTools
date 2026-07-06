@@ -12,8 +12,8 @@ const CHIP_DEFS = [
   { value: 1,    label: "$1",   color: "#DADADA", stripe: "#ffffff", edge: "#AAAAAA", text: "#333" },
 ];
 
-const CHIP_R       = 26;   // radius in px
-const OVERLAP      = 10;   // vertical overlap between chips in a stack
+const CHIP_R       = 21;   // radius in px (~20% smaller than the original 26)
+const OVERLAP      = 8;    // vertical overlap between chips in a stack
 const MAX_SINGLE   = 20;   // chips per column in single-stack mode
 const MAX_PER_DENOM = 12;  // chips per column in multi-stack mode
 
@@ -29,55 +29,90 @@ function decompose(amount) {
   }).filter((c) => c.count > 0);
 }
 
+/**
+ * Shared gradients + drop-shadow filter, defined once per <svg>. The gloss and
+ * inner-shade gradients use objectBoundingBox units so each <circle> re-centres
+ * them, echoing the felt's top-lit specular sheen (PokerTableSurface).
+ */
+function ChipDefs() {
+  return (
+    <defs>
+      {/* Top-lit sheen (bright near the top of each chip, fading out). */}
+      <radialGradient id="chipGloss" cx="0.5" cy="0.3" r="0.75">
+        <stop offset="0%"   stopColor="#ffffff" stopOpacity="0.34" />
+        <stop offset="55%"  stopColor="#ffffff" stopOpacity="0.05" />
+        <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+      </radialGradient>
+      {/* Soft radial shade at the base of the center disc for a sunken inlay. */}
+      <radialGradient id="chipInner" cx="0.5" cy="0.62" r="0.72">
+        <stop offset="55%"  stopColor="#000000" stopOpacity="0" />
+        <stop offset="100%" stopColor="#000000" stopOpacity="0.16" />
+      </radialGradient>
+      {/* Depth shadow, matching the shadow-md language of the badges/felt. */}
+      <filter id="chipShadow" x="-40%" y="-40%" width="180%" height="180%">
+        <feDropShadow dx="0" dy="1" stdDeviation="1.1" floodColor="#000" floodOpacity="0.4" />
+      </filter>
+    </defs>
+  );
+}
+
 /** SVG elements for a single chip centred at (cx, cy). */
 function ChipFace({ cx, cy, chip, r = CHIP_R }) {
-  const nr = r * 0.22;
-  const ir = r * 0.78;
-  const nc = 6;
-  const fs = r < 18 ? 7 : 9;
+  const body = r * 0.93;      // chip body inside the darker edge ring
+  const ringR = r * 0.80;     // decorative inlay ring on the felt
+  const ir = r * 0.60;        // center disc (holds the label)
+  const fs = r < 13 ? 6 : r < 18 ? 7 : 8;
 
-  const notches = Array.from({ length: nc }, (_, i) => {
-    const a = (i / nc) * Math.PI * 2;
+  // Edge spots: short rounded dashes around the rim, poker-chip style.
+  const nc = 8;
+  const spotW = r * 0.16;
+  const spotH = r * 0.30;
+  const spots = Array.from({ length: nc }, (_, i) => {
+    const deg = (i / nc) * 360;
     return (
-      <circle
+      <rect
         key={i}
-        cx={cx + Math.cos(a) * r}
-        cy={cy + Math.sin(a) * r}
-        r={nr}
+        x={cx - spotW / 2}
+        y={cy - r + r * 0.02}
+        width={spotW}
+        height={spotH}
+        rx={spotW / 2}
         fill={chip.stripe}
-      />
-    );
-  });
-
-  const stripes = [-1, 0, 1].map((i) => {
-    const sx = cx + i * ir * 0.42;
-    return (
-      <line
-        key={i}
-        x1={sx - ir * 0.22} y1={cy - ir * 0.92}
-        x2={sx + ir * 0.22} y2={cy + ir * 0.92}
-        stroke={chip.stripe}
-        strokeWidth={r * 0.22}
-        strokeLinecap="round"
+        transform={`rotate(${deg} ${cx} ${cy})`}
       />
     );
   });
 
   return (
-    <g>
-      <circle cx={cx} cy={cy} r={r}     fill={chip.edge} />
-      <circle cx={cx} cy={cy} r={r - 2} fill={chip.color} />
-      {notches}
-      <circle cx={cx} cy={cy} r={ir}        fill={chip.color} />
-      {stripes}
-      <circle cx={cx} cy={cy} r={ir * 0.62} fill={chip.color} />
-      <circle cx={cx} cy={cy} r={ir * 0.62} fill="rgba(0,0,0,0.08)" />
+    <g filter="url(#chipShadow)">
+      {/* darker edge ring + main body */}
+      <circle cx={cx} cy={cy} r={r}    fill={chip.edge} />
+      <circle cx={cx} cy={cy} r={body} fill={chip.color} />
+      {spots}
+      {/* thin emerald-neutral inlay ring, echoing the felt's rim rings */}
+      <circle
+        cx={cx} cy={cy} r={ringR}
+        fill="none"
+        stroke="rgba(255,255,255,0.22)"
+        strokeWidth={Math.max(0.6, r * 0.04)}
+      />
+      {/* sunken center disc with a soft inner shade */}
+      <circle cx={cx} cy={cy} r={ir} fill={chip.color} />
+      <circle cx={cx} cy={cy} r={ir} fill="url(#chipInner)" />
+      <circle
+        cx={cx} cy={cy} r={ir}
+        fill="none"
+        stroke="rgba(0,0,0,0.18)"
+        strokeWidth={Math.max(0.5, r * 0.035)}
+      />
+      {/* top-lit specular sheen over the whole chip */}
+      <circle cx={cx} cy={cy} r={r} fill="url(#chipGloss)" />
       <text
         x={cx}
-        y={cy + fs * 0.38}
+        y={cy + fs * 0.36}
         textAnchor="middle"
         fontSize={fs}
-        fontWeight="500"
+        fontWeight="600"
         fill={chip.text}
         fontFamily="system-ui, sans-serif"
         letterSpacing="-0.3"
@@ -113,8 +148,10 @@ function StackSVG({ chips, maxPerCol, label }) {
         height={svgH}
         viewBox={`0 0 ${svgW} ${svgH}`}
         xmlns="http://www.w3.org/2000/svg"
+        style={{ overflow: "visible" }}
         aria-hidden="true"
       >
+        <ChipDefs />
         {groups.map((group, colIdx) => {
           const cx = CHIP_R + colIdx * (D + 10);
           return group.map((chip, rowIdx) => {

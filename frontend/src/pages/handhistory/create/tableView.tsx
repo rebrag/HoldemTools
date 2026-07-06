@@ -6,7 +6,7 @@
 import React from "react";
 import PlayingCard from "@/components/PlayingCard";
 import { CardBack, type PokerTableSeat } from "@/components/PokerTable";
-import { fmtUnit, revealedBoardCount, STREET_NAMES, type Engine } from "./engine";
+import { displayedPot, fmtUnit, revealedBoardCount, STREET_NAMES, type Engine } from "./engine";
 import type { AdvancedHandState } from "./types";
 
 // Compact numeric label for preview badges: "0.5", "1", "2.5" (no trailing zeros).
@@ -54,7 +54,9 @@ export function buildTableSeats(args: {
     const stackText = ep
       ? `${fmtUnit(ep.stack, engine!.bb, unitMode)}${unitMode === "bb" ? " BB" : ""}`
       : seat.stack.trim();
-    const committed = ep?.committed ?? 0;
+    // At showdown every wager has been swept into the pot, so no seat keeps
+    // chips in front (the fold-out path leaves `committed` set, so force it).
+    const committed = engine?.done ? 0 : ep?.committed ?? 0;
     const post = setupPosts[i];
     // Bet shown on the table: live committed chips during the hand, or the
     // forced-bet preview (SB/BB/straddle) during setup. Both render as a
@@ -78,6 +80,30 @@ export function buildTableSeats(args: {
       hidden: !!engine && !ep, // seat empty during a live hand
     };
   });
+}
+
+/**
+ * Pot presentation for <PokerTable>: the displayed amount (current-street bets
+ * are excluded until the street ends — see displayedPot), a "<Street> · Pot <n>"
+ * label, and, once the hand is won by a single seat, that seat index so the pot
+ * chips slide toward it. Returns null during setup (no engine).
+ */
+export function potView(
+  engine: Engine | null,
+  unitMode: "bb" | "chips"
+): { amount: number; label: string; winnerSeatIndex: number | null } | null {
+  if (!engine) return null;
+  const amount = displayedPot(engine);
+  const label = `${STREET_NAMES[engine.street]} · Pot ${fmtUnit(amount, engine.bb, unitMode)}${
+    unitMode === "bb" ? " BB" : ""
+  }`;
+  // Slide the pot to the winner only for an unambiguous single-seat, single-board
+  // result; splits and run-it-twice stay centered.
+  let winnerSeatIndex: number | null = null;
+  if (engine.done && engine.numBoards === 1 && engine.winners && engine.winners.length === 1) {
+    winnerSeatIndex = engine.players[engine.winners[0]].seat;
+  }
+  return { amount, label, winnerSeatIndex };
 }
 
 // A row of 5 board cards (face-up when revealed, else a card back). In the
@@ -120,7 +146,6 @@ export const BoardRow: React.FC<{
 export const TableCenter: React.FC<{
   state: AdvancedHandState;
   engine: Engine | null;
-  unitMode: "bb" | "chips";
   editable?: boolean;
   onEditBoard?: () => void;
   onEditBoard2?: () => void;
@@ -129,7 +154,6 @@ export const TableCenter: React.FC<{
 }> = ({
   state,
   engine,
-  unitMode,
   editable = false,
   onEditBoard,
   onEditBoard2,
@@ -139,12 +163,10 @@ export const TableCenter: React.FC<{
   const revealCount = engine ? revealedBoardCount(engine.street) : 0;
   return (
     <>
-      {engine ? (
-        <span className="rounded-full bg-black/50 px-3 py-0.5 text-[11px] font-semibold text-white">
-          {STREET_NAMES[engine.street]} · Pot {fmtUnit(engine.pot, engine.bb, unitMode)}
-          {unitMode === "bb" ? " BB" : ""}
-        </span>
-      ) : (
+      {/* The pot (chips + label) is rendered by <PokerTable> as its own movable
+          layer so it can slide toward the winner; see potView() below. Here we
+          only show the setup hint before the hand begins. */}
+      {!engine && (
         <span className="rounded-full bg-black/40 px-2 py-0.5 text-[10px] font-medium text-white/80">
           Tap a card to edit
         </span>

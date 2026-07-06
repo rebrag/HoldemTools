@@ -10,6 +10,7 @@ import { SHARE_ENABLED, createShareToken, shareUrl } from "@/lib/shareApi";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import HandHistorySecondaryNav from "./HandHistorySecondaryNav";
 import RowActionButton from "./RowActionButton";
+import HandPreview from "./HandPreview";
 import FlyingCards from "./FlyingCards";
 import { parseReplay, stripReplay } from "./create/replay";
 import { TEST_HAND_ID, buildTestHandText, SHOW_TEST_HAND } from "./create/testHand";
@@ -84,11 +85,6 @@ function formatDate(iso: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
-}
-
-function previewOf(text: string): string {
-  const firstLine = text.split("\n").find((l) => l.trim().length > 0) ?? "";
-  return firstLine.length > 120 ? `${firstLine.slice(0, 120)}…` : firstLine;
 }
 
 const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
@@ -442,11 +438,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                         {formatDate(row.createdAt)}
                       </div>
                     )}
-                    {!expanded && (
-                      <div className="mt-1 truncate font-mono text-[11px] text-gray-500">
-                        {previewOf(row.clean)}
-                      </div>
-                    )}
+                    {!expanded && <HandPreview rawText={row.rawText} />}
                   </button>
 
                   <div className="flex shrink-0 items-center gap-1.5">

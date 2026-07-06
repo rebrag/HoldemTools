@@ -22,13 +22,16 @@ import LoadingIndicator from "@/components/LoadingIndicator";
 import { authedFetch } from "@/lib/api";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import { positionLabels } from "./create/positions";
-import { buildTableSeats, TableCenter } from "./create/tableView";
+import { buildTableSeats, potView, TableCenter } from "./create/tableView";
 import { parseReplay, reconstructFrames, stripReplay } from "./create/replay";
 import { TEST_HAND_ID, buildTestHandText, SHOW_TEST_HAND } from "./create/testHand";
 import { fetchSharedHand } from "@/lib/shareApi";
 import type { HandHistory } from "./types";
 
-const STEP_MS = 2000;
+// Auto-advance cadence at 1× (default). The speed selector divides this, so 2×
+// steps every 500ms, 0.5× every 2s, etc.
+const BASE_STEP_MS = 1000;
+const SPEEDS = [0.5, 1, 2, 4] as const;
 
 type LoadState =
   | { status: "loading" }
@@ -124,6 +127,7 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
 
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
   const [unitMode, setUnitMode] = useState<"bb" | "chips">("chips");
 
   const last = replay ? replay.frames.length - 1 : 0;
@@ -145,9 +149,9 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
     }
     const id = window.setInterval(() => {
       setCursor((c) => (c >= last ? c : c + 1));
-    }, STEP_MS);
+    }, BASE_STEP_MS / speed);
     return () => window.clearInterval(id);
-  }, [playing, cursor, last, replay]);
+  }, [playing, cursor, last, replay, speed]);
 
   if (load.status === "loading") {
     return (
@@ -214,6 +218,9 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
       setPlaying((p) => !p);
     }
   };
+  // Cycle through the preset playback speeds (0.5× → 1× → 2× → 4× → 0.5×).
+  const cycleSpeed = () =>
+    setSpeed((s) => SPEEDS[(SPEEDS.indexOf(s as (typeof SPEEDS)[number]) + 1) % SPEEDS.length]);
 
   // Winner banner (final frame only).
   const winnerText = (() => {
@@ -231,9 +238,10 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
   })();
 
   const progressPct = last > 0 ? (cursor / last) * 100 : 0;
+  const pot = potView(frame, unitMode);
 
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-3xl flex-col px-4 pt-4 pb-6">
+    <div className="mx-auto flex min-h-[calc(100dvh-3rem)] max-w-3xl flex-col px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
       {/* Header */}
       <div className="mb-2 flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -272,11 +280,13 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
           size={data.state.tableSize}
           seats={buildTableSeats({ state: data.state, engine: frame, labels, unitMode })}
           maxWidthClassName="max-w-2xl"
+          potAmount={pot?.amount}
+          potLabel={pot?.label}
+          potWinnerSeatIndex={pot?.winnerSeatIndex}
           center={
             <TableCenter
               state={data.state}
               engine={frame}
-              unitMode={unitMode}
               editable={false}
             />
           }
@@ -327,23 +337,37 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
         </div>
       </div>
 
-      {/* Transport bar — pinned to the bottom (mobile thumb-zone) */}
-      <div className="mt-auto flex items-center justify-center gap-2 rounded-2xl border border-emerald-300/30 bg-slate-900/70 p-2 shadow-lg shadow-emerald-950/30">
-        <TransportButton label="First action" onClick={goFirst} disabled={atStart} tap={tap}>
-          <SkipBack className="h-5 w-5" />
-        </TransportButton>
-        <TransportButton label="Previous action" onClick={goPrev} disabled={atStart} tap={tap}>
-          <ChevronLeft className="h-6 w-6" />
-        </TransportButton>
-        <TransportButton label={playing ? "Pause" : "Play"} onClick={togglePlay} primary tap={tap}>
-          {playing ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
-        </TransportButton>
-        <TransportButton label="Next action" onClick={goNext} disabled={atEnd} tap={tap}>
-          <ChevronRight className="h-6 w-6" />
-        </TransportButton>
-        <TransportButton label="Last action" onClick={goLast} disabled={atEnd} tap={tap}>
-          <SkipForward className="h-5 w-5" />
-        </TransportButton>
+      {/* Transport controls — pinned to the bottom (mobile thumb-zone) */}
+      <div className="mt-auto flex flex-col gap-2">
+        {/* Playback speed selector (tap to cycle) */}
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={cycleSpeed}
+            aria-label={`Playback speed ${speed}×, tap to change`}
+            className="rounded-full border border-emerald-300/40 bg-slate-900/70 px-3 py-1 text-[11px] font-semibold text-emerald-100 shadow transition hover:bg-slate-800 active:scale-95"
+          >
+            {speed}× speed
+          </button>
+        </div>
+
+        <div className="flex items-center justify-center gap-2 rounded-2xl border border-emerald-300/30 bg-slate-900/70 p-2 shadow-lg shadow-emerald-950/30">
+          <TransportButton label="First action" onClick={goFirst} disabled={atStart} tap={tap}>
+            <SkipBack className="h-5 w-5" />
+          </TransportButton>
+          <TransportButton label="Previous action" onClick={goPrev} disabled={atStart} tap={tap}>
+            <ChevronLeft className="h-6 w-6" />
+          </TransportButton>
+          <TransportButton label={playing ? "Pause" : "Play"} onClick={togglePlay} primary tap={tap}>
+            {playing ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
+          </TransportButton>
+          <TransportButton label="Next action" onClick={goNext} disabled={atEnd} tap={tap}>
+            <ChevronRight className="h-6 w-6" />
+          </TransportButton>
+          <TransportButton label="Last action" onClick={goLast} disabled={atEnd} tap={tap}>
+            <SkipForward className="h-5 w-5" />
+          </TransportButton>
+        </div>
       </div>
     </div>
   );

@@ -15,6 +15,7 @@ import LoadingIndicator from "@/components/LoadingIndicator";
 import CopyButton from "@/components/CopyButton";
 import { authedFetch } from "@/lib/api";
 import CreateHandHistory from "@/pages/handhistory/create/CreateHandHistory";
+import HandPreview from "@/pages/handhistory/HandPreview";
 import type { HandHistory } from "@/pages/handhistory/types";
 
 // A hand typed against an unsaved (draft) session — no server id yet.
@@ -51,11 +52,6 @@ export function makeLocalId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `lh-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function previewOf(text: string): string {
-  const firstLine = text.split("\n").find((l) => l.trim().length > 0) ?? "";
-  return firstLine.length > 100 ? `${firstLine.slice(0, 100)}…` : firstLine;
 }
 
 const SessionHandHistories: React.FC<Props> = ({
@@ -232,11 +228,7 @@ const SessionHandHistories: React.FC<Props> = ({
                       <div className="text-[11px] font-semibold text-gray-700">
                         {row.label}
                       </div>
-                      {!expanded && (
-                        <div className="mt-0.5 truncate font-mono text-[11px] text-gray-500">
-                          {previewOf(row.rawText) || "(empty)"}
-                        </div>
-                      )}
+                      {!expanded && <HandPreview rawText={row.rawText} />}
                     </button>
                     <div className="flex shrink-0 items-center gap-1.5">
                       <CopyButton

@@ -44,7 +44,6 @@ const SeatEditorModal: React.FC<Props> = ({
 }) => {
   const [name, setName] = useState(seat.name);
   const [stack, setStack] = useState(seat.stack);
-  const [occupied, setOccupied] = useState(seat.occupied);
   const [hole, setHole] = useState<HoleCards>(seat.holeCards);
   const [makeButton, setMakeButton] = useState(isButton);
   const [makeHero, setMakeHero] = useState(isHero);
@@ -91,7 +90,7 @@ const SeatEditorModal: React.FC<Props> = ({
   const save = () =>
     onSave({
       seat: {
-        occupied,
+        occupied: true,
         name: name.trim(),
         stack: stack.trim(),
         holeCards: pad(hole.filter((c): c is string => !!c)),
@@ -156,15 +155,6 @@ const SeatEditorModal: React.FC<Props> = ({
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-4">
-          <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-700">
-            <input
-              type="checkbox"
-              checked={occupied}
-              onChange={(e) => setOccupied(e.target.checked)}
-              className="h-4 w-4 accent-emerald-600"
-            />
-            Seat occupied
-          </label>
           <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-700">
             <input
               type="checkbox"
