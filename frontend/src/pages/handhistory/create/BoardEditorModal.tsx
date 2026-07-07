@@ -50,17 +50,19 @@ const BoardEditorModal: React.FC<Props> = ({ board, otherUsed, onSave, onClose }
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[1300] overflow-y-auto">
+    // Centered flex box; the dialog scrolls internally when tall. Deliberately
+    // avoids a `min-h-full` scroll layer + `backdrop-filter` on the dialog: that
+    // combination pins iOS Safari re-blurring the animated backdrop every frame,
+    // stalling the open for seconds. Opaque dialog + internal scroll keeps it
+    // centered and scroll-safe without any backdrop-filter cost.
+    <div className="fixed inset-0 z-[1300] flex items-center justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-8">
       {/* Clicking the backdrop commits the board (same as "Done"), not discard. */}
       <div className="absolute inset-0 bg-black/50" onPointerDown={save} aria-hidden="true" />
-      {/* Center when it fits; scroll (never clipping top or bottom) when taller than
-          the viewport. Bottom safe-area padding keeps "Done" clear on mobile. */}
-      <div className="relative flex min-h-full items-center justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-8">
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Edit board"
-        className="relative z-[1310] w-full max-w-sm rounded-2xl border border-emerald-300/40 bg-white/95 p-4 shadow-2xl shadow-emerald-500/30 backdrop-blur-sm"
+        className="relative z-[1310] max-h-full w-full max-w-sm overflow-y-auto rounded-2xl border border-emerald-300/40 bg-white p-4 shadow-2xl shadow-emerald-500/30"
         onPointerDown={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between gap-2">
@@ -135,7 +137,6 @@ const BoardEditorModal: React.FC<Props> = ({ board, otherUsed, onSave, onClose }
             Done
           </button>
         </div>
-      </div>
       </div>
     </div>,
     document.body
