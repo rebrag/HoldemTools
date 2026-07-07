@@ -47,6 +47,7 @@ export function buildTableSeats(args: {
 
   return Array.from({ length: state.tableSize }, (_, i): PokerTableSeat => {
     const seat = state.seats[i];
+    const empty = !seat.occupied;
     const label = seat.name.trim() || labels[i];
     const ep = engine?.players.find((p) => p.seat === i) ?? null;
     const isActive =
@@ -68,16 +69,17 @@ export function buildTableSeats(args: {
         : post?.label;
     return {
       key: i,
-      label,
-      stackText: stackText || undefined,
-      committedAmount,
-      committedText,
-      holeCards: seat.holeCards,
-      isButton: state.buttonSeat === i,
-      isHero: state.heroSeat === i,
+      label: empty ? "Empty" : label,
+      stackText: empty ? undefined : stackText || undefined,
+      committedAmount: empty ? undefined : committedAmount,
+      committedText: empty ? undefined : committedText,
+      holeCards: empty ? undefined : seat.holeCards,
+      isButton: !empty && state.buttonSeat === i,
+      isHero: !empty && state.heroSeat === i,
       isActive,
       folded: ep?.folded ?? false,
-      hidden: !!engine && !ep, // seat empty during a live hand
+      hidden: !!engine && !ep, // unseated during a live hand (empty or not dealt in)
+      isEmpty: empty,
     };
   });
 }

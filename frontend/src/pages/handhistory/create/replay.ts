@@ -16,7 +16,6 @@ import {
   fmtChips,
   setWinners,
   type Engine,
-  type EnginePlayer,
 } from "./engine";
 
 // A single betting action, ready to feed back to applyAction. `to` (the total
@@ -37,24 +36,42 @@ export interface ReplayData {
 
 // ───────────────────────── capture ─────────────────────────
 
-// Build the replay payload from a fully-resolved engine. Callers must only
-// invoke this once the hand is done (engine.done && winners resolved) — the
-// same guard the recorder's auto-save uses.
-export function buildReplayData(state: AdvancedHandState, engine: Engine): ReplayData {
-  // streetActions fills streets 0→3 in play order, so flattening preserves the
-  // global chronological order of actions.
-  const actions: ReplayAction[] = engine.streetActions.flat().map((a) =>
+// The engine's recorded actions as a replayable list. streetActions fills
+// streets 0→3 in play order, so flattening preserves global chronological order.
+// bet/raise carry their total street commitment; call/check/fold recompute from
+// engine state on replay.
+export function actionsFromEngine(engine: Engine): ReplayAction[] {
+  return engine.streetActions.flat().map((a) =>
     a.kind === "bet" || a.kind === "raise"
       ? { kind: a.kind, to: a.amount }
       : { kind: a.kind }
   );
+}
+
+// Build the replay payload from a fully-resolved engine. Callers must only
+// invoke this once the hand is done (engine.done && winners resolved) — the
+// same guard the recorder's auto-save uses.
+export function buildReplayData(state: AdvancedHandState, engine: Engine): ReplayData {
   return {
     v: 1,
     state,
-    actions,
+    actions: actionsFromEngine(engine),
     winners: engine.winners ? [...engine.winners] : null,
     winners2: engine.winners2 ? [...engine.winners2] : null,
   };
+}
+
+// Replay an action list against a (possibly edited) setup, returning every
+// intermediate engine frame: frames[0] is the posted-blinds state, frames[i+1]
+// the state after actions[i]. Used by the recorder to re-derive the live engine
+// (and its undo stack) after a retroactive setup edit mid-hand. Winners are NOT
+// applied here — callers re-apply them to the final frame if needed.
+export function rebuildFrames(state: AdvancedHandState, actions: ReplayAction[]): Engine[] {
+  const frames: Engine[] = [buildEngine(state)];
+  for (const a of actions) {
+    frames.push(applyAction(frames[frames.length - 1], a.kind, a.to));
+  }
+  return frames;
 }
 
 // ───────────────────────── codec ─────────────────────────
@@ -171,16 +188,20 @@ export function reconstructFrames(data: ReplayData): {
 
 // ───────────────────────── list preview ─────────────────────────
 
+/** One player shown in a list preview: the hero, or an opponent whose hole
+ *  cards were recorded. `cards` entries may be null (unrecorded slots). */
+export interface PreviewPlayer {
+  cards: (string | null)[];
+  name: string;
+  isHero: boolean;
+}
+
 export interface HandPreview {
-  /** Hero's hole cards, or null when no hero was designated for the hand. */
-  heroCards: (string | null)[] | null;
+  /** Hero (when a hero seat exists) followed by every opponent whose hole cards
+   *  were recorded, ordered by chips committed. */
+  players: PreviewPlayer[];
   /** Known community cards, in dealt order (may be empty for preflop-only hands). */
   board: string[];
-  /** Cards of the opponent who committed the most chips, or null when there is
-   *  no opposing player. Individual entries may be null (cards never recorded). */
-  villainCards: (string | null)[] | null;
-  /** Display name of that opponent (custom name or position label). */
-  villainName: string | null;
 }
 
 // Fold the recorded actions into a single final engine, without retaining the
@@ -192,26 +213,26 @@ export function finalEngine(data: ReplayData): Engine {
   return e;
 }
 
-// Extract the pieces the hand-history list preview renders: the hero's cards,
-// the board, and the biggest-committing opponent's cards + name.
+// Extract the pieces the hand-history list preview renders: the hero, the board,
+// and every opponent whose hole cards were recorded (showdown/revealed hands),
+// ordered by chips committed so the most-involved players appear first.
 export function buildHandPreview(data: ReplayData): HandPreview {
   const e = finalEngine(data);
   const heroIdx = e.heroIndex;
-  const heroCards = heroIdx != null ? e.players[heroIdx].hole : null;
 
-  // Villain = the non-hero seat with the most chips in the pot (folded players
-  // included: they still "put the most money in").
-  let villain: EnginePlayer | null = null;
-  for (let i = 0; i < e.players.length; i++) {
-    if (i === heroIdx) continue;
-    const p = e.players[i];
-    if (!villain || p.totalCommitted > villain.totalCommitted) villain = p;
+  const players: PreviewPlayer[] = [];
+  if (heroIdx != null) {
+    const h = e.players[heroIdx];
+    players.push({ cards: h.hole, name: h.name, isHero: true });
   }
+  e.players
+    .map((p, i) => ({ p, i }))
+    .filter(({ p, i }) => i !== heroIdx && p.hole.some((c) => !!c))
+    .sort((a, b) => b.p.totalCommitted - a.p.totalCommitted)
+    .forEach(({ p }) => players.push({ cards: p.hole, name: p.name, isHero: false }));
 
   return {
-    heroCards,
+    players,
     board: data.state.board.filter((c): c is string => !!c),
-    villainCards: villain ? villain.hole : null,
-    villainName: villain ? villain.name : null,
   };
 }

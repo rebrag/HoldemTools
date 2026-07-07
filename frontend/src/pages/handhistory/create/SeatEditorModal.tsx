@@ -26,6 +26,11 @@ interface Props {
   otherUsed: Set<string>; // cards assigned elsewhere (other seats + board)
   onSave: (result: SeatEditResult) => void;
   onClose: () => void;
+  // Setup-phase structural actions on an occupied seat. Omitted during the
+  // action phase, where changing who is in the hand isn't allowed.
+  allowStructural?: boolean;
+  onEmpty?: () => void; // remove the player, leaving an empty seat
+  onMove?: () => void; // start moving this player to another seat
 }
 
 const SeatEditorModal: React.FC<Props> = ({
@@ -41,6 +46,9 @@ const SeatEditorModal: React.FC<Props> = ({
   otherUsed,
   onSave,
   onClose,
+  allowStructural,
+  onEmpty,
+  onMove,
 }) => {
   const [name, setName] = useState(seat.name);
   const [stack, setStack] = useState(seat.stack);
@@ -87,10 +95,13 @@ const SeatEditorModal: React.FC<Props> = ({
     });
   };
 
-  const save = () =>
+  const save = () => {
+    // Don't resurrect a deliberately-empty seat on a no-op save (e.g. tapping the
+    // backdrop): it only becomes occupied once something is entered.
+    const filled = name.trim() !== "" || stack.trim() !== "" || hole.some((c) => !!c);
     onSave({
       seat: {
-        occupied: true,
+        occupied: seat.occupied || filled,
         name: name.trim(),
         stack: stack.trim(),
         holeCards: pad(hole.filter((c): c is string => !!c)),
@@ -100,11 +111,16 @@ const SeatEditorModal: React.FC<Props> = ({
       makeStraddle: canStraddle && makeStraddle,
       straddleAmount: straddleAmt.trim() || defaultStraddle,
     });
+  };
 
   return createPortal(
-    <div className="fixed inset-0 z-[1300] flex items-start justify-center overflow-y-auto p-4 sm:p-8">
+    <div className="fixed inset-0 z-[1300] overflow-y-auto">
       {/* Clicking the backdrop commits the edit (same as "Done"), not discard. */}
       <div className="absolute inset-0 bg-black/50" onPointerDown={save} aria-hidden="true" />
+      {/* Center when it fits; scroll (never clipping top or bottom) when it's taller
+          than the viewport. Bottom safe-area padding keeps "Done" clear of the
+          home indicator on mobile. */}
+      <div className="relative flex min-h-full items-center justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-8">
       <div
         role="dialog"
         aria-modal="true"
@@ -245,6 +261,25 @@ const SeatEditorModal: React.FC<Props> = ({
           />
         </div>
 
+        {allowStructural && seat.occupied && (
+          <div className="mt-4 flex items-center gap-4 border-t border-gray-100 pt-3">
+            <button
+              type="button"
+              onClick={() => onMove?.()}
+              className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-600"
+            >
+              ↔ Move player
+            </button>
+            <button
+              type="button"
+              onClick={() => onEmpty?.()}
+              className="inline-flex items-center gap-1 text-xs font-medium text-rose-600 underline underline-offset-2 hover:text-rose-500"
+            >
+              ✕ Empty seat
+            </button>
+          </div>
+        )}
+
         <div className="mt-4 flex items-center justify-end gap-3">
           <button
             type="button"
@@ -261,6 +296,7 @@ const SeatEditorModal: React.FC<Props> = ({
             Done
           </button>
         </div>
+      </div>
       </div>
     </div>,
     document.body

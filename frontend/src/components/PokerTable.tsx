@@ -34,6 +34,8 @@ export interface PokerTableSeat {
   folded?: boolean;
   /** skip rendering entirely (e.g. an empty seat during a live hand). */
   hidden?: boolean;
+  /** render as a muted "empty" placeholder (no cards; tap to seat a player). */
+  isEmpty?: boolean;
   /** render null holeCards slots as dashed empty placeholders instead of face-down CardBacks. */
   emptySlotsAsPlaceholders?: boolean;
   /** index into holeCards to decorate with the pulsing "NEXT" ring (card-picker target). */
@@ -240,12 +242,16 @@ const PokerTable: React.FC<PokerTableProps> = ({
                 )}
 
                 <span
-                  className={`max-w-[88px] truncate rounded-md px-1.5 py-[1px] text-[10px] font-semibold shadow-md ring-1 ${
-                    seat.isActive
-                      ? "bg-gradient-to-b from-emerald-400 to-emerald-600 text-white ring-emerald-300/70"
-                      : seat.isHero
-                      ? "bg-gradient-to-b from-amber-400 to-amber-600 text-white ring-amber-300/70"
-                      : "bg-gradient-to-b from-slate-800 to-slate-950 text-sky-100 ring-slate-600/70"
+                  className={`max-w-[88px] truncate rounded-md px-1.5 py-[1px] text-[10px] font-semibold shadow-md ${
+                    seat.isEmpty
+                      ? "border border-dashed border-white/40 bg-black/25 text-white/60"
+                      : `ring-1 ${
+                          seat.isActive
+                            ? "bg-gradient-to-b from-emerald-400 to-emerald-600 text-white ring-emerald-300/70"
+                            : seat.isHero
+                            ? "bg-gradient-to-b from-amber-400 to-amber-600 text-white ring-amber-300/70"
+                            : "bg-gradient-to-b from-slate-800 to-slate-950 text-sky-100 ring-slate-600/70"
+                        }`
                   }`}
                 >
                   {seat.label}

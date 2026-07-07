@@ -13,11 +13,14 @@ html {
 
 html, body, #root { min-height: 100%; }
 
+/* Match the app's AuroraBackground (fixed, bg-slate-950 + emerald glow) so the
+   very first paint — before React mounts the backdrop — is the same dark
+   greenish tone instead of a grey gradient that flashes then swaps. */
 body {
   margin: 0;
   background:
-    radial-gradient(1200px 900px at 20% 10%, #2b3541 0%, #121418 60%, #0b0c0e 100%),
-    linear-gradient(135deg, #26303a, #0d1116);
+    radial-gradient(90% 70% at 50% 0%, rgba(16, 185, 129, 0.12) 0%, transparent 60%),
+    #020617;
   color: #111827;
 }
 

@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, type Variants } from "framer-motion";
-import { Play, Share2, Copy, Check, Trash2 } from "lucide-react";
+import { Play, Share2, Copy, Check, Trash2, MoreHorizontal } from "lucide-react";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import { authedFetch } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
@@ -38,25 +38,10 @@ type ToolRow = {
   synthetic?: boolean; // dev-only "test" fixture row; not persisted
 };
 
-// A hand linked to a session shows that session's date/location/blinds
-// (the hand's "time" is the session's), instead of its own saved-at stamp.
-function sessionLabel(s: BankrollSession): string {
-  const parts: string[] = [];
-  if (s.start) {
-    const d = new Date(s.start);
-    if (!Number.isNaN(d.getTime())) {
-      parts.push(
-        d.toLocaleDateString(undefined, {
-          year: "numeric",
-          month: "short",
-          day: "numeric",
-        })
-      );
-    }
-  }
-  if (s.location?.trim()) parts.push(s.location.trim());
-  if (s.blinds?.trim()) parts.push(s.blinds.trim());
-  return parts.join(" · ");
+// A hand linked to a session shows that session's location/blinds (the day is
+// carried by the group header now, so the date is omitted here).
+function sessionMeta(s: BankrollSession): string {
+  return [s.location?.trim(), s.blinds?.trim()].filter(Boolean).join(" · ");
 }
 
 const listVariants: Variants = {
@@ -75,15 +60,20 @@ const itemVariants: Variants = {
   exit: { opacity: 0, x: -24, transition: { duration: 0.18 } },
 };
 
-function formatDate(iso: string): string {
+// Section-header label for a day: "Today" / "Yesterday" for the two most recent
+// calendar days, otherwise a plain date like "Jul 7, 2026".
+function formatDay(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString(undefined, {
+  const startOf = (x: Date) =>
+    new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diffDays = Math.round((startOf(new Date()) - startOf(d)) / 86400000);
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
+  return d.toLocaleDateString(undefined, {
     year: "numeric",
     month: "short",
     day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
   });
 }
 
@@ -95,6 +85,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   const [reloadNonce, setReloadNonce] = useState(0);
 
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [menuKey, setMenuKey] = useState<string | null>(null); // which row's mobile action menu is open
   const [sessionsById, setSessionsById] = useState<Map<string, BankrollSession>>(
     new Map()
   );
@@ -278,6 +269,19 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     return base;
   }, [user, items, localHands, testRawText]);
 
+  // Group the (already date-sorted) rows by calendar day so the list shows one
+  // day header instead of a timestamp on every row.
+  const groups = useMemo(() => {
+    const out: { day: string; rows: ToolRow[] }[] = [];
+    for (const row of rows) {
+      const day = formatDay(row.createdAt);
+      const last = out[out.length - 1];
+      if (last && last.day === day) last.rows.push(row);
+      else out.push({ day, rows: [row] });
+    }
+    return out;
+  }, [rows]);
+
   // Flash a transient "copied"/"shared" confirmation on a row's button.
   const flashRow = (key: string, kind: "copied" | "shared") => {
     setFlash({ key, kind });
@@ -341,12 +345,13 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   };
 
   return (
-    <div className="mx-auto max-w-3xl px-4 pt-4 pb-12">
-      <FlyingCards />
-
+    <>
       <HandHistorySecondaryNav
         onCreate={() => navigate("/hand-history/create")}
       />
+
+      <div className="mx-auto max-w-3xl px-4 pt-5 pb-12">
+      <FlyingCards />
 
       <AnimatePresence>
         {!user && localHands.length > 0 && (
@@ -412,110 +417,161 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
           animate="visible"
         >
           <AnimatePresence initial={false}>
-          {rows.map((row) => {
-            const expanded = expandedKey === row.key;
-            return (
-              <motion.li
-                key={row.key}
-                layout
-                variants={itemVariants}
-                exit="exit"
-                className="p-2.5 transition-colors hover:bg-emerald-50/60"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setExpandedKey(expanded ? null : row.key)}
-                    className="min-w-0 flex-1 text-left"
-                    aria-expanded={expanded}
-                  >
-                    {row.sessionId && sessionsById.get(row.sessionId) ? (
-                      <div className="inline-flex max-w-full items-center gap-1 truncate rounded-full bg-emerald-50 px-2 py-[1px] text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                        🗓 {sessionLabel(sessionsById.get(row.sessionId)!)}
-                      </div>
-                    ) : (
-                      <div className="text-[11px] text-gray-500">
-                        {formatDate(row.createdAt)}
-                      </div>
-                    )}
-                    {!expanded && <HandPreview rawText={row.rawText} />}
-                  </button>
+          {groups.flatMap((group) => [
+            <li
+              key={`day-${group.day}`}
+              className="bg-emerald-50/50 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-700/70"
+            >
+              {group.day}
+            </li>,
+            ...group.rows.map((row) => {
+              const expanded = expandedKey === row.key;
+              const menuOpen = menuKey === row.key;
+              const session = row.sessionId ? sessionsById.get(row.sessionId) : null;
+              const meta = session ? sessionMeta(session) : "";
 
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    {row.replayable && (
-                      <RowActionButton
-                        tone="replay"
-                        label="Replay hand"
-                        icon={<Play className="h-4 w-4" fill="currentColor" />}
-                        onClick={() => navigate(`/hand-history/replay/${row.key}`)}
-                      />
-                    )}
-                    {SHARE_ENABLED &&
-                      row.replayable &&
-                      !row.isLocal &&
-                      !row.synthetic &&
-                      !!row.server && (
+              // Secondary actions, shared between the desktop inline row and the
+              // mobile "⋯" drawer.
+              const shareBtn =
+                SHARE_ENABLED &&
+                row.replayable &&
+                !row.isLocal &&
+                !row.synthetic &&
+                !!row.server ? (
+                  <RowActionButton
+                    tone="share"
+                    label="Share replay link"
+                    disabled={sharingKey === row.key}
+                    success={flash?.key === row.key && flash.kind === "shared"}
+                    icon={
+                      flash?.key === row.key && flash.kind === "shared" ? (
+                        <Check className="h-4 w-4" />
+                      ) : (
+                        <Share2 className="h-4 w-4" />
+                      )
+                    }
+                    onClick={() => handleShare(row)}
+                  />
+                ) : null;
+              const copyBtn = (
+                <RowActionButton
+                  tone="copy"
+                  label="Copy hand text"
+                  success={flash?.key === row.key && flash.kind === "copied"}
+                  icon={
+                    flash?.key === row.key && flash.kind === "copied" ? (
+                      <Check className="h-4 w-4" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )
+                  }
+                  onClick={() => handleCopy(row)}
+                />
+              );
+              const deleteBtn = !row.synthetic ? (
+                <RowActionButton
+                  tone="delete"
+                  label="Delete hand"
+                  icon={<Trash2 className="h-4 w-4" />}
+                  onClick={() => handleDelete(row)}
+                />
+              ) : null;
+
+              return (
+                <motion.li
+                  key={row.key}
+                  layout
+                  variants={itemVariants}
+                  exit="exit"
+                  className="px-3 py-1.5 transition-colors hover:bg-emerald-50/60"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedKey(expanded ? null : row.key)}
+                      className="min-w-0 flex-1 text-left"
+                      aria-expanded={expanded}
+                    >
+                      {session && meta && (
+                        <div className="mb-0.5 inline-flex max-w-full items-center gap-1 truncate rounded-full bg-emerald-50 px-2 py-[1px] text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                          🗓 {meta}
+                        </div>
+                      )}
+                      {!expanded && <HandPreview rawText={row.rawText} />}
+                    </button>
+
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {row.replayable && (
                         <RowActionButton
-                          tone="share"
-                          label="Share replay link"
-                          disabled={sharingKey === row.key}
-                          success={flash?.key === row.key && flash.kind === "shared"}
-                          icon={
-                            flash?.key === row.key && flash.kind === "shared" ? (
-                              <Check className="h-4 w-4" />
-                            ) : (
-                              <Share2 className="h-4 w-4" />
-                            )
-                          }
-                          onClick={() => handleShare(row)}
+                          tone="replay"
+                          label="Replay hand"
+                          icon={<Play className="h-4 w-4" fill="currentColor" />}
+                          onClick={() => navigate(`/hand-history/replay/${row.key}`)}
                         />
                       )}
-                    <RowActionButton
-                      tone="copy"
-                      label="Copy hand text"
-                      success={flash?.key === row.key && flash.kind === "copied"}
-                      icon={
-                        flash?.key === row.key && flash.kind === "copied" ? (
-                          <Check className="h-4 w-4" />
-                        ) : (
-                          <Copy className="h-4 w-4" />
-                        )
-                      }
-                      onClick={() => handleCopy(row)}
-                    />
-                    {!row.synthetic && (
-                      <RowActionButton
-                        tone="delete"
-                        label="Delete hand"
-                        icon={<Trash2 className="h-4 w-4" />}
-                        onClick={() => handleDelete(row)}
-                      />
-                    )}
+                      {/* Desktop: secondary actions inline */}
+                      <div className="hidden items-center gap-1.5 sm:flex">
+                        {shareBtn}
+                        {copyBtn}
+                        {deleteBtn}
+                      </div>
+                      {/* Mobile: collapse secondary actions behind a ⋯ toggle */}
+                      <div className="sm:hidden">
+                        <RowActionButton
+                          tone="copy"
+                          label={menuOpen ? "Hide actions" : "More actions"}
+                          icon={<MoreHorizontal className="h-4 w-4" />}
+                          onClick={() => setMenuKey(menuOpen ? null : row.key)}
+                        />
+                      </div>
+                    </div>
                   </div>
-                </div>
 
-                <AnimatePresence initial={false}>
-                  {expanded && (
-                    <motion.pre
-                      key="raw"
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.22, ease: "easeInOut" }}
-                      className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-[11px] leading-relaxed text-gray-800"
-                    >
-                      {row.clean}
-                    </motion.pre>
-                  )}
-                </AnimatePresence>
-              </motion.li>
-            );
-          })}
+                  {/* Mobile secondary-action drawer: expands within the row so the
+                      list's overflow-hidden never clips it. */}
+                  <AnimatePresence initial={false}>
+                    {menuOpen && (
+                      <motion.div
+                        key="menu"
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.18, ease: "easeInOut" }}
+                        className="overflow-hidden sm:hidden"
+                      >
+                        <div className="mt-2 flex items-center justify-end gap-1.5">
+                          {shareBtn}
+                          {copyBtn}
+                          {deleteBtn}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  <AnimatePresence initial={false}>
+                    {expanded && (
+                      <motion.pre
+                        key="raw"
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.22, ease: "easeInOut" }}
+                        className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-[11px] leading-relaxed text-gray-800"
+                      >
+                        {row.clean}
+                      </motion.pre>
+                    )}
+                  </AnimatePresence>
+                </motion.li>
+              );
+            }),
+          ])}
           </AnimatePresence>
         </motion.ul>
       )}
 
-    </div>
+      </div>
+    </>
   );
 };
 

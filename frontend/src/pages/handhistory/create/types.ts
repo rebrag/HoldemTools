@@ -45,6 +45,23 @@ export function emptySeat(cards = 2): Seat {
   };
 }
 
+// A seat with no player in it (excluded from the hand). Distinct from emptySeat,
+// which is an occupied-but-blank seat awaiting details.
+export function blankSeat(cards = 2): Seat {
+  return { ...emptySeat(cards), occupied: false };
+}
+
+// The next occupied seat clockwise from `from` (exclusive), or `from` itself
+// when no other seat is occupied. Used to keep the button/hero on a live seat.
+export function nextOccupiedSeat(seats: Seat[], from: number): number {
+  const n = seats.length;
+  for (let step = 1; step <= n; step++) {
+    const i = (from + step) % n;
+    if (seats[i]?.occupied) return i;
+  }
+  return from;
+}
+
 // Grow/shrink a seat's hole cards to a new hand size, keeping assigned cards.
 export function resizeHoleCards(hole: HoleCards, cards: number): HoleCards {
   const assigned = hole.filter((c): c is string => !!c);

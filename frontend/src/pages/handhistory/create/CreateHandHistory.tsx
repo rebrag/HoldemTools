@@ -19,7 +19,7 @@ import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import SeatEditorModal, { type SeatEditResult } from "./SeatEditorModal";
 import BoardEditorModal from "./BoardEditorModal";
 import ActionPanel from "./ActionPanel";
-import { positionLabels } from "./positions";
+import { positionLabelsForSeats } from "./positions";
 import {
   applyAction,
   buildEngine,
@@ -28,7 +28,7 @@ import {
   type Engine,
 } from "./engine";
 import { buildTableSeats, potView, TableCenter } from "./tableView";
-import { buildReplayData, encodeReplay } from "./replay";
+import { actionsFromEngine, buildReplayData, encodeReplay, rebuildFrames } from "./replay";
 import { serializeHand, type EquityInfo, type StreetEquity } from "./serialize";
 import { useShowdownEquity, type EquityRequest } from "./useShowdownEquity";
 import { evalWinners, exactEquity, type EvalGame } from "@/lib/handEval";
@@ -36,14 +36,19 @@ import { parseGameString } from "./parseGameString";
 import { parseHandDefaults, type HandDefaults } from "./parseHandDefaults";
 import type { HandHistory } from "../types";
 import {
+  blankSeat,
   createInitialState,
   handSize,
+  nextOccupiedSeat,
   resizeHoleCards,
   resizeSeats,
   usedCards,
   type AdvancedHandState,
-  type HoleCards,
 } from "./types";
+
+// Setup-phase tap-to-place mode: after arming it, the next seat tap either moves
+// the dealer button there or relocates a player from `from`.
+type Placement = { kind: "button" } | { kind: "move"; from: number } | null;
 
 // Merge parsed setup defaults (from the most recent saved hand, or app defaults
 // on Clear/Reset) into a state: blinds/ante/game/table size and each seat's
@@ -128,6 +133,7 @@ const CreateHandHistory: React.FC<Props> = ({
   const [editingBoard, setEditingBoard] = useState(false);
   const [editingBoard2, setEditingBoard2] = useState(false);
   const [phase, setPhase] = useState<"setup" | "action">("setup");
+  const [placement, setPlacement] = useState<Placement>(null);
 
   const [engine, setEngine] = useState<Engine | null>(null);
   const [history, setHistory] = useState<Engine[]>([]);
@@ -144,8 +150,8 @@ const CreateHandHistory: React.FC<Props> = ({
   const rememberedRef = useRef<HandDefaults | null>(null);
 
   const labels = useMemo(
-    () => positionLabels(state.tableSize, state.buttonSeat),
-    [state.tableSize, state.buttonSeat]
+    () => positionLabelsForSeats(state.seats.map((s) => s.occupied), state.buttonSeat),
+    [state.seats, state.buttonSeat]
   );
 
   const occupiedCount = state.seats.filter((s) => s.occupied).length;
@@ -255,31 +261,88 @@ const CreateHandHistory: React.FC<Props> = ({
   const saveSeat = (index: number, result: SeatEditResult) => {
     touchedRef.current = true;
     const { seat, makeButton, makeHero, makeStraddle, straddleAmount } = result;
-    setState((prev) => ({
-      ...prev,
-      seats: prev.seats.map((s, i) => (i === index ? seat : s)),
-      buttonSeat: makeButton ? index : prev.buttonSeat,
-      heroSeat: makeHero ? index : prev.heroSeat,
-      straddleSeat: makeStraddle ? index : prev.straddleSeat === index ? null : prev.straddleSeat,
-      straddleAmount: makeStraddle ? straddleAmount : prev.straddleAmount,
-    }));
-    // Mid-hand edits (e.g. revealing hole cards at showdown) flow into the live
-    // engine so the serialized history reflects them. Betting is untouched.
+    const nextState: AdvancedHandState = {
+      ...state,
+      seats: state.seats.map((s, i) => (i === index ? seat : s)),
+      buttonSeat: makeButton ? index : state.buttonSeat,
+      heroSeat: makeHero ? index : state.heroSeat,
+      straddleSeat: makeStraddle
+        ? index
+        : state.straddleSeat === index
+        ? null
+        : state.straddleSeat,
+      straddleAmount: makeStraddle ? straddleAmount : state.straddleAmount,
+    };
+    setState(nextState);
+    // Mid-hand edits (stack, revealed hole cards, name, straddle) are applied by
+    // rebuilding the engine from the edited setup and replaying the recorded
+    // actions, so retroactive changes propagate through the whole hand. The undo
+    // stack is rebuilt from the same frames, and any resolved winners are
+    // re-applied to the final frame.
     if (engine) {
-      setEngine((prev) =>
-        prev
-          ? {
-              ...prev,
-              players: prev.players.map((p) =>
-                p.seat === index
-                  ? { ...p, hole: [...seat.holeCards] as HoleCards, name: seat.name || p.pos }
-                  : p
-              ),
-            }
-          : prev
-      );
+      const frames = rebuildFrames(nextState, actionsFromEngine(engine));
+      let last = frames[frames.length - 1];
+      if (engine.winners) last = setWinners(last, engine.winners, 1);
+      if (engine.winners2) last = setWinners(last, engine.winners2, 2);
+      frames[frames.length - 1] = last;
+      setEngine(last);
+      setHistory(frames.slice(0, -1));
     }
     setEditingSeat(null);
+  };
+
+  // Relocate a player to another seat, swapping the two seats' full state (the
+  // destination's player, if any, moves back). The button/hero/straddle markers
+  // travel with their seats so positions stay consistent.
+  const moveSeat = (from: number, to: number) => {
+    touchedRef.current = true;
+    const swap = (idx: number) => (idx === from ? to : idx === to ? from : idx);
+    setState((prev) => ({
+      ...prev,
+      seats: prev.seats.map((s, i) =>
+        i === from ? prev.seats[to] : i === to ? prev.seats[from] : s
+      ),
+      buttonSeat: swap(prev.buttonSeat),
+      heroSeat: swap(prev.heroSeat),
+      straddleSeat: prev.straddleSeat == null ? null : swap(prev.straddleSeat),
+    }));
+  };
+
+  // Remove the player at a seat, leaving it empty, and move any button/hero it
+  // held to the next occupied seat (dropping a straddle it posted).
+  const emptySeatAt = (index: number) => {
+    touchedRef.current = true;
+    setState((prev) => {
+      const seats = prev.seats.map((s, i) =>
+        i === index ? blankSeat(handSize(prev.game)) : s
+      );
+      const reassign = (idx: number) =>
+        idx === index && seats.some((s) => s.occupied)
+          ? nextOccupiedSeat(seats, index)
+          : idx;
+      return {
+        ...prev,
+        seats,
+        buttonSeat: reassign(prev.buttonSeat),
+        heroSeat: reassign(prev.heroSeat),
+        straddleSeat: prev.straddleSeat === index ? null : prev.straddleSeat,
+      };
+    });
+    setEditingSeat(null);
+  };
+
+  // Tap-to-place: a seat tap while `placement` is armed either moves the dealer
+  // button to that seat (occupied seats only) or relocates a player there.
+  const handlePlacementTarget = (i: number) => {
+    if (!placement) return;
+    if (placement.kind === "button") {
+      if (state.seats[i].occupied && i !== state.buttonSeat) update({ buttonSeat: i });
+      setPlacement(null);
+      return;
+    }
+    const from = placement.from;
+    setPlacement(null);
+    if (i !== from) moveSeat(from, i);
   };
 
   const reset = () => {
@@ -294,6 +357,7 @@ const CreateHandHistory: React.FC<Props> = ({
     setSaveError(null);
     autoSavedRef.current = false;
     setPhase("setup");
+    setPlacement(null);
   };
 
   // "Clear all": wipe the fields the setup remembers - blinds, ante, table size,
@@ -355,6 +419,7 @@ const CreateHandHistory: React.FC<Props> = ({
 
   const start = () => {
     if (occupiedCount < 2) return;
+    setPlacement(null);
     setEngine(buildEngine(state));
     setHistory([]);
     setWinnerSel([]);
@@ -466,6 +531,15 @@ const CreateHandHistory: React.FC<Props> = ({
     (engine.numBoards === 1 || !!engine.winners2);
 
   const tableSeats = buildTableSeats({ state, engine, labels, unitMode });
+  // While placing, highlight the seats a tap can target: occupied seats for a
+  // button move, every other seat for a player move.
+  const displayedSeats = placement
+    ? tableSeats.map((s, i) => {
+        const targetable =
+          placement.kind === "button" ? state.seats[i].occupied : i !== placement.from;
+        return targetable ? { ...s, highlighted: true } : s;
+      })
+    : tableSeats;
   const pot = potView(engine, unitMode);
 
   return (
@@ -486,10 +560,37 @@ const CreateHandHistory: React.FC<Props> = ({
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-8">
       {/* ───────── Table (left column) ───────── */}
       <div className="w-full lg:flex-1 lg:min-w-0 py-4">
+      {phase === "setup" && (
+        <div className="mb-2 flex items-center justify-center">
+          {placement ? (
+            <div className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-3 py-1 text-xs font-medium text-white shadow">
+              <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
+              {placement.kind === "button"
+                ? "Tap a seat to move the button"
+                : "Tap a seat to move this player"}
+              <button
+                type="button"
+                onClick={() => setPlacement(null)}
+                className="ml-1 underline underline-offset-2"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setPlacement({ kind: "button" })}
+              className="inline-flex items-center gap-1 rounded-full border border-emerald-300/50 bg-white/90 px-3 py-1 text-xs font-semibold text-emerald-700 shadow-sm transition hover:-translate-y-[1px] hover:bg-emerald-50 active:translate-y-[1px]"
+            >
+              ⊙ Move button
+            </button>
+          )}
+        </div>
+      )}
       <PokerTable
         size={state.tableSize}
-        seats={tableSeats}
-        onSeatClick={(i) => setEditingSeat(i)}
+        seats={displayedSeats}
+        onSeatClick={(i) => (placement ? handlePlacementTarget(i) : setEditingSeat(i))}
         maxWidthClassName="max-w-2xl"
         potAmount={pot?.amount}
         potLabel={pot?.label}
@@ -720,7 +821,7 @@ const CreateHandHistory: React.FC<Props> = ({
 
       {editingSeat !== null && (
         <SeatEditorModal
-          positionLabel={labels[editingSeat]}
+          positionLabel={labels[editingSeat] || `Seat ${editingSeat + 1}`}
           seat={state.seats[editingSeat]}
           isButton={state.buttonSeat === editingSeat}
           isHero={state.heroSeat === editingSeat}
@@ -732,6 +833,13 @@ const CreateHandHistory: React.FC<Props> = ({
           otherUsed={usedCards(state, state.seats[editingSeat].holeCards)}
           onSave={(result) => saveSeat(editingSeat, result)}
           onClose={() => setEditingSeat(null)}
+          allowStructural={phase === "setup"}
+          onEmpty={() => emptySeatAt(editingSeat)}
+          onMove={() => {
+            const from = editingSeat;
+            setEditingSeat(null);
+            setPlacement({ kind: "move", from });
+          }}
         />
       )}
 

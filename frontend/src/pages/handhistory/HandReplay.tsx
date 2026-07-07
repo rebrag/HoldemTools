@@ -21,7 +21,7 @@ import PokerTable from "@/components/PokerTable";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import { authedFetch } from "@/lib/api";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
-import { positionLabels } from "./create/positions";
+import { positionLabelsForSeats } from "./create/positions";
 import { buildTableSeats, potView, TableCenter } from "./create/tableView";
 import { parseReplay, reconstructFrames, stripReplay } from "./create/replay";
 import { TEST_HAND_ID, buildTestHandText, SHOW_TEST_HAND } from "./create/testHand";
@@ -117,7 +117,12 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
   const replay = useMemo(() => (data ? reconstructFrames(data) : null), [data]);
   const labels = useMemo(
     () =>
-      data ? positionLabels(data.state.tableSize, data.state.buttonSeat) : [],
+      data
+        ? positionLabelsForSeats(
+            data.state.seats.map((s) => s.occupied),
+            data.state.buttonSeat
+          )
+        : [],
     [data]
   );
   const title = useMemo(

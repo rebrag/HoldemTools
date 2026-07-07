@@ -17,13 +17,36 @@ const ORDER_FROM_BTN: Record<number, string[]> = {
   9: ["BTN", "SB", "BB", "UTG", "UTG1", "MP", "LJ", "HJ", "CO"],
 };
 
-// Label for every seat, given the table size and which seat has the button.
-export function positionLabels(size: number, buttonSeat: number): string[] {
+// Position label for every seat, counting only OCCUPIED seats. Positions are
+// assigned by walking occupied seats clockwise from the button, so a 9-max table
+// with three empty seats is labelled exactly like a 6-max game. Empty seats get
+// "". `buttonSeat` must be occupied — callers keep that invariant by reassigning
+// the button whenever its seat is emptied or vacated.
+export function positionLabelsForSeats(
+  occupied: boolean[],
+  buttonSeat: number
+): string[] {
+  const size = occupied.length;
+  const occCount = occupied.filter(Boolean).length;
   const order =
-    ORDER_FROM_BTN[size] ??
-    Array.from({ length: size }, (_, i) => `P${i + 1}`);
-  return Array.from({ length: size }, (_, i) => {
-    const offset = (((i - buttonSeat) % size) + size) % size;
-    return order[offset] ?? `P${i + 1}`;
-  });
+    ORDER_FROM_BTN[occCount] ??
+    Array.from({ length: occCount }, (_, i) => `P${i + 1}`);
+  const labels: string[] = Array.from({ length: size }, () => "");
+  let k = 0;
+  for (let step = 0; step < size; step++) {
+    const i = (buttonSeat + step) % size;
+    if (!occupied[i]) continue;
+    labels[i] = order[k] ?? `P${k + 1}`;
+    k++;
+  }
+  return labels;
+}
+
+// Label for every seat, given the table size and which seat has the button.
+// Convenience wrapper treating every seat as occupied.
+export function positionLabels(size: number, buttonSeat: number): string[] {
+  return positionLabelsForSeats(
+    Array.from({ length: size }, () => true),
+    buttonSeat
+  );
 }

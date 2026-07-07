@@ -4,7 +4,7 @@
 // serializer. Simplifications (documented for future work): single main pot
 // (no side pots), and showdown winners are chosen by the user.
 import type { AdvancedHandState, HoleCards } from "./types";
-import { positionLabels } from "./positions";
+import { positionLabelsForSeats } from "./positions";
 
 export interface EnginePlayer {
   seat: number;
@@ -157,7 +157,10 @@ export function buildEngine(state: AdvancedHandState): Engine {
   const bb = num(state.bigBlind, 1);
   const sb = num(state.smallBlind, bb / 2);
   const ante = Math.max(0, parseFloat(state.ante) || 0);
-  const labels = positionLabels(state.tableSize, state.buttonSeat);
+  const labels = positionLabelsForSeats(
+    state.seats.map((s) => s.occupied),
+    state.buttonSeat
+  );
 
   const players: EnginePlayer[] = [];
   state.seats.forEach((seat, i) => {

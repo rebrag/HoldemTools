@@ -50,9 +50,12 @@ const BoardEditorModal: React.FC<Props> = ({ board, otherUsed, onSave, onClose }
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[1300] flex items-start justify-center overflow-y-auto p-4 sm:p-8">
+    <div className="fixed inset-0 z-[1300] overflow-y-auto">
       {/* Clicking the backdrop commits the board (same as "Done"), not discard. */}
       <div className="absolute inset-0 bg-black/50" onPointerDown={save} aria-hidden="true" />
+      {/* Center when it fits; scroll (never clipping top or bottom) when taller than
+          the viewport. Bottom safe-area padding keeps "Done" clear on mobile. */}
+      <div className="relative flex min-h-full items-center justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-8">
       <div
         role="dialog"
         aria-modal="true"
@@ -132,6 +135,7 @@ const BoardEditorModal: React.FC<Props> = ({ board, otherUsed, onSave, onClose }
             Done
           </button>
         </div>
+      </div>
       </div>
     </div>,
     document.body

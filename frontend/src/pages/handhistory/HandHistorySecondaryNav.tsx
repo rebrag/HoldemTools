@@ -7,20 +7,21 @@ interface Props {
 }
 
 /**
- * Secondary navbar for the Hand History page. Pinned just under the main
- * NavBar (which is fixed at h-12 / 48px), it carries the section title and the
- * two entry-point buttons. Behind it sits a self-contained coded poker graphic
+ * Secondary navbar for the Hand History page. A full-bleed bar pinned flush
+ * under the main NavBar (which is fixed at h-12 / 48px) with no gap, so the two
+ * read as a stacked navigation header. It carries the section title and the
+ * "Create HH" entry point. Behind it sits a self-contained coded poker graphic
  * (felt gradient + fanned cards + suit watermark) — no image asset, so it
  * stays lightweight and theme-consistent with AuroraBackground.
  */
 const HandHistorySecondaryNav: React.FC<Props> = ({ onCreate }) => {
   return (
-    <div className="sticky top-12 z-30 -mx-4 mb-5 overflow-hidden rounded-b-2xl border-b border-emerald-400/30 shadow-lg shadow-emerald-950/30 sm:mx-0 sm:rounded-2xl sm:border">
+    <div className="sticky top-12 z-30 overflow-hidden border-b border-emerald-400/30 shadow-lg shadow-emerald-950/30">
       {/* ── Coded poker banner background ────────────────────────────── */}
       <PokerFeltBanner />
 
-      {/* ── Foreground content ───────────────────────────────────────── */}
-      <div className="relative flex items-center justify-between gap-3 px-5 py-3.5">
+      {/* ── Foreground content (aligned to the page's content width) ──── */}
+      <div className="relative mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-2.5">
         <div className="min-w-0">
           <h1 className="bg-gradient-to-r from-emerald-200 via-teal-100 to-emerald-300 bg-clip-text text-lg font-extrabold tracking-tight text-transparent drop-shadow-sm sm:text-xl">
             Hand Histories

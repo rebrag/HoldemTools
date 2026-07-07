@@ -210,21 +210,12 @@ const BankrollFormModal: React.FC<Props> = ({
       {/* Hand histories: saved session → server-backed; in-progress draft →
           held locally and attached when the session is saved. */}
       {editingId && user ? (
-        <SessionHandHistories
-          mode="session"
-          user={user}
-          sessionId={editingId}
-          sessionGame={form.blinds}
-          sessionLocation={form.location}
-          onCreatedHandSaved={onSave}
-        />
+        <SessionHandHistories mode="session" user={user} sessionId={editingId} />
       ) : canUseTimerControls ? (
         <SessionHandHistories
           mode="draft"
           draftHands={draftHands}
           onDraftChange={onDraftHandsChange}
-          sessionGame={form.blinds}
-          sessionLocation={form.location}
         />
       ) : null}
 

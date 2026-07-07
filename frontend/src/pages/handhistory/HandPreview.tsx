@@ -20,10 +20,28 @@ const CARD_W = 22;
 const Slot: React.FC<{ code: string | null }> = ({ code }) =>
   code ? <PlayingCard code={code} size="sm" width={CARD_W} /> : <CardBack w={CARD_W} />;
 
-const CardGroup: React.FC<{ cards: (string | null)[] }> = ({ cards }) => (
-  <div className="flex gap-0.5">
+// A row of cards. `overlap` fans them so a long board takes less width; each
+// card keeps a white ring + rising z-index so its (left) corner index stays
+// legible over the previous card.
+const CardGroup: React.FC<{ cards: (string | null)[]; overlap?: boolean }> = ({
+  cards,
+  overlap,
+}) => (
+  <div className="flex">
     {cards.map((c, i) => (
-      <Slot key={i} code={c} />
+      <div
+        key={i}
+        className={
+          i === 0
+            ? ""
+            : overlap
+            ? "-ml-[7px] rounded-md ring-1 ring-white"
+            : "ml-0.5"
+        }
+        style={{ zIndex: i }}
+      >
+        <Slot code={c} />
+      </div>
     ))}
   </div>
 );
@@ -47,40 +65,52 @@ const HandPreview: React.FC<{ rawText: string }> = ({ rawText }) => {
     );
   }
 
-  const { heroCards, board, villainCards, villainName } = preview;
+  const { players, board } = preview;
+  const hero = players.find((p) => p.isHero) ?? null;
+  const opponents = players.filter((p) => !p.isHero);
+
+  const PlayerBlock: React.FC<{ cards: (string | null)[]; label: string; hero?: boolean }> = ({
+    cards,
+    label,
+    hero: isHero,
+  }) => (
+    <div className="flex flex-col items-center gap-0.5">
+      <CardGroup cards={cards.length ? cards : [null, null]} overlap />
+      <span
+        className={
+          isHero
+            ? "text-[8px] font-semibold uppercase tracking-wide text-emerald-600"
+            : "max-w-[72px] truncate text-[9px] font-medium text-gray-500"
+        }
+      >
+        {label}
+      </span>
+    </div>
+  );
+
+  const Dot = () => (
+    <span className="text-gray-300" aria-hidden="true">
+      ·
+    </span>
+  );
 
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-      {/* hero */}
-      <div className="flex flex-col items-center gap-0.5">
-        <CardGroup cards={heroCards ?? [null, null]} />
-        <span className="text-[8px] font-semibold uppercase tracking-wide text-emerald-600">
-          Hero
-        </span>
-      </div>
+    <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
+      {hero && <PlayerBlock cards={hero.cards} label="Hero" hero />}
 
       {board.length > 0 && (
         <>
-          <span className="text-gray-300" aria-hidden="true">
-            ·
-          </span>
-          <CardGroup cards={board} />
+          {hero && <Dot />}
+          <CardGroup cards={board} overlap />
         </>
       )}
 
-      {villainName != null && (
-        <>
-          <span className="text-gray-300" aria-hidden="true">
-            ·
-          </span>
-          <div className="flex flex-col items-center gap-0.5">
-            <CardGroup cards={villainCards ?? [null, null]} />
-            <span className="max-w-[72px] truncate text-[9px] font-medium text-gray-500">
-              {villainName}
-            </span>
-          </div>
-        </>
-      )}
+      {opponents.map((p, i) => (
+        <React.Fragment key={i}>
+          {(hero || board.length > 0 || i > 0) && <Dot />}
+          <PlayerBlock cards={p.cards} label={p.name} />
+        </React.Fragment>
+      ))}
     </div>
   );
 };
