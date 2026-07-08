@@ -557,7 +557,7 @@ const CreateHandHistory: React.FC<Props> = ({
   const pot = potView(engine, unitMode);
 
   return (
-    <div className="mx-auto max-w-6xl px-4 pt-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+    <div className="mx-auto max-w-6xl px-4 pt-2 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
       {embedded && (
         <div className="mb-4 flex items-center justify-between gap-3">
           <h1 className="text-lg font-semibold text-white">Create Hand History</h1>
@@ -573,26 +573,25 @@ const CreateHandHistory: React.FC<Props> = ({
       )}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-8">
       {/* ───────── Table (left column) ───────── */}
-      <div className="w-full lg:flex-1 lg:min-w-0 py-4">
-      {/* Fixed-height slot so arming a placement doesn't shift the table. The
-          idle "move button" affordance now lives on the D badge itself. */}
-      {phase === "setup" && (
-        <div className="mb-2 flex min-h-[28px] items-center justify-center">
-          {placement && (
-            <div className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-3 py-1 text-xs font-medium text-white shadow">
-              <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
-              {placement.kind === "button"
-                ? "Tap a seat to move the button"
-                : "Tap a seat to move this player"}
-              <button
-                type="button"
-                onClick={() => setPlacement(null)}
-                className="ml-1 underline underline-offset-2"
-              >
-                Cancel
-              </button>
-            </div>
-          )}
+      <div className="w-full lg:flex-1 lg:min-w-0 relative">
+      {/* Placement banner overlays the table top so it takes no flow height —
+          arming never shifts the layout. The idle "move button" affordance
+          lives on the D badge itself. */}
+      {placement && (
+        <div className="pointer-events-none absolute left-1/2 top-1 z-40 -translate-x-1/2">
+          <div className="pointer-events-auto inline-flex items-center gap-2 whitespace-nowrap rounded-full bg-emerald-600 px-3 py-1 text-xs font-medium text-white shadow">
+            <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
+            {placement.kind === "button"
+              ? "Tap a seat to move the button"
+              : "Tap a seat to move this player"}
+            <button
+              type="button"
+              onClick={() => setPlacement(null)}
+              className="ml-1 underline underline-offset-2"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
       <PokerTable
@@ -750,7 +749,7 @@ const CreateHandHistory: React.FC<Props> = ({
 
       {/* ───────── Setup phase: config form ───────── */}
       {phase === "setup" && (
-        <div className="mt-4 rounded-2xl border border-emerald-300/40 bg-white/95 p-4 shadow-lg shadow-emerald-500/20 backdrop-blur-sm">
+        <div className="rounded-2xl border border-emerald-300/40 bg-white/95 p-4 shadow-lg shadow-emerald-500/20 backdrop-blur-sm">
           <div className="mb-2 flex items-center justify-end">
             <button
               type="button"
@@ -798,7 +797,7 @@ const CreateHandHistory: React.FC<Props> = ({
           <div className="mt-3 flex flex-col gap-1">
             <label className="text-xs font-medium text-gray-700">Comment</label>
             <textarea
-              rows={2}
+              rows={1}
               className={`${inputCls} resize-y`}
               value={state.comment}
               onChange={(e) => update({ comment: e.target.value })}
