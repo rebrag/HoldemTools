@@ -557,7 +557,7 @@ const CreateHandHistory: React.FC<Props> = ({
   const pot = potView(engine, unitMode);
 
   return (
-    <div className="mx-auto max-w-6xl px-4 pt-2 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+    <div className="mx-auto max-w-6xl px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
       {embedded && (
         <div className="mb-4 flex items-center justify-between gap-3">
           <h1 className="text-lg font-semibold text-white">Create Hand History</h1>
@@ -573,7 +573,7 @@ const CreateHandHistory: React.FC<Props> = ({
       )}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-8">
       {/* ───────── Table (left column) ───────── */}
-      <div className="w-full lg:flex-1 lg:min-w-0 relative">
+      <div className="w-full lg:flex-1 lg:min-w-0 relative pt-2">
       {/* Placement banner overlays the table top so it takes no flow height —
           arming never shifts the layout. The idle "move button" affordance
           lives on the D badge itself. */}
