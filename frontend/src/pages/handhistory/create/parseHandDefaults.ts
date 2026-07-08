@@ -1,13 +1,39 @@
 // src/pages/handhistory/create/parseHandDefaults.ts
-// Tolerant reverse-parser for the text produced by serialize.ts. It recovers
-// only the fields we reuse as setup defaults for the *next* hand: blinds, ante,
-// game, table size, and each seat's name + stack. Hand-specific details (button,
-// hero, hole cards, action) are intentionally ignored.
-import type { InitialStateOverrides } from "./types";
+// Setup defaults for the *next* hand, recovered from a saved hand. We reuse only
+// blinds, ante, game, table size, and each seat's name + stack + sitting-out
+// state; hand-specific details (button, hero, hole cards, action) are ignored.
+//
+// Preferred source is the lossless replay payload embedded in the saved text
+// (see replay.ts) — it carries the full state including sitting-out seats, which
+// the human-readable text drops (serialize.ts lists only dealt-in players). We
+// fall back to a tolerant reverse-parse of the text for old/foreign hands that
+// have no payload.
+import type { AdvancedHandState, InitialStateOverrides } from "./types";
+import { parseReplay } from "./replay";
 
 export interface HandDefaults extends InitialStateOverrides {
   tableSize?: number;
-  seats?: { name: string; stack: string }[];
+  seats?: { name: string; stack: string; sittingOut?: boolean }[];
+}
+
+// Build defaults straight from a previous hand's full state (the lossless path).
+// Includes every occupied seat — active AND sitting-out — in seat order, so the
+// next hand keeps the whole roster and the table size doesn't collapse to the
+// dealt-in count. Sitting-out seats stay sitting out.
+function defaultsFromState(state: AdvancedHandState): HandDefaults {
+  const occupied = state.seats.filter((s) => s.occupied);
+  return {
+    game: state.game,
+    smallBlind: cleanNum(state.smallBlind),
+    bigBlind: cleanNum(state.bigBlind),
+    ante: cleanNum(state.ante),
+    tableSize: occupied.length,
+    seats: occupied.map((s) => ({
+      name: s.name,
+      stack: cleanNum(s.stack),
+      sittingOut: s.sittingOut,
+    })),
+  };
 }
 
 // Bare position labels serialize.ts emits when a seat has no custom name. When a
@@ -46,6 +72,11 @@ function nameFromLabel(label: string): string {
 }
 
 export function parseHandDefaults(rawText: string): HandDefaults {
+  // Lossless path: newer hands embed the full state, which keeps sitting-out
+  // seats the text-only parse below can't see.
+  const replay = parseReplay(rawText);
+  if (replay) return defaultsFromState(replay.state);
+
   const out: HandDefaults = {};
   const lines = rawText.split("\n");
 

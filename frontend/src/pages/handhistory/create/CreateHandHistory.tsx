@@ -72,7 +72,11 @@ function applyDefaults(base: AdvancedHandState, d: HandDefaults): AdvancedHandSt
   if (d.seats) {
     seats = seats.map((s, i) => {
       const ds = d.seats![i];
-      return ds ? { ...s, name: ds.name, stack: ds.stack, occupied: true } : s;
+      // Carry the sitting-out state so a sat-out player stays sat out next hand
+      // (and active seats stay active). Hole cards are left reset above.
+      return ds
+        ? { ...s, name: ds.name, stack: ds.stack, occupied: true, sittingOut: ds.sittingOut }
+        : s;
     });
   }
   next.seats = seats;
