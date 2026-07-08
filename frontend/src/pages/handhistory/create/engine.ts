@@ -158,13 +158,13 @@ export function buildEngine(state: AdvancedHandState): Engine {
   const sb = num(state.smallBlind, bb / 2);
   const ante = Math.max(0, parseFloat(state.ante) || 0);
   const labels = positionLabelsForSeats(
-    state.seats.map((s) => s.occupied),
+    state.seats.map((s) => s.occupied && !s.sittingOut),
     state.buttonSeat
   );
 
   const players: EnginePlayer[] = [];
   state.seats.forEach((seat, i) => {
-    if (!seat.occupied) return;
+    if (!seat.occupied || seat.sittingOut) return;
     const startingStack = num(seat.stack, 100 * bb);
     players.push({
       seat: i,

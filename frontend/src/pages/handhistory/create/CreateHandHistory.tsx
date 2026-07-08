@@ -39,7 +39,8 @@ import {
   blankSeat,
   createInitialState,
   handSize,
-  nextOccupiedSeat,
+  isActiveSeat,
+  nextActiveSeat,
   resizeHoleCards,
   resizeSeats,
   usedCards,
@@ -150,11 +151,16 @@ const CreateHandHistory: React.FC<Props> = ({
   const rememberedRef = useRef<HandDefaults | null>(null);
 
   const labels = useMemo(
-    () => positionLabelsForSeats(state.seats.map((s) => s.occupied), state.buttonSeat),
+    () =>
+      positionLabelsForSeats(
+        state.seats.map((s) => s.occupied && !s.sittingOut),
+        state.buttonSeat
+      ),
     [state.seats, state.buttonSeat]
   );
 
-  const occupiedCount = state.seats.filter((s) => s.occupied).length;
+  // Seats dealt into the hand (occupied and not sitting out) — gates Start.
+  const activeCount = state.seats.filter((s) => isActiveSeat(s)).length;
 
   const evalGame = useMemo(() => evalGameId(state.game), [state.game]);
   const cardsPerHand = handSize(state.game);
@@ -261,11 +267,19 @@ const CreateHandHistory: React.FC<Props> = ({
   const saveSeat = (index: number, result: SeatEditResult) => {
     touchedRef.current = true;
     const { seat, makeButton, makeHero, makeStraddle, straddleAmount } = result;
+    const seats = state.seats.map((s, i) => (i === index ? seat : s));
+    // A seat that just sat out can't hold the button, hero, or straddle —
+    // walk the marker to the next active seat (mirrors emptySeatAt).
+    const satOut = !!seat.sittingOut;
+    const reassign = (idx: number) =>
+      satOut && idx === index && seats.some((s) => isActiveSeat(s))
+        ? nextActiveSeat(seats, index)
+        : idx;
     const nextState: AdvancedHandState = {
       ...state,
-      seats: state.seats.map((s, i) => (i === index ? seat : s)),
-      buttonSeat: makeButton ? index : state.buttonSeat,
-      heroSeat: makeHero ? index : state.heroSeat,
+      seats,
+      buttonSeat: makeButton ? index : reassign(state.buttonSeat),
+      heroSeat: makeHero ? index : reassign(state.heroSeat),
       straddleSeat: makeStraddle
         ? index
         : state.straddleSeat === index
@@ -317,8 +331,8 @@ const CreateHandHistory: React.FC<Props> = ({
         i === index ? blankSeat(handSize(prev.game)) : s
       );
       const reassign = (idx: number) =>
-        idx === index && seats.some((s) => s.occupied)
-          ? nextOccupiedSeat(seats, index)
+        idx === index && seats.some((s) => isActiveSeat(s))
+          ? nextActiveSeat(seats, index)
           : idx;
       return {
         ...prev,
@@ -336,7 +350,7 @@ const CreateHandHistory: React.FC<Props> = ({
   const handlePlacementTarget = (i: number) => {
     if (!placement) return;
     if (placement.kind === "button") {
-      if (state.seats[i].occupied && i !== state.buttonSeat) update({ buttonSeat: i });
+      if (isActiveSeat(state.seats[i]) && i !== state.buttonSeat) update({ buttonSeat: i });
       setPlacement(null);
       return;
     }
@@ -418,7 +432,7 @@ const CreateHandHistory: React.FC<Props> = ({
   }, [embedded, user, localHands]);
 
   const start = () => {
-    if (occupiedCount < 2) return;
+    if (activeCount < 2) return;
     setPlacement(null);
     setEngine(buildEngine(state));
     setHistory([]);
@@ -536,14 +550,14 @@ const CreateHandHistory: React.FC<Props> = ({
   const displayedSeats = placement
     ? tableSeats.map((s, i) => {
         const targetable =
-          placement.kind === "button" ? state.seats[i].occupied : i !== placement.from;
+          placement.kind === "button" ? isActiveSeat(state.seats[i]) : i !== placement.from;
         return targetable ? { ...s, highlighted: true } : s;
       })
     : tableSeats;
   const pot = potView(engine, unitMode);
 
   return (
-    <div className="mx-auto max-w-6xl px-4 pt-6 pb-16">
+    <div className="mx-auto max-w-6xl px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
       {embedded && (
         <div className="mb-4 flex items-center justify-between gap-3">
           <h1 className="text-lg font-semibold text-white">Create Hand History</h1>
@@ -559,38 +573,38 @@ const CreateHandHistory: React.FC<Props> = ({
       )}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-8">
       {/* ───────── Table (left column) ───────── */}
-      <div className="w-full lg:flex-1 lg:min-w-0 py-4">
-      {phase === "setup" && (
-        <div className="mb-2 flex items-center justify-center">
-          {placement ? (
-            <div className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-3 py-1 text-xs font-medium text-white shadow">
-              <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
-              {placement.kind === "button"
-                ? "Tap a seat to move the button"
-                : "Tap a seat to move this player"}
-              <button
-                type="button"
-                onClick={() => setPlacement(null)}
-                className="ml-1 underline underline-offset-2"
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
+      <div className="w-full lg:flex-1 lg:min-w-0 relative pt-2">
+      {/* Placement banner overlays the table top so it takes no flow height —
+          arming never shifts the layout. The idle "move button" affordance
+          lives on the D badge itself. */}
+      {placement && (
+        <div className="pointer-events-none absolute left-1/2 top-1 z-40 -translate-x-1/2">
+          <div className="pointer-events-auto inline-flex items-center gap-2 whitespace-nowrap rounded-full bg-emerald-600 px-3 py-1 text-xs font-medium text-white shadow">
+            <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
+            {placement.kind === "button"
+              ? "Tap a seat to move the button"
+              : "Tap a seat to move this player"}
             <button
               type="button"
-              onClick={() => setPlacement({ kind: "button" })}
-              className="inline-flex items-center gap-1 rounded-full border border-emerald-300/50 bg-white/90 px-3 py-1 text-xs font-semibold text-emerald-700 shadow-sm transition hover:-translate-y-[1px] hover:bg-emerald-50 active:translate-y-[1px]"
+              onClick={() => setPlacement(null)}
+              className="ml-1 underline underline-offset-2"
             >
-              ⊙ Move button
+              Cancel
             </button>
-          )}
+          </div>
         </div>
       )}
       <PokerTable
         size={state.tableSize}
         seats={displayedSeats}
         onSeatClick={(i) => (placement ? handlePlacementTarget(i) : setEditingSeat(i))}
+        onDealerBadgeClick={
+          phase === "setup"
+            ? () =>
+                setPlacement((p) => (p?.kind === "button" ? null : { kind: "button" }))
+            : undefined
+        }
+        dealerBadgeArmed={placement?.kind === "button"}
         maxWidthClassName="max-w-2xl"
         potAmount={pot?.amount}
         potLabel={pot?.label}
@@ -735,7 +749,7 @@ const CreateHandHistory: React.FC<Props> = ({
 
       {/* ───────── Setup phase: config form ───────── */}
       {phase === "setup" && (
-        <div className="mt-4 rounded-2xl border border-emerald-300/40 bg-white/95 p-4 shadow-lg shadow-emerald-500/20 backdrop-blur-sm">
+        <div className="rounded-2xl border border-emerald-300/40 bg-white/95 p-4 shadow-lg shadow-emerald-500/20 backdrop-blur-sm">
           <div className="mb-2 flex items-center justify-end">
             <button
               type="button"
@@ -783,7 +797,7 @@ const CreateHandHistory: React.FC<Props> = ({
           <div className="mt-3 flex flex-col gap-1">
             <label className="text-xs font-medium text-gray-700">Comment</label>
             <textarea
-              rows={2}
+              rows={1}
               className={`${inputCls} resize-y`}
               value={state.comment}
               onChange={(e) => update({ comment: e.target.value })}
@@ -807,7 +821,7 @@ const CreateHandHistory: React.FC<Props> = ({
             </button>
             <button
               type="button"
-              disabled={occupiedCount < 2}
+              disabled={activeCount < 2}
               onClick={start}
               className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-6 py-1.5 text-sm font-semibold text-white shadow-md shadow-emerald-500/40 transition hover:-translate-y-[1px] hover:bg-emerald-500 active:translate-y-[1px] disabled:opacity-50"
             >

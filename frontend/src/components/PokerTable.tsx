@@ -32,6 +32,8 @@ export interface PokerTableSeat {
   isActive?: boolean;
   isHero?: boolean;
   folded?: boolean;
+  /** Seated but not dealt in: grayed out with a "sitting out" tag. */
+  sittingOut?: boolean;
   /** skip rendering entirely (e.g. an empty seat during a live hand). */
   hidden?: boolean;
   /** render as a muted "empty" placeholder (no cards; tap to seat a player). */
@@ -66,6 +68,11 @@ export interface PokerTableProps {
   className?: string;
   /** override seatCoords(size), e.g. to pull side seats inward. */
   coordsOverride?: SeatCoord[];
+  /** When set, the dealer "D" badge becomes tappable (e.g. to arm a
+   *  "move the button" flow). Only the recorder's setup phase passes this. */
+  onDealerBadgeClick?: () => void;
+  /** Pulsing cue on the D badge while the move-button flow is armed. */
+  dealerBadgeArmed?: boolean;
 }
 
 /** Pulsing ring + "NEXT" chip marking the slot the card picker will fill. */
@@ -94,6 +101,8 @@ const PokerTable: React.FC<PokerTableProps> = ({
   cardBackWidth = 30,
   className,
   coordsOverride,
+  onDealerBadgeClick,
+  dealerBadgeArmed,
 }) => {
   const coords = coordsOverride ?? seatCoords(size);
 
@@ -207,7 +216,7 @@ const PokerTable: React.FC<PokerTableProps> = ({
                 onClick={clickable ? () => onSeatClick!(i) : undefined}
                 className={`absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5 ${
                   clickable ? "cursor-pointer" : "cursor-default"
-                } ${seat.folded ? "opacity-40 grayscale" : ""} ${
+                } ${seat.folded || seat.sittingOut ? "opacity-40 grayscale" : ""} ${
                   seat.highlighted
                     ? "rounded-lg ring-2 ring-emerald-400 ring-offset-1 ring-offset-transparent"
                     : ""
@@ -234,8 +243,39 @@ const PokerTable: React.FC<PokerTableProps> = ({
                       );
                     })}
                     {seat.isButton && (
-                      <span className="absolute -right-3 -bottom-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-b from-amber-200 to-amber-500 text-[10px] font-bold text-amber-950 shadow-md ring-1 ring-amber-700/70">
-                        D
+                      /* The seat root is a <button>, so the badge stays a span
+                         (nested buttons are invalid HTML). When interactive it
+                         gets role="button" + stopPropagation so tapping it never
+                         also opens the seat editor; keyboard users keep the
+                         "Dealer button here" checkbox in the seat editor. The
+                         outer padding + negative margin widens the tap target
+                         to ~32px without changing the visual size. */
+                      <span
+                        role={onDealerBadgeClick ? "button" : undefined}
+                        aria-label={onDealerBadgeClick ? "Move dealer button" : undefined}
+                        onClick={
+                          onDealerBadgeClick
+                            ? (e) => {
+                                e.stopPropagation();
+                                onDealerBadgeClick();
+                              }
+                            : undefined
+                        }
+                        className={`absolute -right-3 -bottom-1 z-10 ${
+                          onDealerBadgeClick ? "-m-1.5 cursor-pointer p-1.5" : ""
+                        }`}
+                      >
+                        <span
+                          className={`inline-flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-b from-amber-200 to-amber-500 text-[10px] font-bold text-amber-950 shadow-md transition-transform ${
+                            dealerBadgeArmed
+                              ? "animate-pulse ring-2 ring-emerald-300"
+                              : onDealerBadgeClick
+                              ? "ring-1 ring-amber-700/70 shadow-[0_0_0_2px_rgba(255,255,255,0.35)] hover:scale-110 active:scale-95"
+                              : "ring-1 ring-amber-700/70"
+                          }`}
+                        >
+                          D
+                        </span>
                       </span>
                     )}
                   </div>
@@ -260,6 +300,12 @@ const PokerTable: React.FC<PokerTableProps> = ({
                 {seat.stackText && (
                   <span className="-mt-px rounded-b-md bg-black/60 px-1.5 text-[10px] font-semibold text-emerald-100 shadow-sm ring-1 ring-black/40">
                     {seat.stackText}
+                  </span>
+                )}
+
+                {seat.sittingOut && seat.label.toLowerCase() !== "sitting out" && (
+                  <span className="mt-0.5 rounded-full bg-black/50 px-1.5 text-[8px] font-semibold uppercase tracking-wide text-white/60">
+                    sitting out
                   </span>
                 )}
 

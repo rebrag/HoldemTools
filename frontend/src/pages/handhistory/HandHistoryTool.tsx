@@ -411,7 +411,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
         </motion.div>
       ) : (
         <motion.ul
-          className="divide-y divide-emerald-100 overflow-hidden rounded-2xl border border-emerald-300/40 bg-white/90 shadow-sm shadow-emerald-500/10 backdrop-blur-sm"
+          className="divide-y divide-emerald-100 overflow-hidden rounded-2xl border border-emerald-300/40 bg-white/90 shadow-sm shadow-emerald-500/10"
           variants={listVariants}
           initial="hidden"
           animate="visible"
@@ -480,7 +480,6 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
               return (
                 <motion.li
                   key={row.key}
-                  layout
                   variants={itemVariants}
                   exit="exit"
                   className="px-3 py-1.5 transition-colors hover:bg-emerald-50/60"
@@ -533,11 +532,11 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                     {menuOpen && (
                       <motion.div
                         key="menu"
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        transition={{ duration: 0.18, ease: "easeInOut" }}
-                        className="overflow-hidden sm:hidden"
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.15, ease: "easeOut" }}
+                        className="sm:hidden"
                       >
                         <div className="mt-2 flex items-center justify-end gap-1.5">
                           {shareBtn}
@@ -552,10 +551,10 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                     {expanded && (
                       <motion.pre
                         key="raw"
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        transition={{ duration: 0.22, ease: "easeInOut" }}
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.18, ease: "easeOut" }}
                         className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-[11px] leading-relaxed text-gray-800"
                       >
                         {row.clean}

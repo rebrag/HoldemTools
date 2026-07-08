@@ -119,7 +119,7 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
     () =>
       data
         ? positionLabelsForSeats(
-            data.state.seats.map((s) => s.occupied),
+            data.state.seats.map((s) => s.occupied && !s.sittingOut),
             data.state.buttonSeat
           )
         : [],
@@ -195,6 +195,22 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
   const caption = replay.captions[cursor] ?? "";
   const atStart = cursor <= 0;
   const atEnd = cursor >= last;
+
+  // "Hide cards until showdown": marked seats render card backs on every frame
+  // before the last one, and are revealed on the final frame only if the hand
+  // actually reached showdown with that player still in it. A hidden player who
+  // folded (or won by everyone else folding) stays face-down for the whole
+  // replay — same as live poker. Folded status comes from the FINAL frame so
+  // scrubbing backward past a fold never flashes the cards face-up.
+  const finalFrame = replay.frames[last];
+  const showdownReached =
+    finalFrame.done && finalFrame.players.filter((p) => !p.folded).length >= 2;
+  const concealSeats = data.state.seats.map((s, i) => {
+    if (!s.hideUntilShowdown) return false;
+    if (!atEnd || !showdownReached) return true;
+    const fp = finalFrame.players.find((p) => p.seat === i);
+    return !fp || fp.folded;
+  });
 
   const tap = reduce ? undefined : { scale: 0.9 };
 
@@ -283,7 +299,7 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
       <div className="w-full py-2">
         <PokerTable
           size={data.state.tableSize}
-          seats={buildTableSeats({ state: data.state, engine: frame, labels, unitMode })}
+          seats={buildTableSeats({ state: data.state, engine: frame, labels, unitMode, concealSeats })}
           maxWidthClassName="max-w-2xl"
           potAmount={pot?.amount}
           potLabel={pot?.label}
