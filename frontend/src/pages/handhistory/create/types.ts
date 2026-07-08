@@ -17,6 +17,14 @@ export interface Seat {
   name: string; // optional custom label ("David sunglasses kid"); falls back to position
   stack: string; // kept as string for input ergonomics; parsed when needed
   holeCards: HoleCards;
+  /** Seated but not dealt in: shown at the table, excluded from the hand
+   *  (no blinds, no cards, no action). Optional so old replay payloads,
+   *  which predate the field, deserialize unchanged. */
+  sittingOut?: boolean;
+  /** Replay-only: render this seat's hole cards face-down until showdown.
+   *  Lives solely in the embedded replay payload — the human-readable hand
+   *  text never mentions it. Optional for the same backward-compat reason. */
+  hideUntilShowdown?: boolean;
 }
 
 export interface AdvancedHandState {
@@ -58,6 +66,23 @@ export function nextOccupiedSeat(seats: Seat[], from: number): number {
   for (let step = 1; step <= n; step++) {
     const i = (from + step) % n;
     if (seats[i]?.occupied) return i;
+  }
+  return from;
+}
+
+// A seat that is dealt into the hand: occupied and not sitting out. The engine,
+// position labels, and button/hero assignment all key off this.
+export function isActiveSeat(s: Seat | undefined): boolean {
+  return !!s && s.occupied && !s.sittingOut;
+}
+
+// nextOccupiedSeat, but skipping sitting-out seats too. Used to keep the
+// button/hero on a seat that is actually in the hand.
+export function nextActiveSeat(seats: Seat[], from: number): number {
+  const n = seats.length;
+  for (let step = 1; step <= n; step++) {
+    const i = (from + step) % n;
+    if (isActiveSeat(seats[i])) return i;
   }
   return from;
 }

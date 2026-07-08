@@ -21,8 +21,11 @@ export function buildTableSeats(args: {
   engine: Engine | null;
   labels: string[];
   unitMode: "bb" | "chips";
+  /** Replayer-only: seats whose hole cards should render face-down (card
+   *  backs) on this frame. The recorder never passes this. */
+  concealSeats?: boolean[];
 }): PokerTableSeat[] {
-  const { state, engine, labels, unitMode } = args;
+  const { state, engine, labels, unitMode, concealSeats } = args;
 
   // Forced-bet preview shown during setup (before the engine exists). Derived
   // from the same position labels as buildEngine's blind assignment, so the
@@ -40,7 +43,7 @@ export function buildTableSeats(args: {
     if (sbIdx >= 0 && sb > 0 && !(sbIdx in setupPosts))
       setupPosts[sbIdx] = { amount: sb, label: `SB ${fmtNum(sb)}` };
     const strSeat = state.straddleSeat;
-    if (strSeat != null && state.seats[strSeat]?.occupied && str > 0) {
+    if (strSeat != null && state.seats[strSeat]?.occupied && !state.seats[strSeat]?.sittingOut && str > 0) {
       setupPosts[strSeat] = { amount: str, label: `Str ${fmtNum(str)}` }; // straddle wins over a blind badge
     }
   }
@@ -48,7 +51,10 @@ export function buildTableSeats(args: {
   return Array.from({ length: state.tableSize }, (_, i): PokerTableSeat => {
     const seat = state.seats[i];
     const empty = !seat.occupied;
-    const label = seat.name.trim() || labels[i];
+    const sittingOut = !empty && !!seat.sittingOut;
+    // Sitting-out seats have no position label; fall back to a status label so
+    // an unnamed seat's badge isn't blank.
+    const label = seat.name.trim() || labels[i] || (sittingOut ? "Sitting out" : "");
     const ep = engine?.players.find((p) => p.seat === i) ?? null;
     const isActive =
       !!engine && engine.toAct != null && engine.players[engine.toAct]?.seat === i;
@@ -71,14 +77,24 @@ export function buildTableSeats(args: {
       key: i,
       label: empty ? "Empty" : label,
       stackText: empty ? undefined : stackText || undefined,
-      committedAmount: empty ? undefined : committedAmount,
-      committedText: empty ? undefined : committedText,
-      holeCards: empty ? undefined : seat.holeCards,
-      isButton: !empty && state.buttonSeat === i,
+      committedAmount: empty || sittingOut ? undefined : committedAmount,
+      committedText: empty || sittingOut ? undefined : committedText,
+      // Sitting out = not dealt in (no card row); concealed = dealt but shown
+      // face-down (null slots render as CardBacks).
+      holeCards:
+        empty || sittingOut
+          ? undefined
+          : concealSeats?.[i]
+          ? seat.holeCards.map(() => null)
+          : seat.holeCards,
+      isButton: !empty && !sittingOut && state.buttonSeat === i,
       isHero: !empty && state.heroSeat === i,
       isActive,
       folded: ep?.folded ?? false,
-      hidden: !!engine && !ep, // unseated during a live hand (empty or not dealt in)
+      sittingOut,
+      // Unseated during a live hand (empty or not dealt in) — but keep
+      // sitting-out seats visible (inert, grayed) throughout the hand.
+      hidden: !!engine && !ep && !sittingOut,
       isEmpty: empty,
     };
   });

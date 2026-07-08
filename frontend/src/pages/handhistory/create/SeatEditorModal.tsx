@@ -56,6 +56,8 @@ const SeatEditorModal: React.FC<Props> = ({
   const [makeButton, setMakeButton] = useState(isButton);
   const [makeHero, setMakeHero] = useState(isHero);
   const [makeStraddle, setMakeStraddle] = useState(isStraddle);
+  const [sittingOut, setSittingOut] = useState(!!seat.sittingOut);
+  const [hideCards, setHideCards] = useState(!!seat.hideUntilShowdown);
   const defaultStraddle = (() => {
     const bb = parseFloat(bigBlind);
     return Number.isFinite(bb) && bb > 0 ? (bb * 2).toString() : "2";
@@ -98,17 +100,22 @@ const SeatEditorModal: React.FC<Props> = ({
   const save = () => {
     // Don't resurrect a deliberately-empty seat on a no-op save (e.g. tapping the
     // backdrop): it only becomes occupied once something is entered.
-    const filled = name.trim() !== "" || stack.trim() !== "" || hole.some((c) => !!c);
+    const filled =
+      name.trim() !== "" || stack.trim() !== "" || hole.some((c) => !!c) || sittingOut;
     onSave({
       seat: {
         occupied: seat.occupied || filled,
         name: name.trim(),
         stack: stack.trim(),
-        holeCards: pad(hole.filter((c): c is string => !!c)),
+        // A sitting-out seat isn't dealt in — drop its cards so they don't
+        // count as used elsewhere.
+        holeCards: sittingOut ? pad([]) : pad(hole.filter((c): c is string => !!c)),
+        sittingOut,
+        hideUntilShowdown: !sittingOut && hideCards,
       },
-      makeButton,
-      makeHero,
-      makeStraddle: canStraddle && makeStraddle,
+      makeButton: !sittingOut && makeButton,
+      makeHero: !sittingOut && makeHero,
+      makeStraddle: !sittingOut && canStraddle && makeStraddle,
       straddleAmount: straddleAmt.trim() || defaultStraddle,
     });
   };
@@ -172,33 +179,81 @@ const SeatEditorModal: React.FC<Props> = ({
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-4">
-          <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-700">
+          <label
+            className={`inline-flex items-center gap-2 text-xs font-medium ${
+              sittingOut ? "text-gray-400" : "text-gray-700"
+            }`}
+          >
             <input
               type="checkbox"
-              checked={makeButton}
+              checked={!sittingOut && makeButton}
+              disabled={sittingOut}
               onChange={(e) => setMakeButton(e.target.checked)}
               className="h-4 w-4 accent-emerald-600"
             />
             Dealer button here
           </label>
-          <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-700">
+          <label
+            className={`inline-flex items-center gap-2 text-xs font-medium ${
+              sittingOut ? "text-gray-400" : "text-gray-700"
+            }`}
+          >
             <input
               type="checkbox"
-              checked={makeHero}
+              checked={!sittingOut && makeHero}
+              disabled={sittingOut}
               onChange={(e) => setMakeHero(e.target.checked)}
               className="h-4 w-4 accent-emerald-600"
             />
             This is my hand (hero)
           </label>
           {canStraddle && (
-            <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-700">
+            <label
+              className={`inline-flex items-center gap-2 text-xs font-medium ${
+                sittingOut ? "text-gray-400" : "text-gray-700"
+              }`}
+            >
               <input
                 type="checkbox"
-                checked={makeStraddle}
+                checked={!sittingOut && makeStraddle}
+                disabled={sittingOut}
                 onChange={(e) => setMakeStraddle(e.target.checked)}
                 className="h-4 w-4 accent-emerald-600"
               />
               Posts a straddle
+            </label>
+          )}
+          {!sittingOut && (
+            <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-700">
+              <input
+                type="checkbox"
+                checked={hideCards}
+                onChange={(e) => setHideCards(e.target.checked)}
+                className="h-4 w-4 accent-emerald-600"
+              />
+              <span>
+                Hide cards until showdown{" "}
+                <span className="font-normal text-gray-400">(replays only)</span>
+              </span>
+            </label>
+          )}
+          {allowStructural && (
+            <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-700">
+              <input
+                type="checkbox"
+                checked={sittingOut}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setSittingOut(on);
+                  if (on) {
+                    setMakeButton(false);
+                    setMakeHero(false);
+                    setMakeStraddle(false);
+                  }
+                }}
+                className="h-4 w-4 accent-emerald-600"
+              />
+              Sitting out
             </label>
           )}
         </div>
@@ -216,7 +271,8 @@ const SeatEditorModal: React.FC<Props> = ({
           </div>
         )}
 
-        {/* Hole cards */}
+        {/* Hole cards (a sitting-out seat isn't dealt any) */}
+        {!sittingOut && (
         <div className="mt-4">
           <div className="mb-1 flex items-center justify-between">
             <label className="text-xs font-medium text-gray-700">Hole cards</label>
@@ -261,6 +317,7 @@ const SeatEditorModal: React.FC<Props> = ({
             className="rounded-xl border border-slate-700 bg-slate-900 p-2.5"
           />
         </div>
+        )}
 
         {allowStructural && seat.occupied && (
           <div className="mt-4 flex items-center gap-4 border-t border-gray-100 pt-3">

@@ -28,7 +28,7 @@ const AppShell: React.FC<AppShellProps> = ({ user }) => {
       {/* Shared cinematic backdrop behind every page (fixed, -z-10) so the
           site's background stays consistent with the homepage. */}
       <AuroraBackground variant="table" />
-      <div className="min-h-screen">
+      <div>
         <NavBar />
         <div className="pt-12">
           <Suspense fallback={<RouteFallback />}>

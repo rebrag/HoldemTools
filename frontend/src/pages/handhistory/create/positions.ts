@@ -20,8 +20,10 @@ const ORDER_FROM_BTN: Record<number, string[]> = {
 // Position label for every seat, counting only OCCUPIED seats. Positions are
 // assigned by walking occupied seats clockwise from the button, so a 9-max table
 // with three empty seats is labelled exactly like a 6-max game. Empty seats get
-// "". `buttonSeat` must be occupied — callers keep that invariant by reassigning
-// the button whenever its seat is emptied or vacated.
+// "". `buttonSeat` must be occupied and not sitting out — callers keep that
+// invariant by reassigning the button whenever its seat is emptied, vacated, or
+// sat out. (Callers pass an "active" mask — occupied && !sittingOut — so
+// sitting-out seats are labelled "" and skipped for blinds.)
 export function positionLabelsForSeats(
   occupied: boolean[],
   buttonSeat: number

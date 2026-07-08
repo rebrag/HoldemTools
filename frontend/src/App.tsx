@@ -73,7 +73,7 @@ function App() {
   const effectiveUser = user ?? (DEV_AUTH_BYPASS ? mockDevUser : null);
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-dvh flex flex-col">
       <div className="flex-grow">
         <Routes>
           <Route path="/solver" element={<Navigate to="/solutions" replace />} />
