@@ -1,7 +1,5 @@
 // src/hooks/useTier.ts
 import { useEffect, useMemo, useState } from "react";
-import { collection, onSnapshot } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { getPriceIdForTier, type Tier } from "@/lib/stripe/stripeTiers";
 
 // Which subscription statuses count as "active enough"
@@ -14,44 +12,57 @@ export function useTier(uid: string | null) {
   useEffect(() => {
     if (!uid) { setTier("free"); setLoading(false); return; }
 
-    const ref = collection(db, "customers", uid, "subscriptions");
-    const unsub = onSnapshot(ref, (snap) => {
-      // environment price IDs
-      const PLUS = getPriceIdForTier("plus");
-      const PRO  = getPriceIdForTier("pro");
+    // Firestore is loaded on demand: this hook mounts with the app shell, and
+    // a static import here would put the whole SDK on the critical path.
+    let unsub: (() => void) | undefined;
+    let cancelled = false;
 
-      let best: Tier = "free";
+    (async () => {
+      const [{ collection, onSnapshot }, { db }] = await Promise.all([
+        import("firebase/firestore"),
+        import("@/lib/firestore"),
+      ]);
+      if (cancelled) return;
 
-      snap.forEach((doc) => {
-        const data = doc.data() ?? {};
-        const status = String(data.status ?? "").toLowerCase();
-        if (!ACTIVE.has(status)) return;
+      const ref = collection(db, "customers", uid, "subscriptions");
+      unsub = onSnapshot(ref, (snap) => {
+        // environment price IDs
+        const PLUS = getPriceIdForTier("plus");
+        const PRO  = getPriceIdForTier("pro");
 
-        // Try to grab price IDs from multiple shapes the Firebase ext may write
-        const items = Array.isArray(data.items) ? data.items : [];
-        const firstItem = items[0] ?? {};
-        const nestedPrice = firstItem?.price?.id;
-        const flatPrice   = data?.price?.id ?? data?.price_id;
+        let best: Tier = "free";
 
-        const candidatePriceId =
-          (typeof nestedPrice === "string" && nestedPrice) ||
-          (typeof flatPrice === "string" && flatPrice) ||
-          "";
+        snap.forEach((doc) => {
+          const data = doc.data() ?? {};
+          const status = String(data.status ?? "").toLowerCase();
+          if (!ACTIVE.has(status)) return;
 
-        // Upgrade logic: Pro > Plus > Free
-        if (PRO && candidatePriceId === PRO) {
-          best = "pro";
-        } else if (PLUS && candidatePriceId === PLUS) {
-          // only set plus if we don't already have pro
-          if (best !== "pro") best = "plus";
-        }
-      });
+          // Try to grab price IDs from multiple shapes the Firebase ext may write
+          const items = Array.isArray(data.items) ? data.items : [];
+          const firstItem = items[0] ?? {};
+          const nestedPrice = firstItem?.price?.id;
+          const flatPrice   = data?.price?.id ?? data?.price_id;
 
-      setTier(best);
-      setLoading(false);
-    }, () => setLoading(false));
+          const candidatePriceId =
+            (typeof nestedPrice === "string" && nestedPrice) ||
+            (typeof flatPrice === "string" && flatPrice) ||
+            "";
 
-    return () => unsub();
+          // Upgrade logic: Pro > Plus > Free
+          if (PRO && candidatePriceId === PRO) {
+            best = "pro";
+          } else if (PLUS && candidatePriceId === PLUS) {
+            // only set plus if we don't already have pro
+            if (best !== "pro") best = "plus";
+          }
+        });
+
+        setTier(best);
+        setLoading(false);
+      }, () => setLoading(false));
+    })().catch(() => setLoading(false));
+
+    return () => { cancelled = true; unsub?.(); };
   }, [uid]);
 
   const flags = useMemo(() => ({

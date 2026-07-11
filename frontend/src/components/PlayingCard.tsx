@@ -127,4 +127,6 @@ const PlayingCard: React.FC<PlayingCardProps> = ({ code, size = "md", width, cla
   );
 };
 
-export default PlayingCard;
+// Memoized: props are all primitives and cards render in large batches
+// (boards, previews, grids), so skipping unchanged cards is a cheap win.
+export default React.memo(PlayingCard);

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // src/bankroll/BankrollTracker.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
 import LoadingIndicator from "@/components/LoadingIndicator";
@@ -186,10 +186,14 @@ function buildBreakdownRows(
 }
 
 
+// Memoized (see usage) so modal keystrokes / the draft ticker in the parent
+// don't re-aggregate every session on each render.
 const BreakdownTable: React.FC<{
   sessions: BankrollSession[];
   mode: "weekday" | "month" | "year";
-}> = ({ sessions, mode }) => {
+}> = React.memo(({ sessions, mode }) => {
+  const rows = useMemo(() => buildBreakdownRows(sessions, mode), [sessions, mode]);
+
   if (!sessions.length) {
     return (
       <div className="px-3 py-3 text-center text-sm text-gray-500 bg-white">
@@ -198,7 +202,6 @@ const BreakdownTable: React.FC<{
     );
   }
 
-  const rows = buildBreakdownRows(sessions, mode);
   if (!rows.length) {
     return (
       <div className="px-3 py-3 text-center text-sm text-gray-500 bg-white">
@@ -279,7 +282,7 @@ const BreakdownTable: React.FC<{
       </tbody>
     </table>
   );
-};
+});
 
 const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
   const [sessions, setSessions] = useState<BankrollSession[]>([]);
@@ -972,7 +975,10 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
 
 
 
-  const startEdit = (session: BankrollSession) => {
+  // startEdit/handleDelete are useCallback-stable: they're the memoized
+  // SessionTable's props, so their identity decides whether the whole table
+  // re-renders on unrelated page state changes (modal typing, the 1s ticker).
+  const startEdit = useCallback((session: BankrollSession) => {
     setEditingId(session.id);
     setMode("edit");
     setActiveDraftId(null);
@@ -986,9 +992,9 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
       cashOut: session.cashOut != null ? session.cashOut.toString() : "",
     });
     setIsModalExpanded(true);
-  };
+  }, []);
 
-  const cancelModal = () => {
+  const cancelModal = useCallback(() => {
     if (mode === "draft" && activeDraftId) {
       // discard this draft
       setDrafts((prev) => prev.filter((d) => d.id !== activeDraftId));
@@ -998,32 +1004,35 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
     setMode(null);
     setForm(defaultForm);
     setIsModalExpanded(true);
-  };
+  }, [mode, activeDraftId]);
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm("Delete this session? This cannot be undone.")) {
-      return;
-    }
-    try {
-      setError(null);
-      const res = await fetch(
-        `${API_BASE_URL}/api/bankroll/${encodeURIComponent(id)}`,
-        { method: "DELETE" }
-      );
-      if (!res.ok) {
-        throw new Error(`Failed to delete session (${res.status})`);
+  const handleDelete = useCallback(
+    async (id: string) => {
+      if (!window.confirm("Delete this session? This cannot be undone.")) {
+        return;
       }
-      setSessions((prev) => prev.filter((s) => s.id !== id));
-      if (editingId === id) {
-        cancelModal();
+      try {
+        setError(null);
+        const res = await fetch(
+          `${API_BASE_URL}/api/bankroll/${encodeURIComponent(id)}`,
+          { method: "DELETE" }
+        );
+        if (!res.ok) {
+          throw new Error(`Failed to delete session (${res.status})`);
+        }
+        setSessions((prev) => prev.filter((s) => s.id !== id));
+        if (editingId === id) {
+          cancelModal();
+        }
+      } catch (e: unknown) {
+        console.error(e);
+        setError(
+          e instanceof Error ? e.message : "Failed to delete session"
+        );
       }
-    } catch (e: unknown) {
-      console.error(e);
-      setError(
-        e instanceof Error ? e.message : "Failed to delete session"
-      );
-    }
-  };
+    },
+    [editingId, cancelModal]
+  );
 
   const handleLocationSelectChange = (
     e: React.ChangeEvent<HTMLSelectElement>
@@ -1279,7 +1288,6 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
        <BankrollChartShadcn
         key={`bankroll-chart-${chartNonce}`}
         points={cumulativePoints}
-        hoverIndex={hoverIndex}
         onHoverIndexChange={setHoverIndex}
       />
     )}

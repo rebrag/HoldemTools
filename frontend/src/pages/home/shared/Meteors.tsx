@@ -1,12 +1,18 @@
-import { JSX, useMemo } from "react";
-import { useReducedMotion } from "framer-motion";
+import { JSX, useMemo, useRef } from "react";
+import { useInView, useReducedMotion } from "framer-motion";
+import { usePageVisible } from "@/hooks/usePageVisible";
 
 /**
  * Magic-UI style meteor shower. Purely decorative; skipped under
- * reduced-motion. Meteors are cheap CSS-animated streaks.
+ * reduced-motion. Meteors are cheap CSS-animated streaks, paused while
+ * off-screen or in a hidden tab so they don't composite forever.
  */
 export function Meteors({ count = 14 }: { count?: number }): JSX.Element | null {
   const reduce = useReducedMotion();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const inView = useInView(rootRef);
+  const pageVisible = usePageVisible();
+  const running = inView && pageVisible;
 
   const meteors = useMemo(
     () =>
@@ -22,7 +28,11 @@ export function Meteors({ count = 14 }: { count?: number }): JSX.Element | null 
   if (reduce) return null;
 
   return (
-    <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+    <div
+      ref={rootRef}
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 overflow-hidden"
+    >
       {meteors.map((m) => (
         <span
           key={m.id}
@@ -31,6 +41,7 @@ export function Meteors({ count = 14 }: { count?: number }): JSX.Element | null 
             left: m.left,
             animationDelay: m.delay,
             animationDuration: m.duration,
+            animationPlayState: running ? "running" : "paused",
           }}
         >
           <span className="absolute top-1/2 h-px w-16 -translate-y-1/2 bg-gradient-to-r from-emerald-300/70 to-transparent" />

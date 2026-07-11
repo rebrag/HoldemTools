@@ -115,4 +115,6 @@ const HandPreview: React.FC<{ rawText: string }> = ({ rawText }) => {
   );
 };
 
-export default HandPreview;
+// Memoized: rawText is the only prop, so a row re-render with the same hand
+// skips rebuilding the card DOM entirely.
+export default React.memo(HandPreview);

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { doc, onSnapshot, setDoc, arrayUnion, arrayRemove, serverTimestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { db } from "@/lib/firestore";
 
 type CourseProgressResult = {
   completedSections: Set<number>;
