@@ -7,7 +7,7 @@ import React from "react";
 import PlayingCard from "@/components/PlayingCard";
 import { CardBack, type PokerTableSeat } from "@/components/PokerTable";
 import { displayedPot, fmtUnit, revealedBoardCount, STREET_NAMES, type Engine } from "./engine";
-import type { AdvancedHandState } from "./types";
+import { straddlesOf, type AdvancedHandState } from "./types";
 
 // Compact numeric label for preview badges: "0.5", "1", "2.5" (no trailing zeros).
 const fmtNum = (n: number) => (Number.isFinite(n) ? String(n) : "");
@@ -34,7 +34,6 @@ export function buildTableSeats(args: {
   if (!engine) {
     const sb = parseFloat(state.smallBlind);
     const bb = parseFloat(state.bigBlind);
-    const str = parseFloat(state.straddleAmount);
     const occ = (pos: string) =>
       state.seats.findIndex((s, i) => s.occupied && labels[i] === pos);
     const bbIdx = occ("BB");
@@ -42,10 +41,15 @@ export function buildTableSeats(args: {
     const sbIdx = occ("SB") >= 0 ? occ("SB") : occ("BTN"); // heads-up: button posts SB
     if (sbIdx >= 0 && sb > 0 && !(sbIdx in setupPosts))
       setupPosts[sbIdx] = { amount: sb, label: `SB ${fmtNum(sb)}` };
-    const strSeat = state.straddleSeat;
-    if (strSeat != null && state.seats[strSeat]?.occupied && !state.seats[strSeat]?.sittingOut && str > 0) {
-      setupPosts[strSeat] = { amount: str, label: `Str ${fmtNum(str)}` }; // straddle wins over a blind badge
-    }
+    const STR_BADGES = ["Str", "2Str", "3Str"];
+    straddlesOf(state).forEach((s, k) => {
+      const amt = parseFloat(s.amount);
+      const seat = state.seats[s.seat];
+      if (seat?.occupied && !seat.sittingOut && amt > 0) {
+        // A straddle badge wins over a blind badge on the same seat.
+        setupPosts[s.seat] = { amount: amt, label: `${STR_BADGES[k] ?? "Str"} ${fmtNum(amt)}` };
+      }
+    });
   }
 
   return Array.from({ length: state.tableSize }, (_, i): PokerTableSeat => {

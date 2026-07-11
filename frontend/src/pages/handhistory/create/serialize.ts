@@ -151,9 +151,12 @@ export function serializeHand(
   const posts: string[] = [];
   if (effSbIdx >= 0) posts.push(`${actLabel(effSbIdx)} posts SB ${money(e.sb)}`);
   if (bbIdx >= 0) posts.push(`${actLabel(bbIdx)} posts BB ${money(e.bb)}`);
-  if (e.straddleIndex != null) {
-    posts.push(`${actLabel(e.straddleIndex)} posts straddle ${money(e.straddle)}`);
-  }
+  const STRADDLE_NAMES = ["straddle", "double straddle", "triple straddle"];
+  e.straddles.forEach((s, k) => {
+    posts.push(
+      `${actLabel(s.index)} posts ${STRADDLE_NAMES[k] ?? "straddle"} ${money(s.amount)}`
+    );
+  });
   let blindLine = posts.join(", ");
   if (e.ante > 0) blindLine = `Ante ${money(e.ante)} total${blindLine ? `, ${blindLine}` : ""}`;
   if (blindLine) {
@@ -162,7 +165,10 @@ export function serializeHand(
   }
 
   // Preflop
-  const preflopPot = e.ante + e.sb + e.bb + e.straddle;
+  // Pot after all forced bets. Taken from the engine's actual posts (not a sum
+  // of the nominal amounts) because a straddling blind only tops up: its blind
+  // counts toward the straddle level rather than stacking under it.
+  const preflopPot = e.streetMeta[0].potStart;
   let preHeader = `Pre Flop: (pot: ${money(preflopPot)})`;
   if (e.heroIndex != null) {
     const hero = e.players[e.heroIndex];

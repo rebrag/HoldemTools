@@ -27,14 +27,31 @@ export interface Seat {
   hideUntilShowdown?: boolean;
 }
 
+// One posted straddle. `amount` is the seat's TOTAL preflop commitment (a
+// straddling blind tops up to it rather than re-posting on top of its blind);
+// it stays a string for input ergonomics (like blinds/stacks) and is parsed
+// when the engine builds.
+export interface StraddlePost {
+  seat: number; // seat index posting this straddle
+  amount: string;
+}
+
+// Straddle, double straddle, triple straddle.
+export const MAX_STRADDLES = 3;
+
 export interface AdvancedHandState {
   tableSize: number; // 2..9
   game: string; // "Holdem" | "PLO" | ...
   smallBlind: string;
   bigBlind: string;
   ante: string; // per-player ante (0 = none)
-  straddleSeat: number | null; // seat index posting a straddle, or null
-  straddleAmount: string;
+  /** Posted straddles in posting order (first entry is the initial straddle,
+   *  then the double straddle, then the triple). Any position may straddle. */
+  straddles: StraddlePost[];
+  /** @deprecated Legacy single-straddle fields. Old saved replay payloads
+   *  embed them; straddlesOf() folds them into `straddles` on read. */
+  straddleSeat?: number | null;
+  straddleAmount?: string;
   numBoards: 1 | 2; // 2 = run it twice
   comment: string;
   buttonSeat: number; // seat index holding the dealer button
@@ -87,6 +104,34 @@ export function nextActiveSeat(seats: Seat[], from: number): number {
   return from;
 }
 
+// The state's straddles in posting order. Old replay payloads predate the
+// `straddles` array and carry the legacy single-straddle fields instead, so
+// every reader goes through this instead of touching `state.straddles` raw.
+export function straddlesOf(state: AdvancedHandState): StraddlePost[] {
+  if (state.straddles?.length) return state.straddles.slice(0, MAX_STRADDLES);
+  if (state.straddleSeat != null) {
+    return [{ seat: state.straddleSeat, amount: state.straddleAmount ?? "" }];
+  }
+  return [];
+}
+
+// Default size for the straddle at `order` (0-based) given the straddles posted
+// before it: double the previous straddle, or double the big blind for the
+// first. Unparseable prior amounts fall back to doubling the level below them.
+export function defaultStraddleAmount(
+  prior: StraddlePost[],
+  order: number,
+  bigBlind: string
+): string {
+  const bb = parseFloat(bigBlind);
+  let level = Number.isFinite(bb) && bb > 0 ? bb : 1;
+  for (let k = 0; k < order; k++) {
+    const a = parseFloat(prior[k]?.amount ?? "");
+    level = Number.isFinite(a) && a > 0 ? a : level * 2;
+  }
+  return String(Math.round(level * 2 * 100) / 100);
+}
+
 // Grow/shrink a seat's hole cards to a new hand size, keeping assigned cards.
 export function resizeHoleCards(hole: HoleCards, cards: number): HoleCards {
   const assigned = hole.filter((c): c is string => !!c);
@@ -111,8 +156,7 @@ export function createInitialState(
     smallBlind: overrides?.smallBlind ?? "0.5",
     bigBlind: overrides?.bigBlind ?? "1",
     ante: overrides?.ante ?? "0",
-    straddleSeat: null,
-    straddleAmount: "2",
+    straddles: [],
     numBoards: 1,
     comment: "",
     buttonSeat: 0,

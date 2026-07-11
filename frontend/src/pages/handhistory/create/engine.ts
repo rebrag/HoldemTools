@@ -4,6 +4,7 @@
 // serializer. Simplifications (documented for future work): single main pot
 // (no side pots), and showdown winners are chosen by the user.
 import type { AdvancedHandState, HoleCards } from "./types";
+import { straddlesOf } from "./types";
 import { positionLabelsForSeats } from "./positions";
 
 export interface EnginePlayer {
@@ -34,13 +35,19 @@ export interface EngineAction {
   allIn: boolean;
 }
 
+// A posted straddle: players index + posted amount, in posting order
+// (straddle, double straddle, triple straddle).
+export interface EngineStraddle {
+  index: number;
+  amount: number;
+}
+
 export interface Engine {
   players: EnginePlayer[]; // in seat order (only occupied seats)
   bb: number;
   sb: number;
   ante: number;
-  straddle: number;
-  straddleIndex: number | null; // players index of the straddler
+  straddles: EngineStraddle[];
   numBoards: 1 | 2;
   street: number; // 0 preflop, 1 flop, 2 turn, 3 river
   reached: number; // highest street reached (for board display / serialization)
@@ -52,7 +59,7 @@ export interface Engine {
   acted: boolean[];
   pot: number;
   streetActions: EngineAction[][]; // structured actions, per street
-  streetMeta: StreetMeta[]; // index by street (1..3 populated)
+  streetMeta: StreetMeta[]; // by street; [0].potStart = pot after forced bets
   done: boolean;
   winners: number[] | null; // player indices for board 1; null = needs user selection
   winners2: number[] | null; // player indices for board 2 (only when numBoards === 2)
@@ -89,6 +96,7 @@ function clone(e: Engine): Engine {
   return {
     ...e,
     players: e.players.map((p) => ({ ...p, hole: [...p.hole] as HoleCards })),
+    straddles: e.straddles.map((s) => ({ ...s })),
     acted: [...e.acted],
     streetActions: e.streetActions.map((t) => t.map((a) => ({ ...a }))),
     streetMeta: e.streetMeta.map((m) => ({ ...m })),
@@ -186,8 +194,7 @@ export function buildEngine(state: AdvancedHandState): Engine {
     bb,
     sb,
     ante,
-    straddle: 0,
-    straddleIndex: null,
+    straddles: [],
     numBoards: state.numBoards,
     street: 0,
     reached: 0,
@@ -226,25 +233,30 @@ export function buildEngine(state: AdvancedHandState): Engine {
   if (effSb >= 0) e.pot += commit(players[effSb], sb);
   if (bbIdx >= 0) e.pot += commit(players[bbIdx], bb);
 
-  // Straddle (optional, any seat): a live bet posted after the blinds that
-  // becomes the new amount to call preflop.
+  // Straddles (optional, any seat including the blinds, up to three): live
+  // bets posted in order after the blinds. Each amount is the seat's TOTAL
+  // preflop commitment, so a blind tops up to the straddle level instead of
+  // re-posting on top of its blind. Each one raises the amount to call; each
+  // consecutive straddle defaults to double the previous one.
   let startFrom = bbIdx >= 0 ? bbIdx : effSb;
-  const straddleIdx =
-    state.straddleSeat != null ? players.findIndex((p) => p.seat === state.straddleSeat) : -1;
-  if (straddleIdx >= 0) {
-    const straddleAmt = num(state.straddleAmount, bb * 2);
-    e.pot += commit(players[straddleIdx], straddleAmt);
-    e.straddle = straddleAmt;
-    e.straddleIndex = straddleIdx;
-    e.currentBet = straddleAmt;
-    e.minRaise = Math.max(bb, straddleAmt - bb);
-    startFrom = straddleIdx;
-  } else {
-    e.currentBet = bb;
-    e.minRaise = bb;
+  e.currentBet = bb;
+  e.minRaise = bb;
+  let prevLevel = bb; // bet level before the straddle being posted
+  for (const s of straddlesOf(state)) {
+    const idx = players.findIndex((p) => p.seat === s.seat);
+    if (idx < 0) continue;
+    const amt = num(s.amount, prevLevel * 2);
+    e.pot += commit(players[idx], Math.max(0, amt - players[idx].committed));
+    e.straddles.push({ index: idx, amount: amt });
+    e.currentBet = Math.max(e.currentBet, amt);
+    e.minRaise = Math.max(bb, e.currentBet - prevLevel);
+    startFrom = idx;
+    prevLevel = e.currentBet;
   }
+  // Preflop pot after all forced bets — serialization's "Pre Flop: (pot: $X)".
+  e.streetMeta[0].potStart = e.pot;
 
-  // First to act preflop: left of the big blind (or the straddler, if any).
+  // First to act preflop: left of the big blind (or the last straddler, if any).
   e.toAct = nextToAct(e, startFrom);
   return e;
 }

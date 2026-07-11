@@ -38,11 +38,14 @@ import type { HandHistory } from "../types";
 import {
   blankSeat,
   createInitialState,
+  defaultStraddleAmount,
   handSize,
   isActiveSeat,
+  MAX_STRADDLES,
   nextActiveSeat,
   resizeHoleCards,
   resizeSeats,
+  straddlesOf,
   usedCards,
   type AdvancedHandState,
 } from "./types";
@@ -279,17 +282,23 @@ const CreateHandHistory: React.FC<Props> = ({
       satOut && idx === index && seats.some((s) => isActiveSeat(s))
         ? nextActiveSeat(seats, index)
         : idx;
+    // Straddles keep their posting order: an existing straddle updates its
+    // amount in place; a new one joins the end of the chain (as the double or
+    // triple straddle); unchecking removes it and lets the later ones move up.
+    const priorStraddles = straddlesOf(state);
+    const straddles = makeStraddle
+      ? priorStraddles.some((s) => s.seat === index)
+        ? priorStraddles.map((s) =>
+            s.seat === index ? { ...s, amount: straddleAmount } : s
+          )
+        : [...priorStraddles, { seat: index, amount: straddleAmount }]
+      : priorStraddles.filter((s) => s.seat !== index);
     const nextState: AdvancedHandState = {
       ...state,
       seats,
       buttonSeat: makeButton ? index : reassign(state.buttonSeat),
       heroSeat: makeHero ? index : reassign(state.heroSeat),
-      straddleSeat: makeStraddle
-        ? index
-        : state.straddleSeat === index
-        ? null
-        : state.straddleSeat,
-      straddleAmount: makeStraddle ? straddleAmount : state.straddleAmount,
+      straddles,
     };
     setState(nextState);
     // Mid-hand edits (stack, revealed hole cards, name, straddle) are applied by
@@ -322,7 +331,7 @@ const CreateHandHistory: React.FC<Props> = ({
       ),
       buttonSeat: swap(prev.buttonSeat),
       heroSeat: swap(prev.heroSeat),
-      straddleSeat: prev.straddleSeat == null ? null : swap(prev.straddleSeat),
+      straddles: straddlesOf(prev).map((s) => ({ ...s, seat: swap(s.seat) })),
     }));
   };
 
@@ -343,7 +352,7 @@ const CreateHandHistory: React.FC<Props> = ({
         seats,
         buttonSeat: reassign(prev.buttonSeat),
         heroSeat: reassign(prev.heroSeat),
-        straddleSeat: prev.straddleSeat === index ? null : prev.straddleSeat,
+        straddles: straddlesOf(prev).filter((s) => s.seat !== index),
       };
     });
     setEditingSeat(null);
@@ -811,7 +820,8 @@ const CreateHandHistory: React.FC<Props> = ({
 
           <p className="mt-3 text-[11px] text-gray-500">
             Tap each seat to set its name, stack, and hole cards. Mark the dealer
-            button, your own seat (hero), or a straddle. Use the “+ 2nd board” chip
+            button, your own seat (hero), or straddles (up to a triple straddle —
+            each defaults to double the last). Use the “+ 2nd board” chip
             on the table to play a double board. Then press Start to record the action.
           </p>
 
@@ -837,16 +847,27 @@ const CreateHandHistory: React.FC<Props> = ({
       </div>
       </div>
 
-      {editingSeat !== null && (
+      {editingSeat !== null && (() => {
+        // This seat's slot in the straddle chain: its existing position, or the
+        // next open one (straddle → double → triple). The amount handed to the
+        // modal is the posted amount, or the doubled default for a fresh one.
+        const straddles = straddlesOf(state);
+        const existingIdx = straddles.findIndex((s) => s.seat === editingSeat);
+        const straddleOrder = existingIdx >= 0 ? existingIdx : straddles.length;
+        const straddleAmount =
+          existingIdx >= 0
+            ? straddles[existingIdx].amount
+            : defaultStraddleAmount(straddles, straddleOrder, state.bigBlind);
+        return (
         <SeatEditorModal
           positionLabel={labels[editingSeat] || `Seat ${editingSeat + 1}`}
           seat={state.seats[editingSeat]}
           isButton={state.buttonSeat === editingSeat}
           isHero={state.heroSeat === editingSeat}
-          isStraddle={state.straddleSeat === editingSeat}
-          straddleAmount={state.straddleAmount}
-          bigBlind={state.bigBlind}
-          canStraddle={labels[editingSeat] !== "BB"}
+          isStraddle={existingIdx >= 0}
+          straddleOrder={straddleOrder}
+          straddleAmount={straddleAmount}
+          canStraddle={existingIdx >= 0 || straddles.length < MAX_STRADDLES}
           capacity={cardsPerHand}
           otherUsed={usedCards(state, state.seats[editingSeat].holeCards)}
           onSave={(result) => saveSeat(editingSeat, result)}
@@ -859,7 +880,8 @@ const CreateHandHistory: React.FC<Props> = ({
             setPlacement({ kind: "move", from });
           }}
         />
-      )}
+        );
+      })()}
 
       {editingBoard && (
         <BoardEditorModal

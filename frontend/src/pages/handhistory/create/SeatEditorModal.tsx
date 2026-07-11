@@ -19,9 +19,13 @@ interface Props {
   isButton: boolean;
   isHero: boolean;
   isStraddle: boolean;
-  straddleAmount: string; // current straddle amount in state
-  bigBlind: string; // used to default a fresh straddle to 2× BB
-  canStraddle: boolean; // false for the BB seat (already a forced bet)
+  /** 0-based order of this seat's straddle (existing, or the slot a fresh one
+   *  would take): 0 = straddle, 1 = double straddle, 2 = triple straddle. */
+  straddleOrder: number;
+  /** Initial amount for the input: the seat's posted amount when it already
+   *  straddles, otherwise double the previous straddle (or 2× BB for the first). */
+  straddleAmount: string;
+  canStraddle: boolean; // false once all straddle slots are taken by other seats
   capacity: number; // hole cards for this game (2 / 4 / 5)
   otherUsed: Set<string>; // cards assigned elsewhere (other seats + board)
   onSave: (result: SeatEditResult) => void;
@@ -39,8 +43,8 @@ const SeatEditorModal: React.FC<Props> = ({
   isButton,
   isHero,
   isStraddle,
+  straddleOrder,
   straddleAmount,
-  bigBlind,
   canStraddle,
   capacity,
   otherUsed,
@@ -58,13 +62,7 @@ const SeatEditorModal: React.FC<Props> = ({
   const [makeStraddle, setMakeStraddle] = useState(isStraddle);
   const [sittingOut, setSittingOut] = useState(!!seat.sittingOut);
   const [hideCards, setHideCards] = useState(!!seat.hideUntilShowdown);
-  const defaultStraddle = (() => {
-    const bb = parseFloat(bigBlind);
-    return Number.isFinite(bb) && bb > 0 ? (bb * 2).toString() : "2";
-  })();
-  const [straddleAmt, setStraddleAmt] = useState(
-    isStraddle && straddleAmount ? straddleAmount : defaultStraddle
-  );
+  const [straddleAmt, setStraddleAmt] = useState(straddleAmount);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -116,7 +114,7 @@ const SeatEditorModal: React.FC<Props> = ({
       makeButton: !sittingOut && makeButton,
       makeHero: !sittingOut && makeHero,
       makeStraddle: !sittingOut && canStraddle && makeStraddle,
-      straddleAmount: straddleAmt.trim() || defaultStraddle,
+      straddleAmount: straddleAmt.trim() || straddleAmount,
     });
   };
 
@@ -220,7 +218,11 @@ const SeatEditorModal: React.FC<Props> = ({
                 onChange={(e) => setMakeStraddle(e.target.checked)}
                 className="h-4 w-4 accent-emerald-600"
               />
-              Posts a straddle
+              {
+                ["Posts a straddle", "Posts the double straddle", "Posts the triple straddle"][
+                  straddleOrder
+                ] ?? "Posts a straddle"
+              }
             </label>
           )}
           {!sittingOut && (
@@ -260,7 +262,11 @@ const SeatEditorModal: React.FC<Props> = ({
 
         {canStraddle && makeStraddle && (
           <div className="mt-3 flex items-center gap-2">
-            <label className="text-xs font-medium text-gray-700">Straddle amount</label>
+            <label className="text-xs font-medium text-gray-700">
+              {["Straddle", "Double straddle", "Triple straddle"][straddleOrder] ??
+                "Straddle"}{" "}
+              amount
+            </label>
             <input
               type="tel"
               inputMode="decimal"
