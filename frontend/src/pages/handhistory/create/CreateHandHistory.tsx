@@ -867,10 +867,7 @@ const CreateHandHistory: React.FC<Props> = ({
           isStraddle={existingIdx >= 0}
           straddleOrder={straddleOrder}
           straddleAmount={straddleAmount}
-          canStraddle={
-            labels[editingSeat] !== "BB" &&
-            (existingIdx >= 0 || straddles.length < MAX_STRADDLES)
-          }
+          canStraddle={existingIdx >= 0 || straddles.length < MAX_STRADDLES}
           capacity={cardsPerHand}
           otherUsed={usedCards(state, state.seats[editingSeat].holeCards)}
           onSave={(result) => saveSeat(editingSeat, result)}

@@ -59,7 +59,7 @@ export interface Engine {
   acted: boolean[];
   pot: number;
   streetActions: EngineAction[][]; // structured actions, per street
-  streetMeta: StreetMeta[]; // index by street (1..3 populated)
+  streetMeta: StreetMeta[]; // by street; [0].potStart = pot after forced bets
   done: boolean;
   winners: number[] | null; // player indices for board 1; null = needs user selection
   winners2: number[] | null; // player indices for board 2 (only when numBoards === 2)
@@ -233,8 +233,10 @@ export function buildEngine(state: AdvancedHandState): Engine {
   if (effSb >= 0) e.pot += commit(players[effSb], sb);
   if (bbIdx >= 0) e.pot += commit(players[bbIdx], bb);
 
-  // Straddles (optional, any seat, up to three): live bets posted in order
-  // after the blinds. Each one raises the amount to call preflop; each
+  // Straddles (optional, any seat including the blinds, up to three): live
+  // bets posted in order after the blinds. Each amount is the seat's TOTAL
+  // preflop commitment, so a blind tops up to the straddle level instead of
+  // re-posting on top of its blind. Each one raises the amount to call; each
   // consecutive straddle defaults to double the previous one.
   let startFrom = bbIdx >= 0 ? bbIdx : effSb;
   e.currentBet = bb;
@@ -244,13 +246,15 @@ export function buildEngine(state: AdvancedHandState): Engine {
     const idx = players.findIndex((p) => p.seat === s.seat);
     if (idx < 0) continue;
     const amt = num(s.amount, prevLevel * 2);
-    e.pot += commit(players[idx], amt);
+    e.pot += commit(players[idx], Math.max(0, amt - players[idx].committed));
     e.straddles.push({ index: idx, amount: amt });
     e.currentBet = Math.max(e.currentBet, amt);
     e.minRaise = Math.max(bb, e.currentBet - prevLevel);
     startFrom = idx;
     prevLevel = e.currentBet;
   }
+  // Preflop pot after all forced bets — serialization's "Pre Flop: (pot: $X)".
+  e.streetMeta[0].potStart = e.pot;
 
   // First to act preflop: left of the big blind (or the last straddler, if any).
   e.toAct = nextToAct(e, startFrom);

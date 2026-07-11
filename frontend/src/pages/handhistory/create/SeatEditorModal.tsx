@@ -25,7 +25,7 @@ interface Props {
   /** Initial amount for the input: the seat's posted amount when it already
    *  straddles, otherwise double the previous straddle (or 2× BB for the first). */
   straddleAmount: string;
-  canStraddle: boolean; // false for the BB seat, or when all straddles are taken
+  canStraddle: boolean; // false once all straddle slots are taken by other seats
   capacity: number; // hole cards for this game (2 / 4 / 5)
   otherUsed: Set<string>; // cards assigned elsewhere (other seats + board)
   onSave: (result: SeatEditResult) => void;

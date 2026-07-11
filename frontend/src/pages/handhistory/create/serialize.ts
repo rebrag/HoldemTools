@@ -165,8 +165,10 @@ export function serializeHand(
   }
 
   // Preflop
-  const preflopPot =
-    e.ante + e.sb + e.bb + e.straddles.reduce((sum, s) => sum + s.amount, 0);
+  // Pot after all forced bets. Taken from the engine's actual posts (not a sum
+  // of the nominal amounts) because a straddling blind only tops up: its blind
+  // counts toward the straddle level rather than stacking under it.
+  const preflopPot = e.streetMeta[0].potStart;
   let preHeader = `Pre Flop: (pot: ${money(preflopPot)})`;
   if (e.heroIndex != null) {
     const hero = e.players[e.heroIndex];

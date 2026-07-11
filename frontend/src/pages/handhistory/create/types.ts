@@ -27,8 +27,10 @@ export interface Seat {
   hideUntilShowdown?: boolean;
 }
 
-// One posted straddle. `amount` stays a string for input ergonomics (like
-// blinds/stacks); parsed when the engine builds.
+// One posted straddle. `amount` is the seat's TOTAL preflop commitment (a
+// straddling blind tops up to it rather than re-posting on top of its blind);
+// it stays a string for input ergonomics (like blinds/stacks) and is parsed
+// when the engine builds.
 export interface StraddlePost {
   seat: number; // seat index posting this straddle
   amount: string;
