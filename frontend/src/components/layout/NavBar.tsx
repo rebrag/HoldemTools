@@ -101,13 +101,24 @@ const NavBar: React.FC<NavBarProps> = () => {
       const center = Math.min(trueCenter, maxCenter);
       setBrandLeft(Math.max(0, center - brandW / 2));
     };
+    // compute() forces layout (getComputedStyle + getBoundingClientRect), so
+    // coalesce bursts of resize/observer callbacks into one run per frame.
+    let frame = 0;
+    const scheduleCompute = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        compute();
+      });
+    };
     compute();
-    const ro = new ResizeObserver(compute);
+    const ro = new ResizeObserver(scheduleCompute);
     if (navRowRef.current) ro.observe(navRowRef.current);
-    window.addEventListener("resize", compute);
+    window.addEventListener("resize", scheduleCompute);
     return () => {
+      if (frame) cancelAnimationFrame(frame);
       ro.disconnect();
-      window.removeEventListener("resize", compute);
+      window.removeEventListener("resize", scheduleCompute);
     };
   }, []);
 

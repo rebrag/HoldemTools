@@ -1,5 +1,6 @@
-import { JSX, useEffect, useState } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { JSX, useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion, useInView, useReducedMotion } from "framer-motion";
+import { usePageVisible } from "@/hooks/usePageVisible";
 import { cn } from "@/lib/utils";
 
 /**
@@ -60,17 +61,21 @@ const isRed = (s: Suit) => s === "h" || s === "d";
 
 export function EquityDuelPreview({ className }: { className?: string }): JSX.Element {
   const reduce = useReducedMotion();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const inView = useInView(rootRef);
+  const pageVisible = usePageVisible();
   const [idx, setIdx] = useState(0);
   const m = MATCHUPS[idx];
 
+  // Each swap replays card-flip + bar animations; only cycle while visible.
   useEffect(() => {
-    if (reduce) return;
+    if (reduce || !inView || !pageVisible) return;
     const t = window.setInterval(() => setIdx((i) => (i + 1) % MATCHUPS.length), 4200);
     return () => window.clearInterval(t);
-  }, [reduce]);
+  }, [reduce, inView, pageVisible]);
 
   return (
-    <div className={cn("flex flex-col gap-4", className)}>
+    <div ref={rootRef} className={cn("flex flex-col gap-4", className)}>
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-semibold uppercase tracking-widest text-sky-300/90">
           Equity engine

@@ -38,7 +38,7 @@ export default function KineticArcade(): JSX.Element {
     <main className="relative min-h-screen overflow-clip text-slate-100">
       {/* HERO */}
       <section className="relative">
-        <Meteors count={16} />
+        <Meteors count={8} />
         <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-10 pt-14 sm:px-6 lg:grid-cols-2 lg:pt-20">
           <div>
             <motion.span
@@ -180,7 +180,7 @@ export default function KineticArcade(): JSX.Element {
       {/* FOOTER CTA */}
       <section className="mx-auto max-w-6xl px-4 pb-28 sm:px-6">
         <div className="relative overflow-hidden rounded-3xl border border-emerald-400/20 bg-gradient-to-br from-emerald-500/15 via-slate-900/50 to-slate-950 p-10 text-center sm:p-16">
-          <Meteors count={10} />
+          <Meteors count={6} />
           <h2 className="relative text-3xl font-black tracking-tight sm:text-5xl">
             Ready to <span className="text-emerald-300">level up</span>?
           </h2>

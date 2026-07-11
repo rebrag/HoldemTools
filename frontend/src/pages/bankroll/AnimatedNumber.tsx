@@ -2,7 +2,7 @@
 "use client";
 
 import React from "react";
-import type { SpringOptions } from "motion/react";
+import type { SpringOptions } from "framer-motion";
 import { SlidingNumber } from "@/components/ui/shadcn-io/sliding-number";
 
 type AnimatedNumberProps = {

@@ -1,5 +1,6 @@
-import { JSX, useEffect, useMemo, useState } from "react";
-import { motion, useReducedMotion } from "framer-motion";
+import { JSX, useEffect, useMemo, useRef, useState } from "react";
+import { motion, useInView, useReducedMotion } from "framer-motion";
+import { usePageVisible } from "@/hooks/usePageVisible";
 import { cn } from "@/lib/utils";
 import {
   buildSolutionRanges,
@@ -20,17 +21,22 @@ const SWAP_MS = 4000;
 export function RangeGridPreview({ className }: { className?: string }): JSX.Element {
   const ranges = useMemo(() => buildSolutionRanges(), []);
   const reduce = useReducedMotion();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const inView = useInView(rootRef);
+  const pageVisible = usePageVisible();
   const [activeIdx, setActiveIdx] = useState(0);
   const [hoverHand, setHoverHand] = useState<string | null>(null);
 
+  // 169 cells animate on every swap, so only run the loop while the grid is
+  // actually on screen in a visible tab.
   useEffect(() => {
-    if (reduce) return;
+    if (reduce || !inView || !pageVisible) return;
     const t = window.setInterval(
       () => setActiveIdx((i) => (i + 1) % ranges.length),
       SWAP_MS,
     );
     return () => window.clearInterval(t);
-  }, [reduce, ranges.length]);
+  }, [reduce, inView, pageVisible, ranges.length]);
 
   const state = ranges[activeIdx];
   const hoverCell = hoverHand
@@ -38,7 +44,7 @@ export function RangeGridPreview({ className }: { className?: string }): JSX.Ele
     : null;
 
   return (
-    <div className={cn("flex flex-col gap-3", className)}>
+    <div ref={rootRef} className={cn("flex flex-col gap-3", className)}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="relative flex h-2 w-2">

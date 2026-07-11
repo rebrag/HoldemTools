@@ -8,7 +8,6 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
 } from "firebase/auth";
-import { getFirestore, serverTimestamp } from "firebase/firestore";
 import { FirebaseError } from "firebase/app";
 
 // Firebase config from environment variables
@@ -25,11 +24,11 @@ const firebaseConfig = {
 // Initialize Firebase
 export const app = initializeApp(firebaseConfig); // ⬅️ export app
 
-// Firebase services
+// Firebase services. Firestore is intentionally NOT initialized here — it is
+// the heaviest part of the SDK and only a few lazily-loaded routes need it.
+// Import { db } from "@/lib/firestore" instead (keeps it off the entry chunk).
 const auth = getAuth(app);
-const db = getFirestore(app);
 const provider = new GoogleAuthProvider();
-export const timestamp = serverTimestamp;
 
 const signInWithGoogle = async () => {
   try {
@@ -45,7 +44,6 @@ const signInWithGoogle = async () => {
 
 export {
   auth,
-  db,
   provider,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,

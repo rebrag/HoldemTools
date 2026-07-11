@@ -2,6 +2,7 @@ import { JSX, useMemo } from "react";
 import { useReducedMotion } from "framer-motion";
 import PlayingCard from "@/components/PlayingCard";
 import { CardBack } from "@/components/PokerTable";
+import { usePageVisible } from "@/hooks/usePageVisible";
 
 /**
  * Decorative "cards flying around" backdrop for the Hand History page.
@@ -19,8 +20,9 @@ function randomCode(): string {
   return `${r}${s}`;
 }
 
-export function FlyingCards({ count = 20 }: { count?: number }): JSX.Element | null {
+export function FlyingCards({ count = 10 }: { count?: number }): JSX.Element | null {
   const reduce = useReducedMotion();
+  const pageVisible = usePageVisible();
 
   const cards = useMemo(
     () =>
@@ -54,6 +56,7 @@ export function FlyingCards({ count = 20 }: { count?: number }): JSX.Element | n
             top: c.top,
             animationDelay: c.delay,
             animationDuration: c.duration,
+            animationPlayState: pageVisible ? "running" : "paused",
             // seeds the diagonal tilt the keyframes rotate around
             ["--card-rotate" as string]: c.rotate,
           }}

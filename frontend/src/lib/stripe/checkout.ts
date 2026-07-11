@@ -1,4 +1,4 @@
-import { db } from "@/lib/firebase";
+import { db } from "@/lib/firestore";
 import { collection, addDoc, onSnapshot } from "firebase/firestore";
 
 type StartCheckoutOpts = {

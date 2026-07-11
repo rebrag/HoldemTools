@@ -1,5 +1,6 @@
-import { JSX } from "react";
+import { CSSProperties, JSX } from "react";
 import { useReducedMotion } from "framer-motion";
+import { usePageVisible } from "@/hooks/usePageVisible";
 import { cn } from "@/lib/utils";
 
 interface AuroraBackgroundProps {
@@ -18,7 +19,13 @@ export function AuroraBackground({
   className,
 }: AuroraBackgroundProps): JSX.Element {
   const reduce = useReducedMotion();
+  const pageVisible = usePageVisible();
   const drift = reduce ? "" : "animate-aurora";
+  // The blurred blobs are the priciest layers to composite; freeze the drift
+  // while the tab is hidden.
+  const driftStyle: CSSProperties = pageVisible
+    ? {}
+    : { animationPlayState: "paused" };
 
   return (
     <div
@@ -49,21 +56,21 @@ export function AuroraBackground({
               "absolute -top-40 left-[8%] h-[38rem] w-[38rem] rounded-full blur-[130px]",
               drift,
             )}
-            style={{ background: "rgba(16,185,129,0.28)" }}
+            style={{ background: "rgba(16,185,129,0.28)", ...driftStyle }}
           />
           <div
             className={cn(
               "absolute top-[18%] right-[4%] h-[34rem] w-[34rem] rounded-full blur-[130px]",
               drift,
             )}
-            style={{ background: "rgba(56,189,248,0.20)", animationDelay: "-6s" }}
+            style={{ background: "rgba(56,189,248,0.20)", animationDelay: "-6s", ...driftStyle }}
           />
           <div
             className={cn(
               "absolute bottom-[-12%] left-[30%] h-[36rem] w-[36rem] rounded-full blur-[140px]",
               drift,
             )}
-            style={{ background: "rgba(167,139,250,0.18)", animationDelay: "-11s" }}
+            style={{ background: "rgba(167,139,250,0.18)", animationDelay: "-11s", ...driftStyle }}
           />
         </>
       ) : (
@@ -73,14 +80,14 @@ export function AuroraBackground({
               "absolute -top-52 left-1/2 h-[46rem] w-[60rem] -translate-x-1/2 rounded-full blur-[150px]",
               drift,
             )}
-            style={{ background: "rgba(16,185,129,0.22)" }}
+            style={{ background: "rgba(16,185,129,0.22)", ...driftStyle }}
           />
           <div
             className={cn(
               "absolute bottom-[-20%] right-[-6%] h-[40rem] w-[40rem] rounded-full blur-[150px]",
               drift,
             )}
-            style={{ background: "rgba(20,184,166,0.16)", animationDelay: "-8s" }}
+            style={{ background: "rgba(20,184,166,0.16)", animationDelay: "-8s", ...driftStyle }}
           />
         </>
       )}

@@ -1,5 +1,4 @@
 import React, { useMemo, useState } from "react";
-import { useLocation } from "react-router-dom";
 import {
   CartesianGrid,
   Line,
@@ -23,7 +22,6 @@ type ChartDatum = {
 
 type Props = {
   points: CumulativePoint[];
-  hoverIndex: number | null;
   onHoverIndexChange: (idx: number | null) => void;
 };
 
@@ -154,9 +152,6 @@ function ChartTooltipContent(props: TooltipProps<number, string>): React.ReactEl
 }
 
 const BankrollChartShadcn: React.FC<Props> = ({ points, onHoverIndexChange }) => {
-  const location = useLocation();
-  const chartRemountKey = location.key;
-
   const hasData = points.length > 1;
 
   const data: ChartDatum[] = useMemo((): ChartDatum[] => {
@@ -195,7 +190,6 @@ const BankrollChartShadcn: React.FC<Props> = ({ points, onHoverIndexChange }) =>
     <div className="h-[300px] w-full">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart
-          key={chartRemountKey}
           data={data}
           margin={{ top: 12, right: 14, bottom: 18, left: 10 }}
           onMouseMove={(state) => {
@@ -259,4 +253,8 @@ const BankrollChartShadcn: React.FC<Props> = ({ points, onHoverIndexChange }) =>
   );
 };
 
-export default BankrollChartShadcn;
+// Memoized: hover state lives in the parent (it drives the stats grid), and
+// without memo every hovered point would re-render the whole chart. The
+// parent still force-remounts via its `key` nonce to replay the draw
+// animation on each visit to the page.
+export default React.memo(BankrollChartShadcn);

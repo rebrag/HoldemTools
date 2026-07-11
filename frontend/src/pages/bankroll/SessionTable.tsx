@@ -1,5 +1,5 @@
 // src/bankroll/SessionTable.tsx
-import React from "react";
+import React, { useMemo } from "react";
 import { formatHours, formatMoney } from "./utils";
 import type { BankrollSession } from "./types";
 
@@ -9,11 +9,26 @@ interface Props {
   onDelete: (id: string) => void;
 }
 
+// Memoized (see export): the parent re-renders on every modal keystroke and
+// on a 1s ticker while a draft session is running, and this table should only
+// re-render when the session list itself (or its callbacks) change.
 const SessionTable: React.FC<Props> = ({
   sessions,
   onEdit,
   onDelete,
 }) => {
+  // Sorting copies the array and parses two dates per comparison — worth
+  // caching across unrelated re-renders.
+  const ordered = useMemo(
+    () =>
+      [...sessions].sort((a, b) => {
+        const aTime = a.start ? new Date(a.start).getTime() : 0;
+        const bTime = b.start ? new Date(b.start).getTime() : 0;
+        return bTime - aTime;
+      }),
+    [sessions]
+  );
+
   if (!sessions.length) {
     return (
       <tbody className="divide-y divide-gray-100 bg-white">
@@ -28,12 +43,6 @@ const SessionTable: React.FC<Props> = ({
       </tbody>
     );
   }
-
-  const ordered = [...sessions].sort((a, b) => {
-    const aTime = a.start ? new Date(a.start).getTime() : 0;
-    const bTime = b.start ? new Date(b.start).getTime() : 0;
-    return bTime - aTime;
-  });
 
   return (
     <tbody className="divide-y divide-gray-100 bg-white">
@@ -159,4 +168,4 @@ const SessionTable: React.FC<Props> = ({
   );
 };
 
-export default SessionTable;
+export default React.memo(SessionTable);
