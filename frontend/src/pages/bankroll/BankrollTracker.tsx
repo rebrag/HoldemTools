@@ -220,11 +220,11 @@ const BreakdownTable: React.FC<{
   return (
     <table className="w-full table-fixed divide-y divide-gray-200 text-left">
       <colgroup>
-        <col className="w-[26%]" /> {/* Period */}
-        <col className="w-[14%]" /> {/* Sessions */}
-        <col className="w-[18%]" /> {/* Hours */}
-        <col className="w-[21%]" /> {/* Net */}
-        <col className="w-[21%]" /> {/* Hourly */}
+        <col className="w-[26%]" />{/* Period */}
+        <col className="w-[14%]" />{/* Sessions */}
+        <col className="w-[18%]" />{/* Hours */}
+        <col className="w-[21%]" />{/* Net */}
+        <col className="w-[21%]" />{/* Hourly */}
       </colgroup>
       <thead className="bg-gray-50">
         <tr>
@@ -1532,14 +1532,14 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
           {breakdownMode === "sessions" ? (
             <table className="w-full table-fixed divide-y divide-gray-200 text-left">
               <colgroup>
-                <col className="w-[12%]" /> {/* Date */}
-                <col className="w-[18%]" /> {/* Location */}
-                <col className="w-[14%]" /> {/* Blinds */}
-                <col className="w-[8%]" /> {/* Hours */}
-                <col className="w-[12%]" /> {/* Buy-in */}
-                <col className="w-[12%]" /> {/* Cash-out */}
-                <col className="w-[14%]" /> {/* Profit */}
-                <col className="w-[10%]" /> {/* Actions */}
+                <col className="w-[12%]" />{/* Date */}
+                <col className="w-[18%]" />{/* Location */}
+                <col className="w-[14%]" />{/* Blinds */}
+                <col className="w-[8%]" />{/* Hours */}
+                <col className="w-[12%]" />{/* Buy-in */}
+                <col className="w-[12%]" />{/* Cash-out */}
+                <col className="w-[14%]" />{/* Profit */}
+                <col className="w-[10%]" />{/* Actions */}
               </colgroup>
               <thead className="bg-gray-50">
                 <tr>
