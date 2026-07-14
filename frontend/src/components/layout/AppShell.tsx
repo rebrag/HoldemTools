@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { Outlet } from "react-router-dom";
 import NavBar from "@/components/layout/NavBar";
 import { TierProvider } from "@/context/TierContext";
+import { AuthGateProvider } from "@/context/AuthGate";
 import { AuroraBackground } from "@/pages/home/shared/AuroraBackground";
 
 /** Lightweight fallback shown in the content area while a lazy route chunk
@@ -25,17 +26,19 @@ interface AppShellProps {
 const AppShell: React.FC<AppShellProps> = ({ user }) => {
   return (
     <TierProvider user={user}>
-      {/* Shared cinematic backdrop behind every page (fixed, -z-10) so the
-          site's background stays consistent with the homepage. */}
-      <AuroraBackground variant="table" />
-      <div>
-        <NavBar />
-        <div className="pt-12">
-          <Suspense fallback={<RouteFallback />}>
-            <Outlet />
-          </Suspense>
+      <AuthGateProvider user={user}>
+        {/* Shared cinematic backdrop behind every page (fixed, -z-10) so the
+            site's background stays consistent with the homepage. */}
+        <AuroraBackground variant="table" />
+        <div>
+          <NavBar />
+          <div className="pt-12">
+            <Suspense fallback={<RouteFallback />}>
+              <Outlet />
+            </Suspense>
+          </div>
         </div>
-      </div>
+      </AuthGateProvider>
     </TierProvider>
   );
 };

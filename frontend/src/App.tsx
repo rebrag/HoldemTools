@@ -1,6 +1,6 @@
 import { lazy, useEffect, useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
-import { onAuthStateChanged, User } from "firebase/auth";
+import { onAuthStateChanged, signOut, User } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import { AppProvider } from "@/components/AppContext";
@@ -17,15 +17,26 @@ const CreateHandHistory = lazy(() => import("@/pages/handhistory/create/CreateHa
 const HandReplay = lazy(() => import("@/pages/handhistory/HandReplay"));
 const Course = lazy(() => import("@/pages/course/Course"));
 const CourseSection = lazy(() => import("@/pages/course/CourseSection"));
-import { DEV_AUTH_BYPASS, mockDevUser } from "@/lib/devAuth";
+import { DEV_AUTH_BYPASS, useDevAuthUser } from "@/lib/devAuth";
 import "./index.css";
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  // Dev-only: a dummy user that the login/logout flows toggle (null in prod and
+  // when signed out). Kept above the early return so the hook runs every render.
+  const devUser = useDevAuthUser();
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
+      // In dev bypass mode the dummy auth owns login state; don't let a lingering
+      // real Firebase session bleed in — sign it out so "logout" truly logs out.
+      if (DEV_AUTH_BYPASS && u) {
+        signOut(auth).catch(() => {});
+        setUser(null);
+        setLoading(false);
+        return;
+      }
       setUser(u);
       setLoading(false);
     });
@@ -69,8 +80,9 @@ function App() {
     );
   }
 
-  // Dev-only: stand in a mock signed-in user when nobody is authenticated.
-  const effectiveUser = user ?? (DEV_AUTH_BYPASS ? mockDevUser : null);
+  // In dev bypass, the dummy auth is authoritative (real sessions are cleared
+  // above); otherwise use the real Firebase user.
+  const effectiveUser = DEV_AUTH_BYPASS ? devUser : user;
 
   return (
     <div className="min-h-dvh flex flex-col">

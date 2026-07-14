@@ -18,9 +18,13 @@ const TierContext = createContext<TierContextValue | null>(null);
 export const TierProvider: React.FC<{ user: User | null; children: React.ReactNode }> = ({ user, children }) => {
   const { tier, loading, isFree, isPlus, isPro } = useTier(user?.uid ?? null);
 
+  // In dev, force DEV_TIER only while the dummy user is actually signed in; when
+  // signed out (user === null) fall through so gating behaves like production.
+  const useDevTier = DEV_AUTH_BYPASS && !!user;
+
   const value = useMemo(
     () =>
-      DEV_AUTH_BYPASS
+      useDevTier
         ? {
             tier: DEV_TIER,
             loading: false,
@@ -29,7 +33,7 @@ export const TierProvider: React.FC<{ user: User | null; children: React.ReactNo
             isPro: DEV_TIER === "pro",
           }
         : { tier, loading, isFree, isPlus, isPro },
-    [tier, loading, isFree, isPlus, isPro]
+    [useDevTier, tier, loading, isFree, isPlus, isPro]
   );
 
   return <TierContext.Provider value={value}>{children}</TierContext.Provider>;

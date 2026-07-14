@@ -150,9 +150,9 @@ const Solver = ({ user }: SolverProps) => {
   const [singleRangeView, setSingleRangeView] = useState<boolean>(() => {
     try {
       const raw = localStorage.getItem("singleRangeView");
-      return raw === "1";
+      return raw === null ? true : raw === "1"; // default ON, respect saved "0"
     } catch {
-      return false;
+      return true;
     }
   });
 

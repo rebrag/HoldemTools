@@ -14,6 +14,12 @@ import {
   signOut,
   type User,
 } from "firebase/auth";
+import { DEV_AUTH_BYPASS, useDevAuthUser, devAuthSignIn, devAuthSignOut } from "@/lib/devAuth";
+import { useAuthGate } from "@/context/AuthGate";
+
+// Routes that require a signed-in user. Navigating here while signed out opens
+// the login modal on the current page and defers the route change until success.
+const PROTECTED_PATHS = new Set<string>(["/bankroll"]);
 
 export interface NavBarProps {
   toggleViewMode?: () => void;
@@ -122,15 +128,25 @@ const NavBar: React.FC<NavBarProps> = () => {
     };
   }, []);
 
-  const [user, setUser] = useState<User | null>(null);
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [billingBusy, setBillingBusy] = useState(false);
 
   useEffect(() => {
     const auth = getAuth();
-    return onAuthStateChanged(auth, (u) => setUser(u));
+    return onAuthStateChanged(auth, (u) => setFirebaseUser(u));
   }, []);
 
+  // In dev bypass the dummy auth is authoritative (so the navbar matches the rest
+  // of the app, which clears/ignores any real session); otherwise the real user.
+  const devUser = useDevAuthUser();
+  const user = DEV_AUTH_BYPASS ? devUser : firebaseUser;
+
   const handleLogin = async () => {
+    if (DEV_AUTH_BYPASS) {
+      devAuthSignIn();
+      setMenuOpen(false);
+      return;
+    }
     const auth = getAuth();
     const provider = new GoogleAuthProvider();
     await signInWithPopup(auth, provider);
@@ -138,6 +154,13 @@ const NavBar: React.FC<NavBarProps> = () => {
   };
 
   const handleLogout = async () => {
+    if (DEV_AUTH_BYPASS) {
+      devAuthSignOut();
+      // Best-effort: also clear any real Firebase session so logout is complete.
+      signOut(getAuth()).catch(() => {});
+      setMenuOpen(false);
+      return;
+    }
     const auth = getAuth();
     await signOut(auth);
     setMenuOpen(false);
@@ -191,7 +214,15 @@ const NavBar: React.FC<NavBarProps> = () => {
     };
   }, [toolsOpen]);
 
-  const go = (path: string) => { navigate(path); setToolsOpen(false); };
+  const { requireAuth } = useAuthGate();
+
+  const go = (path: string) => {
+    setToolsOpen(false);
+    // Protected routes go through the auth gate: it navigates when signed in, or
+    // opens the login modal here (redirecting after login) when signed out.
+    if (PROTECTED_PATHS.has(path)) requireAuth(path);
+    else navigate(path);
+  };
 
   const tools: { label: string; path: string; section: string }[] = [
     { label: "Course", path: "/course", section: "course" },

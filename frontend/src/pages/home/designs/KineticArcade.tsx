@@ -15,6 +15,7 @@ import { Marquee } from "../shared/Marquee";
 import { TiltCard } from "../shared/TiltCard";
 import { ToolPreview } from "../previews/ToolPreview";
 import { HERO, STATS, MARQUEE_ITEMS, toolById, type ToolMeta } from "../content";
+import { useAuthGate } from "@/context/AuthGate";
 
 /**
  * Design B - "Kinetic Arcade". A cinematic, game-forward take: a table-glow
@@ -24,6 +25,7 @@ import { HERO, STATS, MARQUEE_ITEMS, toolById, type ToolMeta } from "../content"
  */
 export default function KineticArcade(): JSX.Element {
   const navigate = useNavigate();
+  const { requireAuth } = useAuthGate();
   const reduce = useReducedMotion();
   const go = (route: string) => () => navigate(route);
 
@@ -31,6 +33,9 @@ export default function KineticArcade(): JSX.Element {
   const equity = toolById("equity");
   const bankroll = toolById("bankroll");
   const course = toolById("course");
+
+  // Bankroll requires a login: open the modal here and route there after success.
+  const openBankroll = () => requireAuth(bankroll.route);
 
   const heroWords = `${HERO.titleLead} ${HERO.titleAccent}`.split(" ");
 
@@ -169,7 +174,7 @@ export default function KineticArcade(): JSX.Element {
         <KineticStage tool={equity} index={2} onOpen={go(equity.route)}>
           <ToolPreview id="equity" />
         </KineticStage>
-        <KineticStage tool={bankroll} index={3} reverse onOpen={go(bankroll.route)}>
+        <KineticStage tool={bankroll} index={3} reverse onOpen={openBankroll}>
           <ToolPreview id="bankroll" />
         </KineticStage>
         <KineticStage tool={course} index={4} onOpen={go(course.route)}>
