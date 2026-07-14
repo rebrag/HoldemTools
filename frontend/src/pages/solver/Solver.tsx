@@ -1152,7 +1152,7 @@ const Solver = ({ user }: SolverProps) => {
               playerBets={playerBets}
               alivePlayers={alivePlayers}
               onActionClick={handleActionClick}
-              matchWidth={plateContentWidth}
+              matchWidth={windowWidth >= 1024 ? plateContentWidth : undefined}
             />
           </div>
 
