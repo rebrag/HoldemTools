@@ -1,0 +1,19 @@
+# Root .gitignore for the HoldemTools monorepo.
+# Subfolders keep their own .gitignore (frontend/, backend/) — those still apply.
+# This file only covers cross-cutting OS/editor junk and root-level files.
+
+# OS / editor cruft (can appear in any folder)
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Claude Code local, per-machine settings (never shared)
+.claude/settings.local.json
+
+# Root-level env / secrets (subfolders ignore their own .env already)
+.env
+.env.local
+*.local
