@@ -46,6 +46,10 @@ jobs:
   deploy:
     runs-on: windows-latest
     needs: build
+    # Azure Deployment Center stored the OIDC secrets under the "Production"
+    # GitHub environment, so the job must declare it to read them.
+    environment:
+      name: 'Production'
     permissions:
       id-token: write #This is required for requesting the JWT
       contents: read #This is required for actions/checkout
