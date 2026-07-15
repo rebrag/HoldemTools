@@ -1,0 +1,85 @@
+/* WillyAim Design Kit — Tailwind v4 tokens.
+ *
+ * This adds surface/motion "technique" to your project. A few semantic tokens
+ * map to concrete colors, and the kit's recipes reference those semantic names.
+ *
+ * Preloaded here with the HoldemTools color scheme (emerald / slate / blue).
+ * To reuse this kit in another project, remap the four tokens below to that
+ * project's palette; the glows and grid tint derive from them automatically.
+ *
+ * Paste this into your main CSS file, AFTER `@import "tailwindcss";`.
+ */
+
+@theme {
+  /* ---- HoldemTools palette (emerald / slate / blue) ------------------- */
+  --color-surface: #0f172a;    /* slate-900   — elevated glass-panel base */
+  --color-accent: #10b981;     /* emerald-500 — primary brand accent */
+  --color-accent-2: #3b82f6;   /* blue-500    — secondary accent */
+  --color-on-accent: #020617;  /* slate-950   — text on accent buttons */
+
+  /* Subtle hairline border. Dark UI: white at low alpha. Light UI: black. */
+  --color-hairline: rgba(255, 255, 255, 0.1);
+
+  /* Optional condensed display font for headings. Delete if you keep yours. */
+  --font-display: 'Bebas Neue', Impact, sans-serif;
+
+  /* ---- Derived: glow shadows tint themselves from your accents -------- */
+  --shadow-glow: 0 0 24px
+    color-mix(in srgb, var(--color-accent) 35%, transparent);
+  --shadow-glow-2: 0 0 24px
+    color-mix(in srgb, var(--color-accent-2) 35%, transparent);
+
+  /* ---- Motion (color-agnostic) --------------------------------------- */
+  --animate-grid-pan: grid-pan 3s linear infinite;
+  --animate-pulse-ring: pulse-ring 1.5s ease-out infinite;
+
+  @keyframes grid-pan {
+    from {
+      background-position: 0 0;
+    }
+    to {
+      background-position: 40px 40px;
+    }
+  }
+  @keyframes pulse-ring {
+    from {
+      transform: scale(0.9);
+      opacity: 0.7;
+    }
+    to {
+      transform: scale(1.6);
+      opacity: 0;
+    }
+  }
+}
+
+/* Optional: only if you enabled --font-display above and want the Bebas font. */
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap');
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+/* Uppercase condensed heading — optional, use where a bold display look fits. */
+.heading {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* Tactical grid backdrop used by <TacticalBackground/>. Tints from your accent. */
+.tactical-grid {
+  background-image:
+    linear-gradient(
+      color-mix(in srgb, var(--color-accent-2) 8%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--color-accent-2) 8%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 40px 40px;
+}

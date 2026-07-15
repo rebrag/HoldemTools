@@ -1,0 +1,302 @@
+/* index.css */
+
+@plugin "tailwindcss-animate";
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+html {
+  font-family: "Inter", ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+}
+
+html, body, #root { min-height: 100%; }
+
+/* Match the app's AuroraBackground (fixed, bg-slate-950 + emerald glow) so the
+   very first paint — before React mounts the backdrop — is the same dark
+   greenish tone instead of a grey gradient that flashes then swaps. */
+body {
+  margin: 0;
+  background:
+    radial-gradient(90% 70% at 50% 0%, rgba(16, 185, 129, 0.12) 0%, transparent 60%),
+    #020617;
+  color: #111827;
+}
+
+/* iOS Safari auto-zooms when a focused form field's font-size is < 16px,
+   forcing users to pinch back out after every input. Enforce a 16px floor on
+   touch devices so focusing a field never triggers the zoom. This rule is
+   intentionally left unlayered so it wins over Tailwind's `text-sm`/`text-xs`
+   utilities (which live in `@layer utilities`) without needing `!important`.
+   Pinch-to-zoom stays fully enabled — we don't touch the viewport meta. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* Utilities */
+@layer utilities {
+  .text-gradient {
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+/* ==========================================================================
+   WillyAim design-kit tokens (Tailwind v4) — surface + motion "technique",
+   wired to HoldemTools' existing emerald / slate / blue scheme.
+   No new brand colors: each token maps to a color the app already uses, so
+   this only adds glass surfaces, accent glow, and motion. Placed AFTER the
+   shadcn `@theme inline` block so `accent` resolves to the real brand emerald
+   (the shadcn `accent` placeholder is unused as a utility anywhere in src/).
+   ========================================================================== */
+@theme {
+  --color-surface: #0f172a;    /* slate-900  — elevated glass-panel base */
+  --color-accent: #10b981;     /* emerald-500 — primary brand accent */
+  --color-accent-2: #3b82f6;   /* blue-500    — secondary accent */
+  --color-on-accent: #020617;  /* slate-950   — text on accent buttons */
+
+  /* Subtle hairline, matching the existing `border-white/10`. */
+  --color-hairline: rgba(255, 255, 255, 0.1);
+
+  /* Glow shadows tint themselves from the accents above via color-mix. */
+  --shadow-glow: 0 0 24px color-mix(in srgb, var(--color-accent) 35%, transparent);
+  --shadow-glow-2: 0 0 24px color-mix(in srgb, var(--color-accent-2) 35%, transparent);
+
+  /* Motion (color-agnostic). */
+  --animate-grid-pan: grid-pan 3s linear infinite;
+  --animate-pulse-ring: pulse-ring 1.5s ease-out infinite;
+
+  @keyframes grid-pan {
+    from { background-position: 0 0; }
+    to { background-position: 40px 40px; }
+  }
+  @keyframes pulse-ring {
+    from { transform: scale(0.9); opacity: 0.7; }
+    to { transform: scale(1.6); opacity: 0; }
+  }
+
+  /* ---- 2026 homepage redesign motion ---------------------------------- */
+  --animate-marquee: marquee var(--marquee-duration, 40s) linear infinite;
+  --animate-meteor: meteor 5s linear infinite;
+  --animate-shimmer: shimmer 2.4s linear infinite;
+  --animate-gradient-pan: gradient-pan 6s ease infinite;
+  --animate-float: float 7s ease-in-out infinite;
+  --animate-aurora: aurora 18s ease-in-out infinite;
+  --animate-card-drift: card-drift 22s linear infinite;
+
+  @keyframes marquee {
+    to { transform: translateX(-50%); }
+  }
+  @keyframes meteor {
+    0% { transform: rotate(215deg) translateX(0); opacity: 1; }
+    70% { opacity: 1; }
+    100% { transform: rotate(215deg) translateX(-560px); opacity: 0; }
+  }
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  @keyframes gradient-pan {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+  @keyframes aurora {
+    0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+    33% { transform: translate3d(4%, -6%, 0) scale(1.1); }
+    66% { transform: translate3d(-5%, 4%, 0) scale(0.95); }
+  }
+  /* Slowly drift a decorative card diagonally upward while it fades in and
+     out and lists around its seeded tilt (--card-rotate). Used by FlyingCards. */
+  @keyframes card-drift {
+    0% {
+      transform: translate3d(0, 0, 0) rotate(var(--card-rotate, 0deg)) scale(1);
+      opacity: 0;
+    }
+    15% { opacity: 1; }
+    85% { opacity: 1; }
+    100% {
+      transform: translate3d(60px, -120px, 0) rotate(calc(var(--card-rotate, 0deg) + 18deg)) scale(1.05);
+      opacity: 0;
+    }
+  }
+}
+
+@layer base {
+  html { scroll-behavior: smooth; }
+}
+
+/* Animated gradient text — pair with an `animate-gradient-pan` bg-clip-text. */
+.text-gradient-animated {
+  background-size: 200% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Fade the edges of an infinite marquee track. */
+.marquee-mask {
+  -webkit-mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+  mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-mask [class*="animate-marquee"],
+  [class*="animate-meteor"],
+  [class*="animate-float"],
+  [class*="animate-aurora"],
+  [class*="animate-card-drift"],
+  [class*="animate-gradient-pan"] {
+    animation: none !important;
+  }
+}
+
+/* Tactical grid backdrop (available for an opt-in <TacticalBackground/>);
+   tints from accent-2, so it blends with the existing scheme. */
+.tactical-grid {
+  background-image:
+    linear-gradient(
+      color-mix(in srgb, var(--color-accent-2) 8%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--color-accent-2) 8%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 40px 40px;
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
