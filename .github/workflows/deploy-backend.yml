@@ -1,0 +1,60 @@
+# Deploys the backend (backend/) to Azure App Service "holdemtoolsapieast".
+# Promoted from the pre-merge backend/.github/workflows/main_holdemtoolsapieast.yml,
+# adapted to build from the backend/ subfolder and to run only on backend changes.
+name: Build and deploy backend to Azure - holdemtoolsapieast
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read # required for actions/checkout
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET Core
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - name: Build with dotnet
+        run: dotnet build backend/HoldemToolsAPI.sln --configuration Release
+
+      # Publish the API project specifically (not the .sln) so the test project
+      # is excluded from the deployment package.
+      - name: dotnet publish
+        run: dotnet publish backend/GTOLiteAPI.csproj -c Release -o "${{env.DOTNET_ROOT}}/myapp"
+
+      - name: Upload artifact for deployment job
+        uses: actions/upload-artifact@v4
+        with:
+          name: .net-app
+          path: ${{env.DOTNET_ROOT}}/myapp
+
+  deploy:
+    runs-on: windows-latest
+    needs: build
+
+    steps:
+      - name: Download artifact from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: .net-app
+
+      - name: Deploy to Azure Web App
+        id: deploy-to-webapp
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: 'holdemtoolsapieast'
+          slot-name: 'Production'
+          package: .
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
