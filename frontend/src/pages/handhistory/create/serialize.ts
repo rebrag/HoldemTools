@@ -91,8 +91,7 @@ function splitAmounts(total: number, n: number): number[] {
 export function serializeHand(
   state: AdvancedHandState,
   e: Engine,
-  equity?: EquityInfo,
-  opts?: { location?: string | null }
+  equity?: EquityInfo
 ): string {
   const lines: string[] = [];
   const isHero = (i: number) => e.heroIndex === i;
@@ -129,13 +128,12 @@ export function serializeHand(
 
   const limit = state.game === "Holdem" ? "NL" : "PL";
 
-  // Header. Use the session's location when available (e.g. from the bankroll
-  // session that spawned this hand); fall back to the generic site name.
-  const site = opts?.location?.trim() || "Yatahay Network";
-  lines.push(
-    `${site} - ${money(e.bb)} ${limit} - ${gameName(state.game)} - ${e.players.length} players`
-  );
+  // Header. Lead with the HoldemTools attribution (no site/location prefix),
+  // then a compact stakes/game/players summary.
   lines.push("Hand converted by HoldemTools: http://www.holdemtools.com/");
+  lines.push(
+    `${money(e.bb)} ${limit} - ${gameName(state.game)} - ${e.players.length} players`
+  );
   if (state.numBoards === 2) lines.push("(Double board)");
   lines.push("");
 
