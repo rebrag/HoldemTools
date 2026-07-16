@@ -75,16 +75,29 @@ function applyDefaults(base: AdvancedHandState, d: HandDefaults): AdvancedHandSt
   if (d.seats) {
     seats = seats.map((s, i) => {
       const ds = d.seats![i];
-      // Carry the sitting-out state so a sat-out player stays sat out next hand
-      // (and active seats stay active). Hole cards are left reset above.
+      // Carry each seat's occupied + sitting-out state so the whole table layout
+      // survives to the next hand: an empty seat stays empty in the same spot and
+      // a sat-out player stays sat out. Hole cards are left reset above.
       return ds
-        ? { ...s, name: ds.name, stack: ds.stack, occupied: true, sittingOut: ds.sittingOut }
+        ? {
+            ...s,
+            name: ds.name,
+            stack: ds.stack,
+            occupied: ds.occupied ?? true,
+            sittingOut: ds.sittingOut,
+          }
         : s;
     });
   }
   next.seats = seats;
   next.buttonSeat = Math.min(next.buttonSeat, size - 1);
   next.heroSeat = Math.min(next.heroSeat, size - 1);
+  // Empties are now carried forward, so the button/hero can land on a seat that
+  // isn't in the hand — snap them to the nearest seat that is.
+  if (!isActiveSeat(next.seats[next.buttonSeat]))
+    next.buttonSeat = nextActiveSeat(next.seats, next.buttonSeat);
+  if (!isActiveSeat(next.seats[next.heroSeat]))
+    next.heroSeat = nextActiveSeat(next.seats, next.heroSeat);
   return next;
 }
 
@@ -108,12 +121,37 @@ interface Props {
   // Free-form game string (e.g. a bankroll session's "2/5 NL") used to seed the
   // setup's blinds/ante/game. Unrecognized tokens are ignored.
   defaultGameString?: string;
-  // Session location shown as the site name in the serialized header. Falls
-  // back to a generic site name when absent (standalone builder).
-  location?: string | null;
 }
 
 const TABLE_SIZES = [9, 8, 7, 6, 5, 4, 3, 2];
+
+// In-progress setup is persisted here so it survives navigating away or a reload
+// (standalone mode only). Cleared once the hand is saved.
+const DRAFT_KEY = "ht_handhistory_draft_v1";
+
+// Read a persisted setup, or null when absent/invalid. Light validation only —
+// we trust any object carrying the seats array the recorder needs.
+function loadSetupDraft(): AdvancedHandState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as AdvancedHandState;
+    if (parsed && Array.isArray(parsed.seats) && parsed.seats.length >= 2) return parsed;
+  } catch {
+    // ignore malformed drafts
+  }
+  return null;
+}
+
+function clearSetupDraft(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 const inputCls =
   "w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition";
@@ -123,7 +161,6 @@ const CreateHandHistory: React.FC<Props> = ({
   onComplete,
   onClose,
   defaultGameString,
-  location,
 }) => {
   const navigate = useNavigate();
   const embedded = !!onComplete;
@@ -134,8 +171,16 @@ const CreateHandHistory: React.FC<Props> = ({
     () => (defaultGameString ? parseGameString(defaultGameString) : undefined),
     [defaultGameString]
   );
-  const [state, setState] = useState<AdvancedHandState>(() =>
-    createInitialState(9, setupDefaults)
+  // One-time read of any persisted in-progress setup (standalone only). When a
+  // draft is restored we treat the form as already "touched" so the
+  // seed-from-last-hand pass below still records the remembered hand (for "New
+  // hand") but doesn't overwrite the restored draft.
+  const draftRef = useRef<AdvancedHandState | null | undefined>(undefined);
+  if (draftRef.current === undefined) {
+    draftRef.current = embedded ? null : loadSetupDraft();
+  }
+  const [state, setState] = useState<AdvancedHandState>(
+    () => draftRef.current ?? createInitialState(9, setupDefaults)
   );
   const [editingSeat, setEditingSeat] = useState<number | null>(null);
   const [editingBoard, setEditingBoard] = useState(false);
@@ -153,7 +198,7 @@ const CreateHandHistory: React.FC<Props> = ({
   // Defaults seeding (standalone mode): copy the most recent saved hand's setup
   // once, unless the user has already touched the form or hit Clear all.
   const seededRef = useRef(false);
-  const touchedRef = useRef(false);
+  const touchedRef = useRef(draftRef.current != null);
   const clearedRef = useRef(false);
   const rememberedRef = useRef<HandDefaults | null>(null);
 
@@ -238,9 +283,9 @@ const CreateHandHistory: React.FC<Props> = ({
   const serialized = useMemo(
     () =>
       engine && engine.done && engine.winners
-        ? serializeHand(state, engine, equityInfo, { location })
+        ? serializeHand(state, engine, equityInfo)
         : "",
-    [engine, state, equityInfo, location]
+    [engine, state, equityInfo]
   );
 
   const update = (partial: Partial<AdvancedHandState>) => {
@@ -444,6 +489,24 @@ const CreateHandHistory: React.FC<Props> = ({
     };
   }, [embedded, user, localHands]);
 
+  // Persist the in-progress setup so it survives navigation/reload (standalone
+  // only, setup phase only). Skip the pristine default so an untouched form
+  // doesn't pre-empt the seed-from-last-hand pass above. saveHand clears it once
+  // the hand is saved.
+  const pristineSetup = useMemo(() => createInitialState(9, setupDefaults), [setupDefaults]);
+  useEffect(() => {
+    if (embedded || phase !== "setup") return;
+    try {
+      if (JSON.stringify(state) === JSON.stringify(pristineSetup)) {
+        window.localStorage.removeItem(DRAFT_KEY);
+      } else {
+        window.localStorage.setItem(DRAFT_KEY, JSON.stringify(state));
+      }
+    } catch {
+      // ignore quota / serialization errors
+    }
+  }, [embedded, phase, state, pristineSetup]);
+
   const start = () => {
     if (activeCount < 2) return;
     setPlacement(null);
@@ -493,6 +556,7 @@ const CreateHandHistory: React.FC<Props> = ({
     // synchronous, so we skip the saving/error state and route to the list.
     if (!user) {
       addLocal(toSave);
+      clearSetupDraft();
       navigate("/hand-history");
       return;
     }
@@ -504,6 +568,7 @@ const CreateHandHistory: React.FC<Props> = ({
         body: JSON.stringify({ rawText: toSave, sessionId: null }),
       });
       if (!res.ok) throw new Error(`Save failed (${res.status})`);
+      clearSetupDraft();
       navigate("/hand-history");
     } catch (e: unknown) {
       setSaveError(e instanceof Error ? e.message : "Save failed.");

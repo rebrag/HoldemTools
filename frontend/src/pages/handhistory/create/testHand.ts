@@ -83,8 +83,8 @@ export function buildTestHandText(): string {
     },
   };
 
-  // No opts → site name defaults to "Yatahay Network". Append the embedded
-  // replay payload so the fixture is replayable just like a real saved hand
-  // (HandHistoryTool strips it from the on-screen text via stripReplay).
+  // Append the embedded replay payload so the fixture is replayable just like a
+  // real saved hand (HandHistoryTool strips it from the on-screen text via
+  // stripReplay).
   return serializeHand(state, e, equity) + encodeReplay(buildReplayData(state, e));
 }

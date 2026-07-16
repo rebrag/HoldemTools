@@ -296,9 +296,23 @@ export function legalActions(e: Engine): LegalActions | null {
 export type ActionKind = "fold" | "check" | "call" | "bet" | "raise" | "allin";
 
 // amountTo = desired total street commitment (for bet/raise/allin-as-bet).
-export function applyAction(prev: Engine, kind: ActionKind, amountTo?: number): Engine {
+// How settling one action left the betting round:
+//   "none"    — action played, betting continues (toAct advanced to the next actor)
+//   "advance" — betting round closed; the caller collects bets and deals the next street
+//   "foldout" — only one player remains; the caller awards the pot
+export type SettleClose = "none" | "advance" | "foldout";
+
+// Apply an action's chip/fold effects and record it, WITHOUT advancing the
+// street or ending the hand. Split out of applyAction so the replayer can show
+// the action on its own frame before the board and pot react to it; applyAction
+// composes settleAction with the resolution below and is unchanged externally.
+export function settleAction(
+  prev: Engine,
+  kind: ActionKind,
+  amountTo?: number
+): { e: Engine; close: SettleClose } {
   const e = clone(prev);
-  if (e.toAct == null || e.done) return e;
+  if (e.toAct == null || e.done) return { e, close: "none" };
   const idx = e.toAct;
   const p = e.players[idx];
   const actions = e.streetActions[e.street];
@@ -365,62 +379,113 @@ export function applyAction(prev: Engine, kind: ActionKind, amountTo?: number): 
     }
   }
 
-  // Hand ends immediately if only one player remains.
+  // Only one player left → fold-out win, resolved by the caller.
   const live = e.players.filter((pl) => !pl.folded);
-  if (live.length === 1) {
-    const winnerIdx = e.players.indexOf(live[0]);
-    e.toAct = null;
-    e.done = true;
-    e.winners = [winnerIdx];
-    e.winners2 = e.numBoards === 2 ? [winnerIdx] : null;
-    return e;
-  }
+  if (live.length === 1) return { e, close: "foldout" };
 
   const next = nextToAct(e, idx);
   if (next != null) {
     e.toAct = next;
-    return e;
+    return { e, close: "none" };
   }
-  // Betting round complete → return any uncalled excess, then advance.
-  returnUncalled(e);
-  return advanceStreet(e);
+  // Betting round complete → caller returns uncalled excess and advances.
+  return { e, close: "advance" };
+}
+
+// Award the pot to the lone remaining player (fold-out). Mutates and returns e.
+function finishFoldout(e: Engine): Engine {
+  const live = e.players.filter((pl) => !pl.folded);
+  const winnerIdx = e.players.indexOf(live[0]);
+  e.toAct = null;
+  e.done = true;
+  e.winners = [winnerIdx];
+  e.winners2 = e.numBoards === 2 ? [winnerIdx] : null;
+  return e;
+}
+
+export function applyAction(prev: Engine, kind: ActionKind, amountTo?: number): Engine {
+  const { e, close } = settleAction(prev, kind, amountTo);
+  if (close === "foldout") return finishFoldout(e);
+  if (close === "advance") {
+    returnUncalled(e);
+    return advanceStreet(e);
+  }
+  return e;
 }
 
 function canActCount(e: Engine): number {
   return e.players.filter((p) => !p.folded && !p.allIn).length;
 }
 
-function advanceStreet(e: Engine): Engine {
-  // If fewer than two players can still act, the money is all in as of the
-  // just-completed street; remaining streets are pure run-outs. Record that
+// Outcome of advancing a single street:
+//   "betting"  — a real betting round opened on the new street (toAct is set)
+//   "runout"   — a card was dealt but nobody can act and streets still remain
+//   "showdown" — the hand reached showdown (done)
+export type StreetStatus = "betting" | "runout" | "showdown";
+
+// Advance exactly one street: collect the just-closed street's bets into the pot,
+// deal the next board card(s), and report how the new street resolved. Splitting
+// the advance into single steps lets the replayer reveal a run-out one card at a
+// time; advanceStreet loops this to reproduce the all-at-once behavior. Pure.
+function stepStreet(prev: Engine): { e: Engine; status: StreetStatus } {
+  const e = clone(prev);
+  // First time betting is effectively closed with money still live, record the
   // street so callers can compute all-in equity from the right board state.
   if (e.allInStreet == null && canActCount(e) < 2 && e.players.filter((p) => !p.folded).length >= 2) {
     e.allInStreet = e.street;
   }
-  // Reset per-street state.
+  // Collect this street's bets into the pot (committed → 0) and reset per-street
+  // state. Idempotent on later run-out steps, where committed is already 0.
   for (const p of e.players) p.committed = 0;
   e.currentBet = 0;
   e.minRaise = e.bb;
   e.acted = e.players.map(() => false);
 
-  while (e.street < 3) {
-    e.street += 1;
-    e.reached = Math.max(e.reached, e.street);
-    e.streetMeta[e.street] = {
-      potStart: e.pot,
-      players: e.players.filter((p) => !p.folded).length,
-    };
-    if (canActCount(e) >= 2) {
-      // Normal betting street.
-      const buttonSeat = buttonSeatOf(e);
-      e.toAct = firstToActPostflop(e, buttonSeat);
-      if (e.toAct != null) return e;
+  if (e.street >= 3) return { e: finishHand(e), status: "showdown" };
+  e.street += 1;
+  e.reached = Math.max(e.reached, e.street);
+  e.streetMeta[e.street] = {
+    potStart: e.pot,
+    players: e.players.filter((p) => !p.folded).length,
+  };
+  if (canActCount(e) >= 2) {
+    const buttonSeat = buttonSeatOf(e);
+    const toAct = firstToActPostflop(e, buttonSeat);
+    if (toAct != null) {
+      e.toAct = toAct;
+      return { e, status: "betting" };
     }
-    // else: nobody (or only one) can act — run it out to the next street.
   }
+  // Nobody can act on the new street: a run-out card, or showdown if it's the river.
+  if (e.street >= 3) return { e: finishHand(e), status: "showdown" };
+  return { e, status: "runout" };
+}
 
-  // Reached showdown.
-  return finishHand(e);
+function advanceStreet(e: Engine): Engine {
+  let cur = e;
+  for (;;) {
+    const { e: next, status } = stepStreet(cur);
+    if (status !== "runout") return next; // "betting" or "showdown"
+    cur = next;
+  }
+}
+
+// The per-street advance sequence the replayer shows after a street-closing
+// action: return any uncalled excess, then reveal one street at a time. Each
+// entry is a distinct engine snapshot — a run-out yields several (turn, river).
+// Pure; `settled` is not mutated. (applyAction folds this into a single frame.)
+export function dealStreets(settled: Engine): { e: Engine; status: StreetStatus }[] {
+  const base = clone(settled);
+  returnUncalled(base);
+  const out: { e: Engine; status: StreetStatus }[] = [];
+  let cur = base;
+  for (;;) {
+    const step = stepStreet(cur);
+    out.push(step);
+    if (step.status !== "runout") break;
+    cur = step.e;
+  }
+  return out;
 }
 
 function buttonSeatOf(e: Engine): number {

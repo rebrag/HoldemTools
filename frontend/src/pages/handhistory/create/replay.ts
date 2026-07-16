@@ -13,8 +13,10 @@ import type { AdvancedHandState } from "./types";
 import {
   applyAction,
   buildEngine,
+  dealStreets,
   fmtChips,
   setWinners,
+  settleAction,
   type Engine,
 } from "./engine";
 
@@ -157,25 +159,61 @@ function describeAction(prev: Engine, a: ReplayAction): string {
   }
 }
 
-// Precompute every engine snapshot for the replay. frames[0] is the posted-blinds
-// state; frames[i+1] is the state after actions[i]. Winners are applied to the
-// final frame (finishHand leaves winners=null at a multi-way showdown).
+const STREET_NAMES = ["Pre Flop", "Flop", "Turn", "River"];
+
+// Precompute every engine snapshot the replayer scrubs through. Unlike the
+// recorder (where applyAction folds a street-closing action, the next card, and
+// the pot collection into ONE frame), the replay splits them so the deal feels
+// real: the closing action is shown first (chips still in front, board unchanged),
+// then each street is dealt on its own step (a run-out reveals one card at a
+// time), then the hand resolves (pot pushed), and finally — when any seat is
+// hidden-until-showdown — an extra step flips those cards face-up.
+//
+// frames[0] is the posted-blinds state. `revealHidden[i]` marks the single trailing
+// step on which concealed hole cards are shown (see HandReplay's concealSeats).
 export function reconstructFrames(data: ReplayData): {
   frames: Engine[];
   captions: string[];
+  revealHidden: boolean[];
 } {
-  const frames: Engine[] = [buildEngine(data.state)];
-  const captions: string[] = ["Blinds posted"];
+  const frames: Engine[] = [];
+  const captions: string[] = [];
+  const revealHidden: boolean[] = [];
+  const push = (e: Engine, caption: string, reveal = false) => {
+    frames.push(e);
+    captions.push(caption);
+    revealHidden.push(reveal);
+  };
+
+  push(buildEngine(data.state), "Blinds posted");
+  let prev = frames[0];
 
   for (const a of data.actions) {
-    const prev = frames[frames.length - 1];
     const caption = describeAction(prev, a);
-    frames.push(applyAction(prev, a.kind, a.to));
-    captions.push(caption);
+    const { e: settled, close } = settleAction(prev, a.kind, a.to);
+    // The action itself is always its own step, shown before anything reacts.
+    push(settled, caption);
+
+    if (close === "foldout") {
+      // Everyone folded to one player: push the pot on a separate step.
+      const resolved = applyAction(prev, a.kind, a.to); // = settle + finishFoldout
+      push(resolved, "Pot awarded");
+      prev = resolved;
+    } else if (close === "advance") {
+      // Deal each street on its own step (turn, then river for a run-out).
+      const steps = dealStreets(settled);
+      for (const s of steps) {
+        push(s.e, s.status === "showdown" ? "Showdown" : STREET_NAMES[s.e.street]);
+      }
+      prev = steps[steps.length - 1].e;
+    } else {
+      prev = settled; // betting continues
+    }
   }
 
-  // Apply the recorded winners to the last frame so the replay shows the same
-  // award the recorder settled on (idempotent when a fold already set them).
+  // Bake the recorded winners into the final resolved engine so the replay shows
+  // the same award the recorder settled on (a fold already set them; a multi-way
+  // showdown left winners=null for the user's pick).
   let last = frames[frames.length - 1];
   if (data.winners) last = setWinners(last, data.winners, 1);
   if (data.state.numBoards === 2 && data.winners2) {
@@ -183,7 +221,18 @@ export function reconstructFrames(data: ReplayData): {
   }
   frames[frames.length - 1] = last;
 
-  return { frames, captions };
+  // If any hidden seat is still live at the end, add one final step that flips
+  // those cards face-up — always, even on an uncontested win. Non-hero hands are
+  // hidden by default (unless an explicit per-seat choice says otherwise).
+  const hasConcealedToReveal = data.state.seats.some((s, i) => {
+    const hidden = s.hideUntilShowdown ?? i !== data.state.heroSeat;
+    if (!hidden) return false;
+    const fp = last.players.find((p) => p.seat === i);
+    return fp && !fp.folded;
+  });
+  if (hasConcealedToReveal) push(last, "Show cards", true);
+
+  return { frames, captions, revealHidden };
 }
 
 // ───────────────────────── list preview ─────────────────────────

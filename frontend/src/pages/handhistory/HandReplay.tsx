@@ -196,19 +196,21 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
   const atStart = cursor <= 0;
   const atEnd = cursor >= last;
 
-  // "Hide cards until showdown": marked seats render card backs on every frame
-  // before the last one, and are revealed on the final frame only if the hand
-  // actually reached showdown with that player still in it. A hidden player who
-  // folded (or won by everyone else folding) stays face-down for the whole
-  // replay — same as live poker. Folded status comes from the FINAL frame so
-  // scrubbing backward past a fold never flashes the cards face-up.
-  const finalFrame = replay.frames[last];
-  const showdownReached =
-    finalFrame.done && finalFrame.players.filter((p) => !p.folded).length >= 2;
+  // "Hide cards until showdown": marked seats render card backs until the replay
+  // reaches its dedicated reveal step — the trailing step reconstructFrames adds
+  // (revealHidden = true) whenever a concealed seat is still live at the end. On
+  // that step a concealed seat flips face-up unless it folded, so the winner's
+  // hand is always shown at the end, even on an uncontested win. Folded status
+  // comes from the current frame (the reveal step's engine is the final one, so
+  // scrubbing backward off it re-conceals).
+  const revealHidden = replay.revealHidden[cursor];
   const concealSeats = data.state.seats.map((s, i) => {
-    if (!s.hideUntilShowdown) return false;
-    if (!atEnd || !showdownReached) return true;
-    const fp = finalFrame.players.find((p) => p.seat === i);
+    // Default: non-hero hands are hidden until showdown, the hero's are shown.
+    // An explicit per-seat choice (true/false) overrides the default.
+    const hidden = s.hideUntilShowdown ?? i !== data.state.heroSeat;
+    if (!hidden) return false;
+    if (!revealHidden) return true;
+    const fp = frame.players.find((p) => p.seat === i);
     return !fp || fp.folded;
   });
 
@@ -243,9 +245,10 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
   const cycleSpeed = () =>
     setSpeed((s) => SPEEDS[(SPEEDS.indexOf(s as (typeof SPEEDS)[number]) + 1) % SPEEDS.length]);
 
-  // Winner banner (final frame only).
+  // Winner banner: shown once the hand resolves (the pot-push step) and through
+  // the trailing card-reveal step.
   const winnerText = (() => {
-    if (!atEnd) return null;
+    if (!frame.done) return null;
     const nameOf = (idx: number) => frame.players[idx]?.name ?? `Seat ${idx}`;
     const fmt = (w: number[] | null) =>
       w && w.length ? w.map(nameOf).join(" & ") : null;
