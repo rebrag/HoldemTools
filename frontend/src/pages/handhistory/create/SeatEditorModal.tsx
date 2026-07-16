@@ -61,7 +61,11 @@ const SeatEditorModal: React.FC<Props> = ({
   const [makeHero, setMakeHero] = useState(isHero);
   const [makeStraddle, setMakeStraddle] = useState(isStraddle);
   const [sittingOut, setSittingOut] = useState(!!seat.sittingOut);
-  const [hideCards, setHideCards] = useState(!!seat.hideUntilShowdown);
+  // Default: hide non-hero cards until showdown, show the hero's. An explicit
+  // prior choice wins; `undefined` means "use the default", which we preserve on
+  // save (below) so the default keeps following the hero if it's reassigned.
+  const [hideCards, setHideCards] = useState(seat.hideUntilShowdown ?? !isHero);
+  const [hideTouched, setHideTouched] = useState(false);
   const [straddleAmt, setStraddleAmt] = useState(straddleAmount);
 
   useEffect(() => {
@@ -109,7 +113,13 @@ const SeatEditorModal: React.FC<Props> = ({
         // count as used elsewhere.
         holeCards: sittingOut ? pad([]) : pad(hole.filter((c): c is string => !!c)),
         sittingOut,
-        hideUntilShowdown: !sittingOut && hideCards,
+        // Preserve "unset" (undefined) unless the user toggled the checkbox, so
+        // the hero/non-hero default is derived at replay time.
+        hideUntilShowdown: sittingOut
+          ? undefined
+          : hideTouched
+            ? hideCards
+            : seat.hideUntilShowdown,
       },
       makeButton: !sittingOut && makeButton,
       makeHero: !sittingOut && makeHero,
@@ -200,7 +210,11 @@ const SeatEditorModal: React.FC<Props> = ({
               type="checkbox"
               checked={!sittingOut && makeHero}
               disabled={sittingOut}
-              onChange={(e) => setMakeHero(e.target.checked)}
+              onChange={(e) => {
+                setMakeHero(e.target.checked);
+                // Follow the hero/non-hero hide default until the user overrides it.
+                if (!hideTouched) setHideCards(!e.target.checked);
+              }}
               className="h-4 w-4 accent-emerald-600"
             />
             This is my hand (hero)
@@ -230,7 +244,10 @@ const SeatEditorModal: React.FC<Props> = ({
               <input
                 type="checkbox"
                 checked={hideCards}
-                onChange={(e) => setHideCards(e.target.checked)}
+                onChange={(e) => {
+                  setHideCards(e.target.checked);
+                  setHideTouched(true);
+                }}
                 className="h-4 w-4 accent-emerald-600"
               />
               <span>

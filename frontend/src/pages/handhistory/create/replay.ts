@@ -221,10 +221,12 @@ export function reconstructFrames(data: ReplayData): {
   }
   frames[frames.length - 1] = last;
 
-  // If any hidden-until-showdown seat is still live at the end, add one final
-  // step that flips those cards face-up — always, even on an uncontested win.
+  // If any hidden seat is still live at the end, add one final step that flips
+  // those cards face-up — always, even on an uncontested win. Non-hero hands are
+  // hidden by default (unless an explicit per-seat choice says otherwise).
   const hasConcealedToReveal = data.state.seats.some((s, i) => {
-    if (!s.hideUntilShowdown) return false;
+    const hidden = s.hideUntilShowdown ?? i !== data.state.heroSeat;
+    if (!hidden) return false;
     const fp = last.players.find((p) => p.seat === i);
     return fp && !fp.folded;
   });

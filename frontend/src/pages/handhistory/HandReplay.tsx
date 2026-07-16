@@ -205,7 +205,10 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
   // scrubbing backward off it re-conceals).
   const revealHidden = replay.revealHidden[cursor];
   const concealSeats = data.state.seats.map((s, i) => {
-    if (!s.hideUntilShowdown) return false;
+    // Default: non-hero hands are hidden until showdown, the hero's are shown.
+    // An explicit per-seat choice (true/false) overrides the default.
+    const hidden = s.hideUntilShowdown ?? i !== data.state.heroSeat;
+    if (!hidden) return false;
     if (!revealHidden) return true;
     const fp = frame.players.find((p) => p.seat === i);
     return !fp || fp.folded;
