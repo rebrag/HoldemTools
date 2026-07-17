@@ -24,6 +24,8 @@ import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import { positionLabelsForSeats } from "./create/positions";
 import { buildTableSeats, potView, TableCenter } from "./create/tableView";
 import { parseReplay, reconstructFrames, stripReplay } from "./create/replay";
+import { legalActions } from "./create/engine";
+import { useReplayEquities } from "./create/useReplayEquities";
 import { TEST_HAND_ID, buildTestHandText, SHOW_TEST_HAND } from "./create/testHand";
 import { fetchSharedHand } from "@/lib/shareApi";
 import type { HandHistory } from "./types";
@@ -130,6 +132,21 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
     [rawText]
   );
 
+  // Per-street equities for the shown / all-in players, computed once per hand
+  // from the resolved final frame (not per scrubbed frame).
+  const finalEngine = replay ? replay.frames[replay.frames.length - 1] : null;
+  const eq = useReplayEquities(data?.state ?? null, finalEngine);
+
+  // The frame on which the hand locks into an all-in (the action that closed
+  // betting with the players committed). From here on the run-out is decided, so
+  // the replayer tables the live hands face-up and shows equity on each street.
+  // It's the frame just before the first one carrying an `allInStreet`.
+  const allInLockIdx = useMemo(() => {
+    if (!replay) return -1;
+    const i = replay.frames.findIndex((f) => f.allInStreet != null);
+    return i < 0 ? -1 : i - 1;
+  }, [replay]);
+
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
@@ -204,14 +221,46 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
   // comes from the current frame (the reveal step's engine is the final one, so
   // scrubbing backward off it re-conceals).
   const revealHidden = replay.revealHidden[cursor];
+  // Once the hand is locked all-in, the run-out is decided and the live hands are
+  // effectively tabled — reveal them (like the final showdown step) so equities
+  // can be shown on each street.
+  const lockedAllIn = allInLockIdx >= 0 && cursor >= allInLockIdx;
   const concealSeats = data.state.seats.map((s, i) => {
     // Default: non-hero hands are hidden until showdown, the hero's are shown.
     // An explicit per-seat choice (true/false) overrides the default.
     const hidden = s.hideUntilShowdown ?? i !== data.state.heroSeat;
     if (!hidden) return false;
-    if (!revealHidden) return true;
+    if (!revealHidden && !lockedAllIn) return true;
+    // On the reveal step / all-in run-out, flip live hands face-up but keep
+    // folded ones concealed.
     const fp = frame.players.find((p) => p.seat === i);
     return !fp || fp.folded;
+  });
+
+  // Pot odds for the single player currently facing a bet (engine.toAct). Uses
+  // the full pot (frame.pot already includes the current street's bets) so the
+  // break-even % is call / (pot + call).
+  const la = legalActions(frame);
+  const potOdds =
+    la && la.canCall && la.callAmount > 0 && frame.toAct != null
+      ? {
+          seat: frame.players[frame.toAct].seat,
+          pct: (la.callAmount / (frame.pot + la.callAmount)) * 100,
+        }
+      : null;
+
+  // Per-seat readout placed in each seat's `extra` slot: pot odds for whoever
+  // faces a bet, otherwise a running equity for shown / all-in participants on the
+  // current street. Only one seat is ever to-act, so the two never collide.
+  const seatExtras = data.state.seats.map((_, i) => {
+    if (potOdds && potOdds.seat === i) return <PotOddsBadge pct={potOdds.pct} />;
+    if (!eq.participantSeats.includes(i) || concealSeats[i]) return undefined;
+    const streetEq = eq.bySeat[i]?.[frame.street];
+    // Re-key on the rounded value so the badge re-mounts (and re-animates) as the
+    // equity ticks street to street during a run-out.
+    if (streetEq != null) return <EquityBadge key={Math.round(streetEq)} pct={streetEq} />;
+    if (eq.computing) return <EquityBadge key="pending" pending />;
+    return undefined;
   });
 
   const tap = reduce ? undefined : { scale: 0.9 };
@@ -302,7 +351,7 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
       <div className="w-full py-2">
         <PokerTable
           size={data.state.tableSize}
-          seats={buildTableSeats({ state: data.state, engine: frame, labels, unitMode, concealSeats })}
+          seats={buildTableSeats({ state: data.state, engine: frame, labels, unitMode, concealSeats, seatExtras })}
           maxWidthClassName="max-w-2xl"
           potAmount={pot?.amount}
           potLabel={pot?.label}
@@ -420,6 +469,32 @@ const TransportButton: React.FC<{
   >
     {children}
   </motion.button>
+);
+
+// Running equity readout under a seat (win% incl. tie share on the current
+// street). Re-keys on the value so it ticks as the board runs out. `pending`
+// shows a placeholder while the preflop Monte-Carlo converges.
+const EquityBadge: React.FC<{ pct?: number; pending?: boolean }> = ({ pct, pending }) => (
+  <motion.span
+    initial={{ opacity: 0, y: 2, scale: 0.85 }}
+    animate={{ opacity: 1, y: 0, scale: 1 }}
+    transition={{ duration: 0.2 }}
+    className="mt-0.5 rounded-full bg-sky-500/90 px-1.5 text-[9px] font-bold tabular-nums text-white shadow ring-1 ring-sky-300/50"
+  >
+    {pending ? "…" : `${Math.round(pct ?? 0)}%`}
+  </motion.span>
+);
+
+// Pot-odds readout under the seat facing a bet: the break-even equity % to call.
+const PotOddsBadge: React.FC<{ pct: number }> = ({ pct }) => (
+  <motion.span
+    initial={{ opacity: 0, y: 2 }}
+    animate={{ opacity: 1, y: 0 }}
+    transition={{ duration: 0.2 }}
+    className="mt-0.5 whitespace-nowrap rounded-full bg-violet-500/90 px-1.5 text-[9px] font-bold tabular-nums text-white shadow ring-1 ring-violet-300/50"
+  >
+    Pot odds {Math.round(pct)}%
+  </motion.span>
 );
 
 export default HandReplay;

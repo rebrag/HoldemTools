@@ -1,5 +1,6 @@
 // src/pages/handhistory/create/types.ts
 // State model for the Advanced Hand History recorder (visual hand entry).
+import type { EvalGame } from "@/lib/handEval";
 
 // Hole cards for a seat. Length matches the game's hand size (2 for Hold'em,
 // 4 for PLO, 5 for PLO5); empty slots are null.
@@ -10,6 +11,15 @@ export function handSize(game: string): number {
   if (game === "PLO") return 4;
   if (game === "PLO5") return 5;
   return 2; // Holdem / Other
+}
+
+// Map the recorder's game label to the evaluator's game id (null = can't eval).
+// Shared by the recorder and the replayer's equity computation.
+export function evalGameId(game: string): EvalGame | null {
+  if (game === "Holdem") return "texas-holdem";
+  if (game === "PLO") return "omaha4";
+  if (game === "PLO5") return "omaha5";
+  return null;
 }
 
 export interface Seat {
