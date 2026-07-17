@@ -31,7 +31,7 @@ import { buildTableSeats, potView, TableCenter } from "./tableView";
 import { actionsFromEngine, buildReplayData, encodeReplay, rebuildFrames } from "./replay";
 import { serializeHand, type EquityInfo, type StreetEquity } from "./serialize";
 import { useShowdownEquity, type EquityRequest } from "./useShowdownEquity";
-import { evalWinners, exactEquity, type EvalGame } from "@/lib/handEval";
+import { evalWinners, exactEquity } from "@/lib/handEval";
 import { parseGameString } from "./parseGameString";
 import { parseHandDefaults, type HandDefaults } from "./parseHandDefaults";
 import type { HandHistory } from "../types";
@@ -39,6 +39,7 @@ import {
   blankSeat,
   createInitialState,
   defaultStraddleAmount,
+  evalGameId,
   handSize,
   isActiveSeat,
   MAX_STRADDLES,
@@ -100,15 +101,6 @@ function applyDefaults(base: AdvancedHandState, d: HandDefaults): AdvancedHandSt
     next.heroSeat = nextActiveSeat(next.seats, next.heroSeat);
   return next;
 }
-
-// Map the recorder's game label to the evaluator's game id (null = can't eval).
-function evalGameId(game: string): EvalGame | null {
-  if (game === "Holdem") return "texas-holdem";
-  if (game === "PLO") return "omaha4";
-  if (game === "PLO5") return "omaha5";
-  return null;
-}
-
 
 interface Props {
   user: User | null;
