@@ -239,22 +239,34 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
 
   // Pot odds for the single player currently facing a bet (engine.toAct). Uses
   // the full pot (frame.pot already includes the current street's bets) so the
-  // break-even % is call / (pot + call).
+  // break-even % is call / (pot + call). Only shown when the player faces a
+  // VOLUNTARY bet/raise — never a forced blind or straddle: preflop the current
+  // bet starts at the largest forced post (BB or top straddle) and only a raise
+  // pushes it above that; postflop every bet is voluntary (no blinds/straddles).
   const la = legalActions(frame);
+  const maxForcedPost = Math.max(frame.bb, ...frame.straddles.map((s) => s.amount));
+  const facingVoluntaryBet = frame.street > 0 || frame.currentBet > maxForcedPost;
   const potOdds =
-    la && la.canCall && la.callAmount > 0 && frame.toAct != null
+    la && la.canCall && la.callAmount > 0 && frame.toAct != null && facingVoluntaryBet
       ? {
           seat: frame.players[frame.toAct].seat,
           pct: (la.callAmount / (frame.pot + la.callAmount)) * 100,
         }
       : null;
 
+  // Equities are all-or-nothing: only shown once EVERY known participant's hand
+  // is face-up on this frame (the all-in run-out or the showdown reveal). This
+  // avoids leaking one face-up hand's equity while a villain is still face-down.
+  const showEquities =
+    eq.participantSeats.length > 0 &&
+    eq.participantSeats.every((s) => !concealSeats[s]);
+
   // Per-seat readout placed in each seat's `extra` slot: pot odds for whoever
-  // faces a bet, otherwise a running equity for shown / all-in participants on the
-  // current street. Only one seat is ever to-act, so the two never collide.
+  // faces a bet, otherwise a running equity for every participant on the current
+  // street. Only one seat is ever to-act, so the two never collide.
   const seatExtras = data.state.seats.map((_, i) => {
     if (potOdds && potOdds.seat === i) return <PotOddsBadge pct={potOdds.pct} />;
-    if (!eq.participantSeats.includes(i) || concealSeats[i]) return undefined;
+    if (!showEquities || !eq.participantSeats.includes(i)) return undefined;
     const streetEq = eq.bySeat[i]?.[frame.street];
     // Re-key on the rounded value so the badge re-mounts (and re-animates) as the
     // equity ticks street to street during a run-out.
