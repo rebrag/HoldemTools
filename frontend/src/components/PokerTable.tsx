@@ -44,15 +44,18 @@ export interface PokerTableSeat {
   nextSlotIndex?: number;
   /** emerald ring around the whole seat: marks the seat selected for editing. */
   highlighted?: boolean;
-  /** extra node rendered below the badges (e.g. an equity readout).
-   *  Must not contain interactive elements: the seat root is a <button>. */
-  extra?: React.ReactNode;
+  /** short equity readout (e.g. "16%") shown inline in the name badge, after the
+   *  label — "Hero - 16%". Omit to show the name alone. */
+  equityText?: string;
 }
 
 export interface PokerTableProps {
   size: number; // seat count -> seatCoords(size)
   seats: PokerTableSeat[];
   center?: React.ReactNode; // caller injects center content (board/pot/etc.)
+  /** Node pinned dead-center at the top of the felt, in the clear band between
+   *  the top seat and the pot chips (e.g. a pot-odds box). Omit for nothing. */
+  topCenter?: React.ReactNode;
   /** Pot chip amount rendered as its own movable stack above the table center.
    *  Omit (or <1) to show no pot. */
   potAmount?: number;
@@ -91,6 +94,7 @@ const PokerTable: React.FC<PokerTableProps> = ({
   size,
   seats,
   center,
+  topCenter,
   potAmount,
   potLabel,
   potWinnerSeatIndex,
@@ -134,6 +138,16 @@ const PokerTable: React.FC<PokerTableProps> = ({
           {center != null && (
             <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1.5">
               {center}
+            </div>
+          )}
+
+          {/* top-center slot (e.g. the pot-odds box): dead-center on the x-axis,
+              parked in the clear band between the top seat (whose badges bottom
+              out ~15% down) and the pot chips (~28% down), so on every table
+              size it sits over open felt and never overlaps a seat or the pot. */}
+          {topCenter != null && (
+            <div className="pointer-events-none absolute left-1/2 top-[20%] z-30 flex -translate-x-1/2 -translate-y-1/2 justify-center">
+              {topCenter}
             </div>
           )}
 
@@ -281,8 +295,11 @@ const PokerTable: React.FC<PokerTableProps> = ({
                   </div>
                 )}
 
+                {/* Name badge, with the running equity shown inline after the
+                    name ("Hero - 16%") when supplied. The name truncates; the
+                    equity never shrinks so it stays readable. */}
                 <span
-                  className={`max-w-[88px] truncate rounded-md px-1.5 py-[1px] text-[10px] font-semibold shadow-md ${
+                  className={`flex max-w-[128px] items-center gap-1 rounded-md px-1.5 py-[1px] text-[10px] font-semibold shadow-md ${
                     seat.isEmpty
                       ? "border border-dashed border-white/40 bg-black/25 text-white/60"
                       : `ring-1 ${
@@ -294,7 +311,12 @@ const PokerTable: React.FC<PokerTableProps> = ({
                         }`
                   }`}
                 >
-                  {seat.label}
+                  <span className="truncate">{seat.label}</span>
+                  {seat.equityText && (
+                    <span className="shrink-0 font-bold tabular-nums text-sky-200">
+                      - {seat.equityText}
+                    </span>
+                  )}
                 </span>
 
                 {seat.stackText && (
@@ -316,8 +338,6 @@ const PokerTable: React.FC<PokerTableProps> = ({
                     {seat.committedText}
                   </span>
                 )}
-
-                {seat.extra}
               </button>
               </React.Fragment>
             );

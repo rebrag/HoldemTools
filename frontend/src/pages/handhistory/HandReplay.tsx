@@ -261,17 +261,13 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
     eq.participantSeats.length > 0 &&
     eq.participantSeats.every((s) => !concealSeats[s]);
 
-  // Per-seat readout placed in each seat's `extra` slot: pot odds for whoever
-  // faces a bet, otherwise a running equity for every participant on the current
-  // street. Only one seat is ever to-act, so the two never collide.
-  const seatExtras = data.state.seats.map((_, i) => {
-    if (potOdds && potOdds.seat === i) return <PotOddsBadge pct={potOdds.pct} />;
+  // Per-seat equity string shown inline in each name badge ("Hero - 16%"). Only
+  // populated once EVERY participant is face-up, so no hidden hand's equity leaks.
+  const seatEquities = data.state.seats.map((_, i) => {
     if (!showEquities || !eq.participantSeats.includes(i)) return undefined;
     const streetEq = eq.bySeat[i]?.[frame.street];
-    // Re-key on the rounded value so the badge re-mounts (and re-animates) as the
-    // equity ticks street to street during a run-out.
-    if (streetEq != null) return <EquityBadge key={Math.round(streetEq)} pct={streetEq} />;
-    if (eq.computing) return <EquityBadge key="pending" pending />;
+    if (streetEq != null) return `${Math.round(streetEq)}%`;
+    if (eq.computing) return "…";
     return undefined;
   });
 
@@ -363,11 +359,12 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
       <div className="w-full py-2">
         <PokerTable
           size={data.state.tableSize}
-          seats={buildTableSeats({ state: data.state, engine: frame, labels, unitMode, concealSeats, seatExtras })}
+          seats={buildTableSeats({ state: data.state, engine: frame, labels, unitMode, concealSeats, seatEquities })}
           maxWidthClassName="max-w-2xl"
           potAmount={pot?.amount}
           potLabel={pot?.label}
           potWinnerSeatIndex={pot?.winnerSeatIndex}
+          topCenter={potOdds && <PotOddsBadge pct={potOdds.pct} />}
           center={
             <TableCenter
               state={data.state}
@@ -483,30 +480,22 @@ const TransportButton: React.FC<{
   </motion.button>
 );
 
-// Running equity readout under a seat (win% incl. tie share on the current
-// street). Re-keys on the value so it ticks as the board runs out. `pending`
-// shows a placeholder while the preflop Monte-Carlo converges.
-const EquityBadge: React.FC<{ pct?: number; pending?: boolean }> = ({ pct, pending }) => (
-  <motion.span
-    initial={{ opacity: 0, y: 2, scale: 0.85 }}
-    animate={{ opacity: 1, y: 0, scale: 1 }}
-    transition={{ duration: 0.2 }}
-    className="mt-0.5 rounded-full bg-sky-500/90 px-1.5 text-[9px] font-bold tabular-nums text-white shadow ring-1 ring-sky-300/50"
-  >
-    {pending ? "…" : `${Math.round(pct ?? 0)}%`}
-  </motion.span>
-);
-
-// Pot-odds readout under the seat facing a bet: the break-even equity % to call.
+// Pot-odds box pinned to the top of the felt: the break-even equity % needed to
+// call. Percentage only (a boxed badge echoing a poker client's pot-odds panel).
 const PotOddsBadge: React.FC<{ pct: number }> = ({ pct }) => (
-  <motion.span
-    initial={{ opacity: 0, y: 2 }}
-    animate={{ opacity: 1, y: 0 }}
-    transition={{ duration: 0.2 }}
-    className="mt-0.5 whitespace-nowrap rounded-full bg-violet-500/90 px-1.5 text-[9px] font-bold tabular-nums text-white shadow ring-1 ring-violet-300/50"
+  <motion.div
+    initial={{ opacity: 0, y: -4, scale: 0.9 }}
+    animate={{ opacity: 1, y: 0, scale: 1 }}
+    transition={{ type: "spring", stiffness: 320, damping: 22 }}
+    className="flex flex-col items-center whitespace-nowrap rounded-md border border-violet-400/50 bg-slate-950/85 px-2 py-0.5 text-center shadow-lg shadow-violet-950/40 backdrop-blur-sm"
   >
-    Pot odds {Math.round(pct)}%
-  </motion.span>
+    <span className="text-[7px] font-semibold uppercase tracking-widest text-violet-300/80">
+      Pot odds
+    </span>
+    <span className="text-[13px] font-bold leading-none tabular-nums text-white">
+      {Math.round(pct)}%
+    </span>
+  </motion.div>
 );
 
 export default HandReplay;

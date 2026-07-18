@@ -24,11 +24,11 @@ export function buildTableSeats(args: {
   /** Replayer-only: seats whose hole cards should render face-down (card
    *  backs) on this frame. The recorder never passes this. */
   concealSeats?: boolean[];
-  /** Replayer-only: per-seat readout node (e.g. equity / pot-odds badge) placed
-   *  in the seat's `extra` slot. Indexed by seat. The recorder never passes this. */
-  seatExtras?: (React.ReactNode | undefined)[];
+  /** Replayer-only: per-seat equity string (e.g. "16%") shown inline in the name
+   *  badge. Indexed by seat. The recorder never passes this. */
+  seatEquities?: (string | undefined)[];
 }): PokerTableSeat[] {
-  const { state, engine, labels, unitMode, concealSeats, seatExtras } = args;
+  const { state, engine, labels, unitMode, concealSeats, seatEquities } = args;
 
   // Forced-bet preview shown during setup (before the engine exists). Derived
   // from the same position labels as buildEngine's blind assignment, so the
@@ -103,8 +103,8 @@ export function buildTableSeats(args: {
       // sitting-out seats visible (inert, grayed) throughout the hand.
       hidden: !!engine && !ep && !sittingOut,
       isEmpty: empty,
-      // Replayer readout (equity / pot odds); undefined on the recorder.
-      extra: empty || sittingOut ? undefined : seatExtras?.[i],
+      // Replayer equity shown inline in the name badge; undefined on the recorder.
+      equityText: empty || sittingOut ? undefined : seatEquities?.[i],
     };
   });
 }
