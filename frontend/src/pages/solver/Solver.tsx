@@ -32,8 +32,18 @@ import { useCurrentTier } from "@/context/TierContext";
 import CardPicker from "@/components/CardPicker";
 import PlayingCard from "@/components/PlayingCard";
 import { handleActionClickImpl, type PendingFlopUpload } from "@/lib/solver/handleActionClick";
-import { root169ToJsonData, pollForPioSolutionByGametree } from "@/lib/solver/postflopClient";
-import type { PioSolutionDoc } from "@/lib/solver/postflopClient";
+import { parseGametreePathForSolution } from "@/lib/solver/postflopClient";
+import {
+  fetchBoardManifest,
+  pollForBoardManifest,
+  type PostflopIndexEntry,
+} from "@/lib/solver/postflopLibrary";
+import { boardToCards, docToJsonData } from "@/lib/solver/postflopNode";
+import { usePostflopSession } from "@/hooks/usePostflopSession";
+import usePostflopIndex from "@/hooks/usePostflopIndex";
+import PostflopLine from "./PostflopLine";
+import PostflopLibrary from "./PostflopLibrary";
+import { Library } from "lucide-react";
 
 // Toggle experimental postflop pipeline (upload + polling).
 // Off unless VITE_POSTFLOP_ENABLED=true (frontend/.env locally; Vercel env var in prod).
@@ -103,6 +113,34 @@ const tourSteps = [
   { element: '[data-intro-target="color-key-btn"]', intro: "Toggle single-range view here.", position: "bottom" },
 ];
 
+/** Pending banner shown while the local solver works on a fresh flop request. */
+const PendingSolveCard = ({ board, startedAt }: { board: string[]; startedAt: number }) => {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000));
+  const mm = Math.floor(elapsed / 60);
+  const ss = String(elapsed % 60).padStart(2, "0");
+  return (
+    <div className="flex justify-center mb-2 px-2">
+      <div className="inline-flex items-center gap-2 rounded-md bg-slate-900/80 border border-amber-400/50 px-3 py-1.5 shadow-sm">
+        <span className="inline-block h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+        <span className="text-[11px] font-semibold tracking-wide text-amber-200">
+          Solving flop
+        </span>
+        {board.map((code) => (
+          <PlayingCard key={code} code={code} width="clamp(24px, 5vw, 36px)" />
+        ))}
+        <span className="text-[11px] tabular-nums text-gray-300">
+          {mm}:{ss} elapsed · usually 2-10 min
+        </span>
+      </div>
+    </div>
+  );
+};
+
 type SolverProps = { user: User | null };
 
 const Solver = ({ user }: SolverProps) => {
@@ -146,6 +184,16 @@ const Solver = ({ user }: SolverProps) => {
   const [flopInputError, setFlopInputError] = useState<string | null>(null);
 
   const [currentBoard, setCurrentBoard] = useState<string[]>([]);
+
+  // Postflop session (navigation) + solutions library
+  const pf = usePostflopSession(API_BASE_URL);
+  const pfIndex = usePostflopIndex(API_BASE_URL);
+  const [showLibrary, setShowLibrary] = useState(false);
+  const [postflopPending, setPostflopPending] = useState<{
+    board: string[];
+    startedAt: number;
+  } | null>(null);
+  const pendingCancelRef = useRef(false);
 
   // Single-range view toggle (persisted)
   const [singleRangeView, setSingleRangeView] = useState<boolean>(() => {
@@ -510,6 +558,14 @@ const Solver = ({ user }: SolverProps) => {
 
   const handleActionClick = useCallback(
     (action: string, fileName: string) => {
+      // Postflop mode: clicks on the acting seat's plate navigate the
+      // postflop tree; the preflop machinery is bypassed entirely.
+      if (pf.view && fileName.endsWith("_postflop.json")) {
+        if (fileName === `${pf.view.actorSeat}_postflop.json`) {
+          void pf.clickAction(action);
+        }
+        return;
+      }
       handleActionClickImpl(
         {
           API_BASE_URL,
@@ -562,7 +618,121 @@ const Solver = ({ user }: SolverProps) => {
       lastRangePos,
       loadedPlates,
       availableJsonFiles,
+      pf.view,
+      pf.clickAction,
     ]
+  );
+
+  // Sync the postflop session into the plate state: the acting seat's plate
+  // shows the current node; the other seat shows their latest decision (or
+  // the check-response preview at the root). Postflop plates use
+  // "{seat}_postflop.json" names, which the preflop fetch effect ignores.
+  useEffect(() => {
+    const view = pf.view;
+    if (!view) return;
+
+    const bbFor = (seat: string) => view.manifest.stacks_map?.[seat] ?? 0;
+    const roleOf = (seat: string): "oop" | "ip" => (seat === view.oopSeat ? "oop" : "ip");
+
+    const updates: Record<string, JsonData> = {};
+    const mapping: Record<string, string> = {};
+    if (view.actorDoc) {
+      const file = `${view.actorSeat}_postflop.json`;
+      updates[file] = docToJsonData(view.actorDoc, roleOf(view.actorSeat), view.actorSeat, bbFor(view.actorSeat));
+      mapping[view.actorSeat] = file;
+    }
+    if (view.opponentDoc) {
+      const file = `${view.opponentSeat}_postflop.json`;
+      updates[file] = docToJsonData(view.opponentDoc, roleOf(view.opponentSeat), view.opponentSeat, bbFor(view.opponentSeat));
+      mapping[view.opponentSeat] = file;
+    }
+
+    setPlateData((prev) => ({ ...prev, ...updates }));
+    setPlateMapping((prev) => {
+      const next = { ...prev, ...mapping };
+      if (!view.opponentDoc) delete next[view.opponentSeat];
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(next);
+      const unchanged =
+        prevKeys.length === nextKeys.length && nextKeys.every((k) => prev[k] === next[k]);
+      return unchanged ? prev : next;
+    });
+
+    setAlivePlayers((prev) => {
+      const aliveMap: Record<string, boolean> = {};
+      Object.keys(prev).forEach((pos) => {
+        aliveMap[pos] = pos === view.actorSeat || pos === view.opponentSeat;
+      });
+      return aliveMap;
+    });
+    setActivePlayer(view.actorSeat);
+
+    // Bets/pot from the current node (chips -> bb) keeps the table animating.
+    const pot = view.actorDoc?.pot;
+    if (Array.isArray(pot) && pot.length >= 3) {
+      setPlayerBets({
+        [view.oopSeat]: (pot[0] ?? 0) / 100,
+        [view.ipSeat]: (pot[1] ?? 0) / 100,
+      });
+      setPotSize((pot[2] ?? 0) / 100);
+    }
+    // NOTE: deliberately depends only on pf.view. positionOrder is derived
+    // from plateMapping, which this effect writes - including it loops.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pf.view]);
+
+  // Leave postflop: close the session and reset the table to a clean root.
+  const exitPostflop = useCallback(() => {
+    pendingCancelRef.current = true;
+    setPostflopPending(null);
+    pf.close();
+    setCurrentBoard([]);
+    actuallyOpenFolder(folderRef.current);
+    // Same-folder reopen skips the metadata effect, so reset blinds/pot here.
+    const resetBets: Record<string, number> =
+      playerCount === 2 ? { BTN: 0.5, BB: 1 } : { SB: 0.5, BB: 1 };
+    setPlayerBets(resetBets);
+    setPotSize(Object.values(resetBets).reduce((s, b) => s + b, 0) + metadata.ante);
+  }, [pf, actuallyOpenFolder, playerCount, metadata.ante]);
+
+  // Open a previously solved board from the library (tier-gated like folders).
+  const openSolvedBoard = useCallback(
+    async (entry: PostflopIndexEntry) => {
+      setShowLibrary(false);
+
+      if (!uid) {
+        setPendingFolder(entry.stacks);
+        setPendingTier(requiredTierForFolder(entry.stacks));
+        setShowLoginOverlay(true);
+        return;
+      }
+      const meta = folderMetaMap[entry.stacks] ?? undefined;
+      const need = requiredTierForFolder(entry.stacks, meta as FolderMetaLike | undefined);
+      if (!tierLoading && !isTierSufficient(tier ?? "free", need)) {
+        setPendingFolder(entry.stacks);
+        setPendingTier(need);
+        setShowProModal(true);
+        return;
+      }
+
+      if (entry.stacks !== folderRef.current) {
+        actuallyOpenFolder(entry.stacks);
+      }
+
+      const manifest = await fetchBoardManifest(
+        API_BASE_URL,
+        entry.stacks,
+        entry.node_name,
+        entry.board
+      );
+      if (!manifest) {
+        console.warn("Manifest not found for library entry:", entry);
+        return;
+      }
+      setCurrentBoard(boardToCards(entry.board));
+      await pf.open(manifest);
+    },
+    [uid, folderMetaMap, tier, tierLoading, API_BASE_URL, actuallyOpenFolder, pf]
   );
 
   const handleLineClick = useCallback(
@@ -802,76 +972,23 @@ const Solver = ({ user }: SolverProps) => {
         return;
       }
 
+      const { stacks, nodeName } = parseGametreePathForSolution(gametreePath);
+      if (!stacks || !nodeName) {
+        console.warn("Could not derive stacks/node from gametree path:", gametreePath);
+        return;
+      }
+
+      // Poll for the board manifest (solve takes minutes), then open the session.
+      pendingCancelRef.current = false;
+      setPostflopPending({ board: [...flopCards], startedAt: Date.now() });
       void (async () => {
-        const [rootSolution, checkSolution] = await Promise.all([
-          pollForPioSolutionByGametree(API_BASE_URL, gametreePath, boardName, "r:0"),
-          pollForPioSolutionByGametree(API_BASE_URL, gametreePath, boardName, "r:0:c"),
-        ]);
-
-        if (!rootSolution?.root_169 && !checkSolution?.root_169) {
-          console.warn("No root_169 in either solution doc; cannot build postflop JsonData");
-          return;
-        }
-
-        const solutions: PioSolutionDoc[] = [];
-        if (rootSolution?.root_169) solutions.push(rootSolution);
-        if (checkSolution?.root_169) solutions.push(checkSolution);
-        if (solutions.length === 0) return;
-
-        const sortedAlive = [...alivePositions].sort(
-          (a, b) => positionOrder.indexOf(a) - positionOrder.indexOf(b)
-        );
-        if (sortedAlive.length !== 2) {
-          console.warn("Expected exactly 2 alive positions after sort, got:", sortedAlive);
-          return;
-        }
-
-        const oopSeat = sortedAlive[0];
-        const ipSeat = sortedAlive[1];
-
-        const solutionForRole: Partial<Record<"OOP" | "IP", PioSolutionDoc>> = {};
-        for (const s of solutions) {
-          if (s.position === "OOP" || s.position === "IP") {
-            solutionForRole[s.position] = s;
-          }
-        }
-        if (!solutionForRole.OOP) solutionForRole.OOP = solutions[0];
-        if (!solutionForRole.IP) solutionForRole.IP = solutions[solutions.length - 1];
-
-        const applySolutionToSeat = (
-          seat: string,
-          role: "oop" | "ip",
-          doc: PioSolutionDoc | undefined | null
-        ) => {
-          if (!doc?.root_169) return;
-          const preflopFile = plateMapping[seat];
-          const startingBb =
-            preflopFile && plateData[preflopFile]
-              ? plateData[preflopFile].bb ?? 0
-              : 0;
-
-          const json = root169ToJsonData(doc.root_169, role, seat, startingBb);
-          const postflopFileName = `${seat}_flop.json`;
-
-          setPlateData((prev) => ({
-            ...prev,
-            [postflopFileName]: json,
-          }));
-
-          setPlateMapping((prev) => ({
-            ...prev,
-            [seat]: postflopFileName,
-          }));
-
-          setAlivePlayers((prev) => ({
-            ...prev,
-            [seat]: true,
-          }));
-        };
-
-        applySolutionToSeat(oopSeat, "oop", solutionForRole.OOP || null);
-        applySolutionToSeat(ipSeat, "ip", solutionForRole.IP || null);
-        setActivePlayer(oopSeat);
+        const manifest = await pollForBoardManifest(API_BASE_URL, stacks, nodeName, boardName, {
+          shouldStop: () => pendingCancelRef.current,
+        });
+        setPostflopPending(null);
+        if (!manifest) return;
+        await pf.open(manifest);
+        void pfIndex.refresh();
       })();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
@@ -882,6 +999,15 @@ const Solver = ({ user }: SolverProps) => {
   };
 
   const usedSetForFlop = useMemo(() => new Set<string>(flopCards), [flopCards]);
+
+  // Boards already solved for the exact line being requested (skip re-solving)
+  const solvedForPendingLine = useMemo(
+    () =>
+      pendingFlopUpload
+        ? pfIndex.entriesForLine(pendingFlopUpload.folder, pendingFlopUpload.preflopLine)
+        : [],
+    [pendingFlopUpload, pfIndex]
+  );
 
   return (
     <>
@@ -910,6 +1036,32 @@ const Solver = ({ user }: SolverProps) => {
             <p className="text-xs text-gray-300 mb-3">
               Pick exactly three cards for the flop. This board will be sent with the game tree to be saved for later.
             </p>
+
+            {solvedForPendingLine.length > 0 && (
+              <div className="mb-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-2">
+                <div className="mb-1 text-[11px] font-semibold text-emerald-200">
+                  Already solved for this line - open instantly:
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {solvedForPendingLine.map((entry) => (
+                    <button
+                      key={`${entry.node_name}-${entry.board}`}
+                      type="button"
+                      onClick={() => {
+                        closeFlopModal();
+                        void openSolvedBoard(entry);
+                      }}
+                      className="inline-flex items-center gap-0.5 rounded-lg border border-white/10 bg-white/5 hover:bg-emerald-500/20 px-1.5 py-1 transition-colors"
+                      title={`Open ${entry.board}`}
+                    >
+                      {boardToCards(entry.board).map((code) => (
+                        <PlayingCard key={code} code={code} width="clamp(22px, 4vw, 30px)" />
+                      ))}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center justify-center gap-3 mb-2">
               <div className="flex items-center justify-center gap-2">
@@ -1019,6 +1171,16 @@ const Solver = ({ user }: SolverProps) => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* SOLVED FLOPS LIBRARY MODAL */}
+      {POSTFLOP_ENABLED && showLibrary && (
+        <PostflopLibrary
+          entries={pfIndex.entries}
+          loading={pfIndex.loading}
+          onOpen={(entry) => void openSolvedBoard(entry)}
+          onClose={() => setShowLibrary(false)}
+        />
       )}
 
       <div className="h-auto flex flex-col">
@@ -1133,32 +1295,76 @@ const Solver = ({ user }: SolverProps) => {
                       onToggleSingleRange={() => setSingleRangeView((v) => !v)}
                     />
                   </div>
+
+                  {/* Solved flops library */}
+                  {POSTFLOP_ENABLED && (
+                    <div className="flex-shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setShowLibrary(true)}
+                        className="
+                          relative h-9 sm:h-10 px-2.5 gap-1.5
+                          inline-flex items-center justify-center
+                          rounded-xl border border-gray-300 bg-white/95 shadow-md
+                          hover:bg-gray-100 text-gray-800
+                          focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60
+                        "
+                        aria-label="Solved flops"
+                        title="Browse solved flops"
+                      >
+                        <Library size={16} strokeWidth={2.2} className="text-emerald-600" />
+                        {pfIndex.entries.length > 0 && (
+                          <span className="absolute -top-1 -right-1 min-w-[1rem] rounded-full bg-emerald-600 px-1 text-center text-[10px] font-bold leading-4 text-white shadow">
+                            {pfIndex.entries.length}
+                          </span>
+                        )}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Line row */}
+          {/* Line row: preflop seat strip, or the postflop breadcrumb in a session */}
           <div
             ref={lineWrapperRef}
             className="relative flex items-center mt-2 mb-2"
           >
-            <Line
-              line={preflopLine}
-              onLineClick={handleLineClick}
-              positions={actingOrder}
-              activePlayer={activePlayer}
-              plateData={plateData}
-              plateMapping={plateMapping}
-              playerBets={playerBets}
-              alivePlayers={alivePlayers}
-              onActionClick={handleActionClick}
-              matchWidth={windowWidth >= 1024 ? plateContentWidth : undefined}
-            />
+            {pf.view ? (
+              <PostflopLine
+                preflopLine={pf.view.manifest.preflop.line}
+                board={pf.view.board}
+                line={pf.view.line}
+                currentNodeId={pf.view.currentNodeId}
+                notice={pf.view.notice}
+                onJump={pf.jumpTo}
+                onExit={exitPostflop}
+                matchWidth={windowWidth >= 1024 ? plateContentWidth : undefined}
+              />
+            ) : (
+              <Line
+                line={preflopLine}
+                onLineClick={handleLineClick}
+                positions={actingOrder}
+                activePlayer={activePlayer}
+                plateData={plateData}
+                plateMapping={plateMapping}
+                playerBets={playerBets}
+                alivePlayers={alivePlayers}
+                onActionClick={handleActionClick}
+                matchWidth={windowWidth >= 1024 ? plateContentWidth : undefined}
+              />
+            )}
           </div>
 
-          {/* Current flop display */}
-          {currentBoard.length > 0 && (
+          {/* Pending solve banner */}
+          {postflopPending && (
+            <PendingSolveCard board={postflopPending.board} startedAt={postflopPending.startedAt} />
+          )}
+
+          {/* Current flop display (outside a session, e.g. legacy state) */}
+          {!pf.view && !postflopPending && currentBoard.length > 0 && (
             <div className="flex justify-center mb-2 px-2">
               <div className="inline-flex items-center gap-2 rounded-md bg-slate-900/80 border border-emerald-500/40 px-3 py-1.5 shadow-sm">
                 <span className="text-[11px] font-semibold tracking-wide text-emerald-300">

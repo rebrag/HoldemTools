@@ -8,9 +8,17 @@ export type PioSolutionDoc = {
   position?: "IP" | "OOP";
   hero_pos?: string | null;
   bb?: number | null;
-  node_type?: "root" | "check";
+  node_type?: "root" | "check" | "node";
   node_id?: string | null; // e.g. "r:0" or "r:0:1"
   node_suffix?: string | null; // e.g. "r.0" or "r.0.1"
+
+  // v2 fields (schema 2 docs; absent on legacy docs)
+  schema?: number;
+  street?: "flop" | "turn" | "river";
+  parent_id?: string | null;
+  children?: Record<string, string>; // pio action label -> child node id
+  pio_node_type?: string; // OOP_DEC | IP_DEC | SPLIT_NODE | terminal
+  pot?: number[] | null; // [oop_chips, ip_chips, pot_chips]
 
   root_169?: {
     hand_classes: string[];
