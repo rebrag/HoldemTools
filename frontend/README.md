@@ -45,34 +45,33 @@ A modern, mobile‑first **React + TypeScript** interface that visualises solv
 * **Axios** – typed API layer with interceptors for auth token refresh
 * **Framer Motion** – shared layout animations (matrix zoom, plate focus)
 * **Intro.js‑React** – product tour, persisted via `localStorage`
-* **Jest + React Testing Library** – unit tests (\~90 % statements)
-* **Cypress 13** – end‑to‑end smoke on every PR & production deploy
+* **Firebase Emulator Suite** - credential-free Auth + Firestore for cloud sessions (see root `CLAUDE.md`)
 
 > **Note:** Actual solver ranges & EV data live in a private Azure Data Lake— nothing in this repo reveals them.
 
 ---
 
-## Local Setup (5 steps)
+## Local Setup
 
 ```bash
-# 1. Clone the repo
-$ git clone https://github.com/<your‑user>/HoldemToolsFE.git && cd HoldemToolsFE
+# 1. Clone the monorepo (frontend/ and backend/ live side by side)
+$ git clone https://github.com/rebrag/holdemtools.git && cd holdemtools/frontend
 
-# 2. Install deps (pnpm recommended)
-$ pnpm install
+# 2. Install deps
+$ npm install
 
-# 3. Env vars (never committed)
-$ cp .env.example .env.local
-$ echo "VITE_API_URL=https://<your‑api>.azurewebsites.net"   >> .env.local
-$ echo "VITE_FIREBASE_API_KEY=<your‑firebase‑key>"          >> .env.local
-#   … plus the other Firebase X vars
+# 3. Env vars - frontend/.env, gitignored and never committed.
+#    VITE_API_BASE_URL + the VITE_FIREBASE_* set; see src/lib/firebase.ts.
 
-# 4. Run dev server
-$ pnpm dev   # http://localhost:5173
+# 4. Run dev server
+$ npm run dev   # http://localhost:5173, override with VITE_DEV_PORT
 
-# 5. (optional) Run tests
-$ pnpm test:unit  &&  pnpm test:e2e
+# 5. No credentials? Run against the Firebase emulators instead -
+#    see "Firebase emulators" in the repo root CLAUDE.md.
+$ USE_FIREBASE_EMULATOR=true npm run dev
 ```
+
+> This package has no test runner. The backend has xUnit tests: `cd ../backend && dotnet test`.
 
 ---
 

@@ -1,0 +1,64 @@
+// EMULATOR-ONLY Firestore rules.
+//
+// These are NOT the production rules for the real `gto-lite` project - the real
+// rules are managed in the Firebase console and have never lived in this repo.
+// This file exists so the Firestore emulator has something to enforce, and it
+// mirrors the ownership model the app actually relies on so emulator sessions
+// fail the same way production would.
+//
+// Deliberately kept under firebase/ rather than the repo root so a stray
+// `firebase deploy` is less likely to push it over the real project's rules.
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // Stripe extension data: customers/{uid}/subscriptions (read by useTier)
+    // and customers/{uid}/checkout_sessions (written by startSubscriptionCheckout).
+    // The extension itself writes with admin privileges, which bypass rules.
+    match /customers/{uid} {
+      allow read: if isOwner(uid);
+
+      match /subscriptions/{subId} {
+        allow read: if isOwner(uid);
+      }
+
+      match /checkout_sessions/{sessionId} {
+        allow read, create: if isOwner(uid);
+      }
+
+      match /payments/{paymentId} {
+        allow read: if isOwner(uid);
+      }
+    }
+
+    // Catalog read by loadActiveProducts(). Public in production too - price
+    // data is not sensitive, and signed-out visitors see upgrade pricing.
+    match /products/{productId} {
+      allow read: if true;
+
+      match /prices/{priceId} {
+        allow read: if true;
+      }
+    }
+
+    // Course completion state, one doc per user (useCourseProgress).
+    match /courseProgress/{uid} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // Per-user profile doc (TestFirestore).
+    match /users/{uid} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // Anything not matched above is denied, same as production.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

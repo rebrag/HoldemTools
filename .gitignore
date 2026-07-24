@@ -17,3 +17,13 @@ Thumbs.db
 .env
 .env.local
 *.local
+
+# Firebase emulator run artifacts (see "Firebase emulators" in CLAUDE.md).
+# The committed config is firebase.json / .firebaserc / firebase/ — everything
+# below is generated at runtime.
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+database-debug.log
+pubsub-debug.log
+.firebase/

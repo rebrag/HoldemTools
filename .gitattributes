@@ -1,0 +1,4 @@
+# Shell scripts must check out with LF even on Windows clones: the .claude/hooks
+# scripts are executed by bash in Linux containers (Claude Code on the web), and
+# CRLF line endings there fail with "bad interpreter: /bin/bash^M".
+*.sh text eol=lf

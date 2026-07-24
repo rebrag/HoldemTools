@@ -20,6 +20,13 @@ export default defineConfig(({ mode }) => ({
     // into the client bundle so dev-only fixtures can detect preview deploys.
     // Empty string locally (where import.meta.env.DEV already applies).
     "import.meta.env.VITE_VERCEL_ENV": JSON.stringify(process.env.VERCEL_ENV ?? ""),
+    // Bridge USE_FIREBASE_EMULATOR into the client bundle. It has no VITE_
+    // prefix (the same flag drives the backend and the emulator scripts), so
+    // Vite would not expose it on its own. Empty string = off, which is what
+    // every real dev machine and every Vercel build sees.
+    "import.meta.env.VITE_USE_FIREBASE_EMULATOR": JSON.stringify(
+      process.env.USE_FIREBASE_EMULATOR ?? ""
+    ),
   },
   resolve: {
     alias: {
