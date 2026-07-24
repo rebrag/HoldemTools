@@ -16,6 +16,14 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddMemoryCache();
 
+// Gzip/brotli for JSON responses (solution docs are large and repetitive).
+// Pre-gzipped street bundles set their own Content-Encoding and are skipped
+// by this middleware automatically.
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+});
+
 // === Firebase ID-token authentication (used by [Authorize] controllers only) ===
 // Endpoints without [Authorize] stay anonymous, so existing controllers are unaffected.
 //
@@ -115,6 +123,9 @@ var app = builder.Build();
 
 // CORS
 app.UseCors(CorsPolicy);
+
+// Compress after CORS (preflights untouched), before anything writes a body.
+app.UseResponseCompression();
 
 if (app.Environment.IsDevelopment())
 {

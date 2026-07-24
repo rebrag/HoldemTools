@@ -138,7 +138,7 @@ namespace PokerRangeAPI2.Controllers
 
         // --------------------------------------------------------------------
         // GET api/files/piosolutions/{stacks}/{node}/{board}/manifest
-        // Per-board manifest (node map, seats, preflop context). Not cached:
+        // Per-board manifest (streets map, seats, preflop context). Not cached:
         // the frontend polls this while a solve is pending; 404 = not solved.
         // --------------------------------------------------------------------
         [HttpGet("piosolutions/{stacks}/{node}/{board}/manifest")]
@@ -157,7 +157,39 @@ namespace PokerRangeAPI2.Controllers
                 return NotFound($"Manifest not found: {blobPath}");
 
             BlobDownloadResult result = await blob.DownloadContentAsync();
+            Response.Headers.CacheControl = "no-cache";
             return Ok(result.Content.ToString());
+        }
+
+        // --------------------------------------------------------------------
+        // GET api/files/piosolutions/{stacks}/{node}/{board}/streets/{seed}.json
+        // One gzipped street bundle (all decision nodes of one street). The
+        // blob is stored pre-gzipped; serve the bytes as-is with
+        // Content-Encoding so the browser inflates it natively. The response
+        // compression middleware skips responses that already carry a
+        // Content-Encoding header, so there is no double compression.
+        // --------------------------------------------------------------------
+        [HttpGet("piosolutions/{stacks}/{node}/{board}/streets/{seed}.json")]
+        public async Task<IActionResult> GetPioStreetBundle(
+            string stacks,
+            string node,
+            string board,
+            string seed)
+        {
+            var seedSuffix = (seed ?? "r.0").Replace(":", ".");
+            string blobPath = $"piosolutions/{stacks}/{node}/{board}/streets/{seedSuffix}.json.gz";
+
+            BlobClient blob = _blobServiceClient
+                .GetBlobContainerClient(_containerName)
+                .GetBlobClient(blobPath);
+
+            if (!await blob.ExistsAsync())
+                return NotFound($"Street bundle not found: {blobPath}");
+
+            BlobDownloadResult result = await blob.DownloadContentAsync();
+            Response.Headers.ContentEncoding = "gzip";
+            Response.Headers.CacheControl = "public, max-age=86400";
+            return File(result.Content.ToArray(), "application/json");
         }
 
         // --------------------------------------------------------------------
@@ -172,6 +204,7 @@ namespace PokerRangeAPI2.Controllers
 
             if (_cache.TryGetValue(cacheKey, out string? cachedJson) && cachedJson != null)
             {
+                Response.Headers.CacheControl = "public, max-age=60";
                 return Ok(cachedJson);
             }
 
@@ -190,6 +223,7 @@ namespace PokerRangeAPI2.Controllers
                 AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60)
             });
 
+            Response.Headers.CacheControl = "public, max-age=60";
             return Ok(json);
         }
 
