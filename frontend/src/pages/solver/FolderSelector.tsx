@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { LayoutGrid, Square } from "lucide-react";
+import { motion, useReducedMotion } from "framer-motion";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "@/lib/firebase";
 import { logUserAction } from "@/lib/logEvent";
@@ -107,6 +108,21 @@ const hasExactNumber = (folder: string, rawNum: string): boolean => {
   return re.test(folder);
 };
 
+/* ────────────────────────────────────────────────────────────────── */
+/*  Filter popover styling                                            */
+/* ────────────────────────────────────────────────────────────────── */
+const FILTER_LABEL =
+  "text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-1.5";
+
+const chipClass = (active: boolean) =>
+  [
+    "px-2 py-1 rounded-lg text-xs border transition-colors",
+    "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
+    active
+      ? "bg-accent/20 text-accent border-accent/50"
+      : "bg-white/5 text-slate-300 border-hairline hover:bg-white/10 hover:text-slate-100",
+  ].join(" ");
+
 /* fixed header order for table */
 const DESIRED_HEADER_ORDER = ["UTG", "UTG1", "UTG2", "LJ", "HJ", "CO", "BTN", "SB", "BB"];
 
@@ -142,6 +158,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   onToggleSingleRange,
 }) => {
   const [user] = useAuthState(auth);
+  const reduceMotion = useReducedMotion();
 
   const [input, setInput] = useState("");
   const [items, setItems] = useState<string[]>([]);
@@ -296,14 +313,17 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
               onKeyDown={nav}
               placeholder={`Search ${numSims} Preflop Solutions…`}
               className="
-                bg-white/95 shadow-md hover:bg-blue-100
+                bg-surface/85 backdrop-blur-md shadow-md
+                text-slate-100 placeholder:text-slate-500
                 w-full
                 px-3 sm:px-4
                 pr-8 sm:pr-10
                 py-1.5 sm:py-2
                 text-sm sm:text-base
-                border border-gray-300 rounded-xl
-                focus:outline-none focus:ring focus:border-blue-300
+                border border-hairline rounded-xl
+                transition-colors
+                hover:border-white/20
+                focus:outline-none focus:border-accent/60 focus:ring-1 focus:ring-accent/40
               "
             />
             <button
@@ -314,7 +334,13 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
               aria-label="Toggle folder list"
               title="Toggle folder list"
             >
-              <svg className="h-4 w-4 sm:h-5 sm:w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
+              <svg
+                className={`h-4 w-4 sm:h-5 sm:w-5 text-slate-400 transition-transform duration-200 ${
+                  open ? "rotate-180" : ""
+                }`}
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
                 <path
                   fillRule="evenodd"
                   d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.23 8.27a.75.75 0 01.02-1.06z"
@@ -332,35 +358,43 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
               title="Filters"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => setShowFilter((p) => !p)}
-              className="
+              className={`
                 h-9 w-9 sm:h-10 sm:w-10
                 inline-flex items-center justify-center
-                rounded-xl border border-gray-300 bg-white/95 shadow-md
-                hover:bg-gray-100 focus:outline-none focus:ring
-              "
+                rounded-xl border shadow-md backdrop-blur-md transition-colors
+                focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60
+                ${
+                  showFilter || playersFilter !== null || ftFilter !== "any"
+                    ? "border-accent/50 bg-accent/15 text-accent"
+                    : "border-hairline bg-surface/85 text-slate-300 hover:border-white/20 hover:text-slate-100"
+                }
+              `}
             >
-              <svg viewBox="0 0 24 24" className="h-4 w-4 sm:h-5 sm:w-5 text-gray-700" fill="currentColor">
+              <svg viewBox="0 0 24 24" className="h-4 w-4 sm:h-5 sm:w-5" fill="currentColor">
                 <path d="M3 5a1 1 0 011-1h16a1 1 0 01.8 1.6l-6.2 8.27V19a1 1 0 01-.553.894l-3 1.5A1 1 0 019 20.5v-5.63L2.2 5.6A1 1 0 013 5z" />
               </svg>
             </button>
 
             {showFilter && (
-              <div
-                className="absolute right-0 mt-2 w-68 rounded-xl border border-gray-200 bg-white shadow-lg p-3 z-20"
+              <motion.div
+                className="
+                  absolute right-0 mt-2 w-68 z-20 p-3
+                  rounded-xl border border-hairline
+                  bg-surface/90 backdrop-blur-md
+                  shadow-[0_18px_40px_rgba(2,6,23,0.45)]
+                "
                 onMouseDown={(e) => e.preventDefault()}
+                initial={reduceMotion ? false : { opacity: 0, y: -6, scale: 0.985 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+                style={{ transformOrigin: "top right" }}
               >
                 {/* Number of players */}
                 <div className="mb-3">
-                  <div className="text-xs font-semibold text-gray-600 mb-1">
-                    Number of players
-                  </div>
+                  <div className={FILTER_LABEL}>Number of players</div>
                   <div className="flex flex-wrap gap-1">
                     <button
-                      className={`px-1 py-1 rounded-md text-xs border ${
-                        playersFilter === null
-                          ? "bg-blue-600 text-white border-blue-600"
-                          : "bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
-                      }`}
+                      className={chipClass(playersFilter === null)}
                       onClick={() => setPlayersFilter(null)}
                     >
                       Any
@@ -368,11 +402,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
                     {[2, 3, 4, 5, 6, 7, 8].map((n) => (
                       <button
                         key={n}
-                        className={`px-2 py-1 rounded-md text-xs border ${
-                          playersFilter === n
-                            ? "bg-blue-600 text-white border-blue-600"
-                            : "bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
-                        }`}
+                        className={chipClass(playersFilter === n)}
                         onClick={() => setPlayersFilter((prev) => (prev === n ? null : n))}
                       >
                         {n}
@@ -383,34 +413,22 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
 
                 {/* Final Table */}
                 <div className="mb-2">
-                  <div className="text-xs font-semibold text-gray-600 mb-1">Final Table</div>
+                  <div className={FILTER_LABEL}>Final Table</div>
                   <div className="flex flex-wrap gap-1">
                     <button
-                      className={`px-2 py-1 rounded-md text-xs border ${
-                        ftFilter === "any"
-                          ? "bg-blue-600 text-white border-blue-600"
-                          : "bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
-                      }`}
+                      className={chipClass(ftFilter === "any")}
                       onClick={() => setFtFilter("any")}
                     >
                       Any
                     </button>
                     <button
-                      className={`px-2 py-1 rounded-md text-xs border ${
-                        ftFilter === "only"
-                          ? "bg-blue-600 text-white border-blue-600"
-                          : "bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
-                      }`}
+                      className={chipClass(ftFilter === "only")}
                       onClick={() => setFtFilter("only")}
                     >
                       Final Table
                     </button>
                     <button
-                      className={`px-2 py-1 rounded-md text-xs border ${
-                        ftFilter === "exclude"
-                          ? "bg-blue-600 text-white border-blue-600"
-                          : "bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
-                      }`}
+                      className={chipClass(ftFilter === "exclude")}
                       onClick={() => setFtFilter("exclude")}
                     >
                       Exclude FT
@@ -418,9 +436,9 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
                   </div>
                 </div>
 
-                <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
+                <div className="pt-2 border-t border-hairline flex items-center justify-between">
                   <button
-                    className="text-xs text-blue-700 hover:underline"
+                    className="text-xs text-accent hover:underline"
                     onClick={() => {
                       setPlayersFilter(null);
                       setFtFilter("any");
@@ -429,13 +447,13 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
                     Reset filters
                   </button>
                   <button
-                    className="text-xs text-gray-600 hover:underline"
+                    className="text-xs text-slate-400 hover:text-slate-200"
                     onClick={() => setShowFilter(false)}
                   >
                     Close
                   </button>
                 </div>
-              </div>
+              </motion.div>
             )}
           </div>
 
@@ -449,11 +467,11 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
               className={[
                 "h-9 sm:h-10 px-2 sm:px-3 gap-1.5",
                 "inline-flex items-center justify-center whitespace-nowrap",
-                "rounded-xl border shadow-md transition-colors",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60",
+                "rounded-xl border shadow-md backdrop-blur-md transition-colors",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
                 singleRangeView
-                  ? "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
-                  : "border-gray-300 bg-white/95 text-gray-800 hover:bg-gray-100",
+                  ? "border-accent/50 bg-accent/15 text-accent"
+                  : "border-hairline bg-surface/85 text-slate-300 hover:border-white/20 hover:text-slate-100",
               ].join(" ")}
               title="Toggle Single Range View"
             >
