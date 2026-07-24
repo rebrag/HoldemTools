@@ -478,6 +478,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
           hi={hi}
           setHi={setHi}
           onChoose={choose}
+          onClose={() => setOpen(false)}
           metaByFolder={metaByFolder}
           parseFolderSafe={parseFolderSafe}
           lockedSet={lockedSet}
