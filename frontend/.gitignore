@@ -26,3 +26,9 @@ dist-ssr
 
 src/bankroll_import.csv
 src/bulkImportBankroll.mjs
+
+# Playwright (baselines in e2e/__screenshots__ ARE committed)
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/

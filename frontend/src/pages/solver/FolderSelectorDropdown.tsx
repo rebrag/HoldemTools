@@ -1,6 +1,6 @@
-import React, { useEffect, useLayoutEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type { FolderMetadata } from "@/hooks/useFolders";
 
 type Props = {
@@ -17,22 +17,62 @@ type Props = {
   lockedSet?: Set<string>;
 };
 
-const FtPill: React.FC = () => (
-  <span
-    className="
-      inline-flex items-center px-1.5 py-[1px]
-      rounded-full text-[10px] leading-4
-      bg-amber-200 text-amber-900 border border-amber-300 shadow-sm
-      pointer-events-none
-    "
-  >
-    FT
-  </span>
-);
+/* ────────────────────────────────────────────────────────────────── */
+/*  Metrics                                                           */
+/*  Desktop hangs the tag rail outside the panel; mobile has no room  */
+/*  for that, so tags fold into a leading column instead. Both read   */
+/*  their row height from here so the two grids line up to the pixel. */
+/* ────────────────────────────────────────────────────────────────── */
+const RAIL_W = 46; // px — desktop tag gutter, hangs off the panel's left edge
+const RAIL_GAP = 6; // px — breathing room between rail and panel border
+const ROW_H = 28; // px
+const HEAD_H = 26; // px
+const TITLE_H = 40; // px — mobile sheet title bar
+const PANEL_BORDER = 1; // px — the panel's own border, offsets the first row
+const CHIP_COL_W = 42; // px — mobile inline tag column
+
+/* Column sizing. The dropdown is sized by its own content, not by the
+   search bar, so the stack columns always get a legible width. */
+const AVG_W = 44; // px
+const SEAT_W = 52; // px — fits "12.5" at 11px with room to spare
+const VIEWPORT_MARGIN = 8; // px
+
+/* The scroll gutter is reserved chrome, so it is added to the panel width
+   rather than taken out of it - otherwise the last seat column sits under
+   the scrollbar. Measured once with the same `thin` scrollbar the panel
+   uses, since the reserved gutter has to match the real one. */
+let scrollbarWidthCache: number | null = null;
+const scrollbarWidth = (): number => {
+  if (scrollbarWidthCache !== null) return scrollbarWidthCache;
+  if (typeof document === "undefined") return 0;
+  const probe = document.createElement("div");
+  probe.style.cssText =
+    "position:absolute;top:-9999px;width:100px;height:100px;overflow-y:scroll;scrollbar-width:thin";
+  document.body.appendChild(probe);
+  scrollbarWidthCache = probe.offsetWidth - probe.clientWidth;
+  document.body.removeChild(probe);
+  return scrollbarWidthCache;
+};
+
+/* ────────────────────────────────────────────────────────────────── */
+/*  Tags                                                              */
+/* ────────────────────────────────────────────────────────────────── */
+const TAG_STYLES: Record<string, string> = {
+  FT: "text-amber-200 bg-amber-400/15 border-amber-400/35",
+  ICM: "text-blue-200 bg-blue-500/15 border-blue-400/35",
+  HU: "text-violet-200 bg-violet-500/15 border-violet-400/35",
+};
+const TAG_FALLBACK = "text-slate-300 bg-white/5 border-white/15";
+/* Locked wins the chip's colour: it is the one thing that changes whether
+   the row can be opened at all. */
+const LOCK_STYLE = "text-amber-200 bg-amber-400/20 border-amber-400/45";
+
+/** Most-informative tag first, so the one pill the rail shows is the useful one. */
+const TAG_PRIORITY = ["FT", "ICM", "HU"];
 
 const LockIcon: React.FC<{ className?: string; title?: string }> = ({
-  className = "h-3.5 w-3.5 text-amber-700",
-  title = "Locked — requires upgrade",
+  className = "h-3.5 w-3.5 text-amber-300",
+  title = "Locked - requires upgrade",
 }) => (
   <svg
     viewBox="0 0 24 24"
@@ -62,8 +102,37 @@ const LockIcon: React.FC<{ className?: string; title?: string }> = ({
   </svg>
 );
 
-/* Tracks the mobile breakpoint (Tailwind `sm` = 640px) so the dropdown can
-   switch between a viewport-centered sheet and an anchored desktop window. */
+/**
+ * One chip per row, carrying the tag and the locked state together.
+ * On desktop the chip rides an external rail over whatever the page shows,
+ * so a bare icon has nothing to read against - everything here needs a fill.
+ */
+const RailChip: React.FC<{ tag?: string; locked: boolean }> = ({ tag, locked }) => {
+  if (!tag && !locked) return null;
+  return (
+    <span
+      data-testid="rail-chip"
+      data-locked={locked ? "true" : "false"}
+      className={`
+        inline-flex items-center gap-0.5 px-1 py-[1px]
+        rounded-full border text-[9px] font-semibold leading-[14px] tracking-[0.06em]
+        shadow-[0_1px_3px_rgba(2,6,23,0.5)] backdrop-blur-sm
+        pointer-events-none
+        ${locked ? LOCK_STYLE : (tag && TAG_STYLES[tag]) || TAG_FALLBACK}
+      `}
+    >
+      {locked && <LockIcon className="h-2.5 w-2.5 shrink-0" />}
+      {tag}
+    </span>
+  );
+};
+
+/* ────────────────────────────────────────────────────────────────── */
+/*  Hooks                                                             */
+/* ────────────────────────────────────────────────────────────────── */
+
+/** Tracks the Tailwind `sm` breakpoint so the dropdown can switch between an
+ *  anchored desktop window and a viewport-centered mobile sheet. */
 function useIsMobile(): boolean {
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
@@ -77,43 +146,63 @@ function useIsMobile(): boolean {
   return isMobile;
 }
 
-/* Measures the anchor (search bar) and viewport while open, re-measuring on
-   scroll/resize. Used only to *position* the window — never to size it. */
 type Anchor = { top: number; left: number; bottom: number; width: number };
+type Placement = { anchor: Anchor; viewport: { w: number; h: number } };
+
+/**
+ * The window is portaled to <body> and positioned in viewport coordinates,
+ * so it has to follow the anchor by hand. A rAF poll while open catches
+ * everything that can move it - scroll, resize, and the layout shift when the
+ * solution-info pill beside the search bar grows once metadata loads - which a
+ * resize listener alone would miss, stranding the window off its anchor.
+ */
 function useAnchorRect(
   open: boolean,
   anchorRef: React.RefObject<HTMLDivElement | null>
-): { anchor: Anchor; viewport: { w: number; h: number } } | null {
-  const [state, setState] = useState<{
-    anchor: Anchor;
-    viewport: { w: number; h: number };
-  } | null>(null);
+): Placement | null {
+  const [state, setState] = useState<Placement | null>(null);
+  const last = useRef<Placement | null>(null);
 
-  useLayoutEffect(() => {
-    if (!open || typeof window === "undefined") return;
-    const el = anchorRef.current;
-    if (!el) return;
-
-    const measure = () => {
-      const r = el.getBoundingClientRect();
-      setState({
-        anchor: { top: r.top, left: r.left, bottom: r.bottom, width: r.width },
-        viewport: { w: window.innerWidth, h: window.innerHeight },
-      });
+  useEffect(() => {
+    if (!open || typeof window === "undefined") {
+      last.current = null;
+      setState(null);
+      return;
+    }
+    let frame = 0;
+    const tick = () => {
+      const el = anchorRef.current;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        const next: Placement = {
+          anchor: { top: r.top, left: r.left, bottom: r.bottom, width: r.width },
+          viewport: { w: window.innerWidth, h: window.innerHeight },
+        };
+        const p = last.current;
+        if (
+          !p ||
+          Math.abs(p.anchor.left - next.anchor.left) > 0.5 ||
+          Math.abs(p.anchor.bottom - next.anchor.bottom) > 0.5 ||
+          Math.abs(p.anchor.width - next.anchor.width) > 0.5 ||
+          p.viewport.w !== next.viewport.w ||
+          p.viewport.h !== next.viewport.h
+        ) {
+          last.current = next;
+          setState(next);
+        }
+      }
+      frame = requestAnimationFrame(tick);
     };
-
-    measure();
-    window.addEventListener("resize", measure);
-    window.addEventListener("scroll", measure, true);
-    return () => {
-      window.removeEventListener("resize", measure);
-      window.removeEventListener("scroll", measure, true);
-    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
   }, [open, anchorRef]);
 
   return state;
 }
 
+/* ────────────────────────────────────────────────────────────────── */
+/*  Component                                                         */
+/* ────────────────────────────────────────────────────────────────── */
 const FolderSelectorDropdown: React.FC<Props> = ({
   open,
   anchorRef,
@@ -127,61 +216,241 @@ const FolderSelectorDropdown: React.FC<Props> = ({
   parseFolderSafe,
   lockedSet,
 }) => {
+  const reduceMotion = useReducedMotion();
   const isMobile = useIsMobile();
   const placement = useAnchorRect(open, anchorRef);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const railTrackRef = useRef<HTMLDivElement | null>(null);
 
-  // Fixed column widths keep the right border of Avg. aligned; seat columns get
-  // a min width so a wide table scrolls horizontally instead of squishing.
-  const GRID_TEMPLATE_COLUMNS = `3rem 3rem repeat(${header.length}, minmax(2.75rem, 1fr))`;
-
-  // Shared cell metrics (header + rows) so row height == header height.
-  const CELL_TEXT = "text-[11px] leading-4";
-  const CELL_PY = "py-1";
-  const CELL_TAGS_PX = "px-1"; // tags col is visually tighter
-  const CELL_STD_PX = "px-1";
-
-  const COL_COUNT = 2 + header.length;
-  const cellBorderR = (i: number) => (i < COL_COUNT - 1 ? "border-r border-gray-200" : "");
-
-  const isFinalTable = (folder: string): boolean => {
-    const meta = metaByFolder?.[folder] ?? null;
-    const tags = meta?.tags;
-    if (tags && tags.some((t) => t.toUpperCase() === "FT")) return true;
-
-    // Fallback if metadata missing:
-    return folder.toUpperCase().includes("FT");
+  /* The desktop rail sits outside the scrolling panel, so it is moved by hand.
+     Writing the transform straight to the node keeps this off React's render
+     path - re-rendering every row on each scroll frame would stutter. */
+  const syncRail = () => {
+    const track = railTrackRef.current;
+    const scroller = scrollRef.current;
+    if (track && scroller) {
+      track.style.transform = `translateY(${-scroller.scrollTop}px)`;
+    }
   };
+
+  /* Refiltering replaces the list under a scroll offset that no longer means
+     anything, so send both back to the top together. */
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    syncRail();
+  }, [items]);
 
   if (typeof document === "undefined") return null;
 
-  // Geometry: the window sizes itself from its content (bounded by the
-  // viewport), decoupled from the search bar's width.
-  const MARGIN = 8; // px gap from viewport edges
-  let winStyle: React.CSSProperties = {};
-  let scrollMaxHeight = 480;
+  /** Ordered, de-duped tags for a folder. Falls back to the folder name for FT. */
+  const tagsFor = (folder: string): string[] => {
+    const raw = metaByFolder?.[folder]?.tags ?? [];
+    const seen = new Set(raw.map((t) => t.toUpperCase()));
+    if (seen.size === 0 && folder.toUpperCase().includes("FT")) seen.add("FT");
+    const known = TAG_PRIORITY.filter((t) => seen.has(t));
+    const rest = [...seen].filter((t) => !TAG_PRIORITY.includes(t));
+    return [...known, ...rest];
+  };
+
+  /* Rows with no parseable stacks are dropped. The rail walks the same list so
+     the two stay index-for-index. */
+  const rows = items
+    .map((folder, idx) => ({ folder, idx, ...parseFolderSafe(folder) }))
+    .filter((r) => Object.keys(r.stacks).length > 0);
+
+  /* ---- Geometry -------------------------------------------------- */
+  const gutter = scrollbarWidth();
+  const railFootprint = RAIL_W + RAIL_GAP;
+
+  const gridCols = isMobile
+    ? `${CHIP_COL_W}px ${AVG_W}px repeat(${header.length}, minmax(0, 1fr))`
+    : `${AVG_W}px repeat(${header.length}, minmax(0, 1fr))`;
+
+  let elementLeft = 0;
+  let elementTop = 0;
+  let elementWidth = 320;
+  let panelWidth = 320;
+  let scrollMaxHeight = 400;
 
   if (placement) {
     const { anchor, viewport } = placement;
-    const top = anchor.bottom + MARGIN;
+    elementTop = anchor.bottom + VIEWPORT_MARGIN;
 
     if (isMobile) {
-      // Sheet: near-full-width, centered, with a dimmed backdrop behind it.
-      const width = viewport.w - MARGIN * 2;
-      winStyle = { top, left: MARGIN, width };
+      // Sheet: near-full-width and centered; the tag rail is inlined instead.
+      panelWidth = viewport.w - 2 * VIEWPORT_MARGIN;
+      elementLeft = VIEWPORT_MARGIN;
+      elementWidth = panelWidth;
+      scrollMaxHeight = Math.max(180, viewport.h - elementTop - VIEWPORT_MARGIN - TITLE_H);
     } else {
-      // Anchored window: content-driven width, clamped to the viewport, shifted
-      // to stay fully on-screen relative to the search bar.
-      const contentPx = 48 /* tags */ + 48 /* avg */ + header.length * 52 + 24;
-      const width = Math.min(viewport.w - MARGIN * 2, Math.max(360, contentPx));
-      let left = anchor.left;
-      if (left + width > viewport.w - MARGIN) left = viewport.w - MARGIN - width;
-      if (left < MARGIN) left = MARGIN;
-      winStyle = { top, left, width };
-    }
+      // Anchored window: content-driven width plus the reserved scroll gutter,
+      // clamped so both the panel (right) and the external rail (left) stay on
+      // screen. The element box spans the rail so it encloses what is painted.
+      const idealPanelW = AVG_W + header.length * SEAT_W + gutter + 2 * PANEL_BORDER;
+      const maxPanelW = viewport.w - 2 * VIEWPORT_MARGIN - railFootprint;
+      panelWidth = Math.max(160, Math.min(idealPanelW, maxPanelW));
 
-    // Leave room for the title bar (~44px) plus the bottom margin.
-    scrollMaxHeight = Math.max(200, viewport.h - top - MARGIN - 44);
+      const minLeft = VIEWPORT_MARGIN + railFootprint;
+      const maxLeft = viewport.w - VIEWPORT_MARGIN - panelWidth;
+      const panelLeft = Math.round(
+        Math.min(Math.max(anchor.left, minLeft), Math.max(minLeft, maxLeft))
+      );
+      elementLeft = panelLeft - railFootprint;
+      elementWidth = panelWidth + railFootprint;
+      scrollMaxHeight = Math.max(180, viewport.h - elementTop - VIEWPORT_MARGIN);
+    }
   }
+
+  const CELL_TEXT = "text-[11px] leading-none";
+  const COL_COUNT = (isMobile ? 2 : 1) + header.length;
+  const cellBorderR = (i: number) => (i < COL_COUNT - 1 ? "border-r border-white/5" : "");
+
+  const headerCells: string[] = isMobile ? ["", "Avg", ...header] : ["Avg", ...header];
+
+  const panel = (
+    <div
+      data-testid="folder-dropdown-panel"
+      className="
+        rounded-xl border border-hairline
+        bg-surface/85 backdrop-blur-md
+        shadow-[0_18px_40px_rgba(2,6,23,0.55)]
+        overflow-hidden
+      "
+      style={{ width: panelWidth }}
+    >
+      {isMobile && (
+        <div
+          data-testid="folder-dropdown-titlebar"
+          className="flex items-center justify-between gap-2 px-3 border-b border-hairline"
+          style={{ height: TITLE_H }}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm font-semibold text-slate-100 truncate">
+              Preflop Solutions
+            </span>
+            <span className="inline-flex items-center rounded-full bg-accent/15 text-accent text-[11px] font-semibold px-2 py-[1px] tabular-nums">
+              {rows.length}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => onClose?.()}
+            aria-label="Close"
+            className="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border border-hairline text-slate-400 hover:bg-white/10 hover:text-slate-100 transition"
+          >
+            <span className="text-sm leading-none">✕</span>
+          </button>
+        </div>
+      )}
+
+      {rows.length === 0 ? (
+        <div className="px-4 py-10 text-center text-sm text-slate-400">
+          No solutions match your search.
+        </div>
+      ) : (
+        <div
+          ref={scrollRef}
+          onScroll={syncRail}
+          data-testid="folder-dropdown-scroll"
+          className="overflow-y-auto [scrollbar-gutter:stable] [scrollbar-width:thin]"
+          style={{ maxHeight: scrollMaxHeight }}
+        >
+          <div>
+            {/* HEADER */}
+            <div
+              className="
+                grid sticky top-0 z-10
+                bg-slate-950/80 backdrop-blur
+                text-slate-400 font-semibold uppercase tracking-[0.04em]
+                border-b border-hairline
+              "
+              data-testid="folder-dropdown-header"
+              style={{ gridTemplateColumns: gridCols, height: HEAD_H }}
+            >
+              {headerCells.map((label, i) => (
+                <div
+                  key={`h-${i}-${label}`}
+                  className={`text-[10px] leading-none px-0.5 flex items-center justify-center ${cellBorderR(
+                    i
+                  )}`}
+                >
+                  {label}
+                </div>
+              ))}
+            </div>
+
+            {/* ROWS */}
+            <div className="grid" style={{ gridTemplateColumns: gridCols }}>
+              {rows.map(({ folder, idx, stacks, avg }) => {
+                const active = idx === hi;
+                /* Background and text stay in separate strings: these and
+                   `text-accent` on the avg cell are all single-class utilities,
+                   so a text colour bundled with the background would let the
+                   cascade, not class order, decide the winner. */
+                const rowBg = active ? "bg-accent/12" : "hover:bg-white/5";
+                const rowText = active ? "text-slate-100" : "text-slate-300";
+                const choose = () => onChoose(folder);
+                const enter = () => setHi(idx);
+                const tags = tagsFor(folder);
+                const locked = lockedSet?.has(folder) ?? false;
+
+                return (
+                  <React.Fragment key={folder}>
+                    {/* MOBILE inline tag cell (desktop uses the external rail) */}
+                    {isMobile && (
+                      <div
+                        className={`${CELL_TEXT} px-0.5 border-t border-white/5 ${cellBorderR(
+                          0
+                        )} ${rowBg} cursor-pointer flex items-center justify-center`}
+                        style={{ height: ROW_H }}
+                        onMouseDown={choose}
+                        onMouseEnter={enter}
+                        title={locked ? "Locked - subscribe to open" : tags.join(" ") || undefined}
+                      >
+                        <RailChip tag={tags[0]} locked={locked} />
+                      </div>
+                    )}
+
+                    {/* AVG */}
+                    <div
+                      className={`${CELL_TEXT} px-0.5 border-t border-white/5 ${cellBorderR(
+                        isMobile ? 1 : 0
+                      )} ${rowBg} cursor-pointer flex items-center justify-center tabular-nums font-semibold text-accent`}
+                      data-testid="row-avg"
+                      data-row={idx}
+                      style={{
+                        height: ROW_H,
+                        boxShadow: active ? "inset 2px 0 0 var(--color-accent)" : undefined,
+                      }}
+                      onMouseDown={choose}
+                      onMouseEnter={enter}
+                    >
+                      {avg}
+                    </div>
+
+                    {/* SEATS */}
+                    {header.map((pos, i) => (
+                      <div
+                        key={`${folder}-${pos}`}
+                        className={`${CELL_TEXT} px-0.5 border-t border-white/5 ${cellBorderR(
+                          (isMobile ? 2 : 1) + i
+                        )} ${rowBg} ${rowText} cursor-pointer flex items-center justify-center tabular-nums`}
+                        style={{ height: ROW_H }}
+                        onMouseDown={choose}
+                        onMouseEnter={enter}
+                      >
+                        {stacks[pos] ?? <span className="text-slate-600">-</span>}
+                      </div>
+                    ))}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 
   return createPortal(
     <AnimatePresence>
@@ -190,8 +459,9 @@ const FolderSelectorDropdown: React.FC<Props> = ({
           {isMobile && (
             <motion.div
               key="backdrop"
-              className="fixed inset-0 z-[1290] bg-black/30 sm:hidden"
-              initial={{ opacity: 0 }}
+              data-testid="folder-dropdown-backdrop"
+              className="fixed inset-0 z-[1290] bg-black/50"
+              initial={reduceMotion ? false : { opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.15 }}
@@ -202,158 +472,67 @@ const FolderSelectorDropdown: React.FC<Props> = ({
 
           <motion.div
             key="window"
+            data-testid="folder-dropdown"
             className="fixed z-[1300]"
-            style={winStyle}
-            initial={{ opacity: 0, y: -8, scale: 0.98 }}
+            style={{ top: elementTop, left: elementLeft, width: elementWidth }}
+            initial={reduceMotion ? false : { opacity: 0, y: -6, scale: 0.985 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.98 }}
-            transition={{ type: "spring", stiffness: 500, damping: 34, mass: 0.7 }}
-            // Keep the search input focused so row onMouseDown fires before blur.
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.985 }}
+            transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
             onMouseDown={(e) => e.preventDefault()}
             role="dialog"
             aria-modal={isMobile}
             aria-label="Preflop solutions"
           >
-            <div
-              className="
-                rounded-2xl border border-gray-200 bg-white
-                shadow-[0_20px_60px_rgba(0,0,0,0.25)]
-                overflow-hidden
-              "
-            >
-              {/* Title bar — gives the window a modal-like identity and a close
-                  affordance (essential on mobile, handy on desktop). */}
-              <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-200 bg-white">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-sm font-semibold text-gray-800 truncate">
-                    Preflop Solutions
-                  </span>
-                  <span className="inline-flex items-center rounded-full bg-blue-100 text-blue-700 text-[11px] font-semibold px-2 py-[1px]">
-                    {items.length}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onClose?.()}
-                  aria-label="Close"
-                  className="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition"
-                >
-                  <span className="text-sm leading-none">✕</span>
-                </button>
+            {isMobile ? (
+              panel
+            ) : (
+              <div className="relative" style={{ paddingLeft: railFootprint }}>
+                {/* TAG RAIL — beside the panel, clipped to it, scrolled in step.
+                    Absolute offsets resolve against the padding box, so `left: 0`
+                    lands outside the panel rather than behind it. */}
+                {rows.length > 0 && (
+                  <div
+                    className="absolute overflow-hidden"
+                    data-testid="folder-dropdown-rail"
+                    style={{
+                      left: 0,
+                      width: RAIL_W,
+                      top: PANEL_BORDER + HEAD_H,
+                      bottom: PANEL_BORDER,
+                    }}
+                  >
+                    <div ref={railTrackRef} className="will-change-transform">
+                      {rows.map(({ folder, idx }) => {
+                        const tags = tagsFor(folder);
+                        const locked = lockedSet?.has(folder) ?? false;
+                        return (
+                          <div
+                            key={`rail-${folder}`}
+                            className="relative flex items-center justify-end pr-1 cursor-pointer"
+                            data-testid="rail-slot"
+                            data-row={idx}
+                            style={{ height: ROW_H }}
+                            onMouseDown={() => onChoose(folder)}
+                            onMouseEnter={() => setHi(idx)}
+                            title={
+                              locked
+                                ? `Locked - subscribe to open${
+                                    tags.length ? ` · ${tags.join(" ")}` : ""
+                                  }`
+                                : tags.join(" ") || undefined
+                            }
+                          >
+                            <RailChip tag={tags[0]} locked={locked} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                {panel}
               </div>
-
-              {items.length === 0 ? (
-                <div className="px-4 py-10 text-center text-sm text-gray-500">
-                  No solutions match your search.
-                </div>
-              ) : (
-                /* One scroll area so header & rows share the same width; stable gutters avoid shifts */
-                <div
-                  className="overflow-auto [scrollbar-gutter:stable]"
-                  style={{ maxHeight: scrollMaxHeight }}
-                >
-                  {/* HEADER (inside scrollbox), same grid template and SAME PAD/TEXT as rows */}
-                  <div
-                    className="grid sticky top-0 z-10 bg-gray-800 text-gray-200 font-semibold border-b border-gray-700"
-                    style={{ gridTemplateColumns: GRID_TEMPLATE_COLUMNS, gridAutoRows: "auto" }}
-                  >
-                    <div
-                      className={`${CELL_TEXT} ${CELL_PY} ${CELL_TAGS_PX} text-center ${cellBorderR(
-                        0
-                      )}`}
-                    >
-                      Tags
-                    </div>
-                    <div
-                      className={`${CELL_TEXT} ${CELL_PY} ${CELL_STD_PX} text-center ${cellBorderR(
-                        1
-                      )}`}
-                    >
-                      Avg.
-                    </div>
-                    {header.map((pos, i) => (
-                      <div
-                        key={`h-${pos}`}
-                        className={`${CELL_TEXT} ${CELL_PY} ${CELL_STD_PX} text-center ${cellBorderR(
-                          i + 2
-                        )}`}
-                      >
-                        {pos}
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* ROWS — same grid template and SAME PAD/TEXT as header */}
-                  <div
-                    className="grid"
-                    style={{ gridTemplateColumns: GRID_TEMPLATE_COLUMNS, gridAutoRows: "auto" }}
-                  >
-                    {items.map((folder, idx) => {
-                      const { stacks, avg } = parseFolderSafe(folder);
-                      if (Object.keys(stacks).length === 0) return null;
-
-                      const showFT = isFinalTable(folder);
-                      const isLocked = lockedSet?.has(folder) ?? false;
-                      const rowBg = idx === hi ? "bg-blue-100" : "hover:bg-gray-50";
-                      const choose = () => onChoose(folder);
-                      const enter = () => setHi(idx);
-
-                      return (
-                        <React.Fragment key={folder}>
-                          {/* TAGS */}
-                          <div
-                            className={`${CELL_TEXT} ${CELL_PY} ${CELL_TAGS_PX} border-t border-gray-200 ${cellBorderR(
-                              0
-                            )} ${rowBg} cursor-pointer flex items-center justify-center`}
-                            onMouseDown={choose}
-                            onMouseEnter={enter}
-                            title={isLocked ? "Locked — Subscribe!" : undefined}
-                          >
-                            {showFT ? (
-                              <div className="relative flex items-center justify-center">
-                                <FtPill />
-                                {isLocked && (
-                                  <span className="absolute -top-1.5 -right-1.5 pointer-events-none select-none">
-                                    <LockIcon className="h-3.5 w-3.5 text-amber-700 drop-shadow-sm" />
-                                  </span>
-                                )}
-                              </div>
-                            ) : (
-                              isLocked && <LockIcon className="h-4 w-4 text-amber-700" />
-                            )}
-                          </div>
-
-                          {/* AVG (fixed-width col) */}
-                          <div
-                            className={`${CELL_TEXT} ${CELL_PY} ${CELL_STD_PX} border-t border-gray-200 ${cellBorderR(
-                              1
-                            )} ${rowBg} cursor-pointer text-center tabular-nums`}
-                            onMouseDown={choose}
-                            onMouseEnter={enter}
-                          >
-                            {avg}
-                          </div>
-
-                          {/* SEATS */}
-                          {header.map((pos, i) => (
-                            <div
-                              key={`${folder}-${pos}`}
-                              className={`${CELL_TEXT} ${CELL_PY} ${CELL_STD_PX} border-t border-gray-200 ${
-                                i < header.length - 1 ? "border-r" : ""
-                              } ${rowBg} cursor-pointer text-center`}
-                              onMouseDown={choose}
-                              onMouseEnter={enter}
-                            >
-                              {stacks[pos] ?? ""}
-                            </div>
-                          ))}
-                        </React.Fragment>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
+            )}
           </motion.div>
         </>
       )}

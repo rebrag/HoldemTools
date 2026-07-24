@@ -1,0 +1,31 @@
+/*
+ * Applied only while a visual baseline is captured.
+ *
+ * The dropdown is a glass panel - `bg-surface/85` - so whatever the solver is
+ * rendering behind it bleeds into every pixel of the baseline. That made the
+ * snapshot depend on live solution data: it drifts when the API returns
+ * something new, and differs between a dev machine with .env and CI without
+ * it. Blanking the page behind keeps the test about the dropdown itself.
+ */
+
+html,
+body {
+  background: #0b1220 !important;
+}
+
+/* visibility inherits, so this hides the whole page... */
+#root > * {
+  visibility: hidden;
+}
+
+/* ...and this brings back only the dropdown and its contents.
+ *
+ * The search input has to stay visible too, even though it sits outside the
+ * captured box. A focused element that becomes invisible is blurred by the
+ * browser, and the input's blur handler closes the dropdown - so hiding it
+ * left the screenshot chasing a panel that was busy unmounting. */
+[data-testid="folder-dropdown"],
+[data-testid="folder-dropdown"] *,
+input[placeholder*="Preflop Solutions"] {
+  visibility: visible;
+}
