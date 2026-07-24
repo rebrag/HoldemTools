@@ -35,8 +35,9 @@ import { handleActionClickImpl, type PendingFlopUpload } from "@/lib/solver/hand
 import { root169ToJsonData, pollForPioSolutionByGametree } from "@/lib/solver/postflopClient";
 import type { PioSolutionDoc } from "@/lib/solver/postflopClient";
 
-// Toggle experimental postflop pipeline (upload + polling)
-const POSTFLOP_ENABLED = false;
+// Toggle experimental postflop pipeline (upload + polling).
+// Off unless VITE_POSTFLOP_ENABLED=true (frontend/.env locally; Vercel env var in prod).
+const POSTFLOP_ENABLED = import.meta.env.VITE_POSTFLOP_ENABLED === "true";
 
 const RANKS = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"] as const;
 const SUITS = ["h", "d", "c", "s"] as const;
