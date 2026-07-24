@@ -9,6 +9,8 @@ import type { PostflopIndexEntry } from "@/lib/solver/postflopLibrary";
 export interface PostflopLibraryProps {
   entries: PostflopIndexEntry[];
   loading: boolean;
+  signInRequired?: boolean;
+  onSignIn?: () => void;
   onOpen: (entry: PostflopIndexEntry) => void;
   onClose: () => void;
 }
@@ -24,6 +26,8 @@ type LineGroup = {
 const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
   entries,
   loading,
+  signInRequired,
+  onSignIn,
   onOpen,
   onClose,
 }) => {
@@ -72,7 +76,20 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
         </p>
 
         <div className="overflow-y-auto pr-1 -mr-1">
-          {loading ? (
+          {signInRequired ? (
+            <div className="py-8 flex flex-col items-center gap-3 text-center">
+              <p className="text-sm text-gray-300">
+                Sign in to browse the solved-flops library.
+              </p>
+              <button
+                type="button"
+                onClick={onSignIn}
+                className="rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 shadow"
+              >
+                Sign in
+              </button>
+            </div>
+          ) : loading ? (
             <div className="py-8 text-center text-sm text-gray-400 animate-pulse">
               Loading solved boards…
             </div>

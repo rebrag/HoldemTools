@@ -1,5 +1,4 @@
 // src/lib/postflopClient.ts
-import axios from "axios";
 import type { JsonData } from "@/lib/solver/utils";
 
 export type PioSolutionDoc = {
@@ -44,9 +43,6 @@ export type PioSolutionDoc = {
     node?: string;
   };
 };
-
-// simple sleep helper for polling
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Convert a root_169 block into your JsonData shape
@@ -115,98 +111,4 @@ export function parseGametreePathForSolution(gametreePath: string): {
     : nodeFile;
 
   return { stacks, nodeName };
-}
-
-/**
- * Build the URL where your API will expose a postflop solution JSON.
- *
- * NOTE: This path must line up with whatever your watcher uploads to ADLS / your API serves.
- */
-export function buildPioSolutionUrl(
-  apiBaseUrl: string,
-  gametreePath: string,
-  boardName: string,
-  nodeId: string = "r:0" // default: root node
-): string | null {
-  const { stacks, nodeName } = parseGametreePathForSolution(gametreePath);
-  if (!stacks || !nodeName) {
-    console.warn("Could not derive stacks/node from gametreePath:", gametreePath);
-    return null;
-  }
-
-  // nodeId may contain ":", so encode it for safety
-  const safeNodeId = encodeURIComponent(nodeId);
-
-  // piosolutions/{stacks}/{nodeName}/{boardName}/{nodeId}.json
-  return `${apiBaseUrl}/api/Files/piosolutions/${stacks}/${nodeName}/${boardName}/${safeNodeId}.json`;
-}
-
-/**
- * Poll your API for a PioSolutionDoc given a gametree path + board + node id.
- * Returns null if it never shows up in time.
- */
-export async function pollForPioSolutionByGametree(
-  apiBaseUrl: string,
-  gametreePath: string,
-  boardName: string,
-  nodeId: string = "r:0",
-  options?: { intervalMs?: number; maxAttempts?: number }
-): Promise<PioSolutionDoc | null> {
-  const intervalMs = options?.intervalMs ?? 8000;
-  const maxAttempts = options?.maxAttempts ?? 20;
-  const url = buildPioSolutionUrl(apiBaseUrl, gametreePath, boardName, nodeId);
-
-  if (!url) return null;
-
-  console.log(
-    `🔎 Polling for Pio solution at ${url} (board=${boardName}, nodeId=${nodeId}, gametreePath=${gametreePath})`
-  );
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const res = await axios.get<PioSolutionDoc>(url, {
-        validateStatus: (status) => status === 200 || status === 404,
-      });
-
-      if (res.status === 200) {
-        const doc = res.data;
-        console.log(
-          `✅ Pio solution ready for board ${boardName} (attempt ${attempt})`,
-          doc
-        );
-
-        if (doc.root_169) {
-          const { hand_classes, strategy, ev } = doc.root_169;
-          console.log("🧩 root_169.hand_classes (169 keys):", hand_classes);
-          console.log("🧩 root_169.strategy.actions:", strategy.actions);
-          console.log(
-            "🧩 root_169.strategy.matrix[0] (first action row, 169 cells):",
-            strategy.matrix?.[0]
-          );
-          console.log("🧮 root_169.ev.oop:", ev.oop);
-          console.log("🧮 root_169.ev.ip:", ev.ip);
-        } else {
-          console.log("ℹ️ No root_169 found on solution doc:", doc);
-        }
-
-        return doc;
-      }
-
-      console.log(
-        `⏳ Solution not ready yet (HTTP ${res.status}) for board ${boardName}, attempt ${attempt}/${maxAttempts}`
-      );
-    } catch (err) {
-      console.warn(
-        `⚠️ Error polling for Pio solution (attempt ${attempt}/${maxAttempts})`,
-        err
-      );
-    }
-
-    await sleep(intervalMs);
-  }
-
-  console.warn(
-    `⌛ Gave up waiting for solution JSON for board ${boardName} after ${maxAttempts} attempts`
-  );
-  return null;
 }

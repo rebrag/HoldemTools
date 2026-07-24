@@ -1,31 +1,59 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { PioSolutionDoc } from "@/lib/solver/postflopClient";
-import type { BoardManifest, ManifestNode } from "@/lib/solver/postflopLibrary";
-import { fetchNodeDoc } from "@/lib/solver/postflopLibrary";
+import type {
+  BoardManifest,
+  ManifestNode,
+} from "@/lib/solver/postflopLibrary";
+import {
+  fetchStreetBundle,
+  pollForStreet,
+  postNodeRequest,
+} from "@/lib/solver/postflopLibrary";
 import {
   boardToCards,
   displayActionMap,
+  isCardSegment,
   parentOf,
   toSuffix,
 } from "@/lib/solver/postflopNode";
 
-export type PostflopLineItem = { label: string; nodeId: string };
+export type PostflopLineItem = {
+  label: string;
+  nodeId: string;
+  kind?: "action" | "card";
+};
+
+export type StreetPicker = {
+  /** The chance node whose card is being picked. */
+  chanceNodeId: string;
+  street: "turn" | "river";
+};
+
+export type PendingStreet = {
+  seedSuffix: string;
+  card: string;
+  startedAt: number;
+  /** True once the watcher reports an evicted-cfr re-solve (minutes). */
+  resolving: boolean;
+};
 
 type SessionCore = {
   stacks: string;
   nodeName: string;
-  board: string[];
+  manifest: BoardManifest;
   oopSeat: string;
   ipSeat: string;
-  manifest: BoardManifest;
   currentNodeId: string;
   line: PostflopLineItem[];
   notice: string | null;
+  picker: StreetPicker | null;
+  pendingStreet: PendingStreet | null;
 };
 
 export type PostflopView = {
   stacks: string;
   nodeName: string;
+  /** Board at the CURRENT node (grows with dealt cards). */
   board: string[];
   oopSeat: string;
   ipSeat: string;
@@ -33,159 +61,245 @@ export type PostflopView = {
   currentNodeId: string;
   line: PostflopLineItem[];
   notice: string | null;
-  /** Seat to act at the current node + its doc. */
+  picker: StreetPicker | null;
+  pendingStreet: PendingStreet | null;
+  /** Cards with an already-extracted street for the open picker. */
+  extractedCards: Set<string>;
+  /** Cards legal to deal at the open picker (52 minus board). */
+  usedCards: Set<string>;
   actorSeat: string;
   actorDoc: PioSolutionDoc | null;
-  /** Other seat; shows their latest decision (or check-preview at the root). */
   opponentSeat: string;
   opponentDoc: PioSolutionDoc | null;
-  /** Raw pio label -> display label for the current node's actions. */
   actions: { pioLabel: string; display: string }[];
   loading: boolean;
 };
 
+/** Cards dealt along a node path (segments after "r:0" that look like cards). */
+function dealtCards(nodeId: string): string[] {
+  return nodeId.split(":").slice(2).filter(isCardSegment);
+}
+
 /**
- * Postflop navigation state machine. Completely separate from the preflop
- * plate-name machinery: nodes are addressed by Pio colon ids and resolved
- * through the board manifest; docs are fetched once and cached per suffix.
+ * Postflop navigation over v3 street bundles. A whole street's node docs and
+ * walk metadata load in one gzipped fetch; navigation within a street is
+ * synchronous. Chance nodes open a turn/river card picker; unextracted
+ * streets are requested on demand and polled via the manifest.
  */
-export function usePostflopSession(apiBase: string) {
+export function usePostflopSession() {
   const [core, setCore] = useState<SessionCore | null>(null);
   const [docs, setDocs] = useState<Record<string, PioSolutionDoc>>({});
   const [loading, setLoading] = useState(false);
   const docsRef = useRef<Record<string, PioSolutionDoc>>({});
+  const metaRef = useRef<Record<string, ManifestNode>>({});
   const coreRef = useRef<SessionCore | null>(null);
+  const cancelRef = useRef(false);
   docsRef.current = docs;
   coreRef.current = core;
 
-  const nodeMeta = useCallback((c: SessionCore, nodeId: string): ManifestNode | undefined => {
-    return c.manifest.nodes[toSuffix(nodeId)];
-  }, []);
-
-  const loadDoc = useCallback(
-    async (c: SessionCore, nodeId: string): Promise<PioSolutionDoc | null> => {
-      const suffix = toSuffix(nodeId);
-      const cached = docsRef.current[suffix];
-      if (cached) return cached;
-      const doc = await fetchNodeDoc(apiBase, c.stacks, c.nodeName, c.manifest.board, nodeId);
-      if (doc) {
-        docsRef.current = { ...docsRef.current, [suffix]: doc };
-        setDocs(docsRef.current);
-      }
-      return doc;
+  const loadStreet = useCallback(
+    async (c: SessionCore, seedSuffix: string): Promise<boolean> => {
+      if (docsRef.current[seedSuffix]) return true; // seed doc present = street cached
+      const bundle = await fetchStreetBundle(
+        c.stacks, c.nodeName, c.manifest.board, seedSuffix
+      );
+      if (!bundle) return false;
+      docsRef.current = { ...docsRef.current, ...bundle.nodes };
+      metaRef.current = { ...metaRef.current, ...bundle.meta };
+      setDocs(docsRef.current);
+      return true;
     },
-    [apiBase]
-  );
-
-  /** Prefetch the check-child of a node when it is an extracted decision node
-   * (used as the opponent's "preview" plate at the root). */
-  const prefetchCheckChild = useCallback(
-    (c: SessionCore, nodeId: string) => {
-      const childId = `${nodeId}:c`;
-      const meta = nodeMeta(c, childId);
-      if (meta?.extracted && (meta.type === "OOP_DEC" || meta.type === "IP_DEC")) {
-        void loadDoc(c, childId);
-      }
-    },
-    [loadDoc, nodeMeta]
+    []
   );
 
   const open = useCallback(
     async (manifest: BoardManifest) => {
       const alive = manifest.preflop.alive_positions ?? [];
-      const oopSeat = manifest.seats.oop ?? alive[0] ?? "OOP";
-      const ipSeat = manifest.seats.ip ?? alive[1] ?? "IP";
       const c: SessionCore = {
         stacks: manifest.stacks,
         nodeName: manifest.node_name,
-        board: boardToCards(manifest.board),
-        oopSeat,
-        ipSeat,
         manifest,
+        oopSeat: manifest.seats.oop ?? alive[0] ?? "OOP",
+        ipSeat: manifest.seats.ip ?? alive[1] ?? "IP",
         currentNodeId: "r:0",
         line: [],
         notice: null,
+        picker: null,
+        pendingStreet: null,
       };
+      cancelRef.current = false;
+      docsRef.current = {};
+      metaRef.current = {};
+      setDocs({});
       setLoading(true);
       try {
-        await loadDoc(c, "r:0");
-        prefetchCheckChild(c, "r:0");
+        await loadStreet(c, "r.0");
       } finally {
         setLoading(false);
       }
       setCore(c);
     },
-    [loadDoc, prefetchCheckChild]
+    [loadStreet]
   );
 
-  const clickAction = useCallback(
-    async (displayLabel: string) => {
-      const c = coreRef.current;
-      if (!c) return;
-      const currentDoc = docsRef.current[toSuffix(c.currentNodeId)];
-      if (!currentDoc) return;
+  const clickAction = useCallback((displayLabel: string) => {
+    const c = coreRef.current;
+    if (!c || c.pendingStreet) return;
+    const currentDoc = docsRef.current[toSuffix(c.currentNodeId)];
+    if (!currentDoc) return;
 
-      const match = displayActionMap(currentDoc, c.currentNodeId).find(
-        (a) => a.display === displayLabel || a.pioLabel === displayLabel
-      );
-      if (!match) return;
+    const match = displayActionMap(currentDoc, c.currentNodeId).find(
+      (a) => a.display === displayLabel || a.pioLabel === displayLabel
+    );
+    if (!match) return;
 
-      const childId = `${c.currentNodeId}:${match.pioLabel}`;
-      const meta = nodeMeta(c, childId);
+    const childId = `${c.currentNodeId}:${match.pioLabel}`;
+    const meta = metaRef.current[toSuffix(childId)];
 
-      if (!meta) {
-        setCore({ ...c, notice: "This continuation was not extracted." });
-        return;
-      }
-      if (meta.type === "SPLIT_NODE") {
-        setCore({
-          ...c,
-          notice:
-            "Betting closes here - the turn is dealt. Turn & river browsing is coming soon.",
-        });
-        return;
-      }
-      if (meta.type === "terminal") {
-        setCore({
-          ...c,
-          notice:
-            match.pioLabel === "f"
-              ? "Hand ends here - fold."
-              : "Hand ends here - all-in and call. Runout EV browsing is coming soon.",
-        });
-        return;
-      }
-      if (!meta.extracted) {
-        setCore({ ...c, notice: "This node is not extracted yet." });
-        return;
-      }
+    if (!meta) {
+      setCore({ ...c, notice: "This continuation was not extracted.", picker: null });
+      return;
+    }
+    if (meta.type === "SPLIT_NODE") {
+      const nextStreet = dealtCards(childId).length === 0 ? "turn" : "river";
+      setCore({
+        ...c,
+        notice: null,
+        picker: { chanceNodeId: childId, street: nextStreet },
+      });
+      return;
+    }
+    if (meta.type === "terminal") {
+      setCore({
+        ...c,
+        picker: null,
+        notice:
+          match.pioLabel === "f"
+            ? "Hand ends here - fold."
+            : "Hand ends here - all-in and call. Runout EV browsing is coming soon.",
+      });
+      return;
+    }
+    if (!docsRef.current[toSuffix(childId)]) {
+      setCore({ ...c, notice: "This node is missing from the street bundle.", picker: null });
+      return;
+    }
+    setCore({
+      ...c,
+      currentNodeId: childId,
+      line: [...c.line, { label: displayLabel, nodeId: childId, kind: "action" }],
+      notice: null,
+      picker: null,
+    });
+  }, []);
 
-      setLoading(true);
-      try {
-        const doc = await loadDoc(c, childId);
-        if (!doc) {
-          setCore({ ...c, notice: "Could not load this node's data." });
-          return;
-        }
-        prefetchCheckChild(c, childId);
-        setCore({
-          ...c,
-          currentNodeId: childId,
-          line: [...c.line, { label: displayLabel, nodeId: childId }],
-          notice: null,
-        });
-      } finally {
-        setLoading(false);
-      }
+  const advanceToStreet = useCallback(
+    (c: SessionCore, seedId: string, card: string, manifest: BoardManifest) => {
+      setCore({
+        ...c,
+        manifest,
+        currentNodeId: seedId,
+        line: [...c.line, { label: card, nodeId: seedId, kind: "card" }],
+        notice: null,
+        picker: null,
+        pendingStreet: null,
+      });
     },
-    [loadDoc, nodeMeta, prefetchCheckChild]
+    []
   );
+
+  const pickCard = useCallback(
+    async (card: string) => {
+      const c = coreRef.current;
+      if (!c?.picker || c.pendingStreet) return;
+      const seedId = `${c.picker.chanceNodeId}:${card}`;
+      const seedSuffix = toSuffix(seedId);
+
+      if (c.manifest.streets?.[seedSuffix]?.extracted) {
+        setLoading(true);
+        try {
+          const ok = await loadStreet(c, seedSuffix);
+          if (!ok) {
+            setCore({ ...c, notice: "Could not load this street's data.", picker: null });
+            return;
+          }
+        } finally {
+          setLoading(false);
+        }
+        advanceToStreet(c, seedId, card, c.manifest);
+        return;
+      }
+
+      // On-demand extraction: queue it and poll the manifest.
+      const pending: PendingStreet = {
+        seedSuffix,
+        card,
+        startedAt: Date.now(),
+        resolving: c.manifest.streets?.[seedSuffix]?.status === "resolving",
+      };
+      setCore({ ...c, pendingStreet: pending, notice: null });
+      try {
+        await postNodeRequest({
+          stacks: c.stacks,
+          node: c.nodeName,
+          board: c.manifest.board,
+          nodeId: seedId,
+        });
+      } catch (err) {
+        console.warn("Node request failed:", err);
+        setCore({ ...coreRef.current!, pendingStreet: null, notice: "Could not queue the extraction." });
+        return;
+      }
+
+      const manifest = await pollForStreet(
+        c.stacks, c.nodeName, c.manifest.board, seedSuffix,
+        {
+          shouldStop: () => cancelRef.current,
+          onResolving: () => {
+            const cur = coreRef.current;
+            if (cur?.pendingStreet && !cur.pendingStreet.resolving) {
+              setCore({ ...cur, pendingStreet: { ...cur.pendingStreet, resolving: true } });
+            }
+          },
+        }
+      );
+      const cur = coreRef.current;
+      if (!cur || cancelRef.current) return;
+      if (!manifest) {
+        setCore({ ...cur, pendingStreet: null, notice: "The solver did not respond in time - try again later." });
+        return;
+      }
+      const c2 = { ...cur, manifest };
+      const ok = await loadStreet(c2, seedSuffix);
+      if (!ok) {
+        setCore({ ...c2, pendingStreet: null, notice: "Street extracted but the bundle failed to load." });
+        return;
+      }
+      advanceToStreet(c2, seedId, card, manifest);
+    },
+    [advanceToStreet, loadStreet]
+  );
+
+  const closePicker = useCallback(() => {
+    const c = coreRef.current;
+    if (!c) return;
+    setCore({ ...c, picker: null });
+  }, []);
+
+  const cancelPending = useCallback(() => {
+    const c = coreRef.current;
+    if (!c) return;
+    cancelRef.current = true;
+    // allow future picks again
+    setTimeout(() => { cancelRef.current = false; }, 0);
+    setCore({ ...c, pendingStreet: null, notice: "Extraction canceled - the street will still finish in the background." });
+  }, []);
 
   const jumpTo = useCallback((nodeId: string) => {
     const c = coreRef.current;
-    if (!c) return;
+    if (!c || c.pendingStreet) return;
     if (nodeId === "r:0") {
-      setCore({ ...c, currentNodeId: "r:0", line: [], notice: null });
+      setCore({ ...c, currentNodeId: "r:0", line: [], notice: null, picker: null });
       return;
     }
     const idx = c.line.findIndex((item) => item.nodeId === nodeId);
@@ -195,19 +309,27 @@ export function usePostflopSession(apiBase: string) {
       currentNodeId: nodeId,
       line: c.line.slice(0, idx + 1),
       notice: null,
+      picker: null,
     });
   }, []);
 
   const close = useCallback(() => {
+    cancelRef.current = true;
     setCore(null);
     setDocs({});
     docsRef.current = {};
+    metaRef.current = {};
   }, []);
 
   const view: PostflopView | null = useMemo(() => {
     if (!core) return null;
     const currentSuffix = toSuffix(core.currentNodeId);
     const currentDoc = docs[currentSuffix] ?? null;
+
+    const board = [
+      ...boardToCards(core.manifest.board),
+      ...dealtCards(core.currentNodeId),
+    ];
 
     const actorRole = currentDoc?.position === "IP" ? "ip" : "oop";
     const actorSeat = actorRole === "ip" ? core.ipSeat : core.oopSeat;
@@ -217,31 +339,50 @@ export function usePostflopSession(apiBase: string) {
     // Opponent plate: nearest ancestor where they acted...
     let opponentDoc: PioSolutionDoc | null = null;
     for (let p = parentOf(core.currentNodeId); p; p = parentOf(p)) {
-      const meta = core.manifest.nodes[toSuffix(p)];
+      const meta = metaRef.current[toSuffix(p)];
       if (meta?.type === opponentType) {
         opponentDoc = docs[toSuffix(p)] ?? null;
         break;
       }
     }
-    // ...else their check-response preview (e.g. r:0:c while viewing r:0).
+    // ...else their check-response preview (same street, already cached).
     if (!opponentDoc) {
-      const previewId = `${core.currentNodeId}:c`;
-      const meta = core.manifest.nodes[toSuffix(previewId)];
-      if (meta?.type === opponentType && meta.extracted) {
-        opponentDoc = docs[toSuffix(previewId)] ?? null;
+      const previewSuffix = toSuffix(`${core.currentNodeId}:c`);
+      const meta = metaRef.current[previewSuffix];
+      if (meta?.type === opponentType) {
+        opponentDoc = docs[previewSuffix] ?? null;
+      }
+    }
+
+    // Picker context
+    const usedCards = new Set<string>(
+      core.picker ? [...boardToCards(core.manifest.board), ...dealtCards(core.picker.chanceNodeId)] : board
+    );
+    const extractedCards = new Set<string>();
+    if (core.picker) {
+      const prefix = toSuffix(core.picker.chanceNodeId) + ".";
+      for (const [suffix, entry] of Object.entries(core.manifest.streets ?? {})) {
+        if (entry.extracted && suffix.startsWith(prefix)) {
+          const card = suffix.slice(prefix.length);
+          if (!card.includes(".")) extractedCards.add(card);
+        }
       }
     }
 
     return {
       stacks: core.stacks,
       nodeName: core.nodeName,
-      board: core.board,
+      board,
       oopSeat: core.oopSeat,
       ipSeat: core.ipSeat,
       manifest: core.manifest,
       currentNodeId: core.currentNodeId,
       line: core.line,
       notice: core.notice,
+      picker: core.picker,
+      pendingStreet: core.pendingStreet,
+      extractedCards,
+      usedCards,
       actorSeat,
       actorDoc: currentDoc,
       opponentSeat,
@@ -251,5 +392,5 @@ export function usePostflopSession(apiBase: string) {
     };
   }, [core, docs, loading]);
 
-  return { view, open, clickAction, jumpTo, close };
+  return { view, open, clickAction, pickCard, closePicker, cancelPending, jumpTo, close };
 }

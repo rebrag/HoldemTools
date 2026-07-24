@@ -80,19 +80,33 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
           <span>Flop</span>
         </button>
 
-        {/* Action chips */}
+        {/* Action / dealt-card chips */}
         {line.map((item) => {
           const isCurrent = item.nodeId === currentNodeId;
+          const chipClass = `inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[0.65rem] font-medium transition-colors ${
+            isCurrent
+              ? "bg-emerald-500/20 text-emerald-200 border border-emerald-400/50"
+              : "bg-white/5 text-gray-200 border border-white/10 hover:bg-white/10"
+          }`;
+          if (item.kind === "card") {
+            return (
+              <button
+                key={item.nodeId}
+                type="button"
+                onClick={() => onJump(item.nodeId)}
+                className={chipClass}
+                title={`Jump to the ${item.label} deal`}
+              >
+                <PlayingCard code={item.label} width="clamp(18px, 3.4vw, 26px)" />
+              </button>
+            );
+          }
           return (
             <button
               key={item.nodeId}
               type="button"
               onClick={() => onJump(item.nodeId)}
-              className={`inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[0.65rem] font-medium transition-colors ${
-                isCurrent
-                  ? "bg-emerald-500/20 text-emerald-200 border border-emerald-400/50"
-                  : "bg-white/5 text-gray-200 border border-white/10 hover:bg-white/10"
-              }`}
+              className={chipClass}
             >
               <span
                 className="inline-block w-1.5 h-1.5 rounded-[2px]"

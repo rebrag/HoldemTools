@@ -19,6 +19,8 @@ interface CardPickerProps {
   /** When set, cards flow with this minimum px width and wrap onto more rows —
    *  keeps cards readable inside small regions instead of shrinking to fit. */
   minCardWidth?: number;
+  /** Cards to visually emphasize (e.g. instantly available picks). */
+  highlight?: Set<string>;
 }
 
 const CardPicker: React.FC<CardPickerProps> = ({
@@ -31,6 +33,7 @@ const CardPicker: React.FC<CardPickerProps> = ({
   className,
   fitToWidth = false,
   minCardWidth,
+  highlight,
 }) => {
   const widthToken =
     typeof cardWidth === "number" ? `${cardWidth}px` : cardWidth;
@@ -61,6 +64,7 @@ const CardPicker: React.FC<CardPickerProps> = ({
     >
       {codes.map((code) => {
         const isUsed = used.has(code);
+        const isHighlighted = !isUsed && highlight?.has(code);
         return (
           <button
             key={code}
@@ -70,7 +74,8 @@ const CardPicker: React.FC<CardPickerProps> = ({
               if (!disabled) onPick(code);
             }}
             className={`rounded-md transition focus:outline-none
-              ${isUsed ? "opacity-30" : "hover:opacity-90"}
+              ${isUsed ? "opacity-30" : highlight && !isHighlighted ? "opacity-60 hover:opacity-90" : "hover:opacity-90"}
+              ${isHighlighted ? "ring-2 ring-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.6)]" : ""}
               ${disabled ? "cursor-not-allowed" : "cursor-pointer"}`}
             aria-pressed={isUsed}
             aria-label={code}

@@ -1,20 +1,21 @@
 // src/lib/uploadGameTree.ts
+// Authenticated: the API takes the uploader's uid from the verified token.
+import { authedFetch } from "@/lib/api";
+
 export type UploadGameTreeBody = {
   folder: string;
   line: string[];
   actingPos: string;
   isICM: boolean;
   text: string;
-  uid?: string | null;
   alivePositions: string[];
 };
 
-export async function uploadGameTree(apiBase: string, body: UploadGameTreeBody) {
-  const url = `${apiBase}/api/gametrees`;
+export async function uploadGameTree(body: UploadGameTreeBody) {
   const start = performance.now();
 
   // Helpful client-side diagnostics
-  console.debug("[uploadGameTree] POST", url, {
+  console.debug("[uploadGameTree] POST /api/gametrees", {
     folder: body.folder,
     actions: body.line.join(" > "),
     actingPos: body.actingPos,
@@ -24,15 +25,14 @@ export async function uploadGameTree(apiBase: string, body: UploadGameTreeBody) 
 
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await authedFetch("/api/gametrees", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       // Trim whitespace on big text to avoid accidental trailing spaces
       body: JSON.stringify({ ...body, text: body.text?.trim?.() ?? body.text }),
     });
   } catch (networkErr) {
     const dur = (performance.now() - start).toFixed(0);
-    console.error(`[uploadGameTree] Network error after ${dur}ms`, networkErr);
+    console.error(`[uploadGameTree] Network/auth error after ${dur}ms`, networkErr);
     throw networkErr;
   }
 

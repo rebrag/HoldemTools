@@ -43,6 +43,7 @@ import { usePostflopSession } from "@/hooks/usePostflopSession";
 import usePostflopIndex from "@/hooks/usePostflopIndex";
 import PostflopLine from "./PostflopLine";
 import PostflopLibrary from "./PostflopLibrary";
+import PostflopCardPicker from "./PostflopCardPicker";
 import { Library } from "lucide-react";
 
 // Toggle experimental postflop pipeline (upload + polling).
@@ -186,8 +187,8 @@ const Solver = ({ user }: SolverProps) => {
   const [currentBoard, setCurrentBoard] = useState<string[]>([]);
 
   // Postflop session (navigation) + solutions library
-  const pf = usePostflopSession(API_BASE_URL);
-  const pfIndex = usePostflopIndex(API_BASE_URL);
+  const pf = usePostflopSession();
+  const pfIndex = usePostflopIndex(Boolean(uid));
   const [showLibrary, setShowLibrary] = useState(false);
   const [postflopPending, setPostflopPending] = useState<{
     board: string[];
@@ -719,12 +720,7 @@ const Solver = ({ user }: SolverProps) => {
         actuallyOpenFolder(entry.stacks);
       }
 
-      const manifest = await fetchBoardManifest(
-        API_BASE_URL,
-        entry.stacks,
-        entry.node_name,
-        entry.board
-      );
+      const manifest = await fetchBoardManifest(entry.stacks, entry.node_name, entry.board);
       if (!manifest) {
         console.warn("Manifest not found for library entry:", entry);
         return;
@@ -732,7 +728,7 @@ const Solver = ({ user }: SolverProps) => {
       setCurrentBoard(boardToCards(entry.board));
       await pf.open(manifest);
     },
-    [uid, folderMetaMap, tier, tierLoading, API_BASE_URL, actuallyOpenFolder, pf]
+    [uid, folderMetaMap, tier, tierLoading, actuallyOpenFolder, pf]
   );
 
   const handleLineClick = useCallback(
@@ -954,13 +950,12 @@ const Solver = ({ user }: SolverProps) => {
     const adjustedText = allLines.join("\n");
 
     try {
-      const result = await uploadGameTree(API_BASE_URL, {
+      const result = await uploadGameTree({
         folder: pfFolder,
         line: pfLine,
         actingPos: actingPosition ?? "",
         isICM: pfICM,
         text: adjustedText,
-        uid,
         alivePositions,
       });
 
@@ -982,7 +977,7 @@ const Solver = ({ user }: SolverProps) => {
       pendingCancelRef.current = false;
       setPostflopPending({ board: [...flopCards], startedAt: Date.now() });
       void (async () => {
-        const manifest = await pollForBoardManifest(API_BASE_URL, stacks, nodeName, boardName, {
+        const manifest = await pollForBoardManifest(stacks, nodeName, boardName, {
           shouldStop: () => pendingCancelRef.current,
         });
         setPostflopPending(null);
@@ -993,6 +988,9 @@ const Solver = ({ user }: SolverProps) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       console.warn("⚠️ Failed to upload game tree:", err?.message ?? err);
+      if (String(err?.message ?? "").includes("signed in")) {
+        setShowLoginOverlay(true);
+      }
     } finally {
       closeFlopModal();
     }
@@ -1178,8 +1176,26 @@ const Solver = ({ user }: SolverProps) => {
         <PostflopLibrary
           entries={pfIndex.entries}
           loading={pfIndex.loading}
+          signInRequired={pfIndex.signInRequired}
+          onSignIn={() => {
+            setShowLibrary(false);
+            setShowLoginOverlay(true);
+          }}
           onOpen={(entry) => void openSolvedBoard(entry)}
           onClose={() => setShowLibrary(false)}
+        />
+      )}
+
+      {/* TURN / RIVER CARD PICKER */}
+      {pf.view?.picker && (
+        <PostflopCardPicker
+          picker={pf.view.picker}
+          usedCards={pf.view.usedCards}
+          extractedCards={pf.view.extractedCards}
+          pendingStreet={pf.view.pendingStreet}
+          onPick={(card) => void pf.pickCard(card)}
+          onClose={pf.closePicker}
+          onCancelPending={pf.cancelPending}
         />
       )}
 

@@ -1,8 +1,9 @@
-// Types + fetchers for the v2 postflop solution layout:
-//   piosolutions/{stacks}/{node_name}/{board}/{suffix}.json   per-node docs
-//   piosolutions/{stacks}/{node_name}/{board}/manifest.json   per-board manifest
-//   piosolutions-index.json                                   library index
-import axios from "axios";
+// Types + authed fetchers for the v3 postflop solution layout:
+//   piosolutions/{stacks}/{node_name}/{board}/streets/{seed}.json.gz  street bundles
+//   piosolutions/{stacks}/{node_name}/{board}/manifest.json           per-board manifest
+//   piosolutions-index.json                                           library index
+// All reads go through authedFetch (endpoints require a signed-in user).
+import { authedFetch } from "@/lib/api";
 import type { PioSolutionDoc } from "@/lib/solver/postflopClient";
 
 export type ManifestNode = {
@@ -10,6 +11,17 @@ export type ManifestNode = {
   street?: "flop" | "turn" | "river";
   actions?: string[]; // pio labels, e.g. ["c","b175"]
   extracted?: boolean;
+};
+
+export type ManifestStreetEntry = {
+  street: "flop" | "turn" | "river";
+  file: string;
+  extracted: boolean;
+  node_count?: number;
+  updated_utc?: string;
+  /** Set while an evicted-cfr re-solve is running (minutes, not seconds). */
+  status?: "resolving";
+  requested_utc?: string;
 };
 
 export type BoardManifest = {
@@ -32,7 +44,19 @@ export type BoardManifest = {
   pot_chips: number | null;
   summary: { ev_oop: number | null; ev_ip: number | null; exploitable: number | null };
   cfr: { file: string; available: boolean; size_bytes: number | null };
-  nodes: Record<string, ManifestNode>; // keyed by dotted suffix, e.g. "r.0.b175"
+  /** v3: keyed by dotted seed suffix ("r.0", "r.0.c.c.Th", ...). */
+  streets: Record<string, ManifestStreetEntry>;
+};
+
+export type StreetBundle = {
+  schema: number;
+  kind: "street_bundle";
+  seed: string; // colon form
+  seed_suffix: string; // dotted form
+  street: "flop" | "turn" | "river";
+  board: string; // board AT this street, e.g. "Ts8d2hTh"
+  nodes: Record<string, PioSolutionDoc>; // keyed by dotted suffix
+  meta: Record<string, ManifestNode>;
 };
 
 export type PostflopIndexEntry = {
@@ -44,6 +68,7 @@ export type PostflopIndexEntry = {
   icm: boolean;
   created_utc: string;
   flop_nodes: number;
+  turn_streets?: number;
   cfr_available: boolean;
 };
 
@@ -55,39 +80,94 @@ export type PostflopIndex = {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export async function fetchPostflopIndex(apiBase: string): Promise<PostflopIndex | null> {
-  const res = await axios.get<PostflopIndex>(`${apiBase}/api/Files/piosolutionsIndex`, {
-    validateStatus: (s) => s === 200 || s === 404,
-  });
-  return res.status === 200 ? res.data : null;
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/** Authenticated GET returning parsed JSON, null on 404, ApiError otherwise. */
+async function authedJson<T>(path: string): Promise<T | null> {
+  const res = await authedFetch(path);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new ApiError(res.status, `${res.status} for ${path}`);
+  return (await res.json()) as T;
+}
+
+export async function fetchPostflopIndex(): Promise<PostflopIndex | null> {
+  return authedJson<PostflopIndex>(`/api/Files/piosolutionsIndex`);
 }
 
 export async function fetchBoardManifest(
-  apiBase: string,
   stacks: string,
   nodeName: string,
   board: string
 ): Promise<BoardManifest | null> {
-  const url = `${apiBase}/api/Files/piosolutions/${stacks}/${nodeName}/${board}/manifest`;
-  const res = await axios.get<BoardManifest>(url, {
-    validateStatus: (s) => s === 200 || s === 404,
-  });
-  return res.status === 200 ? res.data : null;
+  return authedJson<BoardManifest>(
+    `/api/Files/piosolutions/${stacks}/${nodeName}/${board}/manifest`
+  );
 }
 
-export async function fetchNodeDoc(
-  apiBase: string,
+/** Fetch one street bundle; the server sends gzip bytes with
+ * Content-Encoding, which the browser inflates transparently. */
+export async function fetchStreetBundle(
   stacks: string,
   nodeName: string,
   board: string,
-  nodeId: string
-): Promise<PioSolutionDoc | null> {
-  const suffix = encodeURIComponent(nodeId.replace(/:/g, "."));
-  const url = `${apiBase}/api/Files/piosolutions/${stacks}/${nodeName}/${board}/${suffix}.json`;
-  const res = await axios.get<PioSolutionDoc>(url, {
-    validateStatus: (s) => s === 200 || s === 404,
+  seedSuffix: string
+): Promise<StreetBundle | null> {
+  return authedJson<StreetBundle>(
+    `/api/Files/piosolutions/${stacks}/${nodeName}/${board}/streets/${encodeURIComponent(seedSuffix)}.json`
+  );
+}
+
+/** Queue an on-demand street extraction (turn/river card). */
+export async function postNodeRequest(req: {
+  stacks: string;
+  node: string;
+  board: string;
+  nodeId: string;
+}): Promise<boolean> {
+  const res = await authedFetch(`/api/noderequests`, {
+    method: "POST",
+    body: JSON.stringify(req),
   });
-  return res.status === 200 ? res.data : null;
+  return res.ok;
+}
+
+/**
+ * Poll the manifest until a street is extracted. Fast cadence for the normal
+ * warm path (seconds); slower once the watcher reports a re-solve (minutes).
+ */
+export async function pollForStreet(
+  stacks: string,
+  nodeName: string,
+  board: string,
+  seedSuffix: string,
+  options?: {
+    maxAttempts?: number;
+    shouldStop?: () => boolean;
+    onResolving?: () => void;
+  }
+): Promise<BoardManifest | null> {
+  const maxAttempts = options?.maxAttempts ?? 120;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (options?.shouldStop?.()) return null;
+    try {
+      const manifest = await fetchBoardManifest(stacks, nodeName, board);
+      const entry = manifest?.streets?.[seedSuffix];
+      if (entry?.extracted) return manifest;
+      if (entry?.status === "resolving") options?.onResolving?.();
+      await sleep(entry?.status === "resolving" ? 15000 : 3000);
+    } catch (err) {
+      console.warn(`⚠️ Error polling for street ${seedSuffix}`, err);
+      await sleep(3000);
+    }
+  }
+  console.warn(`⌛ Gave up waiting for street ${seedSuffix} on ${board}`);
+  return null;
 }
 
 /**
@@ -95,7 +175,6 @@ export async function fetchNodeDoc(
  * minutes, so the window is generous; `shouldStop` lets the caller cancel.
  */
 export async function pollForBoardManifest(
-  apiBase: string,
   stacks: string,
   nodeName: string,
   board: string,
@@ -106,7 +185,7 @@ export async function pollForBoardManifest(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (options?.shouldStop?.()) return null;
     try {
-      const manifest = await fetchBoardManifest(apiBase, stacks, nodeName, board);
+      const manifest = await fetchBoardManifest(stacks, nodeName, board);
       if (manifest) {
         console.log(`✅ Board manifest ready for ${board} (attempt ${attempt})`);
         return manifest;
