@@ -28,11 +28,8 @@ namespace PokerRangeAPI2.Controllers
             _config = config;
         }
 
-        // Firebase ID tokens carry the uid in both "user_id" and "sub" claims.
-        private string? CurrentUid() =>
-            User.FindFirst("user_id")?.Value
-            ?? User.FindFirst("sub")?.Value
-            ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        // Firebase uid from claims - shared helper in ControllerBaseExtensions.
+        private string? CurrentUid() => ControllerBaseExtensions.CurrentUid(this);
 
         private string? CurrentEmail() => User.FindFirst("email")?.Value;
 

@@ -2,6 +2,7 @@
 using Azure.Storage.Blobs.Models;
 using Azure.Storage.Files.DataLake;
 using Azure.Storage.Files.DataLake.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
@@ -107,6 +108,7 @@ namespace PokerRangeAPI2.Controllers
         // Per-node postflop solution doc. Tries the v2 board-folder layout
         // first, then falls back to the legacy flat "{board}-{suffix}.json".
         // --------------------------------------------------------------------
+        [Authorize]
         [HttpGet("piosolutions/{stacks}/{node}/{board}/{nodeId}.json")]
         public async Task<IActionResult> GetPioSolution(
             string stacks,
@@ -141,6 +143,7 @@ namespace PokerRangeAPI2.Controllers
         // Per-board manifest (streets map, seats, preflop context). Not cached:
         // the frontend polls this while a solve is pending; 404 = not solved.
         // --------------------------------------------------------------------
+        [Authorize]
         [HttpGet("piosolutions/{stacks}/{node}/{board}/manifest")]
         public async Task<IActionResult> GetPioSolutionManifest(
             string stacks,
@@ -169,6 +172,7 @@ namespace PokerRangeAPI2.Controllers
         // compression middleware skips responses that already carry a
         // Content-Encoding header, so there is no double compression.
         // --------------------------------------------------------------------
+        [Authorize]
         [HttpGet("piosolutions/{stacks}/{node}/{board}/streets/{seed}.json")]
         public async Task<IActionResult> GetPioStreetBundle(
             string stacks,
@@ -197,6 +201,7 @@ namespace PokerRangeAPI2.Controllers
         // Library index of all solved boards (piosolutions-index.json).
         // Cached for 60s: it changes after every solve, unlike sim-index.
         // --------------------------------------------------------------------
+        [Authorize]
         [HttpGet("piosolutionsIndex")]
         public async Task<IActionResult> GetPioSolutionsIndex()
         {

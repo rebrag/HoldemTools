@@ -1,6 +1,7 @@
 ﻿using Azure.Storage.Blobs;
 using Azure.Storage.Files.DataLake;
 using Azure.Storage.Files.DataLake.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using System;
@@ -36,8 +37,15 @@ namespace PokerRangeAPI2.Controllers
         // Writes JSON payload to /gametrees/yyyy/MM/dd/uid_or_anon/...
         // --------------------------------------------------------------------
         [HttpPost]
+        [Authorize]
         public async Task<IActionResult> UploadGameTree([FromBody] GameTreeUploadRequest req)
         {
+            // Each upload costs minutes of local solver time - signed-in users
+            // only, and identity comes from the verified token, never the body.
+            var uid = this.CurrentUid();
+            if (string.IsNullOrWhiteSpace(uid))
+                return Unauthorized();
+
             if (string.IsNullOrWhiteSpace(req.Text))
                 return BadRequest("Missing game tree text.");
 
@@ -45,12 +53,11 @@ namespace PokerRangeAPI2.Controllers
             await fs.CreateIfNotExistsAsync();
 
             var now = DateTimeOffset.UtcNow;
-            var uid = string.IsNullOrWhiteSpace(req.Uid) ? "anon" : req.Uid;
             var safeFolder = Sanitize(req.Folder);
             var safePos = Sanitize(req.ActingPos);
             var safeLine = string.Join("-", (req.Line ?? Array.Empty<string>()).Select(Sanitize));
 
-            string dirPath = $"gametrees/{now:yyyy/MM/dd}/{uid}/folder={safeFolder}";
+            string dirPath = $"gametrees/{now:yyyy/MM/dd}/{Sanitize(uid)}/folder={safeFolder}";
             DataLakeDirectoryClient dir = fs.GetDirectoryClient(dirPath);
             await dir.CreateIfNotExistsAsync();
 
@@ -99,7 +106,6 @@ namespace PokerRangeAPI2.Controllers
         public string ActingPos { get; set; } = "";
         public bool IsICM { get; set; }
         public string Text { get; set; } = "";
-        public string? Uid { get; set; }
 
         // 👇 NEW: list of alive positions from the frontend (e.g. ["UTG1","BB"])
         public string[] AlivePositions { get; set; } = Array.Empty<string>();
