@@ -103,8 +103,9 @@ namespace PokerRangeAPI2.Controllers
         }
 
         // --------------------------------------------------------------------
-        // NEW: GET api/files/piosolutions/{stacks}/{node}/{board}.json
-        // Reads solution JSON written by your remote Pio script
+        // GET api/files/piosolutions/{stacks}/{node}/{board}/{nodeId}.json
+        // Per-node postflop solution doc. Tries the v2 board-folder layout
+        // first, then falls back to the legacy flat "{board}-{suffix}.json".
         // --------------------------------------------------------------------
         [HttpGet("piosolutions/{stacks}/{node}/{board}/{nodeId}.json")]
         public async Task<IActionResult> GetPioSolution(
@@ -114,25 +115,81 @@ namespace PokerRangeAPI2.Controllers
             string nodeId)
         {
             // nodeId can be "r:0", "r:0:1", or already "r.0.1".
-            // Normalize to the suffix used in blob filenames: replace ':' with '.'
             var nodeSuffix = (nodeId ?? "root").Replace(":", ".");
 
-            // Matches what the Python script writes:
-            // piosolutions/{stacks}/{node}/{board}-{nodeSuffix}.json
-            string fileName = $"{board}-{nodeSuffix}.json";
-            string blobPath = $"piosolutions/{stacks}/{node}/{fileName}";
+            var container = _blobServiceClient.GetBlobContainerClient(_containerName);
+
+            // v2: piosolutions/{stacks}/{node}/{board}/{suffix}.json
+            string v2Path = $"piosolutions/{stacks}/{node}/{board}/{nodeSuffix}.json";
+            BlobClient blob = container.GetBlobClient(v2Path);
+
+            if (!await blob.ExistsAsync())
+            {
+                // legacy: piosolutions/{stacks}/{node}/{board}-{suffix}.json
+                string legacyPath = $"piosolutions/{stacks}/{node}/{board}-{nodeSuffix}.json";
+                blob = container.GetBlobClient(legacyPath);
+                if (!await blob.ExistsAsync())
+                    return NotFound($"Pio solution not found: {v2Path}");
+            }
+
+            BlobDownloadResult result = await blob.DownloadContentAsync();
+            return Ok(result.Content.ToString());
+        }
+
+        // --------------------------------------------------------------------
+        // GET api/files/piosolutions/{stacks}/{node}/{board}/manifest
+        // Per-board manifest (node map, seats, preflop context). Not cached:
+        // the frontend polls this while a solve is pending; 404 = not solved.
+        // --------------------------------------------------------------------
+        [HttpGet("piosolutions/{stacks}/{node}/{board}/manifest")]
+        public async Task<IActionResult> GetPioSolutionManifest(
+            string stacks,
+            string node,
+            string board)
+        {
+            string blobPath = $"piosolutions/{stacks}/{node}/{board}/manifest.json";
 
             BlobClient blob = _blobServiceClient
                 .GetBlobContainerClient(_containerName)
                 .GetBlobClient(blobPath);
 
             if (!await blob.ExistsAsync())
-                return NotFound($"Pio solution not found: {blobPath}");
+                return NotFound($"Manifest not found: {blobPath}");
 
             BlobDownloadResult result = await blob.DownloadContentAsync();
-            var json = result.Content.ToString();
+            return Ok(result.Content.ToString());
+        }
 
-            // Same shape your frontend already expects (stringified JSON)
+        // --------------------------------------------------------------------
+        // GET api/files/piosolutionsIndex
+        // Library index of all solved boards (piosolutions-index.json).
+        // Cached for 60s: it changes after every solve, unlike sim-index.
+        // --------------------------------------------------------------------
+        [HttpGet("piosolutionsIndex")]
+        public async Task<IActionResult> GetPioSolutionsIndex()
+        {
+            const string cacheKey = "piosolutions:index";
+
+            if (_cache.TryGetValue(cacheKey, out string? cachedJson) && cachedJson != null)
+            {
+                return Ok(cachedJson);
+            }
+
+            var indexBlob = _blobServiceClient
+                .GetBlobContainerClient(_containerName)
+                .GetBlobClient("piosolutions-index.json");
+
+            if (!await indexBlob.ExistsAsync())
+                return NotFound("piosolutions-index.json not found. No postflop solutions indexed yet.");
+
+            BlobDownloadResult result = await indexBlob.DownloadContentAsync();
+            string json = result.Content.ToString();
+
+            _cache.Set(cacheKey, json, new MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60)
+            });
+
             return Ok(json);
         }
 
