@@ -12,6 +12,12 @@
       "runtimeExecutable": "dotnet",
       "runtimeArgs": ["run", "--project", "backend/GTOLiteAPI.csproj", "--launch-profile", "http"],
       "port": 5192
+    },
+    {
+      "name": "backend-emulator",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "backend/GTOLiteAPI.csproj", "--launch-profile", "http-emulator"],
+      "port": 5192
     }
   ]
 }

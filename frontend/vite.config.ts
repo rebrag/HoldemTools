@@ -33,10 +33,13 @@ export default defineConfig(({ mode }) => ({
     "import.meta.env.VITE_VERCEL_ENV": JSON.stringify(process.env.VERCEL_ENV ?? ""),
     // Bridge USE_FIREBASE_EMULATOR into the client bundle. It has no VITE_
     // prefix (the same flag drives the backend and the emulator scripts), so
-    // Vite would not expose it on its own. Empty string = off, which is what
-    // every real dev machine and every Vercel build sees.
+    // Vite would not expose it on its own. Shell env wins (cloud sessions);
+    // .env is honored too so local emulator runs don't need an exported var.
+    // Empty string = off, which is what every Vercel build sees.
     "import.meta.env.VITE_USE_FIREBASE_EMULATOR": JSON.stringify(
-      process.env.USE_FIREBASE_EMULATOR ?? ""
+      process.env.USE_FIREBASE_EMULATOR
+        ?? loadEnv(mode, process.cwd(), '').USE_FIREBASE_EMULATOR
+        ?? ""
     ),
   },
   resolve: {

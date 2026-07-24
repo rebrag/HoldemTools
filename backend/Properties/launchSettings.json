@@ -19,6 +19,17 @@
         "ASPNETCORE_ENVIRONMENT": "Development"
       }
     },
+    "http-emulator": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": false,
+      "applicationUrl": "http://localhost:5192",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "USE_FIREBASE_EMULATOR": "true",
+        "FIREBASE_PROJECT_ID": "demo-gto-lite"
+      }
+    },
     "https": {
       "commandName": "Project",
       "dotnetRunMessages": true,
