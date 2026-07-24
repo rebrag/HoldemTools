@@ -14,6 +14,17 @@ export default defineConfig(({ mode }) => ({
     // the preview proxy). Override per-checkout via VITE_DEV_PORT in .env.
     port: Number(loadEnv(mode, process.cwd(), '').VITE_DEV_PORT) || 5173,
     strictPort: true,
+    // Opt-in same-origin proxy to a locally running API: set
+    // VITE_DEV_API_PROXY=http://localhost:5192 and VITE_API_BASE_URL= (empty)
+    // in .env so /api requests stay on the dev-server origin.
+    proxy: loadEnv(mode, process.cwd(), '').VITE_DEV_API_PROXY
+      ? {
+          "/api": {
+            target: loadEnv(mode, process.cwd(), '').VITE_DEV_API_PROXY,
+            changeOrigin: true,
+          },
+        }
+      : undefined,
   },
   define: {
     // Bridge Vercel's build-time VERCEL_ENV (production | preview | development)
