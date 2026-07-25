@@ -100,19 +100,34 @@ export const getColorForAction = (action: string): string => {
   return ACTION_FALLBACK;
 };
 
+export type ActionCategory = "allin" | "bet" | "min" | "passive" | "fold" | "other";
+
+/** Category of an action label — drives ordering and the stable segment slots
+ * in HandCell (which keep the CSS width transitions seamless). */
+export const actionCategory = (action: string): ActionCategory => {
+  const a = (action ?? "").trim();
+  const n = a.toLowerCase();
+  if (isAllin(n)) return "allin";
+  if (isBetOrRaise(a)) return "bet";
+  if (a === "Min") return "min";
+  if (isPassive(n)) return "passive";
+  if (isFold(n)) return "fold";
+  return "other";
+};
+
 /** Shared ordering for legend bars AND matrix segments so they line up
  * left→right. Preserves the existing look: ALL-IN, bets/raises (largest first),
  * Min, passive (check/call), fold, then anything else. */
-const actionRank = (action: string): number => {
-  const a = action.trim();
-  const n = a.toLowerCase();
-  if (isAllin(n)) return 0;
-  if (isBetOrRaise(a)) return 1;
-  if (a === "Min") return 2;
-  if (isPassive(n)) return 3;
-  if (isFold(n)) return 4;
-  return 5;
+const CATEGORY_RANK: Record<ActionCategory, number> = {
+  allin: 0,
+  bet: 1,
+  min: 2,
+  passive: 3,
+  fold: 4,
+  other: 5,
 };
+
+const actionRank = (action: string): number => CATEGORY_RANK[actionCategory(action)];
 
 export const orderActionKeys = (actions: string[]): string[] =>
   [...actions].sort((a, b) => {

@@ -1,7 +1,34 @@
 // src/components/HandCell.tsx
 import React, { useEffect, useState, useMemo } from "react";
-import { HandCellData, getColorForAction, orderActionKeys } from "@/lib/solver/utils";
+import {
+  HandCellData,
+  actionCategory,
+  getColorForAction,
+  orderActionKeys,
+} from "@/lib/solver/utils";
 import "./App.css";
+
+/* Stable segment slots, always mounted (width 0% when unused) and keyed by
+ * slot name. Keeping the SAME divs across node changes is what lets the
+ * `.segment { transition: width 500ms }` CSS animate range morphs — and since
+ * every slot transitions with identical timing, the widths sum to 100%
+ * throughout, so the cell background never flashes through. Order mirrors
+ * orderActionKeys: all-in, bets (largest first), Min, check/call, fold. */
+const SEGMENT_SLOTS = [
+  "allin",
+  "bet0",
+  "bet1",
+  "bet2",
+  "bet3",
+  "bet4",
+  "bet5",
+  "min",
+  "passive",
+  "fold",
+  "other0",
+  "other1",
+] as const;
+type SlotName = (typeof SEGMENT_SLOTS)[number];
 
 interface HandCellProps {
   data: HandCellData & { evs: Record<string, number> };
@@ -52,27 +79,42 @@ const HandCell: React.FC<HandCellProps> = ({
   }, [isRandomFill, data.actions]);
 
   /* ───────── segments for bar colouring ─────────
-   * One segment per actual action, ordered and colored by the SAME shared
-   * helpers the ColorKey legend uses, so cells and legend always match. */
+   * Actions are colored/ordered by the SAME shared helpers the ColorKey legend
+   * uses (so cells and legend always match), then assigned to the fixed
+   * always-mounted slots above (so CSS width transitions stay seamless). */
   const segments = useMemo(() => {
     const ordered = orderActionKeys(Object.keys(data.actions));
 
-    // randomFill: show only the sampled action, full width.
-    if (isRandomFill && randomizedAction) {
-      return ordered.map((action) => ({
-        action,
-        style: {
-          width: action === randomizedAction ? "100%" : "0%",
-          backgroundColor: getColorForAction(action),
-        },
-      }));
+    // Assign each present action to its stable slot.
+    const bySlot: Partial<Record<SlotName, { width: number; color: string }>> = {};
+    let betIdx = 0;
+    let otherIdx = 0;
+    for (const action of ordered) {
+      const cat = actionCategory(action);
+      let slot: SlotName;
+      if (cat === "bet") slot = `bet${Math.min(betIdx++, 5)}` as SlotName;
+      else if (cat === "other") slot = `other${Math.min(otherIdx++, 1)}` as SlotName;
+      else slot = cat;
+
+      const width =
+        isRandomFill && randomizedAction
+          ? action === randomizedAction
+            ? 100
+            : 0
+          : (data.actions[action] || 0) * 100;
+
+      const prev = bySlot[slot]; // overflow bets/others merge into the last slot
+      bySlot[slot] = {
+        width: (prev?.width ?? 0) + width,
+        color: prev?.color ?? getColorForAction(action),
+      };
     }
 
-    return ordered.map((action) => ({
-      action,
+    return SEGMENT_SLOTS.map((slot) => ({
+      action: slot,
       style: {
-        width: `${(data.actions[action] || 0) * 100}%`,
-        backgroundColor: getColorForAction(action),
+        width: `${bySlot[slot]?.width ?? 0}%`,
+        backgroundColor: bySlot[slot]?.color ?? "transparent",
       },
     }));
   }, [data.actions, isRandomFill, randomizedAction]);
