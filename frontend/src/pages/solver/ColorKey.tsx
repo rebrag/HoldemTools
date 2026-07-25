@@ -1,6 +1,6 @@
 // src/components/ColorKey.tsx
 import React from "react";
-import { HandCellData, getColorForAction } from "@/lib/solver/utils";
+import { HandCellData, getColorForAction, orderActionKeys } from "@/lib/solver/utils";
 import { motion } from "framer-motion";
 
 interface ColorKeyProps {
@@ -60,21 +60,8 @@ const ColorKey: React.FC<ColorKeyProps> = ({
     }, new Set<string>())
   );
 
-  const ordered = uniqueActions.sort((a, b) => {
-    const rank = (act: string) =>
-      act === "ALLIN"
-        ? 0
-        : act.startsWith("Raise ")
-        ? 1
-        : act === "Min"
-        ? 2
-        : act === "Call"
-        ? 3
-        : act === "Fold"
-        ? 4
-        : 5;
-    return rank(a) - rank(b);
-  });
+  // Same ordering the matrix cells use, so legend bars and segments correspond.
+  const ordered = orderActionKeys(uniqueActions);
 
   const shadeColor = (hex: string, percent: number) => {
     const num = parseInt(hex.slice(1), 16);

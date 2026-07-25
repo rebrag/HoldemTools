@@ -37,25 +37,91 @@ export function stringToColor(str: string): string {
 // ...keep your existing interfaces above...
 
 // ---- Action colors ----
+//
+// Single source of truth for BOTH the ColorKey legend and the DecisionMatrix
+// cells. Every action label is colored by the same pure function, so the legend
+// and the matrix segments always agree. Passive actions (check/call) share the
+// preflop green; folds are blue; bets/raises are a red graded by size so
+// distinct sizings are visually distinguishable and consistent between views.
 
-// Base colors for *buckets* (ALLIN, UNKNOWN, Min, Call, Fold).
-// We’ll map raw actions like "c" or "check" into one of these buckets in HandCell.
-const actionColorMapping: Record<string, string> = {
-  ALLIN: "#7d1f1e",
-  UNKNOWN: "#C14c39", // single-unknown color
-  Min: "#F03c3c",
-  Call: "#5ab964",
-  c: "#5ab964",
-  Check: "#5ab964",
-  Fold: "#3d7cb8",
+const ACTION_GREEN = "#5ab964"; // Check / Call
+const ACTION_BLUE = "#3d7cb8"; // Fold
+const ACTION_MIN = "#F03c3c"; // Min (pre-flop min-open)
+const ACTION_ALLIN = "#7d1f1e"; // All-in
+const BET_LIGHT = "#E8743C"; // smallest bet/raise (orange-red)
+const BET_DARK = "#9E2A24"; // largest bet/raise (deep red, still above ALL-IN)
+const ACTION_FALLBACK = "#C14c39";
+
+// Retained for backward-compat imports; no longer used for coloring.
+export const UNKNOWN_MULTI_COLOR = "#F2733c";
+
+const isPassive = (n: string) =>
+  n === "check" || n === "call" || n === "c" || n === "x";
+const isFold = (n: string) => n === "fold" || n === "f";
+const isAllin = (n: string) => n === "allin" || n === "all-in" || n === "all in";
+const isBetOrRaise = (label: string) => /^(bet|raise)\b/i.test(label.trim());
+
+/** Numeric size in a bet/raise label ("Bet 1.8bb", "Raise to 20bb", "Raise 2bb",
+ * "Raise 54%") — the first number found, or null. */
+export function betSize(label: string): number | null {
+  if (!isBetOrRaise(label)) return null;
+  const m = label.match(/(\d+(?:\.\d+)?)/);
+  return m ? parseFloat(m[1]) : null;
+}
+
+const hexToRgb = (h: string): [number, number, number] => {
+  const n = parseInt(h.slice(1), 16);
+  return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
 };
-
-// Used when there are multiple distinct unknown actions in a cell.
-export const UNKNOWN_MULTI_COLOR = "#F2733c"; // pick whatever you like
+const mixHex = (c1: string, c2: string, t: number): string => {
+  const a = hexToRgb(c1);
+  const b = hexToRgb(c2);
+  const ch = (i: number) => Math.round(a[i] + (b[i] - a[i]) * t);
+  return (
+    "#" + [ch(0), ch(1), ch(2)].map((x) => x.toString(16).padStart(2, "0")).join("")
+  );
+};
 
 export const getColorForAction = (action: string): string => {
-  return actionColorMapping[action] ?? "#C14c39";
+  const a = (action ?? "").trim();
+  const n = a.toLowerCase();
+  if (isPassive(n)) return ACTION_GREEN;
+  if (isFold(n)) return ACTION_BLUE;
+  if (isAllin(n)) return ACTION_ALLIN;
+  if (a === "Min") return ACTION_MIN;
+  const size = betSize(a);
+  if (size != null) {
+    // Log ramp so small flop bets and large river bets both spread across the
+    // gradient (~0.5bb → light, ~40bb+ → dark).
+    const t = Math.max(0, Math.min(1, Math.log2(size + 1) / Math.log2(41)));
+    return mixHex(BET_LIGHT, BET_DARK, t);
+  }
+  if (isBetOrRaise(a)) return BET_LIGHT; // bet/raise with no parsable size
+  return ACTION_FALLBACK;
 };
+
+/** Shared ordering for legend bars AND matrix segments so they line up
+ * left→right. Preserves the existing look: ALL-IN, bets/raises (largest first),
+ * Min, passive (check/call), fold, then anything else. */
+const actionRank = (action: string): number => {
+  const a = action.trim();
+  const n = a.toLowerCase();
+  if (isAllin(n)) return 0;
+  if (isBetOrRaise(a)) return 1;
+  if (a === "Min") return 2;
+  if (isPassive(n)) return 3;
+  if (isFold(n)) return 4;
+  return 5;
+};
+
+export const orderActionKeys = (actions: string[]): string[] =>
+  [...actions].sort((a, b) => {
+    const ra = actionRank(a);
+    const rb = actionRank(b);
+    if (ra !== rb) return ra - rb;
+    if (ra === 1) return (betSize(b) ?? 0) - (betSize(a) ?? 0); // larger bet first
+    return a.localeCompare(b);
+  });
 
 
 // Combine JsonData into an array of HandCellData objects,

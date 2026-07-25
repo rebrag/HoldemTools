@@ -1,7 +1,6 @@
 // src/components/HandCell.tsx
 import React, { useEffect, useState, useMemo } from "react";
-import { HandCellData, getColorForAction, UNKNOWN_MULTI_COLOR } from "@/lib/solver/utils";
-import { ALL_ACTIONS, Action as BucketAction } from "@/lib/solver/constants";
+import { HandCellData, getColorForAction, orderActionKeys } from "@/lib/solver/utils";
 import "./App.css";
 
 interface HandCellProps {
@@ -11,25 +10,6 @@ interface HandCellProps {
   onHover?: (evs: Record<string, number>) => void;
   onLeave?: () => void;
 }
-
-// Map raw action keys from the JSON (e.g. "c", "check", "ALLIN", etc.)
-// into your 5 display buckets: ALLIN, UNKNOWN, Min, Call, Fold.
-const mapRawToBucket = (raw: string): BucketAction => {
-  switch (raw) {
-    case "ALLIN":
-      return "ALLIN";
-    case "Min":
-      return "Min";
-    case "Fold":
-      return "Fold";
-    case "Call":
-    case "c":
-    case "check":
-      return "Call";
-    default:
-      return "UNKNOWN";
-  }
-};
 
 const HandCell: React.FC<HandCellProps> = ({
   data,
@@ -71,63 +51,30 @@ const HandCell: React.FC<HandCellProps> = ({
     setRandomizedAction(entries[0][0]);
   }, [isRandomFill, data.actions]);
 
-  /* ───────── segments for bar colouring ───────── */
+  /* ───────── segments for bar colouring ─────────
+   * One segment per actual action, ordered and colored by the SAME shared
+   * helpers the ColorKey legend uses, so cells and legend always match. */
   const segments = useMemo(() => {
-    // Bucket weights in your canonical order
-    const bucketWeights: Record<BucketAction, number> = {
-      ALLIN: 0,
-      UNKNOWN: 0,
-      Min: 0,
-      Call: 0,
-      Fold: 0,
-    };
+    const ordered = orderActionKeys(Object.keys(data.actions));
 
-    let unknownActionsCount = 0;
-
-    // Aggregate raw actions into buckets
-    Object.entries(data.actions).forEach(([rawAction, weight]) => {
-      const w = weight || 0;
-      const bucket = mapRawToBucket(rawAction);
-      bucketWeights[bucket] += w;
-      if (bucket === "UNKNOWN") {
-        unknownActionsCount += 1;
-      }
-    });
-
-    // For randomFill: map the chosen raw action into its bucket
-    const randomBucket: BucketAction | null =
-      isRandomFill && randomizedAction
-        ? mapRawToBucket(randomizedAction)
-        : null;
-
-    // Build segments in the exact order from ALL_ACTIONS:
-    // ["ALLIN", "UNKNOWN", "Min", "Call", "Fold"]
-    return ALL_ACTIONS.map((bucket) => {
-      const weight = bucketWeights[bucket] || 0;
-
-      const targetWidth =
-        randomBucket !== null
-          ? bucket === randomBucket
-            ? 100
-            : 0
-          : weight * 100;
-
-      // Base color from utils…
-      let color = getColorForAction(bucket);
-
-      // …but if there are multiple unknown raw actions, use the multi-unknown color.
-      if (bucket === "UNKNOWN" && unknownActionsCount > 1) {
-        color = UNKNOWN_MULTI_COLOR;
-      }
-
-      return {
-        action: bucket,
+    // randomFill: show only the sampled action, full width.
+    if (isRandomFill && randomizedAction) {
+      return ordered.map((action) => ({
+        action,
         style: {
-          width: `${targetWidth}%`,
-          backgroundColor: color,
+          width: action === randomizedAction ? "100%" : "0%",
+          backgroundColor: getColorForAction(action),
         },
-      };
-    });
+      }));
+    }
+
+    return ordered.map((action) => ({
+      action,
+      style: {
+        width: `${(data.actions[action] || 0) * 100}%`,
+        backgroundColor: getColorForAction(action),
+      },
+    }));
   }, [data.actions, isRandomFill, randomizedAction]);
 
   /* ───────── pocket-pair border style ───────── */

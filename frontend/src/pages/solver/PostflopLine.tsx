@@ -17,9 +17,7 @@ export interface PostflopLineProps {
   matchWidth?: number;
 }
 
-const chipColor = (label: string) =>
-  getColorForAction(label.startsWith("Bet") || label.startsWith("Raise") ? "Min" : label) ||
-  stringToColor(label);
+const chipColor = (label: string) => getColorForAction(label) || stringToColor(label);
 
 const PostflopLine: React.FC<PostflopLineProps> = ({
   preflopLine,
