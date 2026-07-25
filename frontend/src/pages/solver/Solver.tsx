@@ -639,12 +639,12 @@ const Solver = ({ user }: SolverProps) => {
     const mapping: Record<string, string> = {};
     if (view.actorDoc) {
       const file = `${view.actorSeat}_postflop.json`;
-      updates[file] = docToJsonData(view.actorDoc, roleOf(view.actorSeat), view.actorSeat, bbFor(view.actorSeat));
+      updates[file] = docToJsonData(view.actorDoc, roleOf(view.actorSeat), view.actorSeat, bbFor(view.actorSeat), view.manifest.effective_stack_chips);
       mapping[view.actorSeat] = file;
     }
     if (view.opponentDoc) {
       const file = `${view.opponentSeat}_postflop.json`;
-      updates[file] = docToJsonData(view.opponentDoc, roleOf(view.opponentSeat), view.opponentSeat, bbFor(view.opponentSeat));
+      updates[file] = docToJsonData(view.opponentDoc, roleOf(view.opponentSeat), view.opponentSeat, bbFor(view.opponentSeat), view.manifest.effective_stack_chips);
       mapping[view.opponentSeat] = file;
     }
 

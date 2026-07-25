@@ -148,7 +148,11 @@ export function usePostflopSession() {
     const currentDoc = docsRef.current[toSuffix(c.currentNodeId)];
     if (!currentDoc) return;
 
-    const match = displayActionMap(currentDoc, c.currentNodeId).find(
+    const match = displayActionMap(
+      currentDoc,
+      c.currentNodeId,
+      c.manifest.effective_stack_chips
+    ).find(
       (a) => a.display === displayLabel || a.pioLabel === displayLabel
     );
     if (!match) return;
@@ -387,7 +391,9 @@ export function usePostflopSession() {
       actorDoc: currentDoc,
       opponentSeat,
       opponentDoc,
-      actions: currentDoc ? displayActionMap(currentDoc, core.currentNodeId) : [],
+      actions: currentDoc
+        ? displayActionMap(currentDoc, core.currentNodeId, core.manifest.effective_stack_chips)
+        : [],
       loading,
     };
   }, [core, docs, loading]);

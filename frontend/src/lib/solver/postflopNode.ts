@@ -29,17 +29,52 @@ export function facingBet(nodeId: string): boolean {
 }
 
 /**
+ * Chips each player has committed on COMPLETED postflop streets along this
+ * node's path. Pio bet labels are street-cumulative "commit to NNN" amounts,
+ * and a street only completes matched (call or check-through), so the last
+ * bet of each finished street is what both players put in.
+ */
+export function priorStreetCommitChips(nodeId: string): number {
+  const segs = nodeId.split(":").slice(2); // drop "r","0"
+  let total = 0;
+  let lastBetThisStreet = 0;
+  for (const seg of segs) {
+    if (isCardSegment(seg)) {
+      total += lastBetThisStreet; // street completed by the deal
+      lastBetThisStreet = 0;
+    } else {
+      const m = seg.match(/^b(\d+)$/);
+      if (m) lastBetThisStreet = Number(m[1]);
+    }
+  }
+  return total; // the in-progress street is not included
+}
+
+/**
  * Human label for a raw pio action at a given node.
  * "c" -> Check | Call, "f" -> Fold, "bNNN" -> Bet X bb | Raise to X bb.
+ * With `effectiveStackChips` (manifest.effective_stack_chips), a bet that
+ * commits a player's whole remaining stack is labeled ALLIN - matching the
+ * preflop label and color.
  */
-export function formatPioAction(pioLabel: string, nodeId: string): string {
+export function formatPioAction(
+  pioLabel: string,
+  nodeId: string,
+  effectiveStackChips?: number | null
+): string {
   if (pioLabel === "f") return "Fold";
   if (pioLabel === "c" || pioLabel === "x" || pioLabel === "check") {
     return facingBet(nodeId) ? "Call" : "Check";
   }
   const m = pioLabel.match(/^b(\d+)$/);
   if (m) {
-    const bb = Number(m[1]) / 100;
+    const chips = Number(m[1]);
+    if (effectiveStackChips != null && effectiveStackChips > 0) {
+      const remaining = effectiveStackChips - priorStreetCommitChips(nodeId);
+      // 1-chip tolerance: a bet leaving 0.01bb behind is all-in for display.
+      if (remaining > 0 && chips >= remaining - 1) return "ALLIN";
+    }
+    const bb = chips / 100;
     const amount = Number.isInteger(bb) ? String(bb) : bb.toFixed(1);
     return facingBet(nodeId) ? `Raise to ${amount}bb` : `Bet ${amount}bb`;
   }
@@ -49,10 +84,14 @@ export function formatPioAction(pioLabel: string, nodeId: string): string {
 /** Map each raw pio action of a node's doc to its display label (order preserved). */
 export function displayActionMap(
   doc: PioSolutionDoc,
-  nodeId: string
+  nodeId: string,
+  effectiveStackChips?: number | null
 ): { pioLabel: string; display: string }[] {
   const actions = doc.root_169?.strategy.actions ?? [];
-  return actions.map((pioLabel) => ({ pioLabel, display: formatPioAction(pioLabel, nodeId) }));
+  return actions.map((pioLabel) => ({
+    pioLabel,
+    display: formatPioAction(pioLabel, nodeId, effectiveStackChips),
+  }));
 }
 
 /**
@@ -64,7 +103,8 @@ export function docToJsonData(
   doc: PioSolutionDoc,
   role: "oop" | "ip",
   seat: string,
-  bb: number
+  bb: number,
+  effectiveStackChips?: number | null
 ): JsonData {
   const json: JsonData = { Position: seat, bb } as JsonData;
   const root = doc.root_169;
@@ -86,7 +126,7 @@ export function docToJsonData(
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (json as any)[formatPioAction(pioLabel, nodeId)] = handMap;
+    (json as any)[formatPioAction(pioLabel, nodeId, effectiveStackChips)] = handMap;
   });
 
   return json;

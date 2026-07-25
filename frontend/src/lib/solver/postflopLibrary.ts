@@ -42,6 +42,9 @@ export type BoardManifest = {
   seats: { oop: string | null; ip: string | null };
   stacks_map: Record<string, number>;
   pot_chips: number | null;
+  /** Chips behind each player at flop start (from Pio's show_effective_stack);
+   * drives the ALLIN labeling of stack-committing bets. Absent on old boards. */
+  effective_stack_chips?: number | null;
   summary: { ev_oop: number | null; ev_ip: number | null; exploitable: number | null };
   cfr: { file: string; available: boolean; size_bytes: number | null };
   /** v3: keyed by dotted seed suffix ("r.0", "r.0.c.c.Th", ...). */
