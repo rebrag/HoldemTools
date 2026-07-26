@@ -233,13 +233,16 @@ export function handleActionClickImpl(
       })
     );
 
+    // Pio's ICM stacks list players in the same order as Range0/Range1:
+    // OOP first (earliest postflop position, lowest positionOrder index),
+    // then IP, then everyone else.
     let firstPos = lastRangePos;
     let secondPos = actingPosition;
     if (!firstPos) firstPos = secondPos ?? "";
     if (
       firstPos &&
       secondPos &&
-      positionOrder.indexOf(firstPos) < positionOrder.indexOf(secondPos)
+      positionOrder.indexOf(firstPos) > positionOrder.indexOf(secondPos)
     ) {
       [firstPos, secondPos] = [secondPos, firstPos];
     }
@@ -335,7 +338,11 @@ export function handleActionClickImpl(
       linesBeforeBoard,
       linesAfterBoard,
     });
-  } else if (action !== "ALLIN") {
+  } else if (action !== "ALLIN" && action !== "Fold") {
+    // Remember the aggressor's range for the postflop tree upload. Folds must
+    // NOT update this: in e.g. "BTN Min, SB fold, BB call" the SB's fold range
+    // would replace BTN's raise range, so the solve would get the folder's
+    // (complement-looking) range assigned to the wrong seat.
     const data = plateData[fileName];
     const currentRange = convertRangeText(data, action);
     if (currentRange && data?.Position) {
