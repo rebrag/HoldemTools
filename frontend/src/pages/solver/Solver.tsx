@@ -17,6 +17,7 @@ import "intro.js/introjs.css";
 import { User } from "firebase/auth";
 import LoginSignupModal from "@/components/LoginSignupModal";
 import FolderSelector from "./FolderSelector";
+import SimSelect from "./SimSelect";
 import ProUpsell from "@/components/ProUpsell";
 import {
   requiredTierForFolder,
@@ -42,6 +43,7 @@ import { boardToCards, docToJsonData } from "@/lib/solver/postflopNode";
 import { usePostflopSession } from "@/hooks/usePostflopSession";
 import usePostflopIndex from "@/hooks/usePostflopIndex";
 import PostflopLine from "./PostflopLine";
+import { usePreflopLineNodes } from "./usePreflopLineNodes";
 import PostflopLibrary from "./PostflopLibrary";
 import PostflopCardPicker from "./PostflopCardPicker";
 import { Library } from "lucide-react";
@@ -269,6 +271,10 @@ const Solver = ({ user }: SolverProps) => {
     if (!stacks.length) return null;
     return Math.round((stacks.reduce((s, v) => s + v, 0) / stacks.length) * 10) / 10;
   }, [folder]);
+
+  // Desktop single-range "study" layout: compact SimSelect box + Line strip
+  // on top, matrix beside a table/summary/breakdown column below.
+  const desktopStudy = singleRangeView && windowWidth >= 1024;
 
   const isNarrow =
     positionOrder.length === 2 ? !(windowWidth * 1.3 < windowHeight) : windowWidth * 1.3 < windowHeight;
@@ -602,6 +608,10 @@ const Solver = ({ user }: SolverProps) => {
         fileName
       );
     },
+    // pf.view and pf.clickAction are the only pf members used; the rule wants
+    // the whole pf object, but usePostflopSession returns a fresh object each
+    // render, which would defeat this memo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       API_BASE_URL,
       folder,
@@ -679,7 +689,6 @@ const Solver = ({ user }: SolverProps) => {
     }
     // NOTE: deliberately depends only on pf.view. positionOrder is derived
     // from plateMapping, which this effect writes - including it loops.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pf.view]);
 
   // Leave postflop: close the session and reset the table to a clean root.
@@ -1007,6 +1016,80 @@ const Solver = ({ user }: SolverProps) => {
     [pendingFlopUpload, pfIndex]
   );
 
+  /* Preflop node cards for the postflop Line (GTO Wizard style). The ante
+   * only matters for % raise replay accuracy; use it when the session's
+   * folder is the one whose metadata is loaded. */
+  const pfPreflopNodes = usePreflopLineNodes(
+    API_BASE_URL,
+    pf.view?.manifest.preflop.folder ?? null,
+    pf.view?.manifest.preflop.line ?? null,
+    pf.view && pf.view.manifest.preflop.folder === folder ? metadata.ante : 0
+  );
+
+  /* Shared between the classic header layout and the desktop study strip. In
+   * the study strip the Line fills its flex cell, so no measured matchWidth. */
+  const lineNode = pf.view ? (
+    <PostflopLine
+      preflopLine={pf.view.manifest.preflop.line}
+      preflopNodes={pfPreflopNodes}
+      board={pf.view.board}
+      potBB={pf.view.manifest.pot_chips != null ? pf.view.manifest.pot_chips / 100 : null}
+      lineNodes={pf.view.lineNodes}
+      notice={pf.view.notice}
+      onJump={pf.jumpTo}
+      onPickAction={(parentId, display) => void pf.pickActionAt(parentId, display)}
+      onExit={exitPostflop}
+      actorSeat={pf.view.actorSeat}
+      actorStackBB={pf.view.manifest.stacks_map?.[pf.view.actorSeat] ?? null}
+      actions={pf.view.actions}
+      onActionClick={(display) => void pf.clickAction(display)}
+      actionsDisabled={!!pf.view.pendingStreet}
+      matchWidth={
+        desktopStudy ? undefined : windowWidth >= 1024 ? plateContentWidth : undefined
+      }
+    />
+  ) : (
+    <Line
+      line={preflopLine}
+      onLineClick={handleLineClick}
+      positions={actingOrder}
+      activePlayer={activePlayer}
+      plateData={plateData}
+      plateMapping={plateMapping}
+      playerBets={playerBets}
+      alivePlayers={alivePlayers}
+      onActionClick={handleActionClick}
+      matchWidth={
+        desktopStudy ? undefined : windowWidth >= 1024 ? plateContentWidth : undefined
+      }
+    />
+  );
+
+  const libraryButton = POSTFLOP_ENABLED ? (
+    <div className="flex-shrink-0">
+      <button
+        type="button"
+        onClick={() => setShowLibrary(true)}
+        className="
+          relative h-9 sm:h-10 px-2.5 gap-1.5
+          inline-flex items-center justify-center
+          rounded-xl border border-gray-300 bg-white/95 shadow-md
+          hover:bg-gray-100 text-gray-800
+          focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60
+        "
+        aria-label="Solved flops"
+        title="Browse solved flops"
+      >
+        <Library size={16} strokeWidth={2.2} className="text-emerald-600" />
+        {pfIndex.entries.length > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-[1rem] rounded-full bg-emerald-600 px-1 text-center text-[10px] font-bold leading-4 text-white shadow">
+            {pfIndex.entries.length}
+          </span>
+        )}
+      </button>
+    </div>
+  ) : null;
+
   return (
     <>
       <Steps enabled={tourRun} steps={tourSteps} initialStep={0} onExit={() => setTourRun(false)} />
@@ -1203,6 +1286,42 @@ const Solver = ({ user }: SolverProps) => {
         <div className="pt-1 p-1 flex-grow">
           {(folderError || filesError) && <div className="text-red-500">{folderError || filesError}</div>}
 
+          {desktopStudy ? (
+            /* Study strip: SimSelect box + Line side by side */
+            <div className="px-2 sm:px-4 mt-1">
+              <div className="mx-auto w-full max-w-[1480px]">
+                <div className="relative z-50 flex items-stretch gap-3">
+                  <div
+                    data-intro-target="folder-selector"
+                    className="w-[300px] flex-shrink-0"
+                  >
+                    <SimSelect
+                      folders={folders}
+                      currentFolder={folder}
+                      onFolderSelect={handleFolderSelect}
+                      metaByFolder={folderMetaMap}
+                      userTier={tier ?? "free"}
+                      simName={metadata.name}
+                      playerCount={playerCount}
+                      avgStack={avgStack}
+                      ante={metadata.ante}
+                      icm={metadata.icm}
+                      singleRangeView={singleRangeView}
+                      onToggleSingleRange={() => setSingleRangeView((v) => !v)}
+                    />
+                  </div>
+                  <div
+                    ref={lineWrapperRef}
+                    className="relative flex min-w-0 flex-1 items-center"
+                  >
+                    {lineNode}
+                  </div>
+                  {libraryButton}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
           {/* Top row: Sim info button (small), FolderSelector (wide, with filter + SR buttons) */}
           <div className="px-2 sm:px-4 mt-1">
             <div className="mx-auto w-full max-w-xl lg:max-w-3xl">
@@ -1313,30 +1432,7 @@ const Solver = ({ user }: SolverProps) => {
                   </div>
 
                   {/* Solved flops library */}
-                  {POSTFLOP_ENABLED && (
-                    <div className="flex-shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => setShowLibrary(true)}
-                        className="
-                          relative h-9 sm:h-10 px-2.5 gap-1.5
-                          inline-flex items-center justify-center
-                          rounded-xl border border-gray-300 bg-white/95 shadow-md
-                          hover:bg-gray-100 text-gray-800
-                          focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60
-                        "
-                        aria-label="Solved flops"
-                        title="Browse solved flops"
-                      >
-                        <Library size={16} strokeWidth={2.2} className="text-emerald-600" />
-                        {pfIndex.entries.length > 0 && (
-                          <span className="absolute -top-1 -right-1 min-w-[1rem] rounded-full bg-emerald-600 px-1 text-center text-[10px] font-bold leading-4 text-white shadow">
-                            {pfIndex.entries.length}
-                          </span>
-                        )}
-                      </button>
-                    </div>
-                  )}
+                  {libraryButton}
                 </div>
               </div>
             </div>
@@ -1347,32 +1443,10 @@ const Solver = ({ user }: SolverProps) => {
             ref={lineWrapperRef}
             className="relative flex items-center mt-2 mb-2"
           >
-            {pf.view ? (
-              <PostflopLine
-                preflopLine={pf.view.manifest.preflop.line}
-                board={pf.view.board}
-                line={pf.view.line}
-                currentNodeId={pf.view.currentNodeId}
-                notice={pf.view.notice}
-                onJump={pf.jumpTo}
-                onExit={exitPostflop}
-                matchWidth={windowWidth >= 1024 ? plateContentWidth : undefined}
-              />
-            ) : (
-              <Line
-                line={preflopLine}
-                onLineClick={handleLineClick}
-                positions={actingOrder}
-                activePlayer={activePlayer}
-                plateData={plateData}
-                plateMapping={plateMapping}
-                playerBets={playerBets}
-                alivePlayers={alivePlayers}
-                onActionClick={handleActionClick}
-                matchWidth={windowWidth >= 1024 ? plateContentWidth : undefined}
-              />
-            )}
+            {lineNode}
           </div>
+            </>
+          )}
 
           {/* Pending solve banner */}
           {postflopPending && (
@@ -1415,6 +1489,7 @@ const Solver = ({ user }: SolverProps) => {
               ante={metadata.ante}
               pot={potSize}
               activePlayer={activePlayer}
+              board={pf.view ? pf.view.board : currentBoard}
               singleRangeView={singleRangeView}
               onPlateContentRef={setPlateContentEl}
             />

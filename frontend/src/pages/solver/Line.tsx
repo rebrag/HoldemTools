@@ -1,5 +1,5 @@
 // src/components/Line.tsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, RotateCcw } from "lucide-react";
 import { getColorForAction, stringToColor } from "@/lib/solver/utils";
 import type { JsonData } from "@/lib/solver/utils";
@@ -63,6 +63,28 @@ const Line: React.FC<LineProps> = ({
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [canLeft, setCanLeft] = useState(false);
   const [canRight, setCanRight] = useState(false);
+
+  /* Each seat's most recent action along the line, by replaying it over the
+   * acting order (folds drop the seat; other actions pass to the next seat).
+   * Used to highlight the taken option in a seat's card, GTO Wizard style. */
+  const takenBySeat = useMemo(() => {
+    const map: Record<string, string> = {};
+    const alive = [...positions];
+    let idx = 0;
+    for (const action of line.slice(1)) {
+      const seat = alive[idx];
+      if (!seat) break;
+      map[seat] = action;
+      if (action === "Fold") {
+        alive.splice(idx, 1);
+        if (alive.length === 0) break;
+        if (idx >= alive.length) idx = 0;
+      } else {
+        idx = (idx + 1) % alive.length;
+      }
+    }
+    return map;
+  }, [line, positions]);
 
   /* ───── helper to update arrow visibility ───── */
   const refresh = () => {
@@ -200,6 +222,9 @@ const Line: React.FC<LineProps> = ({
                   options.map((action) => {
                     const color =
                       getColorForAction(action) || stringToColor(action);
+                    /* Highlight the seat's taken action once the action has
+                     * moved past them (their card no longer being active). */
+                    const taken = !isActive && takenBySeat[pos] === action;
                     return (
                       <button
                         key={action}
@@ -208,14 +233,20 @@ const Line: React.FC<LineProps> = ({
                           if (file) onActionClick(action, file);
                         }}
                         disabled={!file}
-                        className="group flex items-center gap-1 rounded-sm px-1 py-0.5 text-left hover:bg-white/10 disabled:hover:bg-transparent transition-colors"
+                        className={`group flex items-center gap-1 rounded-sm px-1 py-0.5 text-left hover:bg-white/10 disabled:hover:bg-transparent transition-colors ${
+                          taken ? "bg-white/15" : ""
+                        }`}
                         title={`${pos}: ${action}`}
                       >
                         <span
                           className="inline-block w-1.5 h-1.5 rounded-[2px] flex-shrink-0"
                           style={{ backgroundColor: color }}
                         />
-                        <span className="text-[0.55rem] leading-tight text-gray-200 whitespace-nowrap">
+                        <span
+                          className={`text-[0.55rem] leading-tight whitespace-nowrap ${
+                            taken ? "text-gray-100 font-semibold" : "text-gray-200"
+                          }`}
+                        >
                           {action}
                         </span>
                       </button>

@@ -1,125 +1,261 @@
-// Postflop breadcrumb: preflop context chip, board cards, then one chip per
-// postflop action. Clicking a chip jumps back to that node.
+// Postflop line, GTO Wizard style: one card per visited node of the game
+// tree. Preflop cards show each seat's options with the taken action
+// highlighted; a FLOP card carries the pot + board; postflop decision cards
+// let you jump along the line or branch to a different action; the node to
+// act renders as the active (emerald) card.
 import React from "react";
-import { RotateCcw, X } from "lucide-react";
+import { X } from "lucide-react";
 import PlayingCard from "@/components/PlayingCard";
 import { getColorForAction, stringToColor } from "@/lib/solver/utils";
-import type { PostflopLineItem } from "@/hooks/usePostflopSession";
+import type { PostflopSessionLineNode } from "@/hooks/usePostflopSession";
+import type { PreflopLineNode } from "./usePreflopLineNodes";
 
 export interface PostflopLineProps {
+  /** Raw preflop line; fallback summary when preflopNodes are unavailable. */
   preflopLine: string[] | null;
+  /** Reconstructed preflop nodes (seat, stack, options, taken). */
+  preflopNodes?: PreflopLineNode[] | null;
+  /** Full board at the current node; the FLOP card shows the first three. */
   board: string[];
-  line: PostflopLineItem[];
-  currentNodeId: string;
+  /** Pot at flop start, in bb. */
+  potBB?: number | null;
+  lineNodes: PostflopSessionLineNode[];
   notice: string | null;
   onJump: (nodeId: string) => void;
+  /** Branch: take `display` at the decision node `parentId`. */
+  onPickAction?: (parentId: string, display: string) => void;
   onExit: () => void;
   matchWidth?: number;
+  /** Seat to act at the current node (the active card). */
+  actorSeat?: string;
+  actorStackBB?: number | null;
+  actions?: { display: string }[];
+  onActionClick?: (display: string) => void;
+  /** Disable all action buttons (e.g. while a street extraction is pending). */
+  actionsDisabled?: boolean;
 }
 
 const chipColor = (label: string) => getColorForAction(label) || stringToColor(label);
 
+const fmt = (n: number, decimals = 1) =>
+  Math.abs(n % 1) > 1e-9 ? n.toFixed(decimals) : n.toFixed(0);
+
+/* Shared card shell, mirroring the preflop Line's seat cards. */
+const cardClass = (active: boolean) =>
+  `flex-shrink-0 flex flex-col rounded-md border px-1.5 py-1 min-w-[3.6rem] transition-colors ${
+    active
+      ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_0_2px_rgba(16,185,129,0.35)]"
+      : "border-white/15 bg-white/5"
+  }`;
+
+const CardHeader: React.FC<{ label: string; active?: boolean; stackBB?: number | null }> = ({
+  label,
+  active,
+  stackBB,
+}) => (
+  <div className="flex items-baseline justify-between gap-1 mb-0.5">
+    <span
+      className={`text-[0.7rem] font-bold leading-none ${
+        active ? "text-emerald-300" : "text-gray-100"
+      }`}
+    >
+      {label}
+    </span>
+    {stackBB != null && (
+      <span className="text-[0.6rem] text-gray-300 tabular-nums leading-none">
+        {fmt(stackBB)}
+      </span>
+    )}
+  </div>
+);
+
+/** One option row: color dot + label; the taken action gets a highlight pill. */
+const OptionRow: React.FC<{
+  action: string;
+  taken?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+  title?: string;
+}> = ({ action, taken, disabled, onClick, title }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    disabled={disabled || !onClick}
+    title={title}
+    className={`flex items-center gap-1 rounded-sm px-1 py-0.5 text-left transition-colors ${
+      taken ? "bg-white/15" : ""
+    } ${
+      onClick && !disabled
+        ? "hover:bg-white/10 cursor-pointer"
+        : "cursor-default"
+    } ${disabled ? "opacity-60" : ""}`}
+  >
+    <span
+      className="inline-block w-1.5 h-1.5 rounded-[2px] flex-shrink-0"
+      style={{ backgroundColor: chipColor(action) }}
+    />
+    <span
+      className={`text-[0.55rem] leading-tight whitespace-nowrap ${
+        taken ? "text-gray-100 font-semibold" : "text-gray-300"
+      }`}
+    >
+      {action}
+    </span>
+  </button>
+);
+
 const PostflopLine: React.FC<PostflopLineProps> = ({
   preflopLine,
+  preflopNodes,
   board,
-  line,
-  currentNodeId,
+  potBB,
+  lineNodes,
   notice,
   onJump,
+  onPickAction,
   onExit,
   matchWidth,
+  actorSeat,
+  actorStackBB,
+  actions,
+  onActionClick,
+  actionsDisabled,
 }) => {
   const preflopSummary =
     preflopLine && preflopLine.length > 1 ? preflopLine.slice(1).join(" · ") : null;
+  const flop = board.slice(0, 3);
 
   return (
     <div className="w-full mx-auto select-none" style={{ maxWidth: matchWidth || undefined }}>
-      <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-slate-900/70 px-2 py-1.5 animate-[fadeSlideIn_0.25s_ease-out]">
-        {/* Exit postflop */}
-        <button
-          type="button"
-          onClick={onExit}
-          className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/5 hover:bg-white/10 px-1.5 py-1 text-[0.6rem] text-gray-300 transition-colors"
-          title="Exit postflop view"
-        >
-          <X size={12} />
-          <span>Preflop</span>
-        </button>
-
-        {/* Preflop context */}
-        {preflopSummary && (
-          <span
-            className="max-w-[10rem] truncate text-[0.6rem] text-gray-400"
-            title={preflopSummary}
+      <div className="overflow-x-auto no-scrollbar w-full animate-[fadeSlideIn_0.25s_ease-out]">
+        <div className="flex flex-nowrap items-stretch gap-1 w-full">
+          {/* Exit postflop */}
+          <button
+            type="button"
+            onClick={onExit}
+            className="flex-shrink-0 flex flex-col items-center justify-center px-1.5 rounded-md border border-white/15 bg-white/5 hover:bg-white/10 text-gray-300 transition-colors"
+            title="Exit postflop view"
           >
-            {preflopSummary}
-          </span>
-        )}
+            <X size={14} />
+            <span className="text-[0.5rem] mt-0.5 leading-none">Preflop</span>
+          </button>
 
-        {/* Board */}
-        <div className="inline-flex items-center gap-1 px-1">
-          {board.map((code) => (
-            <PlayingCard key={code} code={code} width="clamp(22px, 4vw, 34px)" />
-          ))}
-        </div>
-
-        {/* Root chip */}
-        <button
-          type="button"
-          onClick={() => onJump("r:0")}
-          className={`inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[0.65rem] font-medium transition-colors ${
-            currentNodeId === "r:0"
-              ? "bg-emerald-500/20 text-emerald-200 border border-emerald-400/50"
-              : "bg-white/5 text-gray-300 border border-white/10 hover:bg-white/10"
-          }`}
-          title="Back to the flop decision"
-        >
-          <RotateCcw size={11} />
-          <span>Flop</span>
-        </button>
-
-        {/* Action / dealt-card chips */}
-        {line.map((item) => {
-          const isCurrent = item.nodeId === currentNodeId;
-          const chipClass = `inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[0.65rem] font-medium transition-colors ${
-            isCurrent
-              ? "bg-emerald-500/20 text-emerald-200 border border-emerald-400/50"
-              : "bg-white/5 text-gray-200 border border-white/10 hover:bg-white/10"
-          }`;
-          if (item.kind === "card") {
-            return (
-              <button
-                key={item.nodeId}
-                type="button"
-                onClick={() => onJump(item.nodeId)}
-                className={chipClass}
-                title={`Jump to the ${item.label} deal`}
-              >
-                <PlayingCard code={item.label} width="clamp(18px, 3.4vw, 26px)" />
-              </button>
-            );
-          }
-          return (
-            <button
-              key={item.nodeId}
-              type="button"
-              onClick={() => onJump(item.nodeId)}
-              className={chipClass}
-            >
+          {/* Preflop nodes: GTO Wizard style cards, else a summary chip */}
+          {preflopNodes && preflopNodes.length > 0 ? (
+            preflopNodes.map((node, i) => (
+              <div key={`pre-${i}-${node.seat}`} className={cardClass(false)}>
+                <CardHeader label={node.seat} stackBB={node.stackBB} />
+                <div className="flex flex-col gap-0.5">
+                  {node.options.map((action) => (
+                    <OptionRow
+                      key={action}
+                      action={action}
+                      taken={action === node.taken}
+                      title={`${node.seat}: ${action}`}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))
+          ) : (
+            preflopSummary && (
               <span
-                className="inline-block w-1.5 h-1.5 rounded-[2px]"
-                style={{ backgroundColor: chipColor(item.label) }}
-              />
-              <span className="whitespace-nowrap">{item.label}</span>
-            </button>
-          );
-        })}
+                className="flex-shrink-0 self-center max-w-[10rem] truncate text-[0.6rem] text-gray-400 px-1"
+                title={preflopSummary}
+              >
+                {preflopSummary}
+              </span>
+            )
+          )}
 
-        {notice && (
-          <span className="ml-1 rounded-md bg-amber-500/15 border border-amber-400/40 px-2 py-1 text-[0.6rem] text-amber-200">
-            {notice}
-          </span>
-        )}
+          {/* FLOP card: pot + board; clicking returns to the flop decision */}
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => onJump("r:0")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") onJump("r:0");
+            }}
+            className={`${cardClass(false)} cursor-pointer hover:bg-white/10`}
+            title="Back to the flop decision"
+          >
+            <CardHeader label="FLOP" stackBB={potBB ?? undefined} />
+            <div className="flex items-center gap-0.5 mt-auto">
+              {flop.map((code) => (
+                <PlayingCard key={code} code={code} width="clamp(20px, 3.6vw, 30px)" />
+              ))}
+            </div>
+          </div>
+
+          {/* Visited postflop nodes */}
+          {lineNodes.map((node) => {
+            if (node.kind === "card") {
+              return (
+                <button
+                  key={node.nodeId}
+                  type="button"
+                  onClick={() => onJump(node.nodeId)}
+                  className={`${cardClass(false)} items-center justify-center cursor-pointer hover:bg-white/10`}
+                  title={`Jump to the ${node.label} deal`}
+                >
+                  <PlayingCard code={node.label} width="clamp(20px, 3.6vw, 30px)" />
+                </button>
+              );
+            }
+            return (
+              <div key={node.nodeId} className={cardClass(false)}>
+                <CardHeader label={node.seat} stackBB={node.stackBB} />
+                <div className="flex flex-col gap-0.5">
+                  {node.options.map((action) => (
+                    <OptionRow
+                      key={action}
+                      action={action}
+                      taken={action === node.taken}
+                      disabled={actionsDisabled}
+                      onClick={
+                        onPickAction
+                          ? () =>
+                              action === node.taken
+                                ? onJump(node.nodeId)
+                                : onPickAction(node.parentId, action)
+                          : undefined
+                      }
+                      title={
+                        action === node.taken
+                          ? `Jump to ${node.seat}'s ${action}`
+                          : `${node.seat}: switch to ${action}`
+                      }
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Current node: the seat to act (active card) */}
+          {actions && actions.length > 0 && (
+            <div className={cardClass(true)}>
+              <CardHeader label={actorSeat ?? "To act"} active stackBB={actorStackBB} />
+              <div className="flex flex-col gap-0.5">
+                {actions.map((a) => (
+                  <OptionRow
+                    key={a.display}
+                    action={a.display}
+                    disabled={actionsDisabled}
+                    onClick={onActionClick ? () => onActionClick(a.display) : undefined}
+                    title={`${actorSeat ?? "To act"}: ${a.display}`}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {notice && (
+            <span className="flex-shrink-0 self-center rounded-md bg-amber-500/15 border border-amber-400/40 px-2 py-1 text-[0.6rem] text-amber-200">
+              {notice}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

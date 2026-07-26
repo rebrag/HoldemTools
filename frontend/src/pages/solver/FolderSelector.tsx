@@ -1,19 +1,10 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { LayoutGrid, Square } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
-import { useAuthState } from "react-firebase-hooks/auth";
-import { auth } from "@/lib/firebase";
-import { logUserAction } from "@/lib/logEvent";
-import { sortFoldersLikeSelector } from "@/lib/solver/folderSort";
 import type { FolderMetadata } from "@/hooks/useFolders";
 import FolderSelectorDropdown from "./FolderSelectorDropdown";
-import {
-  requiredTierForFolder,
-  isTierSufficient,
-  type Tier,
-  type FolderMetaLike,
-} from "@/lib/stripe/stripeTiers";
+import { useFolderSearch, parseFolderSafe, type FTFilter } from "./useFolderSearch";
+import type { Tier } from "@/lib/stripe/stripeTiers";
 
 /* ────────────────────────────────────────────────────────────────── */
 /*  Types                                                             */
@@ -33,81 +24,6 @@ export interface FolderSelectorProps {
   onToggleSingleRange?: () => void;
 }
 
-type FTFilter = "any" | "only" | "exclude";
-
-/* ────────────────────────────────────────────────────────────────── */
-/*  Debug                                                             */
-/* ────────────────────────────────────────────────────────────────── */
-const DEBUG_FILTER = false;
-const dbg = (...args: unknown[]) => {
-  if (DEBUG_FILTER) console.debug("[FolderSelector]", ...args);
-};
-
-/* ────────────────────────────────────────────────────────────────── */
-/*  Exclusions & heuristics                                           */
-/* ────────────────────────────────────────────────────────────────── */
-const EXCLUDE_NAMES = [/^onlinerangedata$/i, /^logs?$/i, /^gametrees$/i];
-const EXCLUDE_EXTS = [".txt", ".log", ".csv", ".json"];
-
-const looksLikeSolutionFolder = (name: string) => {
-  const chunks = name.split("_").filter(Boolean);
-  const nums = chunks.map((ch) => /^(\d+)/.exec(ch)?.[1]).filter(Boolean);
-  return nums.length >= 2;
-};
-
-const isExcludedName = (name: string) =>
-  EXCLUDE_NAMES.some((re) => re.test(name)) ||
-  name.includes("/") ||
-  EXCLUDE_EXTS.some((ext) => name.toLowerCase().endsWith(ext));
-
-const countNumericChunks = (name: string) =>
-  name
-    .split("_")
-    .filter(Boolean)
-    .map((ch) => /^(\d+)/.exec(ch)?.[1])
-    .filter(Boolean).length;
-
-/* ────────────────────────────────────────────────────────────────── */
-/*  Helpers for query parsing                                         */
-/* ────────────────────────────────────────────────────────────────── */
-const canonNum = (s: string): string => {
-  let t = s.replace(/^0+(\d)/, "$1");
-  t = t.replace(/(\.\d*?)0+$/, "$1");
-  t = t.replace(/\.$/, "");
-  return t;
-};
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-type Chunk = { numRaw: string; numCanon: string; pos: string; chunkRaw: string };
-const splitChunks = (folder: string): Chunk[] =>
-  folder
-    .split("_")
-    .map((ch) => {
-      const m = ch.match(/^(\d+(?:\.\d+)?)([A-Z0-9]+)$/i);
-      if (!m) return { numRaw: "", numCanon: "", pos: "", chunkRaw: ch };
-      const [, numRaw, posRaw] = m;
-      return {
-        numRaw,
-        numCanon: canonNum(numRaw),
-        pos: posRaw.toUpperCase(),
-        chunkRaw: ch,
-      };
-    })
-    .filter((c) => c.pos !== "");
-
-const getPosNumMap = (folder: string): Record<string, string> => {
-  const map: Record<string, string> = {};
-  for (const c of splitChunks(folder)) map[c.pos] = c.numCanon;
-  return map;
-};
-
-const hasExactNumber = (folder: string, rawNum: string): boolean => {
-  const want = canonNum(rawNum);
-  const esc = escapeRe(want);
-  const re = new RegExp(String.raw`(?:^|_)0*${esc}(?:\.0+)?[A-Za-z0-9]+(?=_|$)`);
-  return re.test(folder);
-};
-
 /* ────────────────────────────────────────────────────────────────── */
 /*  Filter popover styling                                            */
 /* ────────────────────────────────────────────────────────────────── */
@@ -123,26 +39,120 @@ const chipClass = (active: boolean) =>
       : "bg-white/5 text-slate-300 border-hairline hover:bg-white/10 hover:text-slate-100",
   ].join(" ");
 
-/* fixed header order for table */
-const DESIRED_HEADER_ORDER = ["UTG", "UTG1", "UTG2", "LJ", "HJ", "CO", "BTN", "SB", "BB"];
+/** Shared filter popover body (players + Final Table chips). Also used by SimSelect. */
+export const FolderFilterPanel: React.FC<{
+  playersFilter: number | null;
+  setPlayersFilter: React.Dispatch<React.SetStateAction<number | null>>;
+  ftFilter: FTFilter;
+  setFtFilter: React.Dispatch<React.SetStateAction<FTFilter>>;
+  onClose: () => void;
+}> = ({ playersFilter, setPlayersFilter, ftFilter, setFtFilter, onClose }) => (
+  <>
+    {/* Number of players */}
+    <div className="mb-3">
+      <div className={FILTER_LABEL}>Number of players</div>
+      <div className="flex flex-wrap gap-1">
+        <button
+          className={chipClass(playersFilter === null)}
+          onClick={() => setPlayersFilter(null)}
+        >
+          Any
+        </button>
+        {[2, 3, 4, 5, 6, 7, 8].map((n) => (
+          <button
+            key={n}
+            className={chipClass(playersFilter === n)}
+            onClick={() => setPlayersFilter((prev) => (prev === n ? null : n))}
+          >
+            {n}
+          </button>
+        ))}
+      </div>
+    </div>
 
-/* lightweight parse used by dropdown (avg + per-seat values). */
-function parseFolderSafe(folder: string) {
-  const parts = folder.split("_");
-  const stacks: Record<string, number> = {};
-  parts.forEach((ch) => {
-    const m = ch.match(/^(\d+(?:\.\d+)?)([A-Z][A-Z0-9+]*)$/i);
-    if (!m) return;
-    const [, num, posRaw] = m;
-    const pos = posRaw.toUpperCase();
-    stacks[pos] = Number(num);
-  });
-  const denom = Object.keys(stacks).length || 1;
-  const avg =
-    Math.round((Object.values(stacks).reduce((s, v) => s + v, 0) / denom) * 10) / 10;
+    {/* Final Table */}
+    <div className="mb-2">
+      <div className={FILTER_LABEL}>Final Table</div>
+      <div className="flex flex-wrap gap-1">
+        <button className={chipClass(ftFilter === "any")} onClick={() => setFtFilter("any")}>
+          Any
+        </button>
+        <button className={chipClass(ftFilter === "only")} onClick={() => setFtFilter("only")}>
+          Final Table
+        </button>
+        <button
+          className={chipClass(ftFilter === "exclude")}
+          onClick={() => setFtFilter("exclude")}
+        >
+          Exclude FT
+        </button>
+      </div>
+    </div>
 
-  return { stacks, avg };
-}
+    <div className="pt-2 border-t border-hairline flex items-center justify-between">
+      <button
+        className="text-xs text-accent hover:underline"
+        onClick={() => {
+          setPlayersFilter(null);
+          setFtFilter("any");
+        }}
+      >
+        Reset filters
+      </button>
+      <button className="text-xs text-slate-400 hover:text-slate-200" onClick={onClose}>
+        Close
+      </button>
+    </div>
+  </>
+);
+
+/** Funnel icon used by both the wide selector and SimSelect's filter button. */
+export const FilterIcon: React.FC<{ className?: string }> = ({
+  className = "h-4 w-4 sm:h-5 sm:w-5",
+}) => (
+  <svg viewBox="0 0 24 24" className={className} fill="currentColor">
+    <path d="M3 5a1 1 0 011-1h16a1 1 0 01.8 1.6l-6.2 8.27V19a1 1 0 01-.553.894l-3 1.5A1 1 0 019 20.5v-5.63L2.2 5.6A1 1 0 013 5z" />
+  </svg>
+);
+
+/** Single Range toggle pill. Carries the intro-tour target, so exactly one
+ *  instance must be mounted at a time (FolderSelector or SimSelect). */
+export const SingleRangeTogglePill: React.FC<{
+  singleRangeView?: boolean;
+  onToggle: () => void;
+  /** Icon-only square button sized to SimSelect's compact row. */
+  compact?: boolean;
+}> = ({ singleRangeView, onToggle, compact = false }) => (
+  <button
+    type="button"
+    onClick={onToggle}
+    aria-pressed={singleRangeView ?? false}
+    data-intro-target="color-key-btn"
+    className={[
+      compact
+        ? "h-9 w-9 rounded-lg shadow-sm"
+        : "h-9 sm:h-10 px-2 sm:px-3 gap-1.5 rounded-xl shadow-md backdrop-blur-md",
+      "inline-flex items-center justify-center whitespace-nowrap",
+      "border transition-colors",
+      "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
+      singleRangeView
+        ? "border-accent/50 bg-accent/15 text-accent"
+        : compact
+        ? "border-hairline bg-white/5 text-slate-300 hover:border-white/25 hover:text-slate-100"
+        : "border-hairline bg-surface/85 text-slate-300 hover:border-white/20 hover:text-slate-100",
+    ].join(" ")}
+    title="Toggle Single Range View"
+  >
+    {singleRangeView ? (
+      <Square size={16} strokeWidth={2.2} />
+    ) : (
+      <LayoutGrid size={16} strokeWidth={2.2} />
+    )}
+    {!compact && (
+      <span className="hidden sm:inline text-xs font-semibold">Single Range</span>
+    )}
+  </button>
+);
 
 /* ────────────────────────────────────────────────────────────────── */
 /*  Component                                                         */
@@ -157,141 +167,34 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   singleRangeView,
   onToggleSingleRange,
 }) => {
-  const [user] = useAuthState(auth);
   const reduceMotion = useReducedMotion();
 
-  const [input, setInput] = useState("");
-  const [items, setItems] = useState<string[]>([]);
-  const [open, setOpen] = useState(false);
-  const [hi, setHi] = useState(-1);
+  const {
+    input,
+    setInput,
+    open,
+    setOpen,
+    items,
+    hi,
+    setHi,
+    header,
+    lockedSet,
+    numSims,
+    playersFilter,
+    setPlayersFilter,
+    ftFilter,
+    setFtFilter,
+    choose,
+    handleInputKeyDown,
+  } = useFolderSearch({ folders, currentFolder, onFolderSelect, metaByFolder, userTier });
 
   const [showFilter, setShowFilter] = useState(false);
-  const [playersFilter, setPlayersFilter] = useState<number | null>(null);
-  const [ftFilter, setFtFilter] = useState<FTFilter>("any");
-
   const inputWrapRef = useRef<HTMLDivElement | null>(null);
 
-  const sourceFolders = useMemo(
-    () => folders.filter((f) => !isExcludedName(f) && looksLikeSolutionFolder(f)),
-    [folders]
-  );
-
-  useEffect(() => {
-    const q = input.trim().toLowerCase();
-    const tokens = q.split(/\s+/).filter(Boolean);
-
-    type Pair = { rawNum: string; pos: string };
-    const pairs: Pair[] = [];
-    const numStrs: string[] = [];
-    const words: string[] = [];
-
-    for (const t of tokens) {
-      const mPair = t.match(/^(\d+(?:\.\d+)?)([a-z][a-z0-9+]*)$/i);
-      if (mPair) {
-        pairs.push({ rawNum: mPair[1], pos: mPair[2].toUpperCase() });
-        continue;
-      }
-      const mNum = t.match(/^\d+(?:\.\d+)?$/);
-      if (mNum) {
-        numStrs.push(mNum[0]);
-        continue;
-      }
-      words.push(t);
-    }
-
-    if (DEBUG_FILTER) dbg("query:", q, { tokens, pairs, numStrs, words, playersFilter, ftFilter });
-
-    const filtered = sourceFolders.filter((f) => {
-      if (q) {
-        if (pairs.length > 0) {
-          const posMap = getPosNumMap(f);
-          const okPairs = pairs.every(({ rawNum, pos }) => {
-            const want = canonNum(rawNum);
-            const have = posMap[pos];
-            return have !== undefined && have === want;
-          });
-          if (!okPairs) return false;
-        } else {
-          if (numStrs.length > 0 && !numStrs.every((s) => hasExactNumber(f, s))) return false;
-          if (words.length > 0 && !words.every((w) => f.toLowerCase().includes(w))) return false;
-        }
-      }
-
-      if (playersFilter !== null) {
-        if (countNumericChunks(f) !== playersFilter) return false;
-      }
-
-      if (ftFilter !== "any") {
-        const meta = metaByFolder?.[f] ?? null;
-        const isFT =
-          !!(meta as any)?.name && String((meta as any).name).toUpperCase().includes("FT");
-        if (ftFilter === "only" && !isFT) return false;
-        if (ftFilter === "exclude" && isFT) return false;
-      }
-
-      return true;
-    });
-
-    let list: string[] = [];
-    try {
-      list = sortFoldersLikeSelector(filtered, metaByFolder);
-    } catch {
-      list = filtered.slice().sort((a, b) =>
-        a.localeCompare(b, undefined, { sensitivity: "base" })
-      );
-    }
-    setItems(list);
-    setHi(list.length ? 0 : -1);
-  }, [input, sourceFolders, playersFilter, ftFilter, metaByFolder]);
-
-  const choose = (folder: string) => {
-    if (folder !== currentFolder) {
-      onFolderSelect(folder);
-      if (user) logUserAction(user.email ?? user.uid, "Opened Folder", folder);
-    }
-    setOpen(false);
-    setInput("");
-  };
-
   const nav: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
-    if (e.key === "Escape") {
-      setOpen(false);
-      setShowFilter(false);
-    } else if ((e.key === "ArrowDown" || e.key === "Tab") && items.length > 0) {
-      e.preventDefault();
-      setHi((p) => (p + 1) % items.length);
-    } else if (e.key === "ArrowUp" && items.length > 0) {
-      e.preventDefault();
-      setHi((p) => (p - 1 + items.length) % items.length);
-    } else if (e.key === "Enter" && hi >= 0 && items.length > 0) {
-      choose(items[hi]);
-    } else {
-      setOpen(true);
-    }
+    if (e.key === "Escape") setShowFilter(false);
+    handleInputKeyDown(e);
   };
-
-  const header = useMemo(() => {
-    const present = new Set<string>();
-    for (const f of items) {
-      const { stacks } = parseFolderSafe(f);
-      for (const pos of Object.keys(stacks)) present.add(pos.toUpperCase());
-    }
-    const ordered = DESIRED_HEADER_ORDER.filter((pos) => present.has(pos));
-    return ordered.length ? ordered : DESIRED_HEADER_ORDER;
-  }, [items]);
-
-  const lockedSet = useMemo(() => {
-    const s = new Set<string>();
-    for (const f of items) {
-      const meta = (metaByFolder?.[f] ?? undefined) as FolderMetaLike | undefined;
-      const need = requiredTierForFolder(f, meta);
-      const ok = isTierSufficient(userTier ?? "free", need);
-      if (!ok) s.add(f);
-    }
-    return s;
-  }, [items, metaByFolder, userTier]);
-
-  const numSims = items.length;
 
   return (
     <div className={fullWidth ? "flex justify-stretch overflow-visible" : "flex justify-center overflow-visible"}>
@@ -370,9 +273,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
                 }
               `}
             >
-              <svg viewBox="0 0 24 24" className="h-4 w-4 sm:h-5 sm:w-5" fill="currentColor">
-                <path d="M3 5a1 1 0 011-1h16a1 1 0 01.8 1.6l-6.2 8.27V19a1 1 0 01-.553.894l-3 1.5A1 1 0 019 20.5v-5.63L2.2 5.6A1 1 0 013 5z" />
-              </svg>
+              <FilterIcon />
             </button>
 
             {showFilter && (
@@ -389,101 +290,23 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
                 transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
                 style={{ transformOrigin: "top right" }}
               >
-                {/* Number of players */}
-                <div className="mb-3">
-                  <div className={FILTER_LABEL}>Number of players</div>
-                  <div className="flex flex-wrap gap-1">
-                    <button
-                      className={chipClass(playersFilter === null)}
-                      onClick={() => setPlayersFilter(null)}
-                    >
-                      Any
-                    </button>
-                    {[2, 3, 4, 5, 6, 7, 8].map((n) => (
-                      <button
-                        key={n}
-                        className={chipClass(playersFilter === n)}
-                        onClick={() => setPlayersFilter((prev) => (prev === n ? null : n))}
-                      >
-                        {n}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Final Table */}
-                <div className="mb-2">
-                  <div className={FILTER_LABEL}>Final Table</div>
-                  <div className="flex flex-wrap gap-1">
-                    <button
-                      className={chipClass(ftFilter === "any")}
-                      onClick={() => setFtFilter("any")}
-                    >
-                      Any
-                    </button>
-                    <button
-                      className={chipClass(ftFilter === "only")}
-                      onClick={() => setFtFilter("only")}
-                    >
-                      Final Table
-                    </button>
-                    <button
-                      className={chipClass(ftFilter === "exclude")}
-                      onClick={() => setFtFilter("exclude")}
-                    >
-                      Exclude FT
-                    </button>
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-hairline flex items-center justify-between">
-                  <button
-                    className="text-xs text-accent hover:underline"
-                    onClick={() => {
-                      setPlayersFilter(null);
-                      setFtFilter("any");
-                    }}
-                  >
-                    Reset filters
-                  </button>
-                  <button
-                    className="text-xs text-slate-400 hover:text-slate-200"
-                    onClick={() => setShowFilter(false)}
-                  >
-                    Close
-                  </button>
-                </div>
+                <FolderFilterPanel
+                  playersFilter={playersFilter}
+                  setPlayersFilter={setPlayersFilter}
+                  ftFilter={ftFilter}
+                  setFtFilter={setFtFilter}
+                  onClose={() => setShowFilter(false)}
+                />
               </motion.div>
             )}
           </div>
 
           {/* Single Range toggle — labeled pill (icon-only on the smallest screens) */}
           {onToggleSingleRange && (
-            <button
-              type="button"
-              onClick={onToggleSingleRange}
-              aria-pressed={singleRangeView ?? false}
-              data-intro-target="color-key-btn"
-              className={[
-                "h-9 sm:h-10 px-2 sm:px-3 gap-1.5",
-                "inline-flex items-center justify-center whitespace-nowrap",
-                "rounded-xl border shadow-md backdrop-blur-md transition-colors",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
-                singleRangeView
-                  ? "border-accent/50 bg-accent/15 text-accent"
-                  : "border-hairline bg-surface/85 text-slate-300 hover:border-white/20 hover:text-slate-100",
-              ].join(" ")}
-              title="Toggle Single Range View"
-            >
-              {singleRangeView ? (
-                <Square size={16} strokeWidth={2.2} />
-              ) : (
-                <LayoutGrid size={16} strokeWidth={2.2} />
-              )}
-              <span className="hidden sm:inline text-xs font-semibold">
-                Single Range
-              </span>
-            </button>
+            <SingleRangeTogglePill
+              singleRangeView={singleRangeView}
+              onToggle={onToggleSingleRange}
+            />
           )}
         </div>
 
