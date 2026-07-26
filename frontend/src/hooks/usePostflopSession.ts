@@ -23,6 +23,23 @@ export type PostflopLineItem = {
   kind?: "action" | "card";
 };
 
+/** A visited node of the postflop line, enriched for the Line display:
+ *  dealt-card markers, or decisions with the options that were available. */
+export type PostflopSessionLineNode =
+  | { kind: "card"; nodeId: string; label: string }
+  | {
+      kind: "action";
+      /** Child node reached by taking the action (jump target). */
+      nodeId: string;
+      /** The decision node itself (base for branching to other options). */
+      parentId: string;
+      seat: string;
+      stackBB: number | null;
+      /** Display labels of every action available at the decision node. */
+      options: string[];
+      taken: string;
+    };
+
 export type StreetPicker = {
   /** The chance node whose card is being picked. */
   chanceNodeId: string;
@@ -60,6 +77,8 @@ export type PostflopView = {
   manifest: BoardManifest;
   currentNodeId: string;
   line: PostflopLineItem[];
+  /** The line enriched with per-decision seats/stacks/options for display. */
+  lineNodes: PostflopSessionLineNode[];
   notice: string | null;
   picker: StreetPicker | null;
   pendingStreet: PendingStreet | null;
@@ -142,32 +161,48 @@ export function usePostflopSession() {
     [loadStreet]
   );
 
-  const clickAction = useCallback((displayLabel: string) => {
+  /** Take `displayLabel` at `parentNodeId` (any visited node). Branching from
+   *  a past node truncates the line there first, GTO Wizard style. */
+  const pickActionAt = useCallback((parentNodeId: string, displayLabel: string) => {
     const c = coreRef.current;
     if (!c || c.pendingStreet) return;
-    const currentDoc = docsRef.current[toSuffix(c.currentNodeId)];
-    if (!currentDoc) return;
+    const parentDoc = docsRef.current[toSuffix(parentNodeId)];
+    if (!parentDoc) return;
+
+    // Line up to (and including) the branch point.
+    let baseLine: PostflopLineItem[];
+    if (parentNodeId === "r:0") {
+      baseLine = [];
+    } else {
+      const idx = c.line.findIndex((item) => item.nodeId === parentNodeId);
+      if (idx < 0) return; // not a visited node
+      baseLine = c.line.slice(0, idx + 1);
+    }
+    // Land on the branch point for the notice/picker outcomes below, so a
+    // dead-end pick from a past card still moves the view to that node.
+    const atParent = { currentNodeId: parentNodeId, line: baseLine };
 
     const match = displayActionMap(
-      currentDoc,
-      c.currentNodeId,
+      parentDoc,
+      parentNodeId,
       c.manifest.effective_stack_chips
     ).find(
       (a) => a.display === displayLabel || a.pioLabel === displayLabel
     );
     if (!match) return;
 
-    const childId = `${c.currentNodeId}:${match.pioLabel}`;
+    const childId = `${parentNodeId}:${match.pioLabel}`;
     const meta = metaRef.current[toSuffix(childId)];
 
     if (!meta) {
-      setCore({ ...c, notice: "This continuation was not extracted.", picker: null });
+      setCore({ ...c, ...atParent, notice: "This continuation was not extracted.", picker: null });
       return;
     }
     if (meta.type === "SPLIT_NODE") {
       const nextStreet = dealtCards(childId).length === 0 ? "turn" : "river";
       setCore({
         ...c,
+        ...atParent,
         notice: null,
         picker: { chanceNodeId: childId, street: nextStreet },
       });
@@ -176,6 +211,7 @@ export function usePostflopSession() {
     if (meta.type === "terminal") {
       setCore({
         ...c,
+        ...atParent,
         picker: null,
         notice:
           match.pioLabel === "f"
@@ -185,17 +221,26 @@ export function usePostflopSession() {
       return;
     }
     if (!docsRef.current[toSuffix(childId)]) {
-      setCore({ ...c, notice: "This node is missing from the street bundle.", picker: null });
+      setCore({ ...c, ...atParent, notice: "This node is missing from the street bundle.", picker: null });
       return;
     }
     setCore({
       ...c,
       currentNodeId: childId,
-      line: [...c.line, { label: displayLabel, nodeId: childId, kind: "action" }],
+      line: [...baseLine, { label: displayLabel, nodeId: childId, kind: "action" }],
       notice: null,
       picker: null,
     });
   }, []);
+
+  const clickAction = useCallback(
+    (displayLabel: string) => {
+      const c = coreRef.current;
+      if (!c) return;
+      pickActionAt(c.currentNodeId, displayLabel);
+    },
+    [pickActionAt]
+  );
 
   const advanceToStreet = useCallback(
     (c: SessionCore, seedId: string, card: string, manifest: BoardManifest) => {
@@ -358,6 +403,36 @@ export function usePostflopSession() {
       }
     }
 
+    // Enriched line for the Line display: each decision item carries the seat,
+    // stack, and the options that were available at its decision node.
+    const lineNodes: PostflopSessionLineNode[] = [];
+    {
+      const eff = core.manifest.effective_stack_chips;
+      let parent = "r:0";
+      for (const item of core.line) {
+        if (item.kind === "card") {
+          lineNodes.push({ kind: "card", nodeId: item.nodeId, label: item.label });
+          parent = item.nodeId;
+          continue;
+        }
+        const parentDoc = docs[toSuffix(parent)] ?? null;
+        const seat =
+          parentDoc?.position === "IP" ? core.ipSeat : core.oopSeat;
+        lineNodes.push({
+          kind: "action",
+          nodeId: item.nodeId,
+          parentId: parent,
+          seat,
+          stackBB: core.manifest.stacks_map?.[seat] ?? null,
+          options: parentDoc
+            ? displayActionMap(parentDoc, parent, eff).map((a) => a.display)
+            : [item.label],
+          taken: item.label,
+        });
+        parent = item.nodeId;
+      }
+    }
+
     // Picker context
     const usedCards = new Set<string>(
       core.picker ? [...boardToCards(core.manifest.board), ...dealtCards(core.picker.chanceNodeId)] : board
@@ -382,6 +457,7 @@ export function usePostflopSession() {
       manifest: core.manifest,
       currentNodeId: core.currentNodeId,
       line: core.line,
+      lineNodes,
       notice: core.notice,
       picker: core.picker,
       pendingStreet: core.pendingStreet,
@@ -398,5 +474,5 @@ export function usePostflopSession() {
     };
   }, [core, docs, loading]);
 
-  return { view, open, clickAction, pickCard, closePicker, cancelPending, jumpTo, close };
+  return { view, open, clickAction, pickActionAt, pickCard, closePicker, cancelPending, jumpTo, close };
 }

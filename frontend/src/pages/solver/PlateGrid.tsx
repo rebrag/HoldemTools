@@ -9,6 +9,7 @@ import { LayoutGroup } from "framer-motion";
 import useElementSize from "@/hooks/useElementSize";
 import DecisionMatrix from "./DecisionMatrix";
 import ColorKey from "./ColorKey";
+import SingleRangeStudy from "./SingleRangeStudy";
 import PokerTable, { type PokerTableSeat } from "@/components/PokerTable";
 import { PokerTableBackdrop } from "@/components/PokerTableSurface";
 
@@ -30,6 +31,8 @@ type PlateGridProps = {
   ante?: number;
   pot?: number;
   activePlayer?: string;
+  /** Board card codes when a postflop board is in play (study view). */
+  board?: string[];
 
   /** NEW: show ranges only for active player */
   singleRangeView?: boolean;
@@ -70,6 +73,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   ante,
   pot,
   activePlayer = "UTG",
+  board,
 
   singleRangeView = false,
   onPlateContentRef,
@@ -235,41 +239,6 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     const isWide = viewW >= 1024;
     const vh = viewH || 640;
 
-    // Table and range widths need concrete pixel values — the PokerTable's
-    // aspect-ratio box collapses without a definite ancestor width.
-    //
-    // Desktop: a portrait table beside the range. Mobile: a full-width
-    // landscape (aspect-[7/5]) table — wider AND shorter than a portrait one —
-    // stacked above a range sized to fill whatever viewport height is left, so
-    // the whole 13×13 grid + ColorKey stay on-screen without scrolling.
-    // Breathing room on the left/right of the mobile table + range so they
-    // don't run edge-to-edge; also makes the table a touch smaller (freeing
-    // vertical room for the range).
-    const SIDE_PAD = 20;
-    const availW = Math.max(200, baseW - SIDE_PAD * 2);
-
-    const tableW = isWide
-      ? Math.round(Math.max(260, Math.min(baseW * 0.38, vh * 0.6, 460)))
-      : Math.round(availW);
-
-    let rangeW: number;
-    if (isWide) {
-      rangeW = Math.round(
-        Math.max(300, Math.min(baseW - tableW - 24, vh * 0.85, 620))
-      );
-    } else {
-      const tableH = (tableW * 5) / 7; // aspect-[7/5]
-      const effTop = singleRangeTop > 0 ? singleRangeTop : vh * 0.3;
-      const GAP_BELOW_TABLE = 12; // flex gap-3
-      // Range box height ≈ rangeW + 29 (p-2 16px y + mt-1 4px + ColorKey ~25px
-      // over the square matrix); a little extra so the last row never clips.
-      const BOX_EXTRA = 34;
-      const belowTableH = vh - effTop - tableH - GAP_BELOW_TABLE;
-      rangeW = Math.round(
-        Math.max(200, Math.min(availW, belowTableH - BOX_EXTRA, 560))
-      );
-    }
-
     const tableSeats: PokerTableSeat[] = positions.map((pos, i) => {
       const file = files[i];
       const data = file ? plateData[file] : undefined;
@@ -291,13 +260,66 @@ const PlateGrid: React.FC<PlateGridProps> = ({
       };
     });
 
+    /* Desktop: the GTO Wizard style study layout — matrix beside a stacked
+     * table / action summary / hand breakdown column. */
+    if (isWide) {
+      // Until the ResizeObserver delivers the real container width, fall back
+      // to the viewport minus this wrapper's px-4 + the page's p-1 padding so
+      // the first paint never overflows horizontally.
+      const studyW = container.width || Math.max(320, viewW - 40);
+      return (
+        <div ref={singleRangeWrapRef} className="relative w-full px-2 sm:px-4">
+          {/* Same max width as the study top strip so the columns align with it. */}
+          <div ref={container.ref} className="relative z-10 mx-auto w-full max-w-[1480px]">
+            <SingleRangeStudy
+              tableSeats={tableSeats}
+              seatCount={positions.length}
+              pot={pot}
+              ante={ante}
+              board={board}
+              activeGrid={activeGrid}
+              activeFile={activeFile}
+              activeDataLoaded={!!activeData}
+              loading={loading}
+              isICMSim={isICMSim}
+              randomFillEnabled={randomFillEnabled}
+              onActionClick={onActionClick}
+              baseW={studyW}
+              viewH={vh}
+              topOffset={singleRangeTop}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    // Mobile: a full-width landscape (aspect-[7/5]) table stacked above a
+    // range sized to fill whatever viewport height is left, so the whole
+    // 13×13 grid + ColorKey stay on-screen without scrolling. Table and range
+    // widths need concrete pixel values — the PokerTable's aspect-ratio box
+    // collapses without a definite ancestor width. Breathing room on the
+    // left/right so they don't run edge-to-edge; also makes the table a touch
+    // smaller (freeing vertical room for the range).
+    const SIDE_PAD = 20;
+    const availW = Math.max(200, baseW - SIDE_PAD * 2);
+    const tableW = Math.round(availW);
+
+    const tableH = (tableW * 5) / 7; // aspect-[7/5]
+    const effTop = singleRangeTop > 0 ? singleRangeTop : vh * 0.3;
+    const GAP_BELOW_TABLE = 12; // flex gap-3
+    // Range box height ≈ rangeW + 29 (p-2 16px y + mt-1 4px + ColorKey ~25px
+    // over the square matrix); a little extra so the last row never clips.
+    const BOX_EXTRA = 34;
+    const belowTableH = vh - effTop - tableH - GAP_BELOW_TABLE;
+    const rangeW = Math.round(
+      Math.max(200, Math.min(availW, belowTableH - BOX_EXTRA, 560))
+    );
+
     return (
       <div ref={singleRangeWrapRef} className="relative flex justify-center py-2 w-full">
         <div
           ref={container.ref}
-          className={`relative z-10 w-full flex ${
-            isWide ? "flex-row items-center justify-center" : "flex-col items-center"
-          } gap-3 sm:gap-5`}
+          className="relative z-10 w-full flex flex-col items-center gap-3 sm:gap-5"
         >
           {/* Loading */}
           <div
@@ -315,7 +337,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
               seats={tableSeats}
               className="w-full"
               maxWidthClassName="max-w-none"
-              aspectClassName={isWide ? "aspect-[4/5]" : "aspect-[7/5]"}
+              aspectClassName="aspect-[7/5]"
               potAmount={pot != null ? Math.max(0, pot) : undefined}
               potLabel={
                 pot != null
