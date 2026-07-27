@@ -22,6 +22,16 @@ test.beforeEach(async ({ page }) => {
      returning-user state; the tour deserves its own spec. */
   await page.addInitScript(() => window.localStorage.setItem("tourSeen", "1"));
 
+  /* This spec targets FolderSelector.tsx directly (its own desktop-glass-
+     window vs mobile-sheet split, driven purely by a 639px matchMedia query
+     inside FolderSelectorDropdown - see the file docstring above). At a
+     desktop viewport, singleRangeView defaulting on routes through the
+     unrelated desktop-study layout instead (SimSelect's compact "Select Sim"
+     trigger, same dropdown, different chrome), which is out of scope here.
+     Pin the toggle off so this suite always reaches FolderSelector's wide
+     trigger regardless of the app's current default. */
+  await page.addInitScript(() => window.localStorage.setItem("singleRangeView", "0"));
+
   await page.route("**/api/Files/foldersWithMetadata*", (route) =>
     route.fulfill({ json: foldersFixture })
   );
