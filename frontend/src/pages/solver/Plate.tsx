@@ -215,26 +215,28 @@ const Plate: React.FC<PlateProps> = ({
         }
       `}</style>
 
+      {/* Dealer chip sits outside the fade wrapper so the button marker stays
+          fully visible even after the BTN player folds (plate at 10%). */}
+      {displayData?.Position === "BTN" && (
+        <div
+          className="absolute z-0 pointer-events-none"
+          style={{
+            top: "-16%",
+            right: "-8%",
+            width: "33%",
+            aspectRatio: "1",
+          }}
+        >
+          <DealerButton />
+        </div>
+      )}
+
       <motion.div
         className="relative overflow-visible will-change-transform"
         initial={false}
         animate={{ opacity: alive ? 1 : 0.1 }}
         transition={{ duration: 0.25 }}
       >
-        {displayData?.Position === "BTN" && (
-          <div
-            className="absolute z-0 pointer-events-none"
-            style={{
-              top: "-16%",
-              right: "-8%",
-              width: "33%",
-              aspectRatio: "1",
-            }}
-          >
-            <DealerButton />
-          </div>
-        )}
-
         <div
           className={`relative z-10 border rounded-[7px] shadow-md p-0 bg-white/20 ${
             isActive ? "border-emerald-400" : "border-gray-200"

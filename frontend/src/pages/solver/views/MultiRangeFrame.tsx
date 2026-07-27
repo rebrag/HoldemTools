@@ -23,8 +23,8 @@ interface MultiRangeFrameProps {
   zoomWidth: number;
   onClearZoom: () => void;
   loading: boolean;
-  ante?: number;
-  pot?: number;
+  /** Chips actually in the pot (excludes bets still in front of players). */
+  actualPot?: number;
   children: ReactNode;
 }
 
@@ -36,8 +36,7 @@ const MultiRangeFrame = ({
   zoomWidth,
   onClearZoom,
   loading,
-  ante,
-  pot,
+  actualPot,
   children,
 }: MultiRangeFrameProps) => {
   const badgeClass =
@@ -106,17 +105,11 @@ const MultiRangeFrame = ({
             <LoadingIndicator />
           </div>
 
-          {/* Pot/ante badge (center of table) */}
-          {ante !== undefined && pot !== undefined && (
+          {/* Pot badge (center of table): only once chips are actually pooled */}
+          {actualPot != null && actualPot > 0 && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
               <div className={badgeClass}>
-                <strong>Total:</strong> {fmtBB(Math.max(0, pot), 1)} bb
-                {ante !== 0 && (
-                  <>
-                    <br />
-                    <strong>Pot:</strong> {ante} bb
-                  </>
-                )}
+                <strong>Pot:</strong> {fmtBB(Math.max(0, actualPot), 1)} bb
               </div>
             </div>
           )}

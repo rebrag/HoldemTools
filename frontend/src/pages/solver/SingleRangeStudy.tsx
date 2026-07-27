@@ -14,8 +14,8 @@ import HandBreakdown from "./HandBreakdown";
 interface SingleRangeStudyProps {
   tableSeats: PokerTableSeat[];
   seatCount: number;
+  /** Chips actually in the pot (excludes bets still in front of players). */
   pot?: number;
-  ante?: number;
   /** Board card codes when in a postflop session (blocks dead combos). */
   board?: string[];
 
@@ -44,7 +44,6 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   tableSeats,
   seatCount,
   pot,
-  ante,
   board,
   activeGrid,
   activeFile,
@@ -116,11 +115,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
               aspectClassName="aspect-[7/5]"
               potAmount={pot != null ? Math.max(0, pot) : undefined}
               potLabel={
-                pot != null
-                  ? `Pot ${fmt(Math.max(0, pot), 1)} bb${
-                      ante ? ` · Ante ${fmt(ante, 1)}` : ""
-                    }`
-                  : undefined
+                pot != null ? `Pot ${fmt(Math.max(0, pot), 1)} bb` : undefined
               }
             />
           </div>

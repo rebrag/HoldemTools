@@ -21,7 +21,7 @@ const MultiRangeDesktopView = ({
   playerBets,
   activePlayer,
   pot,
-  ante,
+  actualPot,
   isICMSim,
   randomFillEnabled,
   onActionClick,
@@ -66,8 +66,7 @@ const MultiRangeDesktopView = ({
       zoomWidth={zoomWidth}
       onClearZoom={() => setZoom(null)}
       loading={loading}
-      ante={ante}
-      pot={pot}
+      actualPot={actualPot}
     >
       <div className="flex flex-col gap-4">
         {rows.map((row, rowIdx) => {

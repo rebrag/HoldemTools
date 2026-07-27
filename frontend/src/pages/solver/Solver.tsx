@@ -6,6 +6,7 @@ import SingleRangeMobileView from "./views/SingleRangeMobileView";
 import MultiRangeDesktopView from "./views/MultiRangeDesktopView";
 import MultiRangeMobileView from "./views/MultiRangeMobileView";
 import { actionToNumberMap } from "@/lib/solver/constants";
+import { displayedPot } from "@/lib/pokerPot";
 import { getInitialMapping } from "@/lib/solver/getInitialMapping";
 import useKeyboardShortcuts from "@/hooks/useKeyboardShortcuts";
 import useSolverLayout from "./useSolverLayout";
@@ -283,6 +284,15 @@ const Solver = ({ user }: SolverProps) => {
   // Desktop single-range "study" layout: compact SimSelect box + Line strip
   // on top, matrix beside a table/summary/breakdown column below.
   const desktopStudy = mode === "single-desktop";
+
+  // Chips actually in the pot (shared rule: lib/pokerPot displayedPot).
+  // Preflop potSize includes the in-front bets, so subtract them (leaving the
+  // ante); the postflop sync already stores Pio's start-of-street pot with
+  // bets excluded, so it passes through as-is. Folded players' dead chips
+  // deliberately stay in front of their seats until the street completes.
+  const actualPot = pf.view
+    ? potSize
+    : displayedPot(potSize, Object.values(playerBets));
 
   useEffect(() => {
     const initialAlive: Record<string, boolean> = {};
@@ -1225,7 +1235,7 @@ const Solver = ({ user }: SolverProps) => {
                 playerBets={playerBets}
                 activePlayer={activePlayer}
                 pot={potSize}
-                ante={metadata.ante}
+                actualPot={actualPot}
                 isICMSim={isICMSim}
                 randomFillEnabled={randomFillEnabled}
                 onActionClick={handleActionClick}
@@ -1243,7 +1253,7 @@ const Solver = ({ user }: SolverProps) => {
                 playerBets={playerBets}
                 activePlayer={activePlayer}
                 pot={potSize}
-                ante={metadata.ante}
+                actualPot={actualPot}
                 isICMSim={isICMSim}
                 randomFillEnabled={randomFillEnabled}
                 onActionClick={handleActionClick}
@@ -1262,7 +1272,7 @@ const Solver = ({ user }: SolverProps) => {
                 playerBets={playerBets}
                 activePlayer={activePlayer}
                 pot={potSize}
-                ante={metadata.ante}
+                actualPot={actualPot}
                 isICMSim={isICMSim}
                 randomFillEnabled={randomFillEnabled}
                 onActionClick={handleActionClick}
@@ -1280,7 +1290,7 @@ const Solver = ({ user }: SolverProps) => {
                 playerBets={playerBets}
                 activePlayer={activePlayer}
                 pot={potSize}
-                ante={metadata.ante}
+                actualPot={actualPot}
                 isICMSim={isICMSim}
                 randomFillEnabled={randomFillEnabled}
                 onActionClick={handleActionClick}

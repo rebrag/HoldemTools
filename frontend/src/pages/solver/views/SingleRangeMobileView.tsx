@@ -22,8 +22,7 @@ const SingleRangeMobileView = ({
   alivePlayers,
   playerBets,
   activePlayer,
-  pot,
-  ante,
+  actualPot,
   isICMSim,
   randomFillEnabled,
   onActionClick,
@@ -86,12 +85,10 @@ const SingleRangeMobileView = ({
             className="w-full"
             maxWidthClassName="max-w-none"
             aspectClassName="aspect-[7/5]"
-            potAmount={pot != null ? Math.max(0, pot) : undefined}
+            potAmount={actualPot != null ? Math.max(0, actualPot) : undefined}
             potLabel={
-              pot != null
-                ? `Pot ${fmtBB(Math.max(0, pot), 1)} bb${
-                    ante ? ` · Ante ${fmtBB(ante, 1)}` : ""
-                  }`
+              actualPot != null
+                ? `Pot ${fmtBB(Math.max(0, actualPot), 1)} bb`
                 : undefined
             }
           />

@@ -14,8 +14,10 @@ export interface SolverRangeBaseProps {
   alivePlayers: Record<string, boolean>;
   playerBets: Record<string, number>;
   activePlayer: string;
+  /** Inclusive pot (all chips wagered, current bets included) - pot-odds math. */
   pot?: number;
-  ante?: number;
+  /** Chips actually pooled in the middle (excludes in-front bets) - display. */
+  actualPot?: number;
   isICMSim?: boolean;
   randomFillEnabled: boolean;
   onActionClick: (action: string, file: string) => void;

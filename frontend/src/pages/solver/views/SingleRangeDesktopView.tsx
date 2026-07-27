@@ -17,8 +17,7 @@ const SingleRangeDesktopView = ({
   alivePlayers,
   playerBets,
   activePlayer,
-  pot,
-  ante,
+  actualPot,
   isICMSim,
   randomFillEnabled,
   onActionClick,
@@ -53,8 +52,7 @@ const SingleRangeDesktopView = ({
         <SingleRangeStudy
           tableSeats={tableSeats}
           seatCount={positions.length}
-          pot={pot}
-          ante={ante}
+          pot={actualPot}
           board={board}
           activeGrid={activeGrid}
           activeFile={activeFile}

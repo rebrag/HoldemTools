@@ -32,7 +32,7 @@ const MultiRangeMobileView = ({
   playerBets,
   activePlayer,
   pot,
-  ante,
+  actualPot,
   isICMSim,
   randomFillEnabled,
   onActionClick,
@@ -123,8 +123,7 @@ const MultiRangeMobileView = ({
       zoomWidth={zoomWidth}
       onClearZoom={() => setZoom(null)}
       loading={loading}
-      ante={ante}
-      pot={pot}
+      actualPot={actualPot}
     >
       <div
         className="flex justify-center w-full overflow-visible"
