@@ -28,7 +28,8 @@ export interface SolverRangeBaseProps {
 export interface SingleRangeViewProps extends SolverRangeBaseProps {
   windowWidth: number;
   windowHeight: number;
-  /** Board card codes when a postflop board is in play. */
+  /** Board card codes when a postflop board is in play: dealt onto the
+   *  table's center slot, and used to name the street on the pot label. */
   board?: string[];
 }
 
