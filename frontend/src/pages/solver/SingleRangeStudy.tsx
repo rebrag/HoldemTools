@@ -1,7 +1,8 @@
 // Desktop (>=1024px) single-range "study" layout: the active player's big
 // range matrix on the left; poker table, action summary, and per-combo hand
-// breakdown stacked in a right column. Mobile keeps PlateGrid's stacked
-// single-range layout; this component is desktop-only.
+// breakdown stacked in a right column. Mobile uses SingleRangeMobileView's
+// stacked layout instead; this component is desktop-only (rendered by
+// views/SingleRangeDesktopView).
 import React, { useState } from "react";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import PokerTable, { type PokerTableSeat } from "@/components/PokerTable";

@@ -73,7 +73,6 @@ interface PlateProps {
   maxBet?: number;
   onPlateZoom?: (payload: PlateZoomPayload) => void;
   compact?: boolean;
-  singleRangeView?: boolean;
 }
 
 /* ──────────────────── component ──────────────────── */
@@ -94,7 +93,6 @@ const Plate: React.FC<PlateProps> = ({
   maxBet,
   onPlateZoom,
   compact = false,
-  singleRangeView = false,
 }) => {
   const [displayData, setDisplayData] = useState<JsonData | undefined>(data);
   useEffect(() => {
@@ -137,54 +135,6 @@ const Plate: React.FC<PlateProps> = ({
 
   const stackBB = (displayData?.bb ?? 0) - playerBet;
   const betBB = playerBet;
-  const shouldShowGrid = !singleRangeView || isActive;
-
-  const CardsPlaceholder: React.FC<{ size: number }> = ({ size }) => {
-    const w = size;
-    const h = Math.round(size * 1.4);
-    const logoScale = 0.45;
-
-    const baseCardClass =
-      "absolute rounded-md border border-white/70 bg-white shadow";
-
-    return (
-      <div className="relative mx-auto" style={{ width: w * 1.8, height: h }}>
-        <div
-          className={baseCardClass}
-          style={{ width: w, height: h, left: 0, top: 0, transform: "rotate(-6deg)" }}
-        >
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <img
-              src="/logo-icon.png"
-              alt=""
-              draggable="false"
-              style={{ width: w * logoScale, height: "auto", opacity: 0.9 }}
-            />
-          </div>
-        </div>
-
-        <div
-          className={baseCardClass}
-          style={{
-            width: w,
-            height: h,
-            left: w * 0.45,
-            top: 0,
-            transform: "rotate(6deg)",
-          }}
-        >
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <img
-              src="/logo-icon.png"
-              alt=""
-              draggable="false"
-              style={{ width: w * logoScale, height: "auto", opacity: 0.9 }}
-            />
-          </div>
-        </div>
-      </div>
-    );
-  };
 
   const TopBadges = (
     <div className="mt-1 w-full space-y-1">
@@ -316,23 +266,13 @@ const Plate: React.FC<PlateProps> = ({
                         });
                       }}
                     >
-                      {shouldShowGrid ? (
-                        <ZoomableGrid isActive={isActive}>
-                          <DecisionMatrix
-                            gridData={gridData}
-                            randomFillEnabled={randomFillEnabled && !!displayData}
-                            isICMSim={isICMSim}
-                          />
-                        </ZoomableGrid>
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center">
-                          {alive ? (
-                            <CardsPlaceholder
-                              size={Math.max(28, (dmWidth ?? 120) * 0.35)}
-                            />
-                          ) : null}
-                        </div>
-                      )}
+                      <ZoomableGrid isActive={isActive}>
+                        <DecisionMatrix
+                          gridData={gridData}
+                          randomFillEnabled={randomFillEnabled && !!displayData}
+                          isICMSim={isICMSim}
+                        />
+                      </ZoomableGrid>
                     </div>
                   </div>
                 </div>
@@ -395,23 +335,13 @@ const Plate: React.FC<PlateProps> = ({
                   }}
                 >
                   <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
-                    {shouldShowGrid ? (
-                      <ZoomableGrid isActive={isActive}>
-                        <DecisionMatrix
-                          gridData={gridData}
-                          randomFillEnabled={randomFillEnabled && !!displayData}
-                          isICMSim={isICMSim}
-                        />
-                      </ZoomableGrid>
-                    ) : (
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        {alive ? (
-                          <CardsPlaceholder
-                            size={Math.min(72, (plateWidth ?? 220) * 0.22)}
-                          />
-                        ) : null}
-                      </div>
-                    )}
+                    <ZoomableGrid isActive={isActive}>
+                      <DecisionMatrix
+                        gridData={gridData}
+                        randomFillEnabled={randomFillEnabled && !!displayData}
+                        isICMSim={isICMSim}
+                      />
+                    </ZoomableGrid>
                   </div>
                 </div>
 
@@ -444,7 +374,7 @@ const Plate: React.FC<PlateProps> = ({
   );
 };
 
-/* Memoized: PlateGrid re-renders on every zoom open/close (its `zoom` state),
+/* Memoized: the multi-range views re-render on every zoom open/close (their `zoom` state),
  * but a plate's own inputs rarely change on that tap. Without this, each of the
  * on-screen plates re-rendered its full 13×13 DecisionMatrix on every zoom
  * toggle. All callback props reaching Plate are stable (`handleActionClick` is

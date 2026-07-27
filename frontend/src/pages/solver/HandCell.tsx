@@ -167,7 +167,7 @@ const HandCell: React.FC<HandCellProps> = ({
 
 /* ───────── memo: shallow compare relevant props ─────────
  * The cell `data` objects come from `combineDataByHand`, which is memoized
- * upstream (Plate/PlateGrid `useMemo`), so `actions`/`evs` keep stable
+ * upstream (Plate / useActiveRange `useMemo`), so `actions`/`evs` keep stable
  * references across re-renders that don't actually change the data. Comparing
  * by reference avoids serializing every cell (2× JSON.stringify × 169 cells ×
  * every plate) on unrelated parent re-renders such as opening the zoom overlay. */
