@@ -1,9 +1,10 @@
 // src/components/Solver.tsx
 import { useState, useCallback, useLayoutEffect, useEffect, useMemo, useRef } from "react";
 import type { ChangeEvent } from "react";
-import PlateGrid from "./PlateGrid";
 import SingleRangeDesktopView from "./views/SingleRangeDesktopView";
 import SingleRangeMobileView from "./views/SingleRangeMobileView";
+import MultiRangeDesktopView from "./views/MultiRangeDesktopView";
+import MultiRangeMobileView from "./views/MultiRangeMobileView";
 import { actionToNumberMap } from "@/lib/solver/constants";
 import { getInitialMapping } from "@/lib/solver/getInitialMapping";
 import useKeyboardShortcuts from "@/hooks/useKeyboardShortcuts";
@@ -1251,24 +1252,40 @@ const Solver = ({ user }: SolverProps) => {
                 board={pf.view ? pf.view.board : currentBoard}
                 onPlateContentRef={setPlateContentEl}
               />
-            ) : (
-              <PlateGrid
+            ) : mode === "multi-desktop" ? (
+              <MultiRangeDesktopView
                 files={displayPlates}
                 positions={positionOrder}
-                selectedFolder={folder}
-                randomFillEnabled={randomFillEnabled}
-                onActionClick={handleActionClick}
-                windowWidth={windowWidth}
-                windowHeight={windowHeight}
                 plateData={plateData}
                 loading={loading}
                 alivePlayers={alivePlayers}
                 playerBets={playerBets}
-                isICMSim={isICMSim}
-                ante={metadata.ante}
-                pot={potSize}
                 activePlayer={activePlayer}
-                mode={mode}
+                pot={potSize}
+                ante={metadata.ante}
+                isICMSim={isICMSim}
+                randomFillEnabled={randomFillEnabled}
+                onActionClick={handleActionClick}
+                windowWidth={windowWidth}
+                windowHeight={windowHeight}
+                onPlateContentRef={setPlateContentEl}
+              />
+            ) : (
+              <MultiRangeMobileView
+                files={displayPlates}
+                positions={positionOrder}
+                plateData={plateData}
+                loading={loading}
+                alivePlayers={alivePlayers}
+                playerBets={playerBets}
+                activePlayer={activePlayer}
+                pot={potSize}
+                ante={metadata.ante}
+                isICMSim={isICMSim}
+                randomFillEnabled={randomFillEnabled}
+                onActionClick={handleActionClick}
+                windowWidth={windowWidth}
+                windowHeight={windowHeight}
                 onPlateContentRef={setPlateContentEl}
               />
             )}
