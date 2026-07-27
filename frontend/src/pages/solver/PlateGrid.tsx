@@ -12,6 +12,7 @@ import ColorKey from "./ColorKey";
 import SingleRangeStudy from "./SingleRangeStudy";
 import PokerTable, { type PokerTableSeat } from "@/components/PokerTable";
 import { PokerTableBackdrop } from "@/components/PokerTableSurface";
+import type { SolverLayoutMode } from "./useSolverLayout";
 
 type PlateGridProps = {
   files: string[];
@@ -36,6 +37,9 @@ type PlateGridProps = {
 
   /** NEW: show ranges only for active player */
   singleRangeView?: boolean;
+
+  /** Layout mode from useSolverLayout; overrides the internal calcs when set. */
+  mode?: SolverLayoutMode;
 
   /** Called with the inner plate-row div so the parent can align the Line component */
   onPlateContentRef?: (el: HTMLDivElement | null) => void;
@@ -76,6 +80,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   board,
 
   singleRangeView = false,
+  mode,
   onPlateContentRef,
 }) => {
   const [zoom, setZoom] = useState<PlateZoomPayload | null>(null);
@@ -111,7 +116,8 @@ const PlateGrid: React.FC<PlateGridProps> = ({
 
   const baseNarrow =
     files.length === 2 ? !(viewW * 1.3 < viewH) : viewW * 1.3 < viewH;
-  const isNarrow = baseNarrow && files.length > 4;
+  const isNarrow =
+    mode != null ? mode === "multi-mobile" : baseNarrow && files.length > 4;
 
   const gridRows = isNarrow ? Math.ceil(files.length / 2) : 2;
   const gridCols = isNarrow ? 2 : Math.ceil(files.length / 2);
@@ -236,7 +242,7 @@ const PlateGrid: React.FC<PlateGridProps> = ({
      (mobile) the active player's big range matrix.
      ───────────────────────────────────────────────────────────── */
   if (singleRangeView) {
-    const isWide = viewW >= 1024;
+    const isWide = mode != null ? mode === "single-desktop" : viewW >= 1024;
     const vh = viewH || 640;
 
     const tableSeats: PokerTableSeat[] = positions.map((pos, i) => {

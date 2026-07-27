@@ -6,7 +6,7 @@ import PlateGrid from "./PlateGrid";
 import { actionToNumberMap } from "@/lib/solver/constants";
 import { getInitialMapping } from "@/lib/solver/getInitialMapping";
 import useKeyboardShortcuts from "@/hooks/useKeyboardShortcuts";
-import useWindowDimensions from "@/hooks/useWindowDimensions";
+import useSolverLayout from "./useSolverLayout";
 import useFolders from "@/hooks/useFolders";
 import useFiles from "@/hooks/useFiles";
 import axios from "axios";
@@ -148,7 +148,6 @@ type SolverProps = { user: User | null };
 
 const Solver = ({ user }: SolverProps) => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-  const { windowWidth, windowHeight } = useWindowDimensions();
   const uid = user?.uid ?? null;
   const { tier, loading: tierLoading } = useCurrentTier();
 
@@ -272,18 +271,16 @@ const Solver = ({ user }: SolverProps) => {
     return Math.round((stacks.reduce((s, v) => s + v, 0) / stacks.length) * 10) / 10;
   }, [folder]);
 
+  // Which of the four solver layouts is active (see useSolverLayout.ts).
+  // displayPlates always has one entry per position, so positionOrder.length
+  // is the plate count.
+  const { mode, windowWidth, windowHeight } = useSolverLayout(
+    singleRangeView,
+    positionOrder.length
+  );
   // Desktop single-range "study" layout: compact SimSelect box + Line strip
   // on top, matrix beside a table/summary/breakdown column below.
-  const desktopStudy = singleRangeView && windowWidth >= 1024;
-
-  const isNarrow =
-    positionOrder.length === 2 ? !(windowWidth * 1.3 < windowHeight) : windowWidth * 1.3 < windowHeight;
-  const gridRows = isNarrow ? Math.ceil(positionOrder.length / 2) : 2;
-  const gridCols = isNarrow ? 2 : Math.ceil(positionOrder.length / 2);
-  const gridArray = Array(gridRows * gridCols).fill(null);
-  positionOrder.forEach((pos, i) => {
-    gridArray[i] = pos;
-  });
+  const desktopStudy = mode === "single-desktop";
 
   useEffect(() => {
     const initialAlive: Record<string, boolean> = {};
@@ -1491,6 +1488,7 @@ const Solver = ({ user }: SolverProps) => {
               activePlayer={activePlayer}
               board={pf.view ? pf.view.board : currentBoard}
               singleRangeView={singleRangeView}
+              mode={mode}
               onPlateContentRef={setPlateContentEl}
             />
           </div>
