@@ -41,6 +41,63 @@ The watcher is operational tooling only: never deployed, never imported by front
 - Frontend: `cd frontend && npm run dev` (dev) | `npm run build` (build/type-check)
 - Backend: `cd backend && dotnet run` | migrations: `dotnet ef migrations add <Name>` then `dotnet ef database update` (requires the .NET SDK, not just the runtime)
 
+## Frontend environment variables
+
+`frontend/.env` is **generated, not authored**.
+The one editable copy lives outside the repo, at `~/.holdemtools/env/frontend.env`
+(override the directory with `HOLDEMTOOLS_ENV_DIR`).
+`frontend/scripts/ensure-env.mjs` copies it into place and is wired to `predev`,
+`prebuild`, and `pretest:e2e`, so `npm run dev` and `npm run build` just work.
+Run it on its own with `npm run env:check`.
+
+**Edit the canonical file, never `frontend/.env`** - the latter is overwritten on
+every run (a diverging copy is saved to `frontend/.env.bak` once, then clobbered).
+
+For the handful of settings that are genuinely **per-checkout**, write a
+`frontend/.env.local`.
+Vite loads it at higher precedence than `.env`, `ensure-env.mjs` never touches it,
+and `.gitignore` already covers it.
+`VITE_DEV_PORT` is the case that matters: every worktree receives the same
+generated `.env`, and `strictPort` means two dev servers on 5173 fail rather than
+drift, so a second worktree needs `echo "VITE_DEV_PORT=5174" > frontend/.env.local`.
+A shell export beats both.
+`playwright.config.ts` resolves the port through the same `loadEnv` call as
+`vite.config.ts`, so `npm run test:e2e` follows the override instead of attaching
+to a neighbouring worktree's server via `reuseExistingServer`.
+
+This exists because `.env` is gitignored and therefore does **not** travel to a
+`git worktree`.
+A fresh worktree would otherwise start with no config at all, every
+`import.meta.env.VITE_*` would read `undefined`, and Firebase would throw on
+`initializeApp` or half-initialize silently.
+Copying the file into each worktree by hand fixes that once and then rots, since
+a key added in one worktree is silently missing from the others.
+Deriving the in-repo copy from a single source makes that drift structurally
+impossible.
+
+`frontend/.env.example` **is committed** and is the manifest of what the app needs.
+Because it is tracked it reaches every worktree for free, which is what lets a
+missing key fail loudly at `npm run dev` instead of becoming an `undefined` at
+runtime.
+An uncommented key there is required; a commented-out key is optional.
+**Add every new `VITE_*` var to it**, or `env:check` will warn that it is undocumented.
+
+No values are committed.
+Every `VITE_*` is inlined into the client bundle and shipped to browsers, so none
+of them are secret in the cryptographic sense, but this repo is public and keeping
+them out of it stops bots trawling GitHub from pointing a local app at the real
+`gto-lite` project and burning its auth quota.
+The controls that actually protect the project are the Firestore rules, HTTP
+referrer restrictions on the browser API key, and App Check - not the gitignore.
+
+The script no-ops in two cases, so it never breaks a build that does not need it:
+when `USE_FIREBASE_EMULATOR=true` (the emulators supply their own offline config
+and ignore `.env` entirely), and when every required variable is already present
+in `process.env`, which is how Vercel and CI inject them.
+The second check keys off the variables themselves rather than a vendor flag, so
+it holds for any host, and a partially-configured CI still fails rather than
+silently building with half a config.
+
 ## Firebase emulators (Claude Code cloud sessions)
 
 Cloud sessions (claude.ai/code) clone from GitHub only, so the gitignored `frontend/.env` -

@@ -60,10 +60,13 @@ $ git clone https://github.com/rebrag/holdemtools.git && cd holdemtools/frontend
 # 2. Install deps
 $ npm install
 
-# 3. Env vars - frontend/.env, gitignored and never committed.
-#    VITE_API_BASE_URL + the VITE_FIREBASE_* set; see src/lib/firebase.ts.
+# 3. Env vars. frontend/.env is GENERATED, not authored - the one editable copy
+#    lives outside the repo so it survives `git worktree`. Create it from the
+#    committed template, then fill in the real values:
+$ mkdir -p ~/.holdemtools/env && cp .env.example ~/.holdemtools/env/frontend.env
 
-# 4. Run dev server
+# 4. Run dev server. `predev` copies the canonical file into frontend/.env and
+#    fails loudly if a key .env.example calls for is missing.
 $ npm run dev   # http://localhost:5173, override with VITE_DEV_PORT
 
 # 5. No credentials? Run against the Firebase emulators instead -

@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { loadEnv } from "vite";
 
 /**
  * Playwright drives its own Chromium, so it composites frames and can take
@@ -8,6 +9,15 @@ import { defineConfig, devices } from "@playwright/test";
  * a browser download or a test run on deploy. Run it locally with
  * `npm run test:e2e`, or in CI where the browsers are installed explicitly.
  */
+
+/* Resolved exactly the way vite.config.ts resolves it, so a worktree running on
+   a bumped VITE_DEV_PORT tests ITS OWN dev server. Hardcoding 5173 here was a
+   silent cross-worktree hazard: combined with reuseExistingServer below, a
+   second checkout would attach to the first checkout's server and report
+   passing results for code it never loaded. */
+const DEV_PORT = Number(loadEnv("development", process.cwd(), "").VITE_DEV_PORT) || 5173;
+const BASE_URL = `http://localhost:${DEV_PORT}`;
+
 export default defineConfig({
   testDir: "./e2e",
   outputDir: "./test-results",
@@ -27,7 +37,7 @@ export default defineConfig({
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : [["list"]],
 
   use: {
-    baseURL: "http://localhost:5173",
+    baseURL: BASE_URL,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     /* The dropdown's entrance animation is driven by framer-motion, which
@@ -51,7 +61,7 @@ export default defineConfig({
 
   webServer: {
     command: "npm run dev",
-    url: "http://localhost:5173",
+    url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },

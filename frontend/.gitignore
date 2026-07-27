@@ -22,7 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-.env
+# Real values live in ~/.holdemtools/env/frontend.env and are copied in by
+# scripts/ensure-env.mjs. Only the .env.example template is committed.
+.env*
+!.env.example
 
 src/bankroll_import.csv
 src/bulkImportBankroll.mjs
