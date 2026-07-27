@@ -186,6 +186,12 @@ const PokerTable: React.FC<PokerTableProps> = ({
             const hasBet = seat.committedAmount != null && seat.committedAmount > 0;
             const showChips = hasBet && Math.round(seat.committedAmount!) >= 1;
 
+            // Folded/sitting-out dimming is applied to the seat's contents,
+            // never to the dealer badge: the button marker stays fully
+            // visible for the whole hand even after that player folds.
+            const dimClass =
+              seat.folded || seat.sittingOut ? "opacity-40 grayscale" : "";
+
             return (
               <React.Fragment key={seat.key}>
               {hasBet && (
@@ -216,7 +222,7 @@ const PokerTable: React.FC<PokerTableProps> = ({
                 onClick={clickable ? () => onSeatClick!(i) : undefined}
                 className={`absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5 ${
                   clickable ? "cursor-pointer" : "cursor-default"
-                } ${seat.folded || seat.sittingOut ? "opacity-40 grayscale" : ""} ${
+                } ${
                   seat.highlighted
                     ? "rounded-lg ring-2 ring-emerald-400 ring-offset-1 ring-offset-transparent"
                     : ""
@@ -224,24 +230,30 @@ const PokerTable: React.FC<PokerTableProps> = ({
                 style={{ left: `${coord.x}%`, top: `${coord.y}%` }}
                 aria-label={`Seat ${seat.label}`}
               >
-                {seat.holeCards && (
+                {/* Card row also renders (empty) for a card-less button seat,
+                    so the D badge keeps an anchor after the player folds. */}
+                {(seat.holeCards || seat.isButton) && (
                   <div className="relative flex gap-0.5">
-                    {seat.holeCards.map((c, h) => {
-                      // Shrink cards a little for 4-5 card (PLO) hands so the
-                      // row still fits the seat footprint.
-                      const w =
-                        seat.holeCards!.length >= 4
-                          ? Math.round(cardBackWidth * 0.72)
-                          : cardBackWidth;
-                      if (c) return <PlayingCard key={h} code={c} size="sm" width={w} />;
-                      if (!seat.emptySlotsAsPlaceholders) return <CardBack key={h} w={w} />;
-                      return (
-                        <div key={h} className="relative" style={{ width: w }}>
-                          <div className="aspect-[3/4] rounded-[4px] border border-dashed border-white/30 bg-black/15" />
-                          {seat.nextSlotIndex === h && <NextSlotHighlight />}
-                        </div>
-                      );
-                    })}
+                    {seat.holeCards && (
+                      <div className={`flex gap-0.5 ${dimClass}`}>
+                        {seat.holeCards.map((c, h) => {
+                          // Shrink cards a little for 4-5 card (PLO) hands so the
+                          // row still fits the seat footprint.
+                          const w =
+                            seat.holeCards!.length >= 4
+                              ? Math.round(cardBackWidth * 0.72)
+                              : cardBackWidth;
+                          if (c) return <PlayingCard key={h} code={c} size="sm" width={w} />;
+                          if (!seat.emptySlotsAsPlaceholders) return <CardBack key={h} w={w} />;
+                          return (
+                            <div key={h} className="relative" style={{ width: w }}>
+                              <div className="aspect-[3/4] rounded-[4px] border border-dashed border-white/30 bg-black/15" />
+                              {seat.nextSlotIndex === h && <NextSlotHighlight />}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                     {seat.isButton && (
                       /* The seat root is a <button>, so the badge stays a span
                          (nested buttons are invalid HTML). When interactive it
@@ -281,43 +293,45 @@ const PokerTable: React.FC<PokerTableProps> = ({
                   </div>
                 )}
 
-                <span
-                  className={`max-w-[88px] truncate rounded-md px-1.5 py-[1px] text-[10px] font-semibold shadow-md ${
-                    seat.isEmpty
-                      ? "border border-dashed border-white/40 bg-black/25 text-white/60"
-                      : `ring-1 ${
-                          seat.isActive
-                            ? "bg-gradient-to-b from-emerald-400 to-emerald-600 text-white ring-emerald-300/70"
-                            : seat.isHero
-                            ? "bg-gradient-to-b from-amber-400 to-amber-600 text-white ring-amber-300/70"
-                            : "bg-gradient-to-b from-slate-800 to-slate-950 text-sky-100 ring-slate-600/70"
-                        }`
-                  }`}
-                >
-                  {seat.label}
-                </span>
-
-                {seat.stackText && (
-                  <span className="-mt-px rounded-b-md bg-black/60 px-1.5 text-[10px] font-semibold text-emerald-100 shadow-sm ring-1 ring-black/40">
-                    {seat.stackText}
+                <div className={`flex flex-col items-center gap-0.5 ${dimClass}`}>
+                  <span
+                    className={`max-w-[88px] truncate rounded-md px-1.5 py-[1px] text-[10px] font-semibold shadow-md ${
+                      seat.isEmpty
+                        ? "border border-dashed border-white/40 bg-black/25 text-white/60"
+                        : `ring-1 ${
+                            seat.isActive
+                              ? "bg-gradient-to-b from-emerald-400 to-emerald-600 text-white ring-emerald-300/70"
+                              : seat.isHero
+                              ? "bg-gradient-to-b from-amber-400 to-amber-600 text-white ring-amber-300/70"
+                              : "bg-gradient-to-b from-slate-800 to-slate-950 text-sky-100 ring-slate-600/70"
+                          }`
+                    }`}
+                  >
+                    {seat.label}
                   </span>
-                )}
 
-                {seat.sittingOut && seat.label.toLowerCase() !== "sitting out" && (
-                  <span className="mt-0.5 rounded-full bg-black/50 px-1.5 text-[8px] font-semibold uppercase tracking-wide text-white/60">
-                    sitting out
-                  </span>
-                )}
+                  {seat.stackText && (
+                    <span className="-mt-px rounded-b-md bg-black/60 px-1.5 text-[10px] font-semibold text-emerald-100 shadow-sm ring-1 ring-black/40">
+                      {seat.stackText}
+                    </span>
+                  )}
 
-                {/* Legacy below-seat bet badge (used where no committedAmount is
-                    supplied, e.g. the solver view). */}
-                {seat.committedAmount == null && seat.committedText && (
-                  <span className="mt-0.5 rounded-full bg-amber-400/90 px-1.5 text-[9px] font-bold text-amber-950">
-                    {seat.committedText}
-                  </span>
-                )}
+                  {seat.sittingOut && seat.label.toLowerCase() !== "sitting out" && (
+                    <span className="mt-0.5 rounded-full bg-black/50 px-1.5 text-[8px] font-semibold uppercase tracking-wide text-white/60">
+                      sitting out
+                    </span>
+                  )}
 
-                {seat.extra}
+                  {/* Legacy below-seat bet badge (used where no committedAmount is
+                      supplied, e.g. the solver view). */}
+                  {seat.committedAmount == null && seat.committedText && (
+                    <span className="mt-0.5 rounded-full bg-amber-400/90 px-1.5 text-[9px] font-bold text-amber-950">
+                      {seat.committedText}
+                    </span>
+                  )}
+
+                  {seat.extra}
+                </div>
               </button>
               </React.Fragment>
             );

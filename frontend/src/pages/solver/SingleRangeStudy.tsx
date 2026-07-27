@@ -1,7 +1,8 @@
 // Desktop (>=1024px) single-range "study" layout: the active player's big
 // range matrix on the left; poker table, action summary, and per-combo hand
-// breakdown stacked in a right column. Mobile keeps PlateGrid's stacked
-// single-range layout; this component is desktop-only.
+// breakdown stacked in a right column. Mobile uses SingleRangeMobileView's
+// stacked layout instead; this component is desktop-only (rendered by
+// views/SingleRangeDesktopView).
 import React, { useState } from "react";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import PokerTable, { type PokerTableSeat } from "@/components/PokerTable";
@@ -13,8 +14,8 @@ import HandBreakdown from "./HandBreakdown";
 interface SingleRangeStudyProps {
   tableSeats: PokerTableSeat[];
   seatCount: number;
+  /** Chips actually in the pot (excludes bets still in front of players). */
   pot?: number;
-  ante?: number;
   /** Board card codes when in a postflop session (blocks dead combos). */
   board?: string[];
 
@@ -43,7 +44,6 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   tableSeats,
   seatCount,
   pot,
-  ante,
   board,
   activeGrid,
   activeFile,
@@ -115,11 +115,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
               aspectClassName="aspect-[7/5]"
               potAmount={pot != null ? Math.max(0, pot) : undefined}
               potLabel={
-                pot != null
-                  ? `Pot ${fmt(Math.max(0, pot), 1)} bb${
-                      ante ? ` · Ante ${fmt(ante, 1)}` : ""
-                    }`
-                  : undefined
+                pot != null ? `Pot ${fmt(Math.max(0, pot), 1)} bb` : undefined
               }
             />
           </div>
