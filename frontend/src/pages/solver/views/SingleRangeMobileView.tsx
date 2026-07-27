@@ -10,7 +10,9 @@ import LoadingIndicator from "@/components/LoadingIndicator";
 import PokerTable from "@/components/PokerTable";
 import DecisionMatrix from "../DecisionMatrix";
 import ColorKey from "../ColorKey";
-import useActiveRange, { fmtBB } from "./useActiveRange";
+import SolverTableCenter from "../SolverTableCenter";
+import { boardCardWidth, solverPotLabel } from "../boardDisplay";
+import useActiveRange from "./useActiveRange";
 import useTopOffset from "./useTopOffset";
 import type { SingleRangeViewProps } from "./types";
 
@@ -28,6 +30,7 @@ const SingleRangeMobileView = ({
   onActionClick,
   windowWidth,
   windowHeight,
+  board,
   onPlateContentRef,
 }: SingleRangeViewProps) => {
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
@@ -87,9 +90,12 @@ const SingleRangeMobileView = ({
             aspectClassName="aspect-[7/5]"
             potAmount={actualPot != null ? Math.max(0, actualPot) : undefined}
             potLabel={
-              actualPot != null
-                ? `Pot ${fmtBB(Math.max(0, actualPot), 1)} bb`
-                : undefined
+              actualPot != null ? solverPotLabel(actualPot, board) : undefined
+            }
+            center={
+              board && board.length > 0 ? (
+                <SolverTableCenter board={board} cardWidth={boardCardWidth(tableW)} />
+              ) : undefined
             }
           />
         </div>

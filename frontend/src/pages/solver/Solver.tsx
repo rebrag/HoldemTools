@@ -42,7 +42,7 @@ import {
   pollForBoardManifest,
   type PostflopIndexEntry,
 } from "@/lib/solver/postflopLibrary";
-import { boardToCards, docToJsonData } from "@/lib/solver/postflopNode";
+import { boardToCards, docToJsonData, potSplitChips } from "@/lib/solver/postflopNode";
 import { usePostflopSession } from "@/hooks/usePostflopSession";
 import usePostflopIndex from "@/hooks/usePostflopIndex";
 import PostflopLine from "./PostflopLine";
@@ -284,15 +284,17 @@ const Solver = ({ user }: SolverProps) => {
   // Desktop single-range "study" layout: compact SimSelect box + Line strip
   // on top, matrix beside a table/summary/breakdown column below.
   const desktopStudy = mode === "single-desktop";
+  // Only the single-range layouts render a real PokerTable, and those deal the
+  // board onto the felt themselves; the multi-range layouts show plates over a
+  // bare felt backdrop and still need the standalone board strip.
+  const boardOnTable = mode === "single-desktop" || mode === "single-mobile";
 
   // Chips actually in the pot (shared rule: lib/pokerPot displayedPot).
-  // Preflop potSize includes the in-front bets, so subtract them (leaving the
-  // ante); the postflop sync already stores Pio's start-of-street pot with
-  // bets excluded, so it passes through as-is. Folded players' dead chips
-  // deliberately stay in front of their seats until the street completes.
-  const actualPot = pf.view
-    ? potSize
-    : displayedPot(potSize, Object.values(playerBets));
+  // potSize is the inclusive pot on both sides of the flop - the preflop
+  // machinery and the postflop sync both keep the live bets in it - so one
+  // rule covers both. Folded players' dead chips deliberately stay in front
+  // of their seats until the street completes.
+  const actualPot = displayedPot(potSize, Object.values(playerBets));
 
   useEffect(() => {
     const initialAlive: Record<string, boolean> = {};
@@ -687,15 +689,25 @@ const Solver = ({ user }: SolverProps) => {
     });
     setActivePlayer(view.actorSeat);
 
-    // Bets/pot from the current node (chips -> bb) keeps the table animating.
-    const pot = view.actorDoc?.pot;
-    if (Array.isArray(pot) && pot.length >= 3) {
-      setPlayerBets({
-        [view.oopSeat]: (pot[0] ?? 0) / 100,
-        [view.ipSeat]: (pot[1] ?? 0) / 100,
-      });
-      setPotSize((pot[2] ?? 0) / 100);
-    }
+    // Money on the table for the current node (chips -> bb). potSplitChips
+    // reads it off the node path instead of Pio's running per-player totals,
+    // so a bet that got called on the flop or turn ends up in the pot rather
+    // than parked in front of both seats for the rest of the hand. While a
+    // card picker is open the street's betting is already matched, so the
+    // chips are swept in the way a dealer would before dealing the next card.
+    const chanceNode = view.picker?.chanceNodeId ?? null;
+    const money = potSplitChips(
+      chanceNode ?? view.currentNodeId,
+      view.manifest.pot_chips ?? 0,
+      chanceNode != null
+    );
+    setPlayerBets({
+      [view.oopSeat]: money.oopChips / 100,
+      [view.ipSeat]: money.ipChips / 100,
+    });
+    // potSize is the inclusive pot (live bets included), matching preflop;
+    // actualPot subtracts what's still in front of the players.
+    setPotSize((money.potChips + money.oopChips + money.ipChips) / 100);
     // NOTE: deliberately depends only on pf.view. positionOrder is derived
     // from plateMapping, which this effect writes - including it loops.
   }, [pf.view]);
@@ -1206,7 +1218,7 @@ const Solver = ({ user }: SolverProps) => {
           )}
 
           {/* Current flop display (outside a session, e.g. legacy state) */}
-          {!pf.view && !postflopPending && currentBoard.length > 0 && (
+          {!pf.view && !postflopPending && !boardOnTable && currentBoard.length > 0 && (
             <div className="flex justify-center mb-2 px-2">
               <div className="inline-flex items-center gap-2 rounded-md bg-slate-900/80 border border-emerald-500/40 px-3 py-1.5 shadow-sm">
                 <span className="text-[11px] font-semibold tracking-wide text-emerald-300">

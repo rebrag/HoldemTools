@@ -51,6 +51,58 @@ export function priorStreetCommitChips(nodeId: string): number {
 }
 
 /**
+ * Chips each player has in front of them on the CURRENT (unfinished) street.
+ * Heads-up postflop the actor alternates strictly, OOP first on every street,
+ * and Pio bet labels are street-cumulative "commit to NNN" amounts - so
+ * replaying the street's segments gives each side's live bet.
+ */
+export function currentStreetCommitChips(nodeId: string): {
+  oop: number;
+  ip: number;
+} {
+  const commit = { oop: 0, ip: 0 };
+  let toCall = 0;
+  streetActionsOf(nodeId).forEach((seg, i) => {
+    const who = i % 2 === 0 ? "oop" : "ip";
+    const bet = seg.match(/^b(\d+)$/);
+    if (bet) {
+      commit[who] = Number(bet[1]);
+      toCall = commit[who];
+    } else if (seg === "c") {
+      commit[who] = toCall; // a call matches the outstanding bet; a check is 0
+    }
+  });
+  return commit;
+}
+
+/**
+ * How the money at a node sits on the table: chips already pooled in the
+ * middle, and each side's live bet in front of them.
+ *
+ * Derived from the node path rather than Pio's `pot` triple, which reports
+ * each player's chips as a running total for the whole postflop tree - taking
+ * it at face value leaves a called flop bet parked in front of both seats for
+ * the rest of the hand instead of in the pot.
+ *
+ * `streetComplete` (a chance node waiting on a turn/river card) sweeps the
+ * street's matched bets into the middle, the way a dealer would before dealing.
+ */
+export function potSplitChips(
+  nodeId: string,
+  startingPotChips: number,
+  streetComplete = false
+): { potChips: number; oopChips: number; ipChips: number } {
+  // Completed streets are matched by definition, so both players put in the
+  // same amount: count it twice.
+  const pooled = startingPotChips + 2 * priorStreetCommitChips(nodeId);
+  const live = currentStreetCommitChips(nodeId);
+  if (streetComplete) {
+    return { potChips: pooled + live.oop + live.ip, oopChips: 0, ipChips: 0 };
+  }
+  return { potChips: pooled, oopChips: live.oop, ipChips: live.ip };
+}
+
+/**
  * Human label for a raw pio action at a given node.
  * "c" -> Check | Call, "f" -> Fold, "bNNN" -> Bet X bb | Raise to X bb.
  * With `effectiveStackChips` (manifest.effective_stack_chips), a bet that

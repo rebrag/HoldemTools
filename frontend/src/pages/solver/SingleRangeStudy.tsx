@@ -10,13 +10,16 @@ import { HandCellData } from "@/lib/solver/utils";
 import DecisionMatrix from "./DecisionMatrix";
 import ActionSummary from "./ActionSummary";
 import HandBreakdown from "./HandBreakdown";
+import SolverTableCenter from "./SolverTableCenter";
+import { boardCardWidth, solverPotLabel } from "./boardDisplay";
 
 interface SingleRangeStudyProps {
   tableSeats: PokerTableSeat[];
   seatCount: number;
   /** Chips actually in the pot (excludes bets still in front of players). */
   pot?: number;
-  /** Board card codes when in a postflop session (blocks dead combos). */
+  /** Board card codes when in a postflop session: dealt onto the table's
+   *  center slot, and used by HandBreakdown to block dead combos. */
   board?: string[];
 
   activeGrid: HandCellData[];
@@ -36,9 +39,6 @@ interface SingleRangeStudyProps {
 }
 
 const GAP = 16;
-
-const fmt = (n: number, decimals = 1) =>
-  Math.abs(n % 1) > 1e-9 ? n.toFixed(decimals) : n.toFixed(0);
 
 const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   tableSeats,
@@ -114,8 +114,11 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
               maxWidthClassName="max-w-none"
               aspectClassName="aspect-[7/5]"
               potAmount={pot != null ? Math.max(0, pot) : undefined}
-              potLabel={
-                pot != null ? `Pot ${fmt(Math.max(0, pot), 1)} bb` : undefined
+              potLabel={pot != null ? solverPotLabel(pot, board) : undefined}
+              center={
+                board && board.length > 0 ? (
+                  <SolverTableCenter board={board} cardWidth={boardCardWidth(tableW)} />
+                ) : undefined
               }
             />
           </div>

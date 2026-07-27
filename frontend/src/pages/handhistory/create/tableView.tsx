@@ -4,8 +4,8 @@
 // pot, board reveals, folds, active seat). Extracted verbatim from the recorder
 // to keep them in lock-step.
 import React from "react";
-import PlayingCard from "@/components/PlayingCard";
-import { CardBack, type PokerTableSeat } from "@/components/PokerTable";
+import BoardRow from "@/components/BoardRow";
+import { type PokerTableSeat } from "@/components/PokerTable";
 import { displayedPot, fmtUnit, revealedBoardCount, STREET_NAMES, type Engine } from "./engine";
 import { straddlesOf, type AdvancedHandState } from "./types";
 
@@ -132,39 +132,6 @@ export function potView(
   }
   return { amount, label, winnerSeatIndex };
 }
-
-// A row of 5 board cards (face-up when revealed, else a card back). In the
-// recorder it opens the board editor on tap (onEdit); in the read-only replayer
-// onEdit is omitted and the row renders as a plain, non-interactive element.
-export const BoardRow: React.FC<{
-  board: (string | null)[];
-  revealCount: number;
-  live: boolean;
-  onEdit?: () => void;
-  ariaLabel: string;
-}> = ({ board, revealCount, live, onEdit, ariaLabel }) => {
-  const cards = [0, 1, 2, 3, 4].map((i) => {
-    const revealed = !live || i < revealCount;
-    const c = board[i];
-    return revealed && c ? (
-      <PlayingCard key={i} code={c} size="sm" width={36} />
-    ) : (
-      <CardBack key={i} w={36} />
-    );
-  });
-  if (!onEdit) {
-    return (
-      <div className="flex gap-1" aria-label={ariaLabel}>
-        {cards}
-      </div>
-    );
-  }
-  return (
-    <button type="button" onClick={onEdit} className="flex gap-1" aria-label={ariaLabel}>
-      {cards}
-    </button>
-  );
-};
 
 // The center slot of the table: pot/street badge (live) or an edit hint (setup),
 // an ante preview during setup, and one or two board rows. Editable mode (the
