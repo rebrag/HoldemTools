@@ -2,6 +2,8 @@
 import { useState, useCallback, useLayoutEffect, useEffect, useMemo, useRef } from "react";
 import type { ChangeEvent } from "react";
 import PlateGrid from "./PlateGrid";
+import SingleRangeDesktopView from "./views/SingleRangeDesktopView";
+import SingleRangeMobileView from "./views/SingleRangeMobileView";
 import { actionToNumberMap } from "@/lib/solver/constants";
 import { getInitialMapping } from "@/lib/solver/getInitialMapping";
 import useKeyboardShortcuts from "@/hooks/useKeyboardShortcuts";
@@ -1210,29 +1212,66 @@ const Solver = ({ user }: SolverProps) => {
             </div>
           )}
 
-          {/* Plate grid */}
+          {/* Active view (one of the four layouts - see useSolverLayout) */}
           <div className="relative z-0">
-            <PlateGrid
-              files={displayPlates}
-              positions={positionOrder}
-              selectedFolder={folder}
-              randomFillEnabled={randomFillEnabled}
-              onActionClick={handleActionClick}
-              windowWidth={windowWidth}
-              windowHeight={windowHeight}
-              plateData={plateData}
-              loading={loading}
-              alivePlayers={alivePlayers}
-              playerBets={playerBets}
-              isICMSim={isICMSim}
-              ante={metadata.ante}
-              pot={potSize}
-              activePlayer={activePlayer}
-              board={pf.view ? pf.view.board : currentBoard}
-              singleRangeView={singleRangeView}
-              mode={mode}
-              onPlateContentRef={setPlateContentEl}
-            />
+            {mode === "single-desktop" ? (
+              <SingleRangeDesktopView
+                files={displayPlates}
+                positions={positionOrder}
+                plateData={plateData}
+                loading={loading}
+                alivePlayers={alivePlayers}
+                playerBets={playerBets}
+                activePlayer={activePlayer}
+                pot={potSize}
+                ante={metadata.ante}
+                isICMSim={isICMSim}
+                randomFillEnabled={randomFillEnabled}
+                onActionClick={handleActionClick}
+                windowWidth={windowWidth}
+                windowHeight={windowHeight}
+                board={pf.view ? pf.view.board : currentBoard}
+              />
+            ) : mode === "single-mobile" ? (
+              <SingleRangeMobileView
+                files={displayPlates}
+                positions={positionOrder}
+                plateData={plateData}
+                loading={loading}
+                alivePlayers={alivePlayers}
+                playerBets={playerBets}
+                activePlayer={activePlayer}
+                pot={potSize}
+                ante={metadata.ante}
+                isICMSim={isICMSim}
+                randomFillEnabled={randomFillEnabled}
+                onActionClick={handleActionClick}
+                windowWidth={windowWidth}
+                windowHeight={windowHeight}
+                board={pf.view ? pf.view.board : currentBoard}
+                onPlateContentRef={setPlateContentEl}
+              />
+            ) : (
+              <PlateGrid
+                files={displayPlates}
+                positions={positionOrder}
+                selectedFolder={folder}
+                randomFillEnabled={randomFillEnabled}
+                onActionClick={handleActionClick}
+                windowWidth={windowWidth}
+                windowHeight={windowHeight}
+                plateData={plateData}
+                loading={loading}
+                alivePlayers={alivePlayers}
+                playerBets={playerBets}
+                isICMSim={isICMSim}
+                ante={metadata.ante}
+                pot={potSize}
+                activePlayer={activePlayer}
+                mode={mode}
+                onPlateContentRef={setPlateContentEl}
+              />
+            )}
           </div>
         </div>
 

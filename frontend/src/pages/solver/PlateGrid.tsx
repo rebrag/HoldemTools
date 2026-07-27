@@ -1,16 +1,12 @@
 //PlateGrid.tsx
-/* eslint-disable react-hooks/rules-of-hooks */
-import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useMemo, useState } from "react";
 import Plate, { PlateZoomPayload } from "./Plate";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import { generateSpiralOrder } from "@/lib/solver/gridUtils";
-import { JsonData, HandCellData, combineDataByHand } from "@/lib/solver/utils";
+import { JsonData } from "@/lib/solver/utils";
 import { LayoutGroup } from "framer-motion";
 import useElementSize from "@/hooks/useElementSize";
 import DecisionMatrix from "./DecisionMatrix";
-import ColorKey from "./ColorKey";
-import SingleRangeStudy from "./SingleRangeStudy";
-import PokerTable, { type PokerTableSeat } from "@/components/PokerTable";
 import { PokerTableBackdrop } from "@/components/PokerTableSurface";
 import type { SolverLayoutMode } from "./useSolverLayout";
 
@@ -32,11 +28,6 @@ type PlateGridProps = {
   ante?: number;
   pot?: number;
   activePlayer?: string;
-  /** Board card codes when a postflop board is in play (study view). */
-  board?: string[];
-
-  /** NEW: show ranges only for active player */
-  singleRangeView?: boolean;
 
   /** Layout mode from useSolverLayout; overrides the internal calcs when set. */
   mode?: SolverLayoutMode;
@@ -77,37 +68,12 @@ const PlateGrid: React.FC<PlateGridProps> = ({
   ante,
   pot,
   activePlayer = "UTG",
-  board,
-
-  singleRangeView = false,
   mode,
   onPlateContentRef,
 }) => {
   const [zoom, setZoom] = useState<PlateZoomPayload | null>(null);
 
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
-
-  // Distance from the document top to the single-range wrapper (i.e. the height
-  // of the nav / folder / line chrome above it). Scroll-invariant via scrollY,
-  // so the mobile range can be sized to exactly fill the remaining viewport.
-  const singleRangeWrapRef = useRef<HTMLDivElement | null>(null);
-  const [singleRangeTop, setSingleRangeTop] = useState(0);
-  const measureTop = useCallback(() => {
-    const el = singleRangeWrapRef.current;
-    if (el) setSingleRangeTop(el.getBoundingClientRect().top + window.scrollY);
-  }, []);
-  // Re-measure after every commit so the mobile range budget reflects late
-  // layout changes (the Line row grows once solver data loads, without any prop
-  // whose identity we could depend on). Cheap + idempotent: the wrapper's top is
-  // invariant to its own content, so setState bails once it settles — no loop.
-  useLayoutEffect(() => {
-    measureTop();
-  });
-  useLayoutEffect(() => {
-    measureTop();
-    window.addEventListener("resize", measureTop);
-    return () => window.removeEventListener("resize", measureTop);
-  }, [measureTop]);
 
   const baseW = container.width || windowWidth;
 
@@ -148,9 +114,10 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     return [c0, c1];
   }, [orderedEntries]);
 
-  const rows: (readonly [string, string])[][] = [];
-  for (let i = 0; i < orderedEntries.length; i += gridCols)
-    rows.push(orderedEntries.slice(i, i + gridCols));
+  const rows: (readonly [string, string])[][] = Array.from(
+    { length: Math.ceil(orderedEntries.length / gridCols) },
+    (_, r) => orderedEntries.slice(r * gridCols, (r + 1) * gridCols)
+  );
 
   const gapPx = 15;
 
@@ -213,15 +180,6 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     return { plateW, dmW: Math.round(dmW), sbW: Math.round(sbW) };
   }, [isNarrow, halfPlateWidth, gridRows, gridContainerHeight, remainingViewportH]);
 
-  /* ── Single-range view: data for the one active plate ── */
-  const activeIndex = positions.findIndex((p) => p === activePlayer);
-  const activeFile = activeIndex >= 0 ? files[activeIndex] : undefined;
-  const activeData = activeFile ? plateData[activeFile] : undefined;
-  const activeGrid: HandCellData[] = useMemo(
-    () => (activeData ? combineDataByHand(activeData) : []),
-    [activeData]
-  );
-
   const getZoomWidth = () => {
     const base = isNarrow
       ? narrowDims.plateW ?? 220
@@ -236,153 +194,6 @@ const PlateGrid: React.FC<PlateGridProps> = ({
     (isNarrow
       ? "bg-white/60 px-0.5 py-0.5 text-[8px]"
       : "bg-white/60 px-2 py-0 text-xs");
-
-  /* ─────────────────────────────────────────────────────────────
-     Single-range view: a poker table beside (desktop) or above
-     (mobile) the active player's big range matrix.
-     ───────────────────────────────────────────────────────────── */
-  if (singleRangeView) {
-    const isWide = mode != null ? mode === "single-desktop" : viewW >= 1024;
-    const vh = viewH || 640;
-
-    const tableSeats: PokerTableSeat[] = positions.map((pos, i) => {
-      const file = files[i];
-      const data = file ? plateData[file] : undefined;
-      const alive = alivePlayers[pos] ?? true;
-      const bet = playerBets[pos] ?? 0;
-      const stackBB = data ? (data.bb ?? 0) - bet : null;
-      return {
-        key: pos,
-        label: pos,
-        stackText: stackBB != null ? `${fmt(stackBB, 1)} bb` : undefined,
-        // Numeric bet drives the shared ChipStack + pill (matching the hand
-        // recorder); committedText is the pill label.
-        committedAmount: bet > 0 ? bet : undefined,
-        committedText: bet > 0 ? `${fmt(bet, 1)} bb` : undefined,
-        holeCards: alive ? [null, null] : undefined,
-        isButton: pos === "BTN",
-        isActive: pos === activePlayer,
-        folded: !alive,
-      };
-    });
-
-    /* Desktop: the GTO Wizard style study layout — matrix beside a stacked
-     * table / action summary / hand breakdown column. */
-    if (isWide) {
-      // Until the ResizeObserver delivers the real container width, fall back
-      // to the viewport minus this wrapper's px-4 + the page's p-1 padding so
-      // the first paint never overflows horizontally.
-      const studyW = container.width || Math.max(320, viewW - 40);
-      return (
-        <div ref={singleRangeWrapRef} className="relative w-full px-2 sm:px-4">
-          {/* Same max width as the study top strip so the columns align with it. */}
-          <div ref={container.ref} className="relative z-10 mx-auto w-full max-w-[1480px]">
-            <SingleRangeStudy
-              tableSeats={tableSeats}
-              seatCount={positions.length}
-              pot={pot}
-              ante={ante}
-              board={board}
-              activeGrid={activeGrid}
-              activeFile={activeFile}
-              activeDataLoaded={!!activeData}
-              loading={loading}
-              isICMSim={isICMSim}
-              randomFillEnabled={randomFillEnabled}
-              onActionClick={onActionClick}
-              baseW={studyW}
-              viewH={vh}
-              topOffset={singleRangeTop}
-            />
-          </div>
-        </div>
-      );
-    }
-
-    // Mobile: a full-width landscape (aspect-[7/5]) table stacked above a
-    // range sized to fill whatever viewport height is left, so the whole
-    // 13×13 grid + ColorKey stay on-screen without scrolling. Table and range
-    // widths need concrete pixel values — the PokerTable's aspect-ratio box
-    // collapses without a definite ancestor width. Breathing room on the
-    // left/right so they don't run edge-to-edge; also makes the table a touch
-    // smaller (freeing vertical room for the range).
-    const SIDE_PAD = 20;
-    const availW = Math.max(200, baseW - SIDE_PAD * 2);
-    const tableW = Math.round(availW);
-
-    const tableH = (tableW * 5) / 7; // aspect-[7/5]
-    const effTop = singleRangeTop > 0 ? singleRangeTop : vh * 0.3;
-    const GAP_BELOW_TABLE = 12; // flex gap-3
-    // Range box height ≈ rangeW + 29 (p-2 16px y + mt-1 4px + ColorKey ~25px
-    // over the square matrix); a little extra so the last row never clips.
-    const BOX_EXTRA = 34;
-    const belowTableH = vh - effTop - tableH - GAP_BELOW_TABLE;
-    const rangeW = Math.round(
-      Math.max(200, Math.min(availW, belowTableH - BOX_EXTRA, 560))
-    );
-
-    return (
-      <div ref={singleRangeWrapRef} className="relative flex justify-center py-2 w-full">
-        <div
-          ref={container.ref}
-          className="relative z-10 w-full flex flex-col items-center gap-3 sm:gap-5"
-        >
-          {/* Loading */}
-          <div
-            className={`absolute inset-0 flex items-center justify-center z-50 transition-opacity duration-100 ${
-              loading ? "opacity-100" : "opacity-0 pointer-events-none"
-            }`}
-          >
-            <LoadingIndicator />
-          </div>
-
-          {/* Poker table (definite width so it doesn't collapse) */}
-          <div className="flex-shrink-0" style={{ width: tableW }}>
-            <PokerTable
-              size={positions.length}
-              seats={tableSeats}
-              className="w-full"
-              maxWidthClassName="max-w-none"
-              aspectClassName="aspect-[7/5]"
-              potAmount={pot != null ? Math.max(0, pot) : undefined}
-              potLabel={
-                pot != null
-                  ? `Pot ${fmt(Math.max(0, pot), 1)} bb${
-                      ante ? ` · Ante ${fmt(ante, 1)}` : ""
-                    }`
-                  : undefined
-              }
-            />
-          </div>
-
-          {/* Active player's range */}
-          <div
-            ref={onPlateContentRef}
-            className="relative flex-shrink-0 border border-emerald-400 rounded-[9px] shadow-md p-2 bg-white/20"
-            style={{ width: rangeW }}
-          >
-            <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
-              <DecisionMatrix
-                gridData={activeGrid}
-                randomFillEnabled={randomFillEnabled && !!activeData}
-                isICMSim={isICMSim}
-              />
-            </div>
-
-            <div className="mt-1 w-full">
-              <ColorKey
-                data={activeGrid}
-                loading={!activeData}
-                onActionClick={(action) =>
-                  activeFile && onActionClick(action, activeFile)
-                }
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div
@@ -508,7 +319,6 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                           sidebarWidthPx={narrowDims.sbW}
                           compact
                           onPlateZoom={setZoom}
-                          singleRangeView={singleRangeView}
                         />
                       ))}
                     </div>
@@ -546,7 +356,6 @@ const PlateGrid: React.FC<PlateGridProps> = ({
                         pot={pot}
                         maxBet={maxBet}
                         onPlateZoom={setZoom}
-                        singleRangeView={singleRangeView}
                       />
                       ))}
                     </div>
