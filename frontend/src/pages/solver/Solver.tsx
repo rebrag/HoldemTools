@@ -1,7 +1,6 @@
 // src/components/Solver.tsx
 import { useState, useCallback, useLayoutEffect, useEffect, useMemo, useRef } from "react";
 import type { ChangeEvent } from "react";
-import { Info } from "lucide-react";
 import PlateGrid from "./PlateGrid";
 import { actionToNumberMap } from "@/lib/solver/constants";
 import { getInitialMapping } from "@/lib/solver/getInitialMapping";
@@ -16,8 +15,8 @@ import { Steps } from "intro.js-react";
 import "intro.js/introjs.css";
 import { User } from "firebase/auth";
 import LoginSignupModal from "@/components/LoginSignupModal";
-import FolderSelector from "./FolderSelector";
-import SimSelect from "./SimSelect";
+import StudyTopStrip from "./header/StudyTopStrip";
+import ClassicHeader from "./header/ClassicHeader";
 import ProUpsell from "@/components/ProUpsell";
 import {
   requiredTierForFolder,
@@ -1148,165 +1147,44 @@ const Solver = ({ user }: SolverProps) => {
           {(folderError || filesError) && <div className="text-red-500">{folderError || filesError}</div>}
 
           {desktopStudy ? (
-            /* Study strip: SimSelect box + Line side by side */
-            <div className="px-2 sm:px-4 mt-1">
-              <div className="mx-auto w-full max-w-[1480px]">
-                <div className="relative z-50 flex items-stretch gap-3">
-                  <div
-                    data-intro-target="folder-selector"
-                    className="w-[300px] flex-shrink-0"
-                  >
-                    <SimSelect
-                      folders={folders}
-                      currentFolder={folder}
-                      onFolderSelect={handleFolderSelect}
-                      metaByFolder={folderMetaMap}
-                      userTier={tier ?? "free"}
-                      simName={metadata.name}
-                      playerCount={playerCount}
-                      avgStack={avgStack}
-                      ante={metadata.ante}
-                      icm={metadata.icm}
-                      singleRangeView={singleRangeView}
-                      onToggleSingleRange={() => setSingleRangeView((v) => !v)}
-                    />
-                  </div>
-                  <div
-                    ref={lineWrapperRef}
-                    className="relative flex min-w-0 flex-1 items-center"
-                  >
-                    {lineNode}
-                  </div>
-                  {libraryButton}
-                </div>
-              </div>
-            </div>
+            <StudyTopStrip
+              folders={folders}
+              currentFolder={folder}
+              onFolderSelect={handleFolderSelect}
+              metaByFolder={folderMetaMap}
+              userTier={tier ?? "free"}
+              simName={metadata.name}
+              playerCount={playerCount}
+              avgStack={avgStack}
+              ante={metadata.ante}
+              icm={metadata.icm}
+              singleRangeView={singleRangeView}
+              onToggleSingleRange={() => setSingleRangeView((v) => !v)}
+              line={lineNode}
+              libraryButton={libraryButton}
+              lineWrapperRef={lineWrapperRef}
+            />
           ) : (
-            <>
-          {/* Top row: Sim info button (small), FolderSelector (wide, with filter + SR buttons) */}
-          <div className="px-2 sm:px-4 mt-1">
-            <div className="mx-auto w-full max-w-xl lg:max-w-3xl">
-              <div className="relative z-50">
-                <div className="flex items-stretch gap-2">
-                  {/* Solution info chip + popover, always on the left */}
-                  {metadata?.name && (
-                    <div className="flex-shrink-0">
-                      <div className="relative group">
-                        <button
-                          type="button"
-                          onClick={() => setSimInfoOpen((o) => !o)}
-                          className="
-                            h-9 sm:h-10 px-2.5 gap-1.5 max-w-[9rem] sm:max-w-[15rem]
-                            inline-flex items-center justify-start
-                            rounded-xl border border-gray-300 bg-white/95 shadow-md
-                            hover:bg-gray-100 text-gray-800
-                            focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60
-                          "
-                          aria-label="Solution info"
-                          title={metadata.name}
-                        >
-                          <Info size={16} strokeWidth={2.2} className="shrink-0 text-emerald-600" />
-                          <span className="truncate text-xs font-semibold">
-                            {metadata.name}
-                          </span>
-                        </button>
-
-                        {/* Solution info popover on hover / click */}
-                        <div
-                          className={[
-                            "transition-opacity duration-150 absolute left-0 top-full mt-1 z-50 w-64",
-                            simInfoOpen
-                              ? "opacity-100 pointer-events-auto"
-                              : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto",
-                          ].join(" ")}
-                        >
-                          <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-xl">
-                            <div className="mb-2 break-words text-sm font-semibold text-gray-900">
-                              {metadata.name}
-                            </div>
-
-                            <div className="mb-2 flex flex-wrap gap-1.5">
-                              <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                                {playerCount} players
-                              </span>
-                              {avgStack != null && (
-                                <span className="inline-flex items-center rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700 ring-1 ring-sky-200">
-                                  {avgStack} bb avg
-                                </span>
-                              )}
-                              <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-amber-200">
-                                {metadata.ante > 0 ? `${metadata.ante} bb ante` : "No ante"}
-                              </span>
-                            </div>
-
-                            {Array.isArray(metadata.icm) && metadata.icm.length > 0 ? (
-                              <div>
-                                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-                                  ICM payouts
-                                </div>
-                                <div className="space-y-0.5">
-                                  {metadata.icm.map((value, idx) => {
-                                    const rank = idx + 1;
-                                    const suffix =
-                                      rank === 1 ? "st" : rank === 2 ? "nd" : rank === 3 ? "rd" : "th";
-                                    return (
-                                      <div
-                                        key={idx}
-                                        className="flex justify-between gap-2 text-xs text-gray-700"
-                                      >
-                                        <span>
-                                          {rank}
-                                          <sup>{suffix}</sup> place
-                                        </span>
-                                        <span className="font-medium tabular-nums">
-                                          ${value.toLocaleString()}
-                                        </span>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="text-xs text-gray-500">Chip EV · no ICM</div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Folder selector (center, wide) */}
-                  <div
-                    data-intro-target="folder-selector"
-                    className="flex-1 min-w-0"
-                  >
-                    <FolderSelector
-                      folders={folders}
-                      currentFolder={folder}
-                      onFolderSelect={handleFolderSelect}
-                      metaByFolder={folderMetaMap}
-                      userTier={tier ?? "free"}
-                      fullWidth
-                      singleRangeView={singleRangeView}
-                      onToggleSingleRange={() => setSingleRangeView((v) => !v)}
-                    />
-                  </div>
-
-                  {/* Solved flops library */}
-                  {libraryButton}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Line row: preflop seat strip, or the postflop breadcrumb in a session */}
-          <div
-            ref={lineWrapperRef}
-            className="relative flex items-center mt-2 mb-2"
-          >
-            {lineNode}
-          </div>
-            </>
+            <ClassicHeader
+              folders={folders}
+              currentFolder={folder}
+              onFolderSelect={handleFolderSelect}
+              metaByFolder={folderMetaMap}
+              userTier={tier ?? "free"}
+              fullWidth
+              singleRangeView={singleRangeView}
+              onToggleSingleRange={() => setSingleRangeView((v) => !v)}
+              simName={metadata.name}
+              playerCount={playerCount}
+              avgStack={avgStack}
+              ante={metadata.ante}
+              icm={metadata.icm}
+              simInfoOpen={simInfoOpen}
+              onToggleSimInfo={() => setSimInfoOpen((o) => !o)}
+              line={lineNode}
+              libraryButton={libraryButton}
+              lineWrapperRef={lineWrapperRef}
+            />
           )}
 
           {/* Pending solve banner */}
