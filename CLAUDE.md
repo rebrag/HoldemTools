@@ -6,12 +6,13 @@ so cross-cutting (frontend + backend) changes can happen in one commit and one C
 The repo was created by merging two previously separate repositories, with their **full commit
 history preserved** under the `frontend/` and `backend/` subfolders.
 
-## The two subprojects
+## The subprojects
 
 | Folder | Stack | Original repo | Role |
 |---|---|---|---|
 | `frontend/` | React + TypeScript + Vite + Tailwind | `rebrag/GTOLite` | Frontend web app |
 | `backend/` | .NET 8 Web API + EF Core + SQL Server | `rebrag/HoldemToolsAPI` | Backend API (namespace `PokerRangeAPI2`, assembly `GTOLiteAPI`) |
+| `watcher/` | Python + pywinauto + PioSOLVER | `rebrag/GTOLite-Helper-Script` (archived; snapshot copy, history stays there) | Postflop solve pipeline: runs on Josh's PC, solves uploaded gametrees with Pio, uploads solution blobs to ADLS |
 
 Each subfolder keeps its own `README.md`, and `frontend/` keeps its own `CLAUDE.md` with
 frontend-specific conventions.
@@ -19,6 +20,9 @@ Defer to those for subproject-specific rules.
 
 Hosting: frontend on Vercel, API on Azure App Service.
 Solver data is served from Azure Data Lake.
+The postflop manifest / street-bundle / node-doc schemas the frontend consumes originate in
+`watcher/extraction.py` - see `watcher/README.md`.
+The watcher is operational tooling only: never deployed, never imported by frontend or backend.
 
 ## How they talk
 
