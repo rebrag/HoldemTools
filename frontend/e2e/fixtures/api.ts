@@ -63,7 +63,26 @@ export type ApiStub = {
   unhandled: string[];
 };
 
-export async function stubSolverApi(page: Page): Promise<ApiStub> {
+/**
+ * A solved board for the postflop routes: the library index, the board
+ * manifest, and one street bundle per dotted seed suffix ("r.0").
+ *
+ * Served through the same catch-all as everything else rather than as extra
+ * `page.route` calls, so there is no registration-order question about which
+ * handler wins, and an unstubbed postflop path still lands in `unhandled`.
+ */
+export type PostflopFixture = {
+  index: unknown;
+  manifest: unknown;
+  streets: Record<string, unknown>;
+  /** The board's stacks folder id, whose preflop plates the Line loads. */
+  stacks: string;
+};
+
+export async function stubSolverApi(
+  page: Page,
+  opts: { postflop?: PostflopFixture } = {}
+): Promise<ApiStub> {
   const unhandled: string[] = [];
 
   await page.route("**/api/**", async (route) => {
@@ -72,6 +91,20 @@ export async function stubSolverApi(page: Page): Promise<ApiStub> {
 
     if (pathname.endsWith("/api/Files/foldersWithMetadata")) {
       return json(foldersFixture);
+    }
+
+    // Postflop. An empty library is the honest default: a spec that has not
+    // opted in should see no solved boards rather than a 404 banner.
+    if (pathname.endsWith("/api/Files/piosolutionsIndex")) {
+      return json(opts.postflop?.index ?? { schema: 3, entries: [] });
+    }
+    if (opts.postflop) {
+      if (pathname.endsWith("/manifest")) return json(opts.postflop.manifest);
+      const street = pathname.match(/\/streets\/([^/]+)\.json$/);
+      if (street) {
+        const bundle = opts.postflop.streets[decodeURIComponent(street[1])];
+        if (bundle) return json(bundle);
+      }
     }
 
     const list = pathname.match(/\/api\/Files\/listJSONs\/([^/]+)$/);
@@ -84,6 +117,18 @@ export async function stubSolverApi(page: Page): Promise<ApiStub> {
     if (file) {
       const folder = decodeURIComponent(file[1]);
       const name = decodeURIComponent(file[2]);
+
+      /* The solved board's own stacks folder. Opening a board renders its
+         preflop line, which loads the plate behind each preflop node - real
+         calls for a folder that is not in foldersFixture. Serving them keeps
+         the postflop specs hermetic without adding a row to the shared folder
+         fixture, which every folder-selector baseline is sized against. */
+      if (opts.postflop && folder === opts.postflop.stacks) {
+        const seat = SEAT_BY_PLATE[name];
+        if (name === "metadata.json") return json({ ante: 0 });
+        return json(seat ? platePayload(seat, stackFor(folder, seat)) : {});
+      }
+
       const entry = byFolder.get(folder);
       if (!entry) return route.fulfill({ status: 404, json: { error: "no such folder" } });
 

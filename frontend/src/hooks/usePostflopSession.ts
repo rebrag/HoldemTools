@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { PioSolutionDoc } from "@/lib/solver/postflopClient";
+import { buildComboDetail, type ComboDetail } from "@/lib/solver/comboDetail";
 import type {
   BoardManifest,
   ManifestNode,
@@ -99,6 +100,8 @@ export type PostflopView = {
    *  stacks and the pot split, which both have to net it out. */
   preflopCommitChips: number;
   actions: { pioLabel: string; display: string }[];
+  /** Per-combo strategy/EV/equity for the acting seat; null pre-schema-4. */
+  actorCombos: ComboDetail | null;
   loading: boolean;
 };
 
@@ -119,6 +122,8 @@ export function usePostflopSession() {
   const [loading, setLoading] = useState(false);
   const docsRef = useRef<Record<string, PioSolutionDoc>>({});
   const metaRef = useRef<Record<string, ManifestNode>>({});
+  /** Node suffix -> its bundle's hand_order (shared array per bundle). */
+  const handOrderRef = useRef<Record<string, string[]>>({});
   const coreRef = useRef<SessionCore | null>(null);
   const cancelRef = useRef(false);
   docsRef.current = docs;
@@ -133,6 +138,13 @@ export function usePostflopSession() {
       if (!bundle) return false;
       docsRef.current = { ...docsRef.current, ...bundle.nodes };
       metaRef.current = { ...metaRef.current, ...bundle.meta };
+      // Every node of a bundle indexes its combo arrays against the bundle's
+      // hand_order, so each one points at the same shared array.
+      if (bundle.hand_order?.length) {
+        const next = { ...handOrderRef.current };
+        for (const suffix of Object.keys(bundle.nodes)) next[suffix] = bundle.hand_order;
+        handOrderRef.current = next;
+      }
       setDocs(docsRef.current);
       return true;
     },
@@ -157,6 +169,7 @@ export function usePostflopSession() {
       cancelRef.current = false;
       docsRef.current = {};
       metaRef.current = {};
+      handOrderRef.current = {};
       setDocs({});
       setLoading(true);
       try {
@@ -376,6 +389,7 @@ export function usePostflopSession() {
     setDocs({});
     docsRef.current = {};
     metaRef.current = {};
+    handOrderRef.current = {};
   }, []);
 
   const view: PostflopView | null = useMemo(() => {
@@ -463,6 +477,10 @@ export function usePostflopSession() {
       }
     }
 
+    const actionMap = currentDoc
+      ? displayActionMap(currentDoc, core.currentNodeId, core.manifest.effective_stack_chips)
+      : [];
+
     // Picker context
     const usedCards = new Set<string>(
       core.picker ? [...boardToCards(core.manifest.board), ...dealtCards(core.picker.chanceNodeId)] : board
@@ -499,9 +517,12 @@ export function usePostflopSession() {
       opponentSeat,
       opponentDoc,
       preflopCommitChips: pfCommit,
-      actions: currentDoc
-        ? displayActionMap(currentDoc, core.currentNodeId, core.manifest.effective_stack_chips)
-        : [],
+      actions: actionMap,
+      actorCombos: buildComboDetail(
+        currentDoc,
+        handOrderRef.current[currentSuffix],
+        actionMap.map((a) => a.display)
+      ),
       loading,
     };
   }, [core, docs, loading]);

@@ -64,5 +64,11 @@ export default defineConfig({
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
+    /* Specs that need a signed-in user (the postflop library is auth-gated)
+       drive the dev auth store via localStorage, which only exists when the
+       bypass is compiled in. Setting it here rather than in a local .env keeps
+       the suite reproducible on any checkout and in CI. The store still starts
+       SIGNED OUT, so specs that do not opt in are unaffected. */
+    env: { VITE_DEV_AUTH_BYPASS: "true" },
   },
 });

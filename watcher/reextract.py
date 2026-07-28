@@ -68,6 +68,11 @@ def reextract_board(fs, registry: CfrRegistry, stacks: str, node_name: str, boar
 
     ctx = context_from_manifest(manifest, os.path.basename(cfr_path), extract["tree_info"])
     ctx["effective_stack_chips"] = extract.get("effective_stack")
+    # calc_results reads straight off the .cfr, so a re-extract can fill in
+    # stats (notably MES) for boards solved before they were recorded.
+    for key, value in (extract.get("results") or {}).items():
+        if value is not None:
+            ctx["summary"][key] = value
     root_view = extract["streets"]["r:0"]["views"].get("r:0")
     if root_view and root_view.get("pot"):
         ctx["pot_chips"] = root_view["pot"][-1]

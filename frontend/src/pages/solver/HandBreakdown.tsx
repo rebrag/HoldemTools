@@ -1,8 +1,12 @@
 // Per-combo breakdown for one hand class (the cell the pointer is over in the
-// matrix): each concrete combo renders as a tile whose background is the
-// class's action mix (exact preflop - every combo of a class shares the class
-// strategy) with per-action percentages listed on top, GTO Wizard style.
+// matrix): each concrete combo renders as a tile whose background is that
+// combo's own action mix, with its percentages listed on top, GTO Wizard style.
 // Combos that collide with a board card render as dead tiles.
+//
+// Postflop, combos of one class genuinely play differently - blockers make Ah5h
+// a different hand from Ac5c - so `comboDetail` supplies each combo's real mix.
+// Preflop (and on pre-schema-4 solves) there is no per-combo data and every
+// combo of a class shares the class strategy, which is exact preflop.
 import React, { useMemo } from "react";
 import { HandCellData, orderActionKeys } from "@/lib/solver/utils";
 import {
@@ -11,6 +15,7 @@ import {
   expandHandCombos,
   type SlotSegment,
 } from "@/lib/solver/aggregates";
+import { comboKey, type ComboDetail } from "@/lib/solver/comboDetail";
 import useElementSize from "@/hooks/useElementSize";
 import "./App.css";
 
@@ -20,6 +25,8 @@ interface HandBreakdownProps {
   hand?: string | null;
   /** Board card codes (postflop); combos containing one are dead. */
   board?: string[];
+  /** Real per-combo mixes; falls back to the class average when absent. */
+  comboDetail?: ComboDetail | null;
   loading?: boolean;
   className?: string;
 }
@@ -66,55 +73,92 @@ interface ActionRow {
   pct: string;
 }
 
-const ComboTile: React.FC<{
+interface ComboTileData {
+  key: string;
   c1: string;
   c2: string;
+  blocked: boolean;
   rows: ActionRow[];
   segments: SlotSegment[];
-  blocked: boolean;
-}> = React.memo(({ c1, c2, rows, segments, blocked }) => (
-  <div className="relative flex h-full min-h-[82px] flex-col justify-between overflow-hidden rounded-[4px] bg-slate-900/60 ring-1 ring-black/30">
-    {/* stacked action-mix background */}
-    {!blocked && (
-      <div className="absolute inset-0 flex" aria-hidden="true">
-        {segments.map(({ slot, width, color }) => (
-          <div
-            key={slot}
-            className="segment h-full"
-            style={{ width: `${width}%`, backgroundColor: color }}
-          />
-        ))}
-      </div>
-    )}
+  /** Reach weight 0..1; below 1 the combo is only partly in the range. */
+  weight: number | null;
+  /** Equity vs the opponent's range at this node, 0..1. */
+  equity: number | null;
+}
 
-    {/* header: combo chip + % column mark */}
-    <div className="relative z-10 flex items-start justify-between px-1 pt-1">
-      <ComboChip c1={c1} c2={c2} dim={blocked} />
+const ComboTile: React.FC<Omit<ComboTileData, "key">> = React.memo(
+  ({ c1, c2, rows, segments, blocked, weight, equity }) => (
+    <div
+      data-testid="combo-tile"
+      data-combo={`${c1}${c2}`}
+      data-blocked={blocked ? "1" : "0"}
+      className="relative flex h-full min-h-[82px] flex-col justify-between overflow-hidden rounded-[4px] bg-slate-900/60 ring-1 ring-black/30"
+    >
+      {/* stacked action-mix background */}
       {!blocked && (
-        <span className="text-[9px] font-semibold text-slate-900/70">%</span>
+        <div className="absolute inset-0 flex" aria-hidden="true">
+          {segments.map(({ slot, width, color }) => (
+            <div
+              key={slot}
+              data-testid="combo-segment"
+              data-slot={slot}
+              data-width={width.toFixed(3)}
+              className="segment h-full"
+              style={{ width: `${width}%`, backgroundColor: color }}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* header: combo chip (+ partial-weight badge) + % column mark */}
+      <div className="relative z-10 flex items-start justify-between gap-1 px-1 pt-1">
+        <div className="flex min-w-0 items-center gap-1">
+          <ComboChip c1={c1} c2={c2} dim={blocked} />
+          {!blocked && weight != null && weight < 0.995 && (
+            <span
+              className="rounded-[2px] bg-slate-900/45 px-1 text-[8px] font-semibold leading-[1.4] text-white/90"
+              title={`Only ${fmtPct(weight)}% of this combo reaches here`}
+            >
+              {fmtPct(weight)}%
+            </span>
+          )}
+        </div>
+        {!blocked && (
+          <span className="text-[9px] font-semibold text-slate-900/70">%</span>
+        )}
+      </div>
+
+      {/* per-action rows over the colored background */}
+      {!blocked && (
+        <div className="relative z-10 px-1 pb-1 pt-0.5">
+          {rows.map(({ action, pct }) => (
+            <div
+              key={action}
+              className="flex items-baseline justify-between gap-1 leading-tight"
+            >
+              <span className="truncate text-[10px] font-medium text-slate-900/90">
+                {action}
+              </span>
+              <span className="text-[10px] font-semibold tabular-nums text-slate-900/90">
+                {pct}
+              </span>
+            </div>
+          ))}
+          {equity != null && (
+            <div className="mt-0.5 flex items-baseline justify-between gap-1 border-t border-slate-900/20 pt-0.5 leading-tight">
+              <span className="truncate text-[9px] font-medium uppercase tracking-wide text-slate-900/60">
+                Equity
+              </span>
+              <span className="text-[9px] font-semibold tabular-nums text-slate-900/80">
+                {fmtPct(equity)}
+              </span>
+            </div>
+          )}
+        </div>
       )}
     </div>
-
-    {/* per-action rows over the colored background */}
-    {!blocked && (
-      <div className="relative z-10 px-1 pb-1 pt-0.5">
-        {rows.map(({ action, pct }) => (
-          <div
-            key={action}
-            className="flex items-baseline justify-between gap-1 leading-tight"
-          >
-            <span className="truncate text-[10px] font-medium text-slate-900/90">
-              {action}
-            </span>
-            <span className="text-[10px] font-semibold tabular-nums text-slate-900/90">
-              {pct}
-            </span>
-          </div>
-        ))}
-      </div>
-    )}
-  </div>
-));
+  )
+);
 ComboTile.displayName = "ComboTile";
 
 const TILE_MIN_W = 150; // px per grid column before adding another
@@ -123,6 +167,7 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
   data,
   hand,
   board,
+  comboDetail,
   loading,
   className,
 }) => {
@@ -136,34 +181,72 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
     !!cell &&
     Object.keys(cell.actions).filter((a) => a !== "Position").length > 0;
 
-  /* One segment array + row list per class, shared by all of its tiles.
-   * Rows list every action of the class (zero-weight included, like the
-   * reference) in the same canonical order the segments use. */
-  const { rows, segments } = useMemo(() => {
-    if (!hasData) return { rows: [] as ActionRow[], segments: [] as SlotSegment[] };
-    const ordered = orderActionKeys(
-      Object.keys(cell!.actions).filter((a) => a !== "Position")
-    );
-    return {
-      rows: ordered.map((action) => ({
-        action,
-        pct: fmtPct(cell!.actions[action] || 0),
-      })),
-      segments: buildSegmentSlots(cell!.actions),
-    };
-  }, [cell, hasData]);
+  /* Canonical action order for the class, shared by every tile so the rows and
+   * the colored segments line up column-wise down the grid. Zero-weight actions
+   * stay listed, like the reference. */
+  const orderedActions = useMemo(
+    () =>
+      hasData
+        ? orderActionKeys(
+            Object.keys(cell!.actions).filter((a) => a !== "Position")
+          )
+        : [],
+    [cell, hasData]
+  );
 
   const boardSet = useMemo(() => new Set(board ?? []), [board]);
 
-  const combos = useMemo(() => {
+  const combos = useMemo<ComboTileData[]>(() => {
     if (!hand || !hasData) return [];
-    return expandHandCombos(hand).map(([c1, c2]) => ({
-      key: `${c1}${c2}`,
-      c1,
-      c2,
-      blocked: boardSet.has(c1) || boardSet.has(c2),
+
+    // Class-average fallback, used preflop and for pre-schema-4 solves where
+    // no per-combo data exists. Built once and shared by every tile.
+    const classMix = cell!.actions;
+    const classRows = orderedActions.map((action) => ({
+      action,
+      pct: fmtPct(classMix[action] || 0),
     }));
-  }, [hand, hasData, boardSet]);
+    const classSegments = buildSegmentSlots(classMix);
+
+    return expandHandCombos(hand).map(([c1, c2]) => {
+      const blocked = boardSet.has(c1) || boardSet.has(c2);
+      const detail = blocked
+        ? undefined
+        : comboDetail?.byCombo.get(comboKey(c1, c2));
+
+      if (!detail) {
+        return {
+          key: `${c1}${c2}`,
+          c1,
+          c2,
+          blocked,
+          rows: classRows,
+          segments: classSegments,
+          weight: null,
+          equity: null,
+        };
+      }
+
+      // This combo's own mix: the whole point of the panel.
+      const mix: Record<string, number> = {};
+      for (const action of orderedActions) {
+        mix[action] = detail.actions[action]?.freq ?? 0;
+      }
+      return {
+        key: `${c1}${c2}`,
+        c1,
+        c2,
+        blocked,
+        rows: orderedActions.map((action) => ({
+          action,
+          pct: fmtPct(mix[action]),
+        })),
+        segments: buildSegmentSlots(mix),
+        weight: detail.weight,
+        equity: detail.equity,
+      };
+    });
+  }, [hand, hasData, boardSet, cell, orderedActions, comboDetail]);
 
   const isLoading = (loading ?? false) || data.length === 0;
 
@@ -219,15 +302,8 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
               gridAutoRows: "minmax(82px, 1fr)",
             }}
           >
-            {combos.map(({ key, c1, c2, blocked }) => (
-              <ComboTile
-                key={key}
-                c1={c1}
-                c2={c2}
-                rows={rows}
-                segments={segments}
-                blocked={blocked}
-              />
+            {combos.map(({ key, ...tile }) => (
+              <ComboTile key={key} {...tile} />
             ))}
           </div>
         )}

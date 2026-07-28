@@ -1193,6 +1193,12 @@ const Solver = ({ user }: SolverProps) => {
     [pendingFlopUpload, pfIndex]
   );
 
+  /* Per-combo detail belongs to the seat that acts at the current postflop
+   * node, so it only applies while that seat's range is the one on screen -
+   * viewing the opponent's plate falls back to hand-class averages. */
+  const activeComboDetail =
+    pf.view && activePlayer === pf.view.actorSeat ? pf.view.actorCombos : null;
+
   /* Shared between the classic header layout and the desktop study strip. In
    * the study strip the Line fills its flex cell, so no measured matchWidth. */
   const lineNode = pf.view ? (
@@ -1402,6 +1408,7 @@ const Solver = ({ user }: SolverProps) => {
                 windowWidth={windowWidth}
                 windowHeight={windowHeight}
                 board={pf.view ? pf.view.board : currentBoard}
+                comboDetail={activeComboDetail}
               />
             ) : mode === "single-mobile" ? (
               <SingleRangeMobileView

@@ -19,6 +19,11 @@ def log(msg: str) -> None:
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+# Manifest / street-bundle / node-doc schema. 4 adds the per-combo (1326)
+# blocks, per-seat range weights + equities, and node reach frequency; 3 docs
+# stay readable, they just have no `combos` block for the hand breakdown.
+SCHEMA_VERSION = 4
+
 # =========================
 # Node addressing / streets
 # =========================
@@ -107,10 +112,141 @@ def aggregate_1326_to_169(
     return {cls: sum(vals) / len(vals) for cls, vals in buckets.items() if vals}
 
 
+def weighted_1326_to_169(
+    hand_order: List[str],
+    values_1326: List[float],
+    weights_1326: Optional[List[float]],
+) -> Dict[str, float]:
+    """Range-weighted class average.
+
+    The plain mean above treats a combo the solver never holds as equal to one
+    it always holds, which skews any class containing a blocked or partially
+    weighted combo. Falls back to the plain mean when no weights are available
+    or a class has no weight at all.
+    """
+    if not weights_1326 or len(weights_1326) != len(hand_order):
+        return aggregate_1326_to_169(hand_order, values_1326)
+
+    num: Dict[str, float] = defaultdict(float)
+    den: Dict[str, float] = defaultdict(float)
+    plain: Dict[str, List[float]] = defaultdict(list)
+    for hand, v, w in zip(hand_order, values_1326, weights_1326):
+        if v is None or not math.isfinite(v):
+            continue
+        cls = combo_to_hand_class(hand)
+        plain[cls].append(v)
+        if w and w > 0:
+            num[cls] += v * w
+            den[cls] += w
+
+    out: Dict[str, float] = {}
+    for cls, vals in plain.items():
+        out[cls] = num[cls] / den[cls] if den.get(cls) else sum(vals) / len(vals)
+    return out
+
+
+# =========================
+# Per-combo (1326) payloads
+# =========================
+# Fixed-point scales for the per-combo arrays. Strategy/weight/equity are
+# fractions stored per mille; EV and matchups are chips stored per cent. JSON
+# ints at this precision are both smaller and more gzip-friendly than floats,
+# and the precision is far finer than anything the UI renders.
+COMBO_SCALE = {"w": 1000, "eq": 1000, "ev": 100, "mu": 100, "s": 1000}
+
+
+def quantize(value: Optional[float], scale: int) -> Optional[int]:
+    """Fixed-point encode one value; non-finite (Pio emits nan) -> None."""
+    if value is None or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return int(round(value * scale))
+
+
+def _pick(vec: Optional[List[float]], idx: List[int], scale: int) -> Optional[List[Optional[int]]]:
+    if not vec:
+        return None
+    return [quantize(vec[i] if i < len(vec) else None, scale) for i in idx]
+
+
+def build_seat_combo_block(seat_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Per-combo weight / equity / EV / matchups for one seat at one node.
+
+    Only combos the seat actually holds are emitted, which drops roughly half
+    the 1326 rows on a typical range and keeps the index list the single source
+    of truth for every parallel array. The filter runs on the *quantized*
+    weight, so a combo is emitted only if the encoding can represent it as
+    non-zero - otherwise a combo weighted 0.0001 would ship as weight 0 and
+    read downstream as out of range.
+    """
+    if not seat_data:
+        return None
+    weights = seat_data.get("range")
+    if not weights:
+        return None
+
+    idx = [
+        i
+        for i, w in enumerate(weights)
+        if w and w > 0 and (quantize(w, COMBO_SCALE["w"]) or 0) >= 1
+    ]
+    if not idx:
+        return None
+
+    return {
+        "idx": idx,
+        "w": _pick(weights, idx, COMBO_SCALE["w"]),
+        "eq": _pick(seat_data.get("equity"), idx, COMBO_SCALE["eq"]),
+        "ev": _pick(seat_data.get("ev"), idx, COMBO_SCALE["ev"]),
+        "mu": _pick(seat_data.get("matchups"), idx, COMBO_SCALE["mu"]),
+    }
+
+
+def seat_summary(seat_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Range-wide EV / equity / combo count for one seat at one node.
+
+    `combos` is the weighted sum of the range, so a partially-weighted preflop
+    range reports a fractional count (e.g. 333.5) rather than a raw combo tally.
+    """
+    if not seat_data:
+        return None
+    weights = seat_data.get("range")
+    if not weights:
+        return None
+
+    total_w = sum(w for w in weights if w and w > 0)
+    if total_w <= 0:
+        return None
+
+    def wmean(vec: Optional[List[float]]) -> Optional[float]:
+        if not vec:
+            return None
+        num = den = 0.0
+        for w, v in zip(weights, vec):
+            if w and w > 0 and v is not None and math.isfinite(v):
+                num += w * v
+                den += w
+        return num / den if den > 0 else None
+
+    return {
+        "combos": sanitize_float(total_w),
+        "equity": sanitize_float(seat_data.get("equity_total") or wmean(seat_data.get("equity"))),
+        "ev": sanitize_float(wmean(seat_data.get("ev"))),
+    }
+
+
 def aggregate_strategy_1326_to_169(
-    hand_order: List[str], strategy: List[List[float]]
+    hand_order: List[str],
+    strategy: List[List[float]],
+    weights_1326: Optional[List[float]] = None,
 ) -> Tuple[List[str], List[List[float]]]:
-    """[actions][1326] -> (sorted 169 classes, [actions][169])."""
+    """[actions][1326] -> (sorted 169 classes, [actions][169]).
+
+    Weighted by the actor's reach range when available. Pio reports a strategy
+    for every one of the 1326 combos, including ones the actor cannot hold at
+    this node (board blockers, or simply not in the preflop range); those rows
+    are arbitrary, so averaging them in drags the class value away from the mix
+    the player actually plays. Falls back to a plain mean without weights.
+    """
     if not strategy or not hand_order:
         return [], []
 
@@ -121,24 +257,38 @@ def aggregate_strategy_1326_to_169(
             log("  [agg] Warning: strategy row length != hand_order length")
             return [], []
 
+    use_weights = bool(weights_1326) and len(weights_1326) == n_combos
+
     sum_by_class: Dict[str, List[float]] = {}
+    weight_by_class: Dict[str, float] = defaultdict(float)
+    # Plain (unweighted) totals, used for classes with no reach weight at all.
+    plain_by_class: Dict[str, List[float]] = {}
     count_by_class: Dict[str, int] = defaultdict(int)
+
     for idx, hand in enumerate(hand_order):
         cls = combo_to_hand_class(hand)
         if cls not in sum_by_class:
             sum_by_class[cls] = [0.0] * n_actions
+            plain_by_class[cls] = [0.0] * n_actions
+        w = float(weights_1326[idx]) if use_weights else 1.0
         for a in range(n_actions):
-            sum_by_class[cls][a] += strategy[a][idx]
+            plain_by_class[cls][a] += strategy[a][idx]
+            if w > 0:
+                sum_by_class[cls][a] += strategy[a][idx] * w
+        if w > 0:
+            weight_by_class[cls] += w
         count_by_class[cls] += 1
 
     hand_classes = sorted(sum_by_class.keys(), key=hand_class_sort_key)
-    matrix_169 = [
-        [
-            (sum_by_class[cls][a] / count_by_class[cls]) if count_by_class[cls] else 0.0
-            for cls in hand_classes
-        ]
-        for a in range(n_actions)
-    ]
+
+    def cell(cls: str, a: int) -> float:
+        wsum = weight_by_class.get(cls, 0.0)
+        if wsum > 0:
+            return sum_by_class[cls][a] / wsum
+        n = count_by_class[cls]
+        return (plain_by_class[cls][a] / n) if n else 0.0
+
+    matrix_169 = [[cell(cls, a) for cls in hand_classes] for a in range(n_actions)]
     return hand_classes, matrix_169
 
 
@@ -208,6 +358,8 @@ def walk_street(
     """
     if ev_cache is None:
         ev_cache = {}
+    range_cache: Dict[Tuple[str, str], Optional[List[float]]] = {}
+    eq_cache: Dict[Tuple[str, str], Tuple[Optional[List[float]], Optional[List[float]], Optional[float]]] = {}
 
     def get_ev(position: str, node_id: str) -> Optional[List[float]]:
         key = (position, node_id)
@@ -218,6 +370,62 @@ def walk_street(
             except Exception:
                 ev_cache[key] = None
         return ev_cache[key]
+
+    def get_range(position: str, node_id: str) -> Optional[List[float]]:
+        """Reach weights (1326) for `position` at this node."""
+        key = (position, node_id)
+        if key not in range_cache:
+            try:
+                rng = solver.show_range(position, node_id)
+                range_cache[key] = list(rng) if rng else None
+            except Exception:
+                range_cache[key] = None
+        return range_cache[key]
+
+    def get_equity(
+        position: str, node_id: str
+    ) -> Tuple[Optional[List[float]], Optional[List[float]], Optional[float]]:
+        """calc_eq_node -> (equity[1326], matchups[1326], range-wide equity).
+
+        Pio prints these as three lines; hands outside the range come back as
+        `nan` and are dropped downstream by the weight filter.
+        """
+        key = (position, node_id)
+        if key not in eq_cache:
+            try:
+                raw = solver._run("calc_eq_node", position, node_id)  # type: ignore[attr-defined]
+                lines = [ln for ln in (raw or "").split("\n") if ln.strip()]
+                if len(lines) < 2 or "ERROR" in (raw or ""):
+                    eq_cache[key] = (None, None, None)
+                else:
+                    to_floats = lambda ln: [  # noqa: E731
+                        float(tok) if tok.lower() != "nan" else float("nan")
+                        for tok in ln.split()
+                    ]
+                    equity = to_floats(lines[0])
+                    matchups = to_floats(lines[1])
+                    total = float(lines[2].strip()) if len(lines) > 2 else None
+                    eq_cache[key] = (equity, matchups, sanitize_float(total))
+            except Exception:
+                eq_cache[key] = (None, None, None)
+        return eq_cache[key]
+
+    def seat_block(position: str, node_id: str) -> Dict[str, Any]:
+        equity, matchups, equity_total = get_equity(position, node_id)
+        return {
+            "range": get_range(position, node_id),
+            "equity": equity,
+            "matchups": matchups,
+            "equity_total": equity_total,
+            "ev": get_ev(position, node_id),
+        }
+
+    def node_freq(node_id: str) -> Optional[float]:
+        """How often this node is reached across the whole tree."""
+        try:
+            return sanitize_float(float(solver._run("calc_global_freq", node_id).strip()))  # type: ignore[attr-defined]
+        except Exception:
+            return None
 
     views: Dict[str, Dict[str, Any]] = {}
     nodes_meta: Dict[str, Dict[str, Any]] = {}
@@ -268,6 +476,13 @@ def walk_street(
                 "children": {lbl: c.node_id for lbl, c in zip(labels, children)},
                 "strategy": strategy,
                 "evs": {"oop": get_ev("OOP", nid), "ip": get_ev("IP", nid)},
+                # Per-seat reach weights, equities and matchups: what makes the
+                # per-combo breakdown and the two-seat stats panel possible.
+                "seats": {
+                    "oop": seat_block("OOP", nid),
+                    "ip": seat_block("IP", nid),
+                },
+                "global_freq": node_freq(nid),
             }
             # EV of taking each action = actor's EV at that child node.
             actor = view["position"]
@@ -297,6 +512,43 @@ def walk_street(
         f"{sum(1 for m in nodes_meta.values() if m.get('type') == 'terminal')} terminal"
     )
     return views, nodes_meta
+
+
+RESULTS_KEYS = {
+    "EV OOP": "ev_oop",
+    "EV IP": "ev_ip",
+    "OOP's MES": "mes_oop",
+    "IP's MES": "mes_ip",
+    "Exploitable for": "exploitable",
+}
+
+
+def read_solve_results(solver) -> Dict[str, Optional[float]]:
+    """Parse `calc_results` into solve-quality stats.
+
+    Gives the same EVs the solve log reports plus each side's maximally
+    exploitative value, so how far the pair sits above the solved EVs is a
+    direct read on convergence. Available from the .cfr alone, so re-extraction
+    recovers it for boards solved before this existed.
+    """
+    out: Dict[str, Optional[float]] = {v: None for v in RESULTS_KEYS.values()}
+    try:
+        raw = solver._run("calc_results")  # type: ignore[attr-defined]
+    except Exception:
+        return out
+    if not raw or "ERROR" in raw:
+        return out
+    for line in raw.splitlines():
+        if ":" not in line:
+            continue
+        label, _, value = line.partition(":")
+        key = RESULTS_KEYS.get(label.strip())
+        if key:
+            try:
+                out[key] = sanitize_float(float(value.strip()))
+            except ValueError:
+                pass
+    return out
 
 
 def open_solver(pio_dir: str, exe_name: str = "PioSOLVER2-edge.exe"):
@@ -413,6 +665,7 @@ def extract_board(
             "hand_order": hand_order,
             "tree_info": tree_info,
             "effective_stack": effective_stack,
+            "results": read_solve_results(solver),
             "streets": streets,
         }
     finally:
@@ -496,6 +749,10 @@ def build_board_context(
             "ev_oop": sanitize_float(stats.get("ev_oop")),
             "ev_ip": sanitize_float(stats.get("ev_ip")),
             "exploitable": sanitize_float(stats.get("exploitable")),
+            # Each side's maximally exploitative value: the gap to the solved
+            # EV above is what "exploitable for" is measuring.
+            "mes_oop": sanitize_float(stats.get("mes_oop")),
+            "mes_ip": sanitize_float(stats.get("mes_ip")),
         },
         "tree_info": tree_info,
     }
@@ -520,6 +777,8 @@ def context_from_manifest(
             "ev_oop": summary.get("ev_oop"),
             "ev_ip": summary.get("ev_ip"),
             "exploitable": summary.get("exploitable"),
+            "mes_oop": summary.get("mes_oop"),
+            "mes_ip": summary.get("mes_ip"),
         },
         tree_info=tree_info,
         alive_positions=pre.get("alive_positions"),
@@ -547,6 +806,10 @@ def build_node_doc(
     strategy = view.get("strategy")
     evs = view.get("evs") or {}
     action_evs_1326: Dict[str, Optional[List[float]]] = view.get("action_evs") or {}
+    seats: Dict[str, Any] = view.get("seats") or {}
+    node_position = view.get("position") or ""
+    actor_key = "ip" if node_position == "IP" else "oop"
+    actor_weights = (seats.get(actor_key) or {}).get("range")
 
     hand_classes_169: List[str] = []
     strat_matrix_169: List[List[float]] = []
@@ -562,23 +825,26 @@ def build_node_doc(
     )
     if can_aggregate:
         hand_classes_169, strat_matrix_169 = aggregate_strategy_1326_to_169(
-            hand_order, strategy
+            hand_order, strategy, actor_weights
         )
 
-        def agg169(vec: Optional[List[float]]) -> Optional[List[Optional[float]]]:
+        def agg169(
+            vec: Optional[List[float]], weights: Optional[List[float]] = None
+        ) -> Optional[List[Optional[float]]]:
             if not isinstance(vec, list) or len(vec) != 1326:
                 return None
-            m = aggregate_1326_to_169(hand_order, vec)
+            m = weighted_1326_to_169(hand_order, vec, weights or actor_weights)
             return [sanitize_float(m.get(cls)) for cls in hand_classes_169]
 
-        ev_oop_169 = agg169(evs.get("oop"))
-        ev_ip_169 = agg169(evs.get("ip"))
+        oop_weights = (seats.get("oop") or {}).get("range")
+        ip_weights = (seats.get("ip") or {}).get("range")
+        ev_oop_169 = agg169(evs.get("oop"), oop_weights)
+        ev_ip_169 = agg169(evs.get("ip"), ip_weights)
         for lbl in node_actions:
             action_ev_169[lbl] = agg169(action_evs_1326.get(lbl))
     else:
         log(f"  [doc] {node_id}: no 1326 aggregation available; doc will be sparse")
 
-    node_position = view.get("position") or ""
     hero_node_ev = ev_ip_169 if node_position == "IP" else ev_oop_169
 
     # actions payload: [freq, EV of taking this action]; falls back to the
@@ -599,10 +865,44 @@ def build_node_doc(
                 hand_map[cls] = [float(freq), sanitize_float(ev)]
             actions_payload[lbl] = hand_map
 
-    # Slim schema-3 doc: board-level context (tree_info/source/summary/...)
-    # lives once in the manifest, not in every node.
+    # Per-combo detail. The 169 blocks above are class averages, which is all
+    # the matrix needs; the hand breakdown needs the actual per-combo strategy,
+    # so it lives here indexed against the bundle's shared hand_order.
+    combos_block: Optional[Dict[str, Any]] = None
+    oop_combos = build_seat_combo_block(seats.get("oop"))
+    ip_combos = build_seat_combo_block(seats.get("ip"))
+    actor_combos = ip_combos if actor_key == "ip" else oop_combos
+    if actor_combos:
+        actor_idx = actor_combos["idx"]
+        strat_rows: List[Optional[List[Optional[int]]]] = []
+        action_ev_rows: List[Optional[List[Optional[int]]]] = []
+        for a_idx, lbl in enumerate(node_actions):
+            row = strategy[a_idx] if strategy and a_idx < len(strategy) else None
+            strat_rows.append(_pick(row, actor_idx, COMBO_SCALE["s"]))
+            action_ev_rows.append(
+                _pick(action_evs_1326.get(lbl), actor_idx, COMBO_SCALE["ev"])
+            )
+        combos_block = {
+            "actor": actor_key,
+            "actions": node_actions,
+            "scale": COMBO_SCALE,
+            "oop": oop_combos,
+            "ip": ip_combos,
+            # [action][position within the actor's idx list]
+            "strategy": strat_rows,
+            "action_ev": action_ev_rows,
+        }
+
+    # Range-wide EV / equity / combo count per seat, for the node header panel.
+    seat_stats = {
+        "oop": seat_summary(seats.get("oop")),
+        "ip": seat_summary(seats.get("ip")),
+    }
+
+    # Slim doc: board-level context (tree_info/source/summary/...) lives once
+    # in the manifest, not in every node.
     return {
-        "schema": 3,
+        "schema": SCHEMA_VERSION,
         "board": ctx["board"],
         "position": node_position,
         "hero_pos": ctx["hero_pos"],
@@ -622,6 +922,9 @@ def build_node_doc(
             "strategy": {"actions": node_actions, "matrix": strat_matrix_169},
             "ev": {"oop": ev_oop_169, "ip": ev_ip_169},
         },
+        "combos": combos_block,
+        "seat_stats": seat_stats,
+        "global_freq": sanitize_float(view.get("global_freq")),
     }
 
 
@@ -645,8 +948,11 @@ def build_street_bundle(
     }
 
     return {
-        "schema": 3,
+        "schema": SCHEMA_VERSION,
         "kind": "street_bundle",
+        # Pio's 1326 combo order, stored once per bundle: every node's per-combo
+        # arrays are indexed against it rather than repeating combo names.
+        "hand_order": list(hand_order) if hand_order else [],
         "seed": seed_id,
         "seed_suffix": seed_suffix,
         "street": street,
@@ -686,7 +992,7 @@ def build_manifest(
     streets.update(streets_map)
 
     return {
-        "schema": 3,
+        "schema": SCHEMA_VERSION,
         "board": ctx["board"],
         "stacks": ctx["stacks"],
         "node_name": ctx["node_name"],

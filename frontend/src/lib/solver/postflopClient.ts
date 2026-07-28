@@ -37,11 +37,62 @@ export type PioSolutionDoc = {
     };
   };
 
+  /**
+   * Per-combo (1326) detail, schema 4+. Absent on older docs, and also on a
+   * node the actor reaches with probability 0.
+   *
+   * Every array is parallel to the seat's own `idx`, which holds indices into
+   * the street bundle's shared `hand_order`. Values are fixed-point integers -
+   * divide by the matching entry in `scale`.
+   */
+  combos?: {
+    actor: "oop" | "ip";
+    /** Pio action labels, same order as root_169.strategy.actions. */
+    actions: string[];
+    scale: { w: number; eq: number; ev: number; mu: number; s: number };
+    oop: ComboSeatBlock | null;
+    ip: ComboSeatBlock | null;
+    /** [actionIdx][slot within the actor's idx] */
+    strategy: (number | null)[][];
+    action_ev: ((number | null)[] | null)[];
+  } | null;
+
+  /** Range-wide EV / equity / weighted combo count per seat at this node. */
+  seat_stats?: {
+    oop: SeatStats | null;
+    ip: SeatStats | null;
+  };
+
+  /** How often this node is reached across the whole tree (0..1). */
+  global_freq?: number | null;
+
   source?: {
     gametree_path?: string;
     stacks?: string;
     node?: string;
   };
+};
+
+export type ComboSeatBlock = {
+  /** Indices into the street bundle's hand_order. */
+  idx: number[];
+  /** Reach weight, scale.w. */
+  w: (number | null)[];
+  /** Equity vs the opponent's range here, scale.eq. */
+  eq: (number | null)[] | null;
+  /** EV in chips, scale.ev. */
+  ev: (number | null)[] | null;
+  /** Weighted opponent combos faced, scale.mu. */
+  mu: (number | null)[] | null;
+};
+
+export type SeatStats = {
+  /** Weighted combo count, so fractional for a mixed preflop range. */
+  combos: number | null;
+  /** 0..1. Null when the opponent cannot reach this node. */
+  equity: number | null;
+  /** Chips. */
+  ev: number | null;
 };
 
 /**

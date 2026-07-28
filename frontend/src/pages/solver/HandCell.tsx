@@ -134,6 +134,8 @@ const HandCell: React.FC<HandCellProps> = ({
   return (
     <div
       tabIndex={-1}
+      data-testid="hand-cell"
+      data-hand={data.hand}
       className="relative group w-full h-full bg-slate-50 aspect-square select-none"
       onMouseEnter={() => onHover?.(data.evs)}
       onMouseLeave={() => onLeave?.()}
