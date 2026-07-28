@@ -5,6 +5,7 @@
 // the view via useSolverLayout.
 import type { JsonData } from "@/lib/solver/utils";
 import type { ComboDetail } from "@/lib/solver/comboDetail";
+import type { NodeStats } from "@/lib/solver/nodeStats";
 
 export interface SolverRangeBaseProps {
   /** One plate file name per position (may contain "" for unloaded seats). */
@@ -41,6 +42,10 @@ export interface SingleRangeViewProps extends SolverRangeBaseProps {
    *  seat at a schema-4 node. Drives the hand breakdown's real per-combo mixes;
    *  without it the breakdown falls back to the hand-class average. */
   comboDetail?: ComboDetail | null;
+  /** Range-wide per-seat numbers for the current postflop node. */
+  nodeStats?: NodeStats | null;
+  /** Seat acting at that node, badged in the stats panel. */
+  actorSeat?: string;
 }
 
 export interface MultiRangeViewProps extends SolverRangeBaseProps {

@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { PioSolutionDoc } from "@/lib/solver/postflopClient";
 import { buildComboDetail, type ComboDetail } from "@/lib/solver/comboDetail";
+import { buildNodeStats, type NodeStats } from "@/lib/solver/nodeStats";
 import type {
   BoardManifest,
   ManifestNode,
@@ -102,6 +103,8 @@ export type PostflopView = {
   actions: { pioLabel: string; display: string }[];
   /** Per-combo strategy/EV/equity for the acting seat; null pre-schema-4. */
   actorCombos: ComboDetail | null;
+  /** Range-wide EV / equity / combo count per seat; null pre-schema-4. */
+  nodeStats: NodeStats | null;
   loading: boolean;
 };
 
@@ -522,6 +525,11 @@ export function usePostflopSession() {
         currentDoc,
         handOrderRef.current[currentSuffix],
         actionMap.map((a) => a.display)
+      ),
+      nodeStats: buildNodeStats(
+        currentDoc,
+        { oop: core.oopSeat, ip: core.ipSeat },
+        core.manifest.pot_chips
       ),
       loading,
     };

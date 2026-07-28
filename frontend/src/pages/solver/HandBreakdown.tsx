@@ -148,7 +148,7 @@ const ComboTile: React.FC<Omit<ComboTileData, "key">> = React.memo(
           )}
         </div>
         {!blocked && (
-          <span className="text-[9px] font-semibold text-slate-900/70">%</span>
+          <span className="text-[9px] font-semibold text-white/75">%</span>
         )}
       </div>
 
@@ -160,20 +160,20 @@ const ComboTile: React.FC<Omit<ComboTileData, "key">> = React.memo(
               key={action}
               className="flex items-baseline justify-between gap-1 leading-tight"
             >
-              <span className="truncate text-[10px] font-medium text-slate-900/90">
+              <span className="truncate text-[10px] font-medium text-white">
                 {action}
               </span>
-              <span className="text-[10px] font-semibold tabular-nums text-slate-900/90">
+              <span className="text-[10px] font-semibold tabular-nums text-white">
                 {pct}
               </span>
             </div>
           ))}
           {equity != null && (
-            <div className="mt-0.5 flex items-baseline justify-between gap-1 border-t border-slate-900/20 pt-0.5 leading-tight">
-              <span className="truncate text-[9px] font-medium uppercase tracking-wide text-slate-900/60">
+            <div className="mt-0.5 flex items-baseline justify-between gap-1 border-t border-white/25 pt-0.5 leading-tight">
+              <span className="truncate text-[9px] font-medium uppercase tracking-wide text-white/70">
                 Equity
               </span>
-              <span className="text-[9px] font-semibold tabular-nums text-slate-900/80">
+              <span className="text-[9px] font-semibold tabular-nums text-white/90">
                 {fmtPct(equity)}
               </span>
             </div>

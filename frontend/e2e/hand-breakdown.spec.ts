@@ -142,6 +142,38 @@ test("a partially weighted combo is labelled with its weight", async ({ page }) 
   }
 });
 
+test("both seats get EV / equity / combos", async ({ page }) => {
+  await openBoard(page);
+
+  const rows = page.getByTestId("seat-stats-row");
+  await expect(rows).toHaveCount(2);
+  expect(await rows.evaluateAll((ns) => ns.map((n) => n.getAttribute("data-role")))).toEqual(
+    ["oop", "ip"]
+  );
+
+  const read = async (role: string) =>
+    Object.fromEntries(
+      await page
+        .locator(`[data-testid="seat-stats-row"][data-role="${role}"] [data-testid="seat-stat"]`)
+        .evaluateAll((ns) =>
+          ns.map((n) => [n.getAttribute("data-metric"), (n.textContent ?? "").trim()])
+        )
+    );
+
+  const oop = await read("oop");
+  const ip = await read("ip");
+  expect(Object.keys(oop)).toEqual(["EV", "Equity", "Combos"]);
+
+  // Postflop is zero-sum, so the two equities partition the pot.
+  const pct = (s: string) => Number(s.replace(/[^\d.]/g, ""));
+  expect(pct(oop.Equity) + pct(ip.Equity)).toBeCloseTo(100, 1);
+
+  // Plain white numbers: no direction glyphs, no comparison colouring.
+  for (const cell of [...Object.values(oop), ...Object.values(ip)]) {
+    expect(cell).not.toMatch(/[▲▼]/);
+  }
+});
+
 test("breakdown panel never scrolls sideways", async ({ page }) => {
   await openBoard(page);
   await page.locator('[data-testid="hand-cell"][data-hand="AKo"]').hover();

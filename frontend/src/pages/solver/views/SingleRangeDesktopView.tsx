@@ -26,6 +26,8 @@ const SingleRangeDesktopView = ({
   windowHeight,
   board,
   comboDetail,
+  nodeStats,
+  actorSeat,
 }: SingleRangeViewProps) => {
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
   const { ref: wrapRef, top: topOffset } = useTopOffset();
@@ -68,6 +70,8 @@ const SingleRangeDesktopView = ({
           viewH={vh}
           topOffset={topOffset}
           comboDetail={comboDetail}
+          nodeStats={nodeStats}
+          actorSeat={actorSeat}
         />
       </div>
     </div>
