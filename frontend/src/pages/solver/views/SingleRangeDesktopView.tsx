@@ -28,6 +28,9 @@ const SingleRangeDesktopView = ({
   comboDetail,
   nodeStats,
   actorSeat,
+  seatNames,
+  tableSeatsOverride,
+  money,
 }: SingleRangeViewProps) => {
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
   const { ref: wrapRef, top: topOffset } = useTopOffset();
@@ -39,6 +42,7 @@ const SingleRangeDesktopView = ({
     playerBets,
     potCommitted,
     activePlayer,
+    seatNames,
   });
 
   const vh = windowHeight || 640;
@@ -55,8 +59,8 @@ const SingleRangeDesktopView = ({
         className="relative z-10 mx-auto w-full max-w-[1480px]"
       >
         <SingleRangeStudy
-          tableSeats={tableSeats}
-          seatCount={positions.length}
+          tableSeats={tableSeatsOverride ?? tableSeats}
+          seatCount={tableSeatsOverride?.length ?? positions.length}
           pot={actualPot}
           board={board}
           activeGrid={activeGrid}
@@ -72,6 +76,8 @@ const SingleRangeDesktopView = ({
           comboDetail={comboDetail}
           nodeStats={nodeStats}
           actorSeat={actorSeat}
+          seatNames={seatNames}
+          money={money}
         />
       </div>
     </div>

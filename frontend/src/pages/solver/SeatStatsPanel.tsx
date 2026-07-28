@@ -2,20 +2,27 @@
 // and weighted combo count. The acting seat is ringed.
 import React from "react";
 import type { NodeStats, SeatNodeStats } from "@/lib/solver/nodeStats";
+import type { MoneyDisplay } from "./boardDisplay";
+
+type MoneyOpts = Pick<MoneyDisplay, "mode" | "bbSize">;
 
 interface SeatStatsPanelProps {
   stats: NodeStats | null;
   /** Seat that acts at this node, badged so it is obvious whose turn it is. */
   actorSeat?: string;
+  /** Position -> real player name (hand-history solves). */
+  names?: Record<string, string>;
+  /** Chips/bb display (hand-history solves): EVs convert with it. */
+  money?: MoneyOpts;
   className?: string;
 }
 
 type Metric = {
   label: string;
   /** Rendered value, or null when the data cannot support it. */
-  text: (s: SeatNodeStats, chipEv: boolean) => string | null;
+  text: (s: SeatNodeStats, chipEv: boolean, money?: MoneyOpts) => string | null;
   /** Tooltip; takes chipEv because the EV unit depends on it. */
-  title?: (chipEv: boolean) => string;
+  title?: (chipEv: boolean, money?: MoneyOpts) => string;
 };
 
 const fmt = (n: number, digits: number) =>
@@ -28,18 +35,20 @@ const METRICS: Metric[] = [
   {
     label: "EV",
     // ICM solves report EV in tournament equity, which has no bb conversion,
-    // so the unit is dropped rather than implied.
-    text: (s, chipEv) =>
+    // so the unit is dropped rather than implied. Hand-history solves can
+    // additionally convert bb EV into the hand's real chips.
+    text: (s, chipEv, money) => {
+      if (!chipEv) return s.ev != null ? fmt(s.ev, 2) : null;
+      if (s.evBB == null) return null;
+      return money && money.mode === "chips"
+        ? fmt(s.evBB * money.bbSize, 2)
+        : `${fmt(s.evBB, 2)} bb`;
+    },
+    title: (chipEv, money) =>
       chipEv
-        ? s.evBB != null
-          ? `${fmt(s.evBB, 2)} bb`
-          : null
-        : s.ev != null
-          ? fmt(s.ev, 2)
-          : null,
-    title: (chipEv) =>
-      chipEv
-        ? "Average chips this range wins at this node, in big blinds."
+        ? money && money.mode === "chips"
+          ? "Average amount this range wins at this node, in the hand's own chips."
+          : "Average chips this range wins at this node, in big blinds."
         : "This solve is ICM, so EV is in tournament-equity units rather than chips - there is no bb conversion.",
   },
   {
@@ -57,7 +66,9 @@ const SeatRow: React.FC<{
   seat: SeatNodeStats;
   chipEv: boolean;
   isActor: boolean;
-}> = ({ seat, chipEv, isActor }) => (
+  name?: string;
+  money?: MoneyOpts;
+}> = ({ seat, chipEv, isActor, name, money }) => (
   <div
     data-testid="seat-stats-row"
     data-role={seat.role}
@@ -65,10 +76,15 @@ const SeatRow: React.FC<{
       isActor ? "bg-emerald-400/10 ring-1 ring-emerald-400/40" : "bg-white/[0.04]"
     }`}
   >
-    <div className="flex w-[68px] flex-shrink-0 items-baseline gap-1">
-      <span className="truncate text-[11px] font-bold text-white">{seat.seat}</span>
+    <div
+      className="flex w-[68px] flex-shrink-0 items-baseline gap-1"
+      title={name ? `${name} (${seat.seat})` : undefined}
+    >
+      <span className="truncate text-[11px] font-bold text-white">
+        {name ?? seat.seat}
+      </span>
       <span className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">
-        {seat.role}
+        {name ? seat.seat : seat.role}
       </span>
     </div>
 
@@ -78,13 +94,13 @@ const SeatRow: React.FC<{
         data-testid="seat-stat"
         data-metric={m.label}
         className="flex min-w-0 flex-1 flex-col leading-tight"
-        title={m.title?.(chipEv)}
+        title={m.title?.(chipEv, money)}
       >
         <span className="truncate text-[9px] font-medium uppercase tracking-wide text-slate-400">
           {m.label}
         </span>
         <span className="truncate text-[11px] font-semibold tabular-nums text-white">
-          {m.text(seat, chipEv) ?? "-"}
+          {m.text(seat, chipEv, money) ?? "-"}
         </span>
       </div>
     ))}
@@ -94,6 +110,8 @@ const SeatRow: React.FC<{
 const SeatStatsPanel: React.FC<SeatStatsPanelProps> = ({
   stats,
   actorSeat,
+  names,
+  money,
   className,
 }) => {
   if (!stats) return null;
@@ -108,11 +126,15 @@ const SeatStatsPanel: React.FC<SeatStatsPanelProps> = ({
         seat={stats.oop}
         chipEv={stats.chipEv}
         isActor={stats.oop.seat === actorSeat}
+        name={names?.[stats.oop.seat]}
+        money={money}
       />
       <SeatRow
         seat={stats.ip}
         chipEv={stats.chipEv}
         isActor={stats.ip.seat === actorSeat}
+        name={names?.[stats.ip.seat]}
+        money={money}
       />
     </div>
   );

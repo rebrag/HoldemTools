@@ -54,7 +54,8 @@ without re-solving.
 The full `.cfr` save stays local in `C:\PioSOLVER\Solved` under a name unique per (stacks, line, board), tracked by `registry.json` and capped by an LRU disk budget (`PIO_CFR_MAX_GB`, default 150 GB).
 
 **Schema note:** `extraction.py` is the source of truth for the manifest / street-bundle / node-doc shapes consumed by `frontend/src/lib/solver/postflopLibrary.ts` and `frontend/src/lib/solver/postflopClient.ts`.
-The tree-config text the watcher receives is built in `frontend/src/lib/solver/handleActionClick.ts` (`#Range0#` = OOP, `#Range1#` = IP, `#ICM.Stacks#` OOP-first).
+The tree-config text the watcher receives is built by `frontend/src/lib/solver/treeConfig.ts` `buildTreeConfigText` (`#Range0#` = OOP, `#Range1#` = IP, `#ICM.Stacks#` OOP-first), with the values coming either from a preflop-sim line (`handleActionClick.ts`) or from a recorded hand (`frontend/src/pages/handhistory/create/solveBridge.ts`).
+Hand-history uploads also carry an optional `Seats` list (pos, name, flop-time stack in bb*100 chips, folded, hero, known hole cards) and a `BigBlind` (the hand's big blind in real chips); the watcher echoes them into the manifest as `seat_meta` / `hand_bb` so the solutions viewer can show the real table (names, stacks, cards) and offer a chips/bb display toggle.
 
 ## Files
 

@@ -14,7 +14,8 @@ import DecisionMatrix from "./DecisionMatrix";
 import ActionSummary from "./ActionSummary";
 import HandBreakdown from "./HandBreakdown";
 import SolverTableCenter from "./SolverTableCenter";
-import { boardCardWidth, solverPotLabel } from "./boardDisplay";
+import MoneyToggle from "./MoneyToggle";
+import { boardCardWidth, solverPotLabel, type MoneyDisplay } from "./boardDisplay";
 
 interface SingleRangeStudyProps {
   tableSeats: PokerTableSeat[];
@@ -41,6 +42,10 @@ interface SingleRangeStudyProps {
   nodeStats?: NodeStats | null;
   /** Seat acting at that node. */
   actorSeat?: string;
+  /** Position -> real player name (hand-history solves). */
+  seatNames?: Record<string, string>;
+  /** Chips/bb display toggle (hand-history solves only). */
+  money?: MoneyDisplay;
 
   /** Measured content width (px) and viewport height / chrome offset. */
   baseW: number;
@@ -65,6 +70,8 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   comboDetail,
   nodeStats,
   actorSeat,
+  seatNames,
+  money,
   baseW,
   viewH,
   topOffset,
@@ -119,7 +126,8 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
           className="flex min-w-0 flex-shrink-0 flex-col gap-3"
           style={{ width: rightW, height: matrixSize }}
         >
-          <div className="mx-auto w-full flex-shrink-0" style={{ width: tableW }}>
+          <div className="relative mx-auto w-full flex-shrink-0" style={{ width: tableW }}>
+            <MoneyToggle money={money} className="absolute -top-1 right-0 z-20" />
             <PokerTable
               size={seatCount}
               seats={tableSeats}
@@ -127,7 +135,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
               maxWidthClassName="max-w-none"
               aspectClassName="aspect-[7/5]"
               potAmount={pot != null ? Math.max(0, pot) : undefined}
-              potLabel={pot != null ? solverPotLabel(pot, board) : undefined}
+              potLabel={pot != null ? solverPotLabel(pot, board, money) : undefined}
               center={
                 board && board.length > 0 ? (
                   <SolverTableCenter board={board} cardWidth={boardCardWidth(tableW)} />
@@ -136,7 +144,12 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
             />
           </div>
 
-          <SeatStatsPanel stats={nodeStats ?? null} actorSeat={actorSeat} />
+          <SeatStatsPanel
+            stats={nodeStats ?? null}
+            actorSeat={actorSeat}
+            names={seatNames}
+            money={money}
+          />
 
           <ActionSummary
             data={activeGrid}

@@ -31,6 +31,8 @@ export function useActiveRange(args: {
   /** Chips each seat has already put in the pot (see views/types.ts). */
   potCommitted?: Record<string, number>;
   activePlayer: string;
+  /** Position -> real player name (hand-history solves). */
+  seatNames?: Record<string, string>;
 }): ActiveRange {
   const {
     positions,
@@ -40,6 +42,7 @@ export function useActiveRange(args: {
     playerBets,
     potCommitted,
     activePlayer,
+    seatNames,
   } = args;
 
   const activeIndex = positions.findIndex((p) => p === activePlayer);
@@ -61,7 +64,7 @@ export function useActiveRange(args: {
     const stackBB = data ? (data.bb ?? 0) - committed - bet : null;
     return {
       key: pos,
-      label: pos,
+      label: seatNames?.[pos] ?? pos,
       stackText: stackBB != null ? `${fmtBB(stackBB, 1)} bb` : undefined,
       // Numeric bet drives the shared ChipStack + pill (matching the hand
       // recorder); committedText is the pill label.

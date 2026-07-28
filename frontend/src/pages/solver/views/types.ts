@@ -6,6 +6,8 @@
 import type { JsonData } from "@/lib/solver/utils";
 import type { ComboDetail } from "@/lib/solver/comboDetail";
 import type { NodeStats } from "@/lib/solver/nodeStats";
+import type { PokerTableSeat } from "@/components/PokerTable";
+import type { MoneyDisplay } from "../boardDisplay";
 
 export interface SolverRangeBaseProps {
   /** One plate file name per position (may contain "" for unloaded seats). */
@@ -21,6 +23,14 @@ export interface SolverRangeBaseProps {
    *  preflop, where bets stay in front of the seats until the flop. */
   potCommitted?: Record<string, number>;
   activePlayer: string;
+  /** Position -> real player name (hand-history solves); seats fall back to
+   *  their position label when absent. */
+  seatNames?: Record<string, string>;
+  /** Complete replacement for the derived table seats (hand-history solves
+   *  render the hand's real table: every player, names, stacks, cards). */
+  tableSeatsOverride?: PokerTableSeat[];
+  /** Chips/bb display toggle (hand-history solves only). */
+  money?: MoneyDisplay;
   /** Inclusive pot (all chips wagered, current bets included) - pot-odds math. */
   pot?: number;
   /** Chips actually pooled in the middle (excludes in-front bets) - display. */

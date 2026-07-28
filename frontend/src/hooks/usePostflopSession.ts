@@ -5,6 +5,7 @@ import { buildNodeStats, type NodeStats } from "@/lib/solver/nodeStats";
 import type {
   BoardManifest,
   ManifestNode,
+  SeatMetaEntry,
 } from "@/lib/solver/postflopLibrary";
 import {
   fetchStreetBundle,
@@ -95,6 +96,16 @@ export type PostflopView = {
   actorDoc: PioSolutionDoc | null;
   /** Chips behind the acting seat at the current node, in bb. */
   actorStackBB: number | null;
+  /** Position -> real player name, when the manifest carries hand-history
+   *  seat metadata (empty otherwise). */
+  seatNames: Record<string, string>;
+  /** Full hand-history seat list (table order), null on sim uploads. */
+  seatMeta: SeatMetaEntry[] | null;
+  /** Chips behind each of the two live seats at the CURRENT node, in bb
+   *  (their bet on the current street already deducted). */
+  liveStacksBB: Record<string, number | null>;
+  /** The recorded hand's big blind in real chips, null on sim uploads. */
+  handBB: number | null;
   opponentSeat: string;
   opponentDoc: PioSolutionDoc | null;
   /** Chips (not bb) each remaining seat committed preflop - see the seat
@@ -418,17 +429,37 @@ export function usePostflopSession() {
       [core.oopSeat, core.ipSeat],
       core.manifest.effective_stack_chips
     );
+    /* Hand-history uploads carry exact flop-time stacks (already net of the
+     * preflop money) in seat_meta; prefer those over the int-rounded
+     * folder-derived starting stacks. */
+    const seatMetaByPos: Record<string, { name: string; stackChips: number | null }> = {};
+    for (const s of core.manifest.seat_meta ?? []) {
+      if (s?.pos) {
+        seatMetaByPos[s.pos] = {
+          name: s.name ?? "",
+          stackChips: s.stack_chips ?? null,
+        };
+      }
+    }
     const stackBehindBB = (
       seat: string,
       role: "oop" | "ip",
       nodeId: string
     ): number | null => {
+      const flopChips = seatMetaByPos[seat]?.stackChips;
+      if (flopChips != null) {
+        return stackBehindChips(nodeId, role, flopChips, 0) / 100;
+      }
       const startBB = core.manifest.stacks_map?.[seat];
       if (startBB == null) return null;
       return (
         stackBehindChips(nodeId, role, Math.round(startBB * 100), pfCommit) / 100
       );
     };
+    const seatNames: Record<string, string> = {};
+    for (const [pos, meta] of Object.entries(seatMetaByPos)) {
+      if (meta.name && meta.name !== pos) seatNames[pos] = meta.name;
+    }
 
     // Opponent plate: nearest ancestor where they acted...
     let opponentDoc: PioSolutionDoc | null = null;
@@ -517,6 +548,13 @@ export function usePostflopSession() {
       actorSeat,
       actorDoc: currentDoc,
       actorStackBB: stackBehindBB(actorSeat, actorRole, core.currentNodeId),
+      seatNames,
+      seatMeta: core.manifest.seat_meta ?? null,
+      liveStacksBB: {
+        [core.oopSeat]: stackBehindBB(core.oopSeat, "oop", core.currentNodeId),
+        [core.ipSeat]: stackBehindBB(core.ipSeat, "ip", core.currentNodeId),
+      },
+      handBB: core.manifest.hand_bb ?? null,
       opponentSeat,
       opponentDoc,
       preflopCommitChips: pfCommit,

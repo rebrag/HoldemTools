@@ -24,6 +24,19 @@ export type ManifestStreetEntry = {
   requested_utc?: string;
 };
 
+/** Optional per-seat metadata (hand-history uploads only): real player
+ *  names/stacks/cards for the viewer. stack_chips is measured at the flop, in
+ *  Pio chips (bb * 100). */
+export type SeatMetaEntry = {
+  pos: string;
+  name: string;
+  stack_chips: number | null;
+  folded: boolean;
+  hero: boolean;
+  /** Known hole cards from the recorded hand ("As" codes). */
+  cards?: string[] | null;
+};
+
 export type BoardManifest = {
   schema: number;
   board: string; // "AhKd9c"
@@ -40,6 +53,10 @@ export type BoardManifest = {
     gametree_path: string | null;
   };
   seats: { oop: string | null; ip: string | null };
+  /** Absent on solver-page uploads and pre-existing boards. */
+  seat_meta?: SeatMetaEntry[] | null;
+  /** The hand's big blind in real chips (hand-history uploads only). */
+  hand_bb?: number | null;
   stacks_map: Record<string, number>;
   pot_chips: number | null;
   /** Chips behind each player at flop start (from Pio's show_effective_stack);

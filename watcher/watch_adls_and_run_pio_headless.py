@@ -775,6 +775,8 @@ def process_gametree_json(
     acting_pos: Optional[str] = None
     preflop_line: Optional[list[str]] = None
     is_icm: Optional[bool] = None
+    seat_meta: Optional[list] = None
+    hand_bb: Optional[float] = None
 
     try:
         obj = json.loads(raw)
@@ -784,6 +786,8 @@ def process_gametree_json(
             acting_pos = obj.get("ActingPos")
             preflop_line = obj.get("Line")
             is_icm = obj.get("IsICM")
+            seat_meta = obj.get("Seats")
+            hand_bb = obj.get("BigBlind")
         else:
             text = raw
         if not isinstance(text, str) or not text.strip():
@@ -875,6 +879,8 @@ def process_gametree_json(
         acting_pos=acting_pos,
         preflop_line=preflop_line,
         is_icm=is_icm,
+        seat_meta=seat_meta,
+        hand_bb=hand_bb,
     )
     stacks = ctx["stacks"] or "nostacks"
     node_name = ctx["node_name"] or "nonode"
