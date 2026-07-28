@@ -103,7 +103,7 @@ export type PostflopView = {
   actions: { pioLabel: string; display: string }[];
   /** Per-combo strategy/EV/equity for the acting seat; null pre-schema-4. */
   actorCombos: ComboDetail | null;
-  /** Range-wide EV / equity / EQR / combos per seat; null pre-schema-4. */
+  /** Range-wide EV / equity / combo count per seat; null pre-schema-4. */
   nodeStats: NodeStats | null;
   loading: boolean;
 };

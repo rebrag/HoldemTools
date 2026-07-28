@@ -1,9 +1,10 @@
-// Range-wide numbers for both seats at one postflop node: EV, equity, equity
-// realisation and weighted combo count.
+// Range-wide numbers for both seats at one postflop node: EV, equity and
+// weighted combo count.
 //
-// Everything here is derived from what the watcher already uploads
-// (`doc.seat_stats`); EQR in particular is a ratio of values that are both
-// present, so storing it would only create something that could drift.
+// The values themselves come straight from `doc.seat_stats`, which the watcher
+// fills from Pio (`calc_eq_node` for equity, `show_range` for the weighted
+// combo count, the range-weighted mean of `calc_ev` for EV). Nothing here
+// recomputes them; this only picks the EV unit and guards against nulls.
 import type { PioSolutionDoc, SeatStats } from "./postflopClient";
 
 export interface SeatNodeStats {
@@ -17,12 +18,6 @@ export interface SeatNodeStats {
   ev: number | null;
   /** EV in bb, only when the solve is chip-denominated (see `chipEv`). */
   evBB: number | null;
-  /**
-   * Equity realisation: the fraction of its raw equity the range actually
-   * converts into EV. 1 = realises exactly, above 1 = wins more than the cards
-   * alone are worth (position and initiative), below 1 = the reverse.
-   */
-  eqr: number | null;
 }
 
 export interface NodeStats {
@@ -44,14 +39,10 @@ const finite = (v: number | null | undefined): v is number =>
 /**
  * Build the display stats for both seats.
  *
- * `potChips` is only used to decide whether EV is in chips. It is not used to
- * compute EQR: postflop is zero-sum, so the two seats' EVs sum to the pot *in
- * whatever unit the solve used*, and dividing by that sum makes EQR correct
- * without knowing the unit at all. That matters because ICM boards report EV
- * in tournament equity - one of ours sums to 3.93 against a 550-chip pot - and
- * an EQR taken against the chip pot would be off by two orders of magnitude.
- * Using the EV sum instead, the equity-weighted EQR comes out to exactly 1 on
- * every board, chipEV and ICM alike.
+ * `potChips` is only used to decide whether EV is in chips, which decides
+ * whether a bb conversion is meaningful. ICM boards report EV in
+ * tournament-equity units - one of ours sums to 3.93 against a 550-chip pot -
+ * so dividing those by 100 would produce a confident-looking wrong number.
  */
 export function buildNodeStats(
   doc: PioSolutionDoc | null | undefined,
@@ -79,18 +70,13 @@ export function buildNodeStats(
   const seatStats = (role: "oop" | "ip"): SeatNodeStats => {
     const s: SeatStats | null | undefined = stats[role];
     const ev = finite(s?.ev) ? s!.ev! : null;
-    const equity = finite(s?.equity) ? s!.equity! : null;
     return {
       role,
       seat: seats[role],
       combos: finite(s?.combos) ? s!.combos! : null,
-      equity,
+      equity: finite(s?.equity) ? s!.equity! : null,
       ev,
       evBB: chipEv && ev != null ? ev / CHIPS_PER_BB : null,
-      eqr:
-        ev != null && equity != null && equity > 0 && finite(evSum) && evSum !== 0
-          ? ev / (equity * evSum)
-          : null,
     };
   };
 

@@ -43,28 +43,13 @@ test("ICM solves report no bb, because EV is not chips", () => {
   expect(s.oop.ev).toBeCloseTo(1.07, 2);
 });
 
-test("EQR is unit-independent: equity-weighted it is exactly 1", () => {
-  for (const [name, d] of [
-    ["chip", CHIP],
-    ["icm", ICM],
-  ] as const) {
-    const s = buildNodeStats(d, SEATS, 700)!;
-    const weighted = s.oop.equity! * s.oop.eqr! + s.ip.equity! * s.ip.eqr!;
-    expect(weighted, `${name} EQR did not close`).toBeCloseTo(1, 3);
-  }
-  /* Taken against the chip pot instead of the EV sum, the ICM board's EQR
-     would come out near zero - the bug this guards. */
-  const icm = buildNodeStats(ICM, SEATS, 550)!;
-  expect(icm.oop.eqr!).toBeGreaterThan(0.5);
-});
-
 test("missing or partial stats degrade to nulls, not NaN", () => {
   expect(buildNodeStats(null, SEATS, 700)).toBeNull();
   expect(buildNodeStats({} as PioSolutionDoc, SEATS, 700)).toBeNull();
 
-  // A seat that cannot reach the node has no equity, so no EQR either.
+  // A seat that cannot reach the node has zero equity rather than NaN.
   const oneSided = doc([554.41, 0, 100], [0, 0, 0]);
   const s = buildNodeStats(oneSided, SEATS, 550)!;
-  expect(s.oop.eqr).toBeNull();
+  expect(s.oop.equity).toBe(0);
   expect(Number.isNaN(s.oop.evBB ?? 0)).toBe(false);
 });

@@ -135,20 +135,3 @@ export function buildComboDetail(
     ? { actor: combos.actor, actions: [...labels], byCombo }
     : null;
 }
-
-/**
- * Equity realization: the share of its raw equity a range actually converts
- * into chips. Above 100% means the seat wins more than its cards alone are
- * worth, the usual mark of a positional or initiative edge.
- *
- * Derived rather than stored - it is a ratio of two numbers already uploaded.
- */
-export function equityRealization(
-  ev: number | null | undefined,
-  equity: number | null | undefined,
-  potChips: number | null | undefined
-): number | null {
-  if (ev == null || equity == null || !potChips || equity <= 0) return null;
-  const share = equity * potChips;
-  return share > 0 ? ev / share : null;
-}

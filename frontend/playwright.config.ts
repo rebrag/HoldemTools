@@ -64,11 +64,20 @@ export default defineConfig({
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
-    /* Specs that need a signed-in user (the postflop library is auth-gated)
-       drive the dev auth store via localStorage, which only exists when the
-       bypass is compiled in. Setting it here rather than in a local .env keeps
-       the suite reproducible on any checkout and in CI. The store still starts
-       SIGNED OUT, so specs that do not opt in are unaffected. */
-    env: { VITE_DEV_AUTH_BYPASS: "true" },
+    /* The suite supplies its own feature flags rather than inheriting whatever
+       .env a checkout happens to have, so it behaves the same locally and in
+       CI (which ships no .env at all - see .github/workflows/frontend-ci.yml).
+
+       DEV_AUTH_BYPASS: the postflop library is auth-gated, and specs flip the
+       dev auth store through localStorage, which only exists when the bypass
+       is compiled in. The store still starts SIGNED OUT, so specs that do not
+       opt in are unaffected.
+
+       POSTFLOP_ENABLED: gates the solved-flops library button. Without it the
+       postflop specs have no way into a board at all. */
+    env: {
+      VITE_DEV_AUTH_BYPASS: "true",
+      VITE_POSTFLOP_ENABLED: "true",
+    },
   },
 });
