@@ -139,6 +139,25 @@ export const orderActionKeys = (actions: string[]): string[] =>
   });
 
 
+/** The betting options at a plate's node, in the plate's own key order.
+ *  ("c" is the solver's key for a call; every other key is already a label.) */
+export const plateActions = (data?: JsonData): string[] => {
+  if (!data) return [];
+  const acts = Object.keys(data)
+    .filter((k) => k !== "Position" && k !== "bb")
+    .map((k) => (k === "c" ? "Call" : k));
+  return Array.from(new Set(acts));
+};
+
+/**
+ * The cheapest way to pass the action on at a node: fold if the seat may,
+ * else check, else call. Undefined when a node offers none of the three, i.e.
+ * the seat cannot get out of the way. Drives the Line's "click a seat to skip
+ * ahead to it" shortcut.
+ */
+export const passiveAction = (options: string[]): string | undefined =>
+  ["Fold", "Check", "Call"].find((action) => options.includes(action));
+
 // Combine JsonData into an array of HandCellData objects,
 // extracting both strategy weights and EV values per action.
 export const combineDataByHand = (data: JsonData): HandCellData[] => {

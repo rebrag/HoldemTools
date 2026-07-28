@@ -5,7 +5,6 @@ import SingleRangeDesktopView from "./views/SingleRangeDesktopView";
 import SingleRangeMobileView from "./views/SingleRangeMobileView";
 import MultiRangeDesktopView from "./views/MultiRangeDesktopView";
 import MultiRangeMobileView from "./views/MultiRangeMobileView";
-import { actionToNumberMap } from "@/lib/solver/constants";
 import { displayedPot } from "@/lib/pokerPot";
 import { getInitialMapping } from "@/lib/solver/getInitialMapping";
 import useKeyboardShortcuts from "@/hooks/useKeyboardShortcuts";
@@ -13,7 +12,7 @@ import useSolverLayout from "./useSolverLayout";
 import useFolders from "@/hooks/useFolders";
 import useFiles from "@/hooks/useFiles";
 import axios from "axios";
-import { JsonData } from "@/lib/solver/utils";
+import { JsonData, passiveAction, plateActions } from "@/lib/solver/utils";
 import Line from "./Line";
 import { Steps } from "intro.js-react";
 import "intro.js/introjs.css";
@@ -218,6 +217,12 @@ const Solver = ({ user }: SolverProps) => {
     files: string[];
     step: number;
   } | null>(null);
+  /* Seat the Line was asked to skip ahead to, with the steps taken so far as
+   * a runaway guard. See the skip effect below. */
+  const [skipTarget, setSkipTarget] = useState<{
+    seat: string;
+    steps: number;
+  } | null>(null);
 
   // Single-range view toggle (persisted)
   const [singleRangeView, setSingleRangeView] = useState<boolean>(() => {
@@ -391,6 +396,7 @@ const Solver = ({ user }: SolverProps) => {
       setPreflopLine(["Root"]);
       setPotCommitted({});
       setPreflopReplay(null);
+      setSkipTarget(null);
       setRandomFillEnabled(false);
       const initialAlive: Record<string, boolean> = {};
       Object.keys(freshMapping).forEach((pos) => (initialAlive[pos] = true));
@@ -784,6 +790,7 @@ const Solver = ({ user }: SolverProps) => {
       playerCount === 2 ? { BTN: 0.5, BB: 1 } : { SB: 0.5, BB: 1 };
     setPlayerBets(resetBets);
     setPotCommitted({});
+    setSkipTarget(null);
     setPotSize(
       Object.values(resetBets).reduce((s, b) => s + b, 0) + metadata.ante
     );
@@ -801,12 +808,41 @@ const Solver = ({ user }: SolverProps) => {
   }, [pf, resetPreflopToRoot]);
 
   /**
+   * Walk the preflop tree from the root until `actions` have been taken,
+   * leaving the seat after them to act. The walk runs one action per render
+   * (see the replay effect) because each node's plate is fetched as a side
+   * effect of the action before it, so it lands on exactly the state a user
+   * clicking through would reach.
+   *
+   * `sourceFolder` guards against replaying a line into a different sim: the
+   * caller's line belongs to it, so a mismatch stops at the root instead.
+   */
+  const replayPreflopLine = useCallback(
+    (actions: string[], sourceFolder?: string | null) => {
+      const files = preflopNodeFiles(actions);
+      resetPreflopToRoot();
+      const usable =
+        !!files && actions.length > 0 && (sourceFolder ?? folder) === folder;
+      setPreflopReplay(
+        usable ? { folder, actions, files: files!, step: 0 } : null
+      );
+    },
+    [folder, resetPreflopToRoot]
+  );
+
+  /** Rewind the preflop line to just after its first `actionCount` actions,
+   *  which puts the seat that acted next back on the spot. */
+  const rewindPreflopTo = useCallback(
+    (actionCount: number) => {
+      replayPreflopLine(preflopLine.slice(1, actionCount + 1));
+    },
+    [preflopLine, replayPreflopLine]
+  );
+
+  /**
    * Leave the board and land back in the preflop tree at preflop node `index`.
    * Clicking the action the line took returns to that decision (the seat is up
    * to act again); any other option is taken instead, branching the line.
-   * The tree is walked forward from the root one action per render - each
-   * node's plate is fetched as a side-effect of the previous action - so the
-   * jump lands on exactly the state a user clicking through would reach.
    */
   const jumpToPreflopNode = useCallback(
     (index: number, action: string) => {
@@ -820,29 +856,17 @@ const Solver = ({ user }: SolverProps) => {
         action === lineActions[index]
           ? lineActions.slice(0, index)
           : [...lineActions.slice(0, index), action];
-      const files = preflopNodeFiles(actions);
-      if (!files) return; // an action label with no node number - cannot replay
-
-      // The session's sim is the one already open in every reachable flow; if
-      // it somehow is not, land on its root rather than replaying a line into
-      // the wrong tree.
-      const pfFolder = view.manifest.preflop.folder ?? folder;
 
       pendingCancelRef.current = true;
       setPostflopPending(null);
       pf.close();
       setCurrentBoard([]);
-      resetPreflopToRoot();
-      setPreflopReplay(
-        actions.length && pfFolder === folder
-          ? { folder: pfFolder, actions, files, step: 0 }
-          : null
-      );
+      replayPreflopLine(actions, view.manifest.preflop.folder);
     },
     // pf.view / pf.close are the only members used; pf itself is a fresh
     // object every render, which would defeat this memo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pf.view, pf.close, resetPreflopToRoot, folder]
+    [pf.view, pf.close, replayPreflopLine]
   );
 
   /* Drive a pending preflop replay: apply the next action as soon as its node
@@ -882,6 +906,45 @@ const Solver = ({ user }: SolverProps) => {
     handleActionClick,
   ]);
 
+  /* Clicking the empty part of a seat's card in the Line asks to skip ahead to
+   * that seat: every seat still to act in front of it gets out of the way -
+   * fold if it may, else check, else call - one action per render, so the
+   * clicked seat ends up being the one to act with its range on screen. The
+   * step budget keeps a node that cannot pass from stalling the walk. */
+  const skipToSeat = useCallback((seat: string) => {
+    setSkipTarget({ seat, steps: 0 });
+  }, []);
+
+  useEffect(() => {
+    if (!skipTarget || preflopReplay) return;
+    if (skipTarget.seat === activePlayer || skipTarget.steps > actingOrder.length) {
+      setSkipTarget(null);
+      return;
+    }
+    const file = plateMapping[activePlayer];
+    if (!file) {
+      setSkipTarget(null);
+      return;
+    }
+    if (!loadedPlates.includes(file) || !plateData[file]) return; // await the plate
+    const action = passiveAction(plateActions(plateData[file]));
+    if (!action) {
+      setSkipTarget(null); // this seat has no way to pass the action on
+      return;
+    }
+    handleActionClick(action, file);
+    setSkipTarget((prev) => (prev ? { ...prev, steps: prev.steps + 1 } : prev));
+  }, [
+    skipTarget,
+    preflopReplay,
+    activePlayer,
+    actingOrder.length,
+    plateMapping,
+    loadedPlates,
+    plateData,
+    handleActionClick,
+  ]);
+
   // Open a previously solved board from the library (tier-gated like folders).
   const openSolvedBoard = useCallback(
     async (entry: PostflopIndexEntry) => {
@@ -915,125 +978,6 @@ const Solver = ({ user }: SolverProps) => {
       await pf.open(manifest);
     },
     [uid, folderMetaMap, tier, tierLoading, actuallyOpenFolder, pf]
-  );
-
-  const handleLineClick = useCallback(
-    (clickedIndex: number) => {
-      const trimmedLine = preflopLine.slice(0, clickedIndex + 1);
-      setPreflopLine(trimmedLine);
-      const initialAlive: Record<string, boolean> = {};
-      const positions =
-        playerCount === 8
-          ? ["SB", "BB", "UTG", "UTG1", "LJ", "HJ", "CO", "BTN"]
-          : playerCount === 7
-          ? ["SB", "BB", "UTG1", "LJ", "HJ", "CO", "BTN"]
-          : playerCount === 6
-          ? ["SB", "BB", "LJ", "HJ", "CO", "BTN"]
-          : playerCount === 5
-          ? ["SB", "BB", "HJ", "CO", "BTN"]
-          : playerCount === 4
-          ? ["SB", "BB", "CO", "BTN"]
-          : playerCount === 3
-          ? ["SB", "BB", "BTN"]
-          : playerCount === 2
-          ? ["BB", "BTN"]
-          : Object.keys(plateMapping);
-      positions.forEach((pos) => (initialAlive[pos] = true));
-
-      if (clickedIndex === 0 || clickedIndex === 1 || trimmedLine[clickedIndex] === "Fold") {
-        setAlivePlayers(initialAlive);
-        lastClickRef.current = null;
-        const bbIdx = positions.indexOf("BB");
-        const defaultIdx = (bbIdx + 1) % positions.length;
-        setActivePlayer(positions[defaultIdx]);
-        const resetBets: Record<string, number> = {};
-        if (playerCount === 2) {
-          resetBets["BTN"] = 0.5;
-          resetBets["BB"] = 1;
-        } else {
-          resetBets["SB"] = 0.5;
-          resetBets["BB"] = 1;
-        }
-        const ante = metadata.ante;
-        const pot = Object.values(resetBets).reduce((sum, b) => sum + b, 0) + ante;
-
-        setPlayerBets(resetBets);
-        setPotSize(pot);
-        if (playerCount === 8) {
-          setPlateMapping({
-            UTG: "root.json",
-            UTG1: "0.json",
-            LJ: "0.0.json",
-            HJ: "0.0.0.json",
-            CO: "0.0.0.0.json",
-            BTN: "0.0.0.0.0.json",
-            SB: "0.0.0.0.0.0.json",
-            BB: "0.0.0.0.0.0.1.json",
-          });
-        } else if (playerCount === 7) {
-          setPlateMapping({
-            UTG1: "root.json",
-            LJ: "0.json",
-            HJ: "0.0.json",
-            CO: "0.0.0.json",
-            BTN: "0.0.0.0.json",
-            SB: "0.0.0.0.0.json",
-            BB: "0.0.0.0.0.1.json",
-          });
-        } else if (playerCount === 6) {
-          setPlateMapping({
-            LJ: "root.json",
-            HJ: "0.json",
-            CO: "0.0.json",
-            BTN: "0.0.0.json",
-            SB: "0.0.0.0.json",
-            BB: "0.0.0.0.1.json",
-          });
-        } else if (playerCount === 5) {
-          setPlateMapping({
-            HJ: "root.json",
-            CO: "0.json",
-            BTN: "0.0.json",
-            SB: "0.0.0.json",
-            BB: "0.0.0.1.json",
-          });
-        } else if (playerCount === 4) {
-          setPlateMapping({
-            CO: "root.json",
-            BTN: "0.json",
-            SB: "0.0.json",
-            BB: "0.0.1.json",
-          });
-        } else if (playerCount === 3) {
-          setPlateMapping({
-            BTN: "root.json",
-            SB: "0.json",
-            BB: "0.1.json",
-          });
-        } else if (playerCount === 2) {
-          setPlateMapping({
-            BTN: "root.json",
-            BB: "1.json",
-          });
-        }
-      } else {
-        const fileNamePart = trimmedLine
-          .slice(1, clickedIndex)
-          .map((action) => actionToNumberMap[action])
-          .join(".");
-        const computedFileName = fileNamePart + ".json";
-
-        handleActionClick(trimmedLine[clickedIndex], computedFileName);
-
-        setPlateMapping((prev) => ({
-          ...prev,
-          [plateData[computedFileName].Position]: computedFileName,
-        }));
-      }
-
-      setRandomFillEnabled(false);
-    },
-    [preflopLine, playerCount, plateMapping, metadata.ante, handleActionClick, plateData]
   );
 
   useKeyboardShortcuts({
@@ -1225,7 +1169,6 @@ const Solver = ({ user }: SolverProps) => {
   ) : (
     <Line
       line={preflopLine}
-      onLineClick={handleLineClick}
       positions={actingOrder}
       activePlayer={activePlayer}
       plateData={plateData}
@@ -1233,6 +1176,8 @@ const Solver = ({ user }: SolverProps) => {
       playerBets={playerBets}
       alivePlayers={alivePlayers}
       onActionClick={handleActionClick}
+      onSkipToSeat={skipToSeat}
+      onRewindTo={rewindPreflopTo}
       matchWidth={
         desktopStudy ? undefined : windowWidth >= 1024 ? plateContentWidth : undefined
       }

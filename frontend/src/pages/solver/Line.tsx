@@ -1,13 +1,18 @@
 // src/components/Line.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, RotateCcw } from "lucide-react";
-import { getColorForAction, stringToColor } from "@/lib/solver/utils";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  getColorForAction,
+  passiveAction,
+  plateActions,
+  stringToColor,
+} from "@/lib/solver/utils";
 import type { JsonData } from "@/lib/solver/utils";
 
 export interface LineProps {
-  /** Chronological line of actions (index 0 is "Root"); used for the Reset control. */
+  /** Chronological line of actions (index 0 is "Root"), replayed to find each
+   *  seat's decision - what a click on that seat's card goes back to. */
   line: string[];
-  onLineClick: (idx: number) => void;
 
   /** Seats in pre-flop acting order (UTG … BTN, SB, BB). */
   positions: string[];
@@ -18,6 +23,18 @@ export interface LineProps {
   alivePlayers: Record<string, boolean>;
   /** Same handler the plates use — clicking a seat's option navigates the tree. */
   onActionClick: (action: string, file: string) => void;
+  /**
+   * Skip ahead to `pos`: every seat still to act in front of it gets out of
+   * the way (fold, else check, else call) until `pos` is the one to act.
+   * Bound to a click on the empty part of a seat's card.
+   */
+  onSkipToSeat?: (pos: string) => void;
+  /**
+   * Rewind: walk the tree again from the root, stopping after the line's
+   * first `actionCount` actions. Bound to a click on a seat that has already
+   * acted, so its own decision comes back up - folded seats included.
+   */
+  onRewindTo?: (actionCount: number) => void;
   /** Constrain the bar's total width to match the plate grid below (px). */
   matchWidth?: number;
 }
@@ -40,17 +57,11 @@ const seatRank = (act: string) =>
     : 4;
 
 /** The betting options available at a seat's node, derived from its plate JSON. */
-const seatActions = (data?: JsonData): string[] => {
-  if (!data) return [];
-  const acts = Object.keys(data)
-    .filter((k) => k !== "Position" && k !== "bb")
-    .map((k) => (k === "c" ? "Call" : k));
-  return Array.from(new Set(acts)).sort((a, b) => seatRank(a) - seatRank(b));
-};
+const seatActions = (data?: JsonData): string[] =>
+  plateActions(data).sort((a, b) => seatRank(a) - seatRank(b));
 
 const Line: React.FC<LineProps> = ({
   line,
-  onLineClick,
   positions,
   activePlayer,
   plateData,
@@ -58,32 +69,39 @@ const Line: React.FC<LineProps> = ({
   playerBets,
   alivePlayers,
   onActionClick,
+  onSkipToSeat,
+  onRewindTo,
   matchWidth,
 }) => {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [canLeft, setCanLeft] = useState(false);
   const [canRight, setCanRight] = useState(false);
 
-  /* Each seat's most recent action along the line, by replaying it over the
-   * acting order (folds drop the seat; other actions pass to the next seat).
-   * Used to highlight the taken option in a seat's card, GTO Wizard style. */
-  const takenBySeat = useMemo(() => {
-    const map: Record<string, string> = {};
+  /* Replaying the line over the acting order (folds drop the seat; other
+   * actions pass to the next seat) gives two things per seat: its most recent
+   * action, which highlights the taken option GTO Wizard style, and how many
+   * actions came before its FIRST decision, which is what a click on the seat
+   * rewinds to. Earliest rather than latest so a seat that acted twice unwinds
+   * everything it did - and so the first card always reaches the root, which
+   * is what stands in for a reset control. */
+  const { takenBySeat, actionsBeforeSeat } = useMemo(() => {
+    const taken: Record<string, string> = {};
+    const before: Record<string, number> = {};
     const alive = [...positions];
     let idx = 0;
-    for (const action of line.slice(1)) {
+    line.slice(1).forEach((action, i) => {
       const seat = alive[idx];
-      if (!seat) break;
-      map[seat] = action;
+      if (!seat) return;
+      taken[seat] = action;
+      if (before[seat] == null) before[seat] = i;
       if (action === "Fold") {
         alive.splice(idx, 1);
-        if (alive.length === 0) break;
         if (idx >= alive.length) idx = 0;
-      } else {
+      } else if (alive.length > 0) {
         idx = (idx + 1) % alive.length;
       }
-    }
-    return map;
+    });
+    return { takenBySeat: taken, actionsBeforeSeat: before };
   }, [line, positions]);
 
   /* ───── helper to update arrow visibility ───── */
@@ -115,6 +133,33 @@ const Line: React.FC<LineProps> = ({
   /* smooth-scroll helper */
   const move = (delta: number) => {
     scrollerRef.current?.scrollBy({ left: delta, behavior: "smooth" });
+  };
+
+  /* Clicking a seat's empty area puts that seat back on the spot, in whichever
+   * direction it lies: seats still to act are reached by getting the ones in
+   * front of them out of the way (only possible while the seat to act can -
+   * a node with nothing but bets to choose from cannot), and seats that have
+   * already acted, folded ones included, by rewinding the line to just before
+   * their decision. */
+  const activeIdx = positions.indexOf(activePlayer);
+  const activeFile = plateMapping[activePlayer];
+  const activeCanPass = !!passiveAction(seatActions(plateData[activeFile]));
+
+  const seatCardClick = (
+    pos: string,
+    idx: number,
+    alive: boolean,
+    isActive: boolean
+  ): { onClick?: () => void; title?: string } => {
+    if (isActive) return {};
+    if (onSkipToSeat && alive && activeIdx >= 0 && idx > activeIdx && activeCanPass) {
+      return { onClick: () => onSkipToSeat(pos), title: `Skip ahead to ${pos}` };
+    }
+    const before = actionsBeforeSeat[pos];
+    if (onRewindTo && before != null) {
+      return { onClick: () => onRewindTo(before), title: `Back to ${pos}'s decision` };
+    }
+    return {};
   };
 
   /* ───── render ───── */
@@ -149,19 +194,8 @@ const Line: React.FC<LineProps> = ({
         className="overflow-x-auto scroll-smooth no-scrollbar w-full"
       >
         <div className="flex flex-nowrap items-stretch gap-1 w-full">
-        {/* Reset (back to root) */}
-        {line.length > 1 && (
-          <button
-            onClick={() => onLineClick(0)}
-            className="flex-shrink-0 flex flex-col items-center justify-center px-1.5 rounded-md border border-white/15 bg-white/5 hover:bg-white/10 text-gray-300 transition-colors"
-            title="Reset to start of hand"
-          >
-            <RotateCcw size={14} />
-            <span className="text-[0.5rem] mt-0.5 leading-none">Reset</span>
-          </button>
-        )}
-
-        {/* seat cards */}
+        {/* Seat cards. No separate reset control: the first seat's card is the
+            root of the tree, so clicking it unwinds the whole line. */}
         {positions.map((pos, idx) => {
           const file = plateMapping[pos];
           const data = file ? plateData[file] : undefined;
@@ -170,26 +204,18 @@ const Line: React.FC<LineProps> = ({
           const bet = playerBets[pos] ?? 0;
           const stack = data ? (data.bb ?? 0) - bet : null;
           const options = seatActions(data);
-
-          /* Clicking a card's empty area folds the seat that acts just
-             before it — but only when that previous seat is the one to
-             act, so the "fold to advance" transition is always valid. */
-          const prevPos = idx > 0 ? positions[idx - 1] : undefined;
-          const prevFile = prevPos ? plateMapping[prevPos] : undefined;
-          const canFoldPrev =
-            !!prevPos &&
-            prevPos === activePlayer &&
-            !!prevFile &&
-            seatActions(plateData[prevFile]).includes("Fold");
+          const card = seatCardClick(pos, idx, alive, isActive);
 
           return (
             <div
               key={pos}
-              onClick={
-                canFoldPrev ? () => onActionClick("Fold", prevFile!) : undefined
-              }
+              data-testid="line-card"
+              data-seat={pos}
+              data-active={isActive ? "true" : undefined}
+              onClick={card.onClick}
+              title={card.title}
               className={`flex-1 flex flex-col rounded-md border px-1.5 py-1 min-w-[3.6rem] transition-colors ${
-                canFoldPrev ? "cursor-pointer" : ""
+                card.onClick ? "cursor-pointer hover:bg-white/[0.07]" : ""
               } ${
                 isActive
                   ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_0_2px_rgba(16,185,129,0.35)]"
