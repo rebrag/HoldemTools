@@ -25,6 +25,8 @@ const MultiRangeDesktopView = ({
   actualPot,
   isICMSim,
   randomFillEnabled,
+  heightMode,
+  reachByFile,
   onActionClick,
   windowWidth,
   onPlateContentRef,
@@ -68,6 +70,7 @@ const MultiRangeDesktopView = ({
       onClearZoom={() => setZoom(null)}
       loading={loading}
       actualPot={actualPot}
+      heightMode={heightMode}
     >
       <div className="flex flex-col gap-4">
         {rows.map((row, rowIdx) => {
@@ -90,6 +93,8 @@ const MultiRangeDesktopView = ({
                     data={plateData[file]}
                     onActionClick={onActionClick}
                     randomFillEnabled={randomFillEnabled}
+                    heightMode={heightMode}
+                    reachByHand={reachByFile?.[file] ?? null}
                     alive={alivePlayers[posKey] ?? true}
                     playerBet={playerBets[posKey] ?? 0}
                     potCommitted={potCommitted?.[posKey] ?? 0}

@@ -21,6 +21,8 @@ const SingleRangeDesktopView = ({
   actualPot,
   isICMSim,
   randomFillEnabled,
+  heightMode,
+  reachByFile,
   onActionClick,
   windowWidth,
   windowHeight,
@@ -65,6 +67,8 @@ const SingleRangeDesktopView = ({
           loading={loading}
           isICMSim={isICMSim}
           randomFillEnabled={randomFillEnabled}
+          heightMode={heightMode}
+          reachByHand={activeFile ? reachByFile?.[activeFile] ?? null : null}
           onActionClick={onActionClick}
           baseW={studyW}
           viewH={vh}

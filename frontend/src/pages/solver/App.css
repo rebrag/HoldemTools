@@ -4,6 +4,12 @@
   transition: width 500ms ease-in-out;
 }
 
+/* Reach-scaled cell bar (HandCell): same timing as the width transition so
+   node-change morphs animate width and height in sync. */
+.segment-bar {
+  transition: height 500ms ease-in-out;
+}
+
 .decision-grid {
   grid-template-columns: repeat(13, 90px);
 }
