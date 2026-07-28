@@ -60,8 +60,23 @@ def reextract_board(fs, registry: CfrRegistry, stacks: str, node_name: str, boar
         log(f"SKIP {board}: no existing manifest to rebuild context from")
         return False
 
-    log(f"Re-extracting {board} ({os.path.basename(cfr_path)}), turns={TURN_PRECOMPUTE}")
-    extract = extract_board(cfr_path, PIO_DIR, turn_precompute=TURN_PRECOMPUTE)
+    # River streets exist only because someone requested them, so the default
+    # flop+turn sweep never reaches them. Without this they keep whatever schema
+    # they were first written with, and the hand breakdown silently falls back
+    # to class averages on exactly the nodes a user had already drilled into.
+    rivers = [
+        suffix.replace(".", ":")
+        for suffix, entry in (manifest.get("streets") or {}).items()
+        if entry.get("street") == "river" and entry.get("extracted")
+    ]
+
+    log(
+        f"Re-extracting {board} ({os.path.basename(cfr_path)}), "
+        f"turns={TURN_PRECOMPUTE}, rivers={len(rivers)}"
+    )
+    extract = extract_board(
+        cfr_path, PIO_DIR, turn_precompute=TURN_PRECOMPUTE, extra_seeds=rivers
+    )
     if extract is None or not extract["streets"].get("r:0", {}).get("views"):
         log(f"FAIL {board}: extraction produced nothing")
         return False
