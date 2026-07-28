@@ -32,9 +32,22 @@ test.beforeEach(async ({ page }) => {
      trigger regardless of the app's current default. */
   await page.addInitScript(() => window.localStorage.setItem("singleRangeView", "0"));
 
-  await page.route("**/api/Files/foldersWithMetadata*", (route) =>
-    route.fulfill({ json: foldersFixture })
+  /* One dispatcher for every API call, so the suite is hermetic.
+     Stubbing only foldersWithMetadata left the rest reaching the real API, and
+     what that did depended on whether the dev port happened to be in the
+     deployed CORS allowlist. Blocked, the failing plate-list fetch rendered an
+     "Error fetching files" banner - 24px of layout arriving at a
+     nondeterministic moment, which pushed the trigger down and shrank the
+     anchored dropdown by exactly the amount the screenshots disagreed by
+     (a 664px panel against a 688px baseline). Allowed, a real sim loads and
+     moves the geometry a different way. Serving everything locally makes the
+     layout depend only on the fixture. */
+  await page.route("**/api/**", (route) =>
+    route.request().url().includes("foldersWithMetadata")
+      ? route.fulfill({ json: foldersFixture })
+      : route.fulfill({ json: [] })
   );
+
   await page.goto("/solutions");
 });
 
