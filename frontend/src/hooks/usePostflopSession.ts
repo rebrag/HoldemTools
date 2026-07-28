@@ -14,6 +14,8 @@ import {
   displayActionMap,
   isCardSegment,
   parentOf,
+  preflopCommitChips,
+  stackBehindChips,
   toSuffix,
 } from "@/lib/solver/postflopNode";
 
@@ -34,6 +36,7 @@ export type PostflopSessionLineNode =
       /** The decision node itself (base for branching to other options). */
       parentId: string;
       seat: string;
+      /** Chips behind the seat when they faced this decision, in bb. */
       stackBB: number | null;
       /** Display labels of every action available at the decision node. */
       options: string[];
@@ -88,8 +91,13 @@ export type PostflopView = {
   usedCards: Set<string>;
   actorSeat: string;
   actorDoc: PioSolutionDoc | null;
+  /** Chips behind the acting seat at the current node, in bb. */
+  actorStackBB: number | null;
   opponentSeat: string;
   opponentDoc: PioSolutionDoc | null;
+  /** Chips (not bb) each remaining seat committed preflop - see the seat
+   *  stacks and the pot split, which both have to net it out. */
+  preflopCommitChips: number;
   actions: { pioLabel: string; display: string }[];
   loading: boolean;
 };
@@ -385,6 +393,26 @@ export function usePostflopSession() {
     const opponentSeat = actorRole === "ip" ? core.oopSeat : core.ipSeat;
     const opponentType = actorRole === "ip" ? "OOP_DEC" : "IP_DEC";
 
+    /* Every stack shown postflop is net of the preflop money: stacks_map holds
+     * the seats' starting stacks, which they no longer have once they paid to
+     * see the flop. */
+    const pfCommit = preflopCommitChips(
+      core.manifest.stacks_map,
+      [core.oopSeat, core.ipSeat],
+      core.manifest.effective_stack_chips
+    );
+    const stackBehindBB = (
+      seat: string,
+      role: "oop" | "ip",
+      nodeId: string
+    ): number | null => {
+      const startBB = core.manifest.stacks_map?.[seat];
+      if (startBB == null) return null;
+      return (
+        stackBehindChips(nodeId, role, Math.round(startBB * 100), pfCommit) / 100
+      );
+    };
+
     // Opponent plate: nearest ancestor where they acted...
     let opponentDoc: PioSolutionDoc | null = null;
     for (let p = parentOf(core.currentNodeId); p; p = parentOf(p)) {
@@ -416,14 +444,16 @@ export function usePostflopSession() {
           continue;
         }
         const parentDoc = docs[toSuffix(parent)] ?? null;
-        const seat =
-          parentDoc?.position === "IP" ? core.ipSeat : core.oopSeat;
+        const role = parentDoc?.position === "IP" ? "ip" : "oop";
+        const seat = role === "ip" ? core.ipSeat : core.oopSeat;
         lineNodes.push({
           kind: "action",
           nodeId: item.nodeId,
           parentId: parent,
           seat,
-          stackBB: core.manifest.stacks_map?.[seat] ?? null,
+          // Stack as it was when the seat faced this decision (their bet on
+          // this street is not deducted yet), matching the preflop Line.
+          stackBB: stackBehindBB(seat, role, parent),
           options: parentDoc
             ? displayActionMap(parentDoc, parent, eff).map((a) => a.display)
             : [item.label],
@@ -465,8 +495,10 @@ export function usePostflopSession() {
       usedCards,
       actorSeat,
       actorDoc: currentDoc,
+      actorStackBB: stackBehindBB(actorSeat, actorRole, core.currentNodeId),
       opponentSeat,
       opponentDoc,
+      preflopCommitChips: pfCommit,
       actions: currentDoc
         ? displayActionMap(currentDoc, core.currentNodeId, core.manifest.effective_stack_chips)
         : [],

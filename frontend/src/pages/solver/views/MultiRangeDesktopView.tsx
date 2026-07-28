@@ -19,6 +19,7 @@ const MultiRangeDesktopView = ({
   loading,
   alivePlayers,
   playerBets,
+  potCommitted,
   activePlayer,
   pot,
   actualPot,
@@ -91,6 +92,7 @@ const MultiRangeDesktopView = ({
                     randomFillEnabled={randomFillEnabled}
                     alive={alivePlayers[posKey] ?? true}
                     playerBet={playerBets[posKey] ?? 0}
+                    potCommitted={potCommitted?.[posKey] ?? 0}
                     isICMSim={isICMSim}
                     plateWidth={canonicalPlateWidth}
                     isActive={posKey === activePlayer}

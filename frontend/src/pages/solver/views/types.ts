@@ -12,7 +12,12 @@ export interface SolverRangeBaseProps {
   plateData: Record<string, JsonData>;
   loading: boolean;
   alivePlayers: Record<string, boolean>;
+  /** Chips still in front of each seat (the live bet), in bb. */
   playerBets: Record<string, number>;
+  /** Chips each seat has already pushed into the middle (preflop money and
+   *  matched postflop streets once in a postflop session), in bb. Empty
+   *  preflop, where bets stay in front of the seats until the flop. */
+  potCommitted?: Record<string, number>;
   activePlayer: string;
   /** Inclusive pot (all chips wagered, current bets included) - pot-odds math. */
   pot?: number;

@@ -103,6 +103,65 @@ export function potSplitChips(
 }
 
 /**
+ * Chips each remaining player put in preflop.
+ *
+ * The preflop street always ends with a call, so both players who see the flop
+ * committed the same amount, and Pio's effective stack is the shallower seat's
+ * chips behind at flop start - which pins that amount exactly. Boards solved
+ * before `effective_stack_chips` was recorded return 0, so their seats read as
+ * their full starting stack rather than a wrong number.
+ */
+export function preflopCommitChips(
+  stacksMapBB: Record<string, number> | undefined,
+  seats: string[],
+  effectiveStackChips?: number | null
+): number {
+  if (!stacksMapBB || effectiveStackChips == null || effectiveStackChips <= 0) return 0;
+  const stacks = seats
+    .map((seat) => stacksMapBB[seat])
+    .filter((bb): bb is number => bb != null);
+  if (stacks.length === 0) return 0;
+  return Math.max(0, Math.round(Math.min(...stacks) * 100) - effectiveStackChips);
+}
+
+/**
+ * Chips a seat has already pushed into the middle at `nodeId`: their preflop
+ * money plus every postflop bet that is no longer sitting in front of them.
+ * A seat's remaining stack is `startingStack - this - liveBet`, so chips keep
+ * leaving the stack when a bet gets called and joins the pot.
+ *
+ * `streetComplete` (a chance node waiting on a turn/river card) counts the
+ * street's matched bets as pooled, matching potSplitChips' sweep.
+ */
+export function pooledCommitChips(
+  nodeId: string,
+  role: "oop" | "ip",
+  preflopCommit: number,
+  streetComplete = false
+): number {
+  const live = currentStreetCommitChips(nodeId)[role];
+  return preflopCommit + priorStreetCommitChips(nodeId) + (streetComplete ? live : 0);
+}
+
+/**
+ * Chips a seat still has behind at `nodeId`: their starting stack less the
+ * preflop money, every matched postflop street, and their live bet.
+ */
+export function stackBehindChips(
+  nodeId: string,
+  role: "oop" | "ip",
+  startingStackChips: number,
+  preflopCommit: number
+): number {
+  return (
+    startingStackChips -
+    preflopCommit -
+    priorStreetCommitChips(nodeId) -
+    currentStreetCommitChips(nodeId)[role]
+  );
+}
+
+/**
  * Human label for a raw pio action at a given node.
  * "c" -> Check | Call, "f" -> Fold, "bNNN" -> Bet X bb | Raise to X bb.
  * With `effectiveStackChips` (manifest.effective_stack_chips), a bet that

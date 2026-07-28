@@ -1,8 +1,9 @@
 // Postflop line, GTO Wizard style: one card per visited node of the game
 // tree. Preflop cards show each seat's options with the taken action
-// highlighted; a FLOP card carries the pot + board; postflop decision cards
-// let you jump along the line or branch to a different action; the node to
-// act renders as the active (emerald) card.
+// highlighted, and clicking one leaves the board for that preflop node; a
+// FLOP card carries the pot + board; postflop decision cards let you jump
+// along the line or branch to a different action; the node to act renders as
+// the active (emerald) card.
 import React from "react";
 import { X } from "lucide-react";
 import PlayingCard from "@/components/PlayingCard";
@@ -24,6 +25,12 @@ export interface PostflopLineProps {
   onJump: (nodeId: string) => void;
   /** Branch: take `display` at the decision node `parentId`. */
   onPickAction?: (parentId: string, display: string) => void;
+  /**
+   * Leave the board and go back into the preflop tree at preflop node
+   * `index`. Clicking the action the line took returns to that decision;
+   * clicking any other option takes it instead, branching the preflop line.
+   */
+  onPreflopJump?: (index: number, action: string) => void;
   onExit: () => void;
   matchWidth?: number;
   /** Seat to act at the current node (the active card). */
@@ -113,6 +120,7 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
   notice,
   onJump,
   onPickAction,
+  onPreflopJump,
   onExit,
   matchWidth,
   actorSeat,
@@ -151,7 +159,14 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
                       key={action}
                       action={action}
                       taken={action === node.taken}
-                      title={`${node.seat}: ${action}`}
+                      onClick={
+                        onPreflopJump ? () => onPreflopJump(i, action) : undefined
+                      }
+                      title={
+                        action === node.taken
+                          ? `Back to ${node.seat}'s preflop decision`
+                          : `${node.seat}: switch to ${action} preflop`
+                      }
                     />
                   ))}
                 </div>

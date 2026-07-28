@@ -22,6 +22,16 @@ export interface PreflopLineNode {
   taken: string;
 }
 
+export interface PreflopLineReplay {
+  nodes: PreflopLineNode[];
+  /**
+   * What every seat had in the pot when the line ended, in bb - blinds
+   * included, so seats that folded still account for the chips they posted.
+   * Seats that never put anything in are absent.
+   */
+  committed: Record<string, number>;
+}
+
 /** Same option derivation the preflop Line uses for a seat's plate. */
 const nodeOptions = (data: JsonData): string[] => {
   const acts = Object.keys(data)
@@ -30,8 +40,12 @@ const nodeOptions = (data: JsonData): string[] => {
   return Array.from(new Set(acts));
 };
 
-/** Filenames of the nodes visited along the line ("Root" excluded). */
-const nodeFiles = (actions: string[]): string[] | null => {
+/**
+ * Filenames of the nodes visited along the line ("Root" excluded): file `i` is
+ * the node at which `actions[i]` was taken. Null when the line contains a
+ * label with no action number, i.e. the line cannot be reconstructed.
+ */
+export const preflopNodeFiles = (actions: string[]): string[] | null => {
   const nums: string[] = [];
   const files: string[] = [];
   for (let i = 0; i < actions.length; i++) {
@@ -48,12 +62,15 @@ export function usePreflopLineNodes(
   folder: string | null,
   line: string[] | null,
   ante = 0
-): PreflopLineNode[] | null {
+): PreflopLineReplay | null {
   const actions = useMemo(
     () => (line && line.length > 1 ? line.slice(line[0] === "Root" ? 1 : 0) : null),
     [line]
   );
-  const files = useMemo(() => (actions ? nodeFiles(actions) : null), [actions]);
+  const files = useMemo(
+    () => (actions ? preflopNodeFiles(actions) : null),
+    [actions]
+  );
 
   const [docs, setDocs] = useState<{ key: string; data: (JsonData | null)[] } | null>(null);
   const key = folder && files ? `${folder}|${files.join(",")}` : null;
@@ -121,6 +138,6 @@ export function usePreflopLineNodes(
       committed[seat] = newBet;
       maxBet = Math.max(maxBet, newBet);
     }
-    return nodes;
+    return { nodes, committed };
   }, [actions, docs, key, ante]);
 }

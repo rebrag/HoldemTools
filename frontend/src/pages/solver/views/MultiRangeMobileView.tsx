@@ -30,6 +30,7 @@ const MultiRangeMobileView = ({
   loading,
   alivePlayers,
   playerBets,
+  potCommitted,
   activePlayer,
   pot,
   actualPot,
@@ -155,6 +156,7 @@ const MultiRangeMobileView = ({
                     randomFillEnabled={randomFillEnabled}
                     alive={alivePlayers[posKey] ?? true}
                     playerBet={playerBets[posKey] ?? 0}
+                    potCommitted={potCommitted?.[posKey] ?? 0}
                     isICMSim={isICMSim}
                     isActive={posKey === activePlayer}
                     pot={pot}
