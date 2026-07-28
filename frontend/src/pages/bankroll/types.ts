@@ -37,6 +37,17 @@ export interface BankrollStats {
   hourly: number;
 }
 
+export type BreakdownMode = "sessions" | "weekday" | "month" | "year";
+
+export interface FilterState {
+  location: string;
+  game: string;
+  fromDate: string; // YYYY-MM-DD
+  toDate: string; // YYYY-MM-DD
+  minHours: string;
+  maxHours: string;
+}
+
 export type CumulativePoint = {
   x: number;
   y: number;

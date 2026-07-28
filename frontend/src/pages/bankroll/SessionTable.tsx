@@ -3,11 +3,47 @@ import React, { useMemo } from "react";
 import { formatHours, formatMoney } from "./utils";
 import type { BankrollSession } from "./types";
 
+export type SessionTableTheme = "light" | "dark";
+
 interface Props {
   sessions: BankrollSession[];
   onEdit: (session: BankrollSession) => void;
   onDelete: (id: string) => void;
+  theme?: SessionTableTheme;
 }
+
+const THEMES = {
+  light: {
+    tbody: "divide-y divide-gray-100 bg-white",
+    empty: "px-3 py-3 text-center text-sm text-gray-500",
+    row: "transition-colors hover:bg-emerald-50/60 cursor-pointer group",
+    cell: "text-gray-800",
+    cellMuted: "text-gray-700",
+    actionsCell: "text-gray-500",
+    profitPos: "text-emerald-600",
+    profitNeg: "text-rose-600",
+    profitZero: "text-slate-700",
+    editChip:
+      "inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-300/70 bg-white group-hover:bg-emerald-100 text-emerald-600 transition",
+    deleteBtn:
+      "inline-flex h-6 w-6 items-center justify-center rounded-full border border-rose-300/70 bg-white hover:bg-rose-50 text-rose-600 transition relative z-10",
+  },
+  dark: {
+    tbody: "divide-y divide-white/5",
+    empty: "px-3 py-3 text-center text-sm text-emerald-100/70",
+    row: "transition-colors hover:bg-white/5 cursor-pointer group",
+    cell: "text-emerald-50/95",
+    cellMuted: "text-emerald-100/75",
+    actionsCell: "text-emerald-100/60",
+    profitPos: "text-emerald-300",
+    profitNeg: "text-rose-300",
+    profitZero: "text-emerald-50/80",
+    editChip:
+      "inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-300/30 bg-white/5 group-hover:bg-emerald-400/20 text-emerald-300 transition",
+    deleteBtn:
+      "inline-flex h-6 w-6 items-center justify-center rounded-full border border-rose-300/30 bg-white/5 hover:bg-rose-400/20 text-rose-300 transition relative z-10",
+  },
+} as const;
 
 // Memoized (see export): the parent re-renders on every modal keystroke and
 // on a 1s ticker while a draft session is running, and this table should only
@@ -16,7 +52,10 @@ const SessionTable: React.FC<Props> = ({
   sessions,
   onEdit,
   onDelete,
+  theme = "light",
 }) => {
+  const t = THEMES[theme];
+
   // Sorting copies the array and parses two dates per comparison — worth
   // caching across unrelated re-renders.
   const ordered = useMemo(
@@ -31,12 +70,9 @@ const SessionTable: React.FC<Props> = ({
 
   if (!sessions.length) {
     return (
-      <tbody className="divide-y divide-gray-100 bg-white">
+      <tbody className={t.tbody}>
         <tr>
-          <td
-            colSpan={8}
-            className="px-3 py-3 text-center text-sm text-gray-500"
-          >
+          <td colSpan={8} className={t.empty}>
             No sessions yet. Add one above to get started.
           </td>
         </tr>
@@ -45,7 +81,7 @@ const SessionTable: React.FC<Props> = ({
   }
 
   return (
-    <tbody className="divide-y divide-gray-100 bg-white">
+    <tbody className={t.tbody}>
       {ordered.map((s) => {
         const startDate = s.start ? new Date(s.start) : null;
         const dateStr = startDate ? startDate.toLocaleDateString() : "—";
@@ -67,47 +103,39 @@ const SessionTable: React.FC<Props> = ({
             : "—";
 
         const profitColor =
-          profit > 0
-            ? "text-emerald-600"
-            : profit < 0
-            ? "text-rose-600"
-            : "text-slate-700";
+          profit > 0 ? t.profitPos : profit < 0 ? t.profitNeg : t.profitZero;
 
         return (
-          <tr
-            key={s.id}
-            onClick={() => onEdit(s)}
-            className="transition-colors hover:bg-emerald-50/60 cursor-pointer group"
-          >
-            <td className="px-2 py-1.5 text-[8px] sm:text-xs text-gray-800">
+          <tr key={s.id} onClick={() => onEdit(s)} className={t.row}>
+            <td className={`px-2 py-1.5 text-[8px] sm:text-xs ${t.cell}`}>
               <span className="block truncate max-w-[80px]">
                 {dateStr}
               </span>
             </td>
 
-            <td className="px-2 py-1.5 text-[11px] sm:text-xs text-gray-700">
+            <td className={`px-2 py-1.5 text-[11px] sm:text-xs ${t.cellMuted}`}>
               <span className="block truncate max-w-[110px]">
                 {s.location ?? "—"}
               </span>
             </td>
 
-            <td className="px-2 py-1.5 text-[11px] sm:text-xs text-gray-700">
+            <td className={`px-2 py-1.5 text-[11px] sm:text-xs ${t.cellMuted}`}>
               <span className="block truncate max-w-[90px]">
                 {s.blinds ?? "—"}
               </span>
             </td>
 
-            <td className="px-2 py-1.5 text-[11px] sm:text-xs text-gray-700 text-center">
+            <td className={`px-2 py-1.5 text-[11px] sm:text-xs text-center ${t.cellMuted}`}>
               {hoursStr}
             </td>
 
-            <td className="px-2 py-1.5 text-[9px] sm:text-xs text-gray-700">
+            <td className={`px-2 py-1.5 text-[9px] sm:text-xs ${t.cellMuted}`}>
               <span className="block truncate max-w-[80px]">
                 {s.buyIn != null ? `$${buyInStr}` : "—"}
               </span>
             </td>
 
-            <td className="px-2 py-1.5 text-[9px] sm:text-xs text-gray-700">
+            <td className={`px-2 py-1.5 text-[9px] sm:text-xs ${t.cellMuted}`}>
               <span className="block truncate max-w-[80px]">
                 {s.cashOut != null ? `$${cashOutStr}` : "—"}
               </span>
@@ -121,13 +149,10 @@ const SessionTable: React.FC<Props> = ({
               </span>
             </td>
 
-            <td className="px-2 py-1.5 text-[11px] sm:text-xs text-gray-500">
+            <td className={`px-2 py-1.5 text-[11px] sm:text-xs ${t.actionsCell}`}>
               <div className="flex items-center gap-1 justify-end">
                 {/* Visual indicator for Edit - button behavior now handled by row */}
-                <div
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-300/70 bg-white group-hover:bg-emerald-100 text-emerald-600 transition"
-                  title="Edit session"
-                >
+                <div className={t.editChip} title="Edit session">
                   <svg
                     viewBox="0 0 20 20"
                     className="h-3.5 w-3.5"
@@ -145,7 +170,7 @@ const SessionTable: React.FC<Props> = ({
                     e.stopPropagation(); // Prevents onEdit from firing
                     onDelete(s.id);
                   }}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-rose-300/70 bg-white hover:bg-rose-50 text-rose-600 transition relative z-10"
+                  className={t.deleteBtn}
                   title="Delete session"
                 >
                   <svg
