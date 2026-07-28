@@ -68,6 +68,30 @@ const fmtPct = (weight: number): string => {
   return Math.abs(p % 1) < 0.05 ? p.toFixed(0) : p.toFixed(1);
 };
 
+/**
+ * Rescale an action mix so it sums to 1, which makes every tile's bar span its
+ * full width instead of trailing off into background.
+ *
+ * A strategy is a distribution, so a shortfall is always an artifact rather
+ * than information. The usual source is a class average taken over all of a
+ * class's combos including ones the player cannot hold - a board-blocked combo
+ * contributes a row of zeros, so 65s on a board with one of its cards averages
+ * to 0.75 and the bar renders three-quarters wide. Normalising both the widths
+ * and the printed percentages from the same numbers keeps them consistent.
+ *
+ * An all-zero mix (a hand not in the range at all) is left alone: there is no
+ * strategy to show, and the tile should stay empty rather than invent one.
+ */
+const normalizeMix = (mix: Record<string, number>): Record<string, number> => {
+  const total = Object.values(mix).reduce((sum, w) => sum + (w || 0), 0);
+  if (total <= 0 || Math.abs(total - 1) < 1e-6) return mix;
+  const scaled: Record<string, number> = {};
+  for (const [action, weight] of Object.entries(mix)) {
+    scaled[action] = (weight || 0) / total;
+  }
+  return scaled;
+};
+
 interface ActionRow {
   action: string;
   pct: string;
@@ -201,7 +225,7 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
 
     // Class-average fallback, used preflop and for pre-schema-4 solves where
     // no per-combo data exists. Built once and shared by every tile.
-    const classMix = cell!.actions;
+    const classMix = normalizeMix(cell!.actions);
     const classRows = orderedActions.map((action) => ({
       action,
       pct: fmtPct(classMix[action] || 0),
@@ -228,10 +252,11 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
       }
 
       // This combo's own mix: the whole point of the panel.
-      const mix: Record<string, number> = {};
+      const raw: Record<string, number> = {};
       for (const action of orderedActions) {
-        mix[action] = detail.actions[action]?.freq ?? 0;
+        raw[action] = detail.actions[action]?.freq ?? 0;
       }
+      const mix = normalizeMix(raw);
       return {
         key: `${c1}${c2}`,
         c1,

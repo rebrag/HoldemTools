@@ -588,12 +588,20 @@ def extract_board(
     turn_precompute: bool = True,
     max_nodes_per_street: int = 500,
     seeds: Optional[List[str]] = None,
+    extra_seeds: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Load a .cfr ONCE and walk one or more streets.
 
     Default: walk the flop street, then (if turn_precompute) every turn street
     reachable from each flop chance node. Pass `seeds` (colon node ids) to walk
     only specific streets instead (on-demand river extraction).
+
+    `extra_seeds` are walked in addition to the default set. Re-extraction uses
+    it for river streets: those only exist because someone asked for them, so
+    they are not reachable from the default flop+turn sweep and would otherwise
+    keep whatever schema they were first written with. Loading the .cfr is the
+    expensive part, so folding them into this one pass is much cheaper than a
+    second call.
 
     Returns {hand_order, tree_info, streets: {seed_id: {views, nodes_meta}}}
     or None on failure.
@@ -627,6 +635,8 @@ def extract_board(
         streets: Dict[str, Dict[str, Any]] = {}
 
         def walk(seed_id: str) -> None:
+            if seed_id in streets:
+                return
             t = time.perf_counter()
             views, nodes_meta = walk_street(
                 solver, seed_id=seed_id, max_nodes=max_nodes_per_street, ev_cache=ev_cache
@@ -655,6 +665,9 @@ def extract_board(
                         children = []
                     for child in children:
                         walk(child.node_id)
+
+        for seed_id in extra_seeds or []:
+            walk(seed_id)
 
         log(
             f"  [board] extracted {len(streets)} street(s), "

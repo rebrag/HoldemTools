@@ -107,6 +107,29 @@ test("combos of one class render their own mixes, not the class average", async 
   ).toBeGreaterThan(0);
 });
 
+test("every live tile's bar spans the full width", async ({ page }) => {
+  await openBoard(page);
+
+  /* A strategy sums to 1, so a bar that stops short is an artifact - most often
+     a class average diluted by combos the player cannot hold. The one honest
+     exception is a hand the actor never holds here, which has no strategy to
+     draw: those stay empty rather than being scaled up from nothing. So every
+     bar must be either fully empty or exactly full, never partial. */
+  const seen: number[] = [];
+  for (const hand of ["65s", "66", "AKo", "A5s", "KJo"]) {
+    for (const tile of await tilesFor(page, hand)) {
+      const total = tile.widths
+        .split("|")
+        .reduce((sum, w) => sum + Number(w), 0);
+      seen.push(total);
+      if (total === 0) continue; // hand not in the actor's range here
+      expect(total, `${hand} ${tile.combo} bar totalled ${total}%`).toBeCloseTo(100, 1);
+    }
+  }
+  // Guards against the whole panel being empty, which would pass vacuously.
+  expect(seen.some((t) => t > 0), "no tile had a bar at all").toBe(true);
+});
+
 test("a partially weighted combo is labelled with its weight", async ({ page }) => {
   await openBoard(page);
   await page.locator('[data-testid="hand-cell"][data-hand="66"]').hover();
