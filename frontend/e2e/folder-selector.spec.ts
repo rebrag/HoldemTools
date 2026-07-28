@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { fileURLToPath } from "node:url";
-import { foldersFixture } from "./fixtures/folders";
+import { stubSolverApi, type ApiStub } from "./fixtures/api";
 
 /** Blanks the page behind the glass panel - see the file's own comment.
  *  The package is ESM, so there is no __dirname to resolve against. */
@@ -15,6 +15,14 @@ const SNAPSHOT_STYLE = fileURLToPath(new URL("./screenshot.css", import.meta.url
  * panel sizes itself around a scrollbar gutter it has to measure. These tests
  * pin the invariants so a failure names which one broke.
  */
+
+let api: ApiStub;
+
+/* `npm run test:e2e` starts a fresh Vite dev server, so the first load of a run
+   transforms the solver's whole module graph on demand - and every worker
+   races that same cold start. Booting the app is the one step that legitimately
+   outlives the 5s default; past it the page is up and the default applies. */
+const BOOT_TIMEOUT = 45_000;
 
 test.beforeEach(async ({ page }) => {
   /* A fresh profile is a first-time visitor, so Solver runs its intro.js tour
@@ -32,17 +40,28 @@ test.beforeEach(async ({ page }) => {
      trigger regardless of the app's current default. */
   await page.addInitScript(() => window.localStorage.setItem("singleRangeView", "0"));
 
-  await page.route("**/api/Files/foldersWithMetadata*", (route) =>
-    route.fulfill({ json: foldersFixture })
-  );
+  api = await stubSolverApi(page);
   await page.goto("/solutions");
+});
+
+/* Nothing here is allowed to reach the deployed API: a 404 from production
+   renders an error banner above the header, which moves the anchor the
+   dropdown measures itself against. See fixtures/api.ts. */
+test.afterEach(() => {
+  expect(api.unhandled).toEqual([]);
 });
 
 /** Opens the dropdown. The pointer stays on the search input (above the panel
  *  on desktop), so no row is hovered and the highlight stays on row 0. */
 async function openDropdown(page: Page) {
   const search = page.getByPlaceholder(/Preflop Solutions/i);
-  await expect(search).toBeVisible();
+  await expect(search).toBeVisible({ timeout: BOOT_TIMEOUT });
+
+  /* The sim info chip only renders once metadata.json resolves, and it shares
+     the search bar's flex row. Waiting for it means the header has reached its
+     final size before anything measures the anchor beneath it. */
+  await expect(page.getByRole("button", { name: "Solution info" })).toBeVisible();
+
   await search.click();
 
   const dropdown = page.getByTestId("folder-dropdown");
