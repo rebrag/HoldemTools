@@ -58,6 +58,8 @@ export type StreetBundle = {
   seed_suffix: string; // dotted form
   street: "flop" | "turn" | "river";
   board: string; // board AT this street, e.g. "Ts8d2hTh"
+  /** Pio's 1326 combo order (schema 4+), shared by every node's combo block. */
+  hand_order?: string[];
   nodes: Record<string, PioSolutionDoc>; // keyed by dotted suffix
   meta: Record<string, ManifestNode>;
 };

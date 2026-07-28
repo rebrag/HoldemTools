@@ -4,6 +4,7 @@
 // layout: no mode logic, no data fetching - Solver owns all state and picks
 // the view via useSolverLayout.
 import type { JsonData } from "@/lib/solver/utils";
+import type { ComboDetail } from "@/lib/solver/comboDetail";
 
 export interface SolverRangeBaseProps {
   /** One plate file name per position (may contain "" for unloaded seats). */
@@ -31,6 +32,10 @@ export interface SingleRangeViewProps extends SolverRangeBaseProps {
   /** Board card codes when a postflop board is in play: dealt onto the
    *  table's center slot, and used to name the street on the pot label. */
   board?: string[];
+  /** Per-combo detail for the displayed range, when it is the postflop acting
+   *  seat at a schema-4 node. Drives the hand breakdown's real per-combo mixes;
+   *  without it the breakdown falls back to the hand-class average. */
+  comboDetail?: ComboDetail | null;
 }
 
 export interface MultiRangeViewProps extends SolverRangeBaseProps {

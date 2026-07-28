@@ -860,6 +860,10 @@ def process_gametree_json(
         log("  -> extraction unavailable; skipping upload")
         return
 
+    # calc_results (read off the loaded .cfr) is authoritative over the values
+    # scraped from the solve log, and is the only source for MES.
+    stats = {**stats, **{k: v for k, v in (extract.get("results") or {}).items() if v is not None}}
+
     ctx = build_board_context(
         board=board_name,
         cfr_file=os.path.basename(cfr_path),

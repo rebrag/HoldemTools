@@ -7,6 +7,7 @@ import React, { useState } from "react";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import PokerTable, { type PokerTableSeat } from "@/components/PokerTable";
 import { HandCellData } from "@/lib/solver/utils";
+import type { ComboDetail } from "@/lib/solver/comboDetail";
 import DecisionMatrix from "./DecisionMatrix";
 import ActionSummary from "./ActionSummary";
 import HandBreakdown from "./HandBreakdown";
@@ -32,6 +33,9 @@ interface SingleRangeStudyProps {
   randomFillEnabled: boolean;
   onActionClick: (action: string, file: string) => void;
 
+  /** Real per-combo mixes for the displayed range, when available. */
+  comboDetail?: ComboDetail | null;
+
   /** Measured content width (px) and viewport height / chrome offset. */
   baseW: number;
   viewH: number;
@@ -52,6 +56,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   isICMSim,
   randomFillEnabled,
   onActionClick,
+  comboDetail,
   baseW,
   viewH,
   topOffset,
@@ -133,6 +138,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
             data={activeGrid}
             hand={selectedHand}
             board={board}
+            comboDetail={comboDetail}
             loading={!activeDataLoaded}
             className="min-h-0 flex-1"
           />
