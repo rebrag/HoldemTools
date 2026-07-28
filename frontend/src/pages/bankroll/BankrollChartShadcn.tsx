@@ -23,6 +23,8 @@ type ChartDatum = {
 type Props = {
   points: CumulativePoint[];
   onHoverIndexChange: (idx: number | null) => void;
+  /** Height class for the chart container; defaults to the mobile height. */
+  heightClass?: string;
 };
 
 function niceNum(range: number, round: boolean): number {
@@ -151,7 +153,11 @@ function ChartTooltipContent(props: TooltipProps<number, string>): React.ReactEl
   );
 }
 
-const BankrollChartShadcn: React.FC<Props> = ({ points, onHoverIndexChange }) => {
+const BankrollChartShadcn: React.FC<Props> = ({
+  points,
+  onHoverIndexChange,
+  heightClass = "h-[300px]",
+}) => {
   const hasData = points.length > 1;
 
   const data: ChartDatum[] = useMemo((): ChartDatum[] => {
@@ -187,7 +193,7 @@ const BankrollChartShadcn: React.FC<Props> = ({ points, onHoverIndexChange }) =>
   }
 
   return (
-    <div className="h-[300px] w-full">
+    <div className={`${heightClass} w-full`}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart
           data={data}
