@@ -8,6 +8,8 @@ import LoadingIndicator from "@/components/LoadingIndicator";
 import PokerTable, { type PokerTableSeat } from "@/components/PokerTable";
 import { HandCellData } from "@/lib/solver/utils";
 import type { ComboDetail } from "@/lib/solver/comboDetail";
+import type { NodeStats } from "@/lib/solver/nodeStats";
+import SeatStatsPanel from "./SeatStatsPanel";
 import DecisionMatrix from "./DecisionMatrix";
 import ActionSummary from "./ActionSummary";
 import HandBreakdown from "./HandBreakdown";
@@ -35,6 +37,10 @@ interface SingleRangeStudyProps {
 
   /** Real per-combo mixes for the displayed range, when available. */
   comboDetail?: ComboDetail | null;
+  /** Range-wide per-seat numbers for the current postflop node. */
+  nodeStats?: NodeStats | null;
+  /** Seat acting at that node. */
+  actorSeat?: string;
 
   /** Measured content width (px) and viewport height / chrome offset. */
   baseW: number;
@@ -57,6 +63,8 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   randomFillEnabled,
   onActionClick,
   comboDetail,
+  nodeStats,
+  actorSeat,
   baseW,
   viewH,
   topOffset,
@@ -127,6 +135,8 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
               }
             />
           </div>
+
+          <SeatStatsPanel stats={nodeStats ?? null} actorSeat={actorSeat} />
 
           <ActionSummary
             data={activeGrid}

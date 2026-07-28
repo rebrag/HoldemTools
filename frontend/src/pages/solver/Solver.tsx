@@ -1409,6 +1409,8 @@ const Solver = ({ user }: SolverProps) => {
                 windowHeight={windowHeight}
                 board={pf.view ? pf.view.board : currentBoard}
                 comboDetail={activeComboDetail}
+                nodeStats={pf.view?.nodeStats ?? null}
+                actorSeat={pf.view?.actorSeat}
               />
             ) : mode === "single-mobile" ? (
               <SingleRangeMobileView

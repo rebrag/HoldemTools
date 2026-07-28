@@ -9,7 +9,13 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    /* Specs that import app code pull in modules written against the app's
+       "@/" alias, so this has to mirror vite.config.ts and tsconfig.app.json.
+       Without it those imports typecheck only by accident, when nothing in the
+       reached graph happens to use the alias. */
+    "baseUrl": "..",
+    "paths": { "@/*": ["src/*"] }
   },
   "include": [".", "../playwright.config.ts"]
 }

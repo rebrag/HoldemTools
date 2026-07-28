@@ -142,6 +142,45 @@ test("a partially weighted combo is labelled with its weight", async ({ page }) 
   }
 });
 
+test("both seats get EV / equity / EQR / combos, arrowed head to head", async ({
+  page,
+}) => {
+  await openBoard(page);
+
+  const rows = page.getByTestId("seat-stats-row");
+  await expect(rows).toHaveCount(2);
+  expect(await rows.evaluateAll((ns) => ns.map((n) => n.getAttribute("data-role")))).toEqual(
+    ["oop", "ip"]
+  );
+
+  const read = async (role: string) =>
+    Object.fromEntries(
+      await page
+        .locator(`[data-testid="seat-stats-row"][data-role="${role}"] [data-testid="seat-stat"]`)
+        .evaluateAll((ns) =>
+          ns.map((n) => [n.getAttribute("data-metric"), (n.textContent ?? "").trim()])
+        )
+    );
+
+  const oop = await read("oop");
+  const ip = await read("ip");
+  expect(Object.keys(oop)).toEqual(["EV", "Equity", "EQR", "Combos"]);
+
+  /* Postflop is zero-sum, so the two equities partition the pot. That also
+     means every metric has a strict winner, and exactly one side is arrowed up
+     while the other is arrowed down. */
+  const pct = (s: string) => Number(s.replace(/[^\d.]/g, ""));
+  expect(pct(oop.Equity) + pct(ip.Equity)).toBeCloseTo(100, 1);
+
+  for (const metric of ["EV", "Equity", "EQR", "Combos"]) {
+    const up = [oop[metric], ip[metric]].filter((v) => v.includes("▲")).length;
+    const down = [oop[metric], ip[metric]].filter((v) => v.includes("▼")).length;
+    expect(up + down, `${metric} was not arrowed head to head`).toBe(2);
+    expect(up, `${metric} had ${up} winners`).toBe(1);
+    expect(down).toBe(1);
+  }
+});
+
 test("breakdown panel never scrolls sideways", async ({ page }) => {
   await openBoard(page);
   await page.locator('[data-testid="hand-cell"][data-hand="AKo"]').hover();
