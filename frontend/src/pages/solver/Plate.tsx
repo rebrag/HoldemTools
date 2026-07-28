@@ -8,6 +8,7 @@ import React, {
   ReactNode,
 } from "react";
 import { combineDataByHand, HandCellData, JsonData } from "@/lib/solver/utils";
+import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
 import ColorKey from "./ColorKey";
 import DecisionMatrix from "./DecisionMatrix";
 import DealerButton from "./DealerButton";
@@ -54,6 +55,8 @@ export type PlateZoomPayload = {
   isActive: boolean;
   alive: boolean;
   file: string;
+  /** Reach map for the zoom overlay's matrix, so heights carry over. */
+  reachByHand: Map<string, number> | null;
 };
 
 interface PlateProps {
@@ -76,6 +79,8 @@ interface PlateProps {
   maxBet?: number;
   onPlateZoom?: (payload: PlateZoomPayload) => void;
   compact?: boolean;
+  heightMode?: MatrixHeightMode;
+  reachByHand?: Map<string, number> | null;
 }
 
 /* ──────────────────── component ──────────────────── */
@@ -97,6 +102,8 @@ const Plate: React.FC<PlateProps> = ({
   maxBet,
   onPlateZoom,
   compact = false,
+  heightMode,
+  reachByHand = null,
 }) => {
   const [displayData, setDisplayData] = useState<JsonData | undefined>(data);
   useEffect(() => {
@@ -269,6 +276,7 @@ const Plate: React.FC<PlateProps> = ({
                           isActive,
                           alive,
                           file,
+                          reachByHand,
                         });
                       }}
                     >
@@ -277,6 +285,8 @@ const Plate: React.FC<PlateProps> = ({
                           gridData={gridData}
                           randomFillEnabled={randomFillEnabled && !!displayData}
                           isICMSim={isICMSim}
+                          heightMode={heightMode}
+                          reachByHand={reachByHand}
                         />
                       </ZoomableGrid>
                     </div>
@@ -337,6 +347,7 @@ const Plate: React.FC<PlateProps> = ({
                       isActive,
                       alive,
                       file,
+                      reachByHand,
                     });
                   }}
                 >
@@ -346,6 +357,8 @@ const Plate: React.FC<PlateProps> = ({
                         gridData={gridData}
                         randomFillEnabled={randomFillEnabled && !!displayData}
                         isICMSim={isICMSim}
+                        heightMode={heightMode}
+                        reachByHand={reachByHand}
                       />
                     </ZoomableGrid>
                   </div>

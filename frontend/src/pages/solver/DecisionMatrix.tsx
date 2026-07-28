@@ -10,12 +10,17 @@ import HandCell from "./HandCell";
 import { HandCellData } from "@/lib/solver/utils";
 import { ALL_ACTIONS } from "@/lib/solver/constants";
 import { HAND_ORDER } from "@/lib/solver/handOrder";
+import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
 
 /* ---------- props ---------- */
 interface DecisionMatrixProps extends HTMLAttributes<HTMLDivElement> {
   gridData: HandCellData[];          // may be empty when JSON not loaded yet
   randomFillEnabled?: boolean;
   isICMSim?: boolean;
+  /** Cell-height mode; without reach data every mode renders full height. */
+  heightMode?: MatrixHeightMode;
+  /** Hand class -> reach 0..1 at this node (postflop schema-4 only). */
+  reachByHand?: Map<string, number> | null;
   onMatrixClick?: () => void;
   /** Fires as the pointer moves across cells (study view's hand breakdown). */
   onHandHover?: (hand: string) => void;
@@ -37,6 +42,8 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
   gridData,
   randomFillEnabled: randomFill,
   isICMSim = false,
+  heightMode = "normalized",
+  reachByHand,
   onMatrixClick,
   onHandHover,
   ...rest
@@ -54,6 +61,26 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
       ),
     [gridData]
   );
+
+  /* ---------------- CELL HEIGHTS ----------------
+   * "Normalized" scales the most-reached class to full height (GTO Wizard's
+   * default); "range" uses the absolute reach fraction. Without reach data
+   * (preflop, pre-schema-4 solves) every cell stays full height, so the
+   * feature degrades to the old rendering instead of collapsing the grid. */
+  const maxReach = useMemo(() => {
+    if (!reachByHand || reachByHand.size === 0) return 0;
+    let max = 0;
+    for (const r of reachByHand.values()) if (r > max) max = r;
+    return max;
+  }, [reachByHand]);
+
+  const heightFor = (hand: string): number => {
+    if (heightMode === "full" || !reachByHand || maxReach <= 0) return 100;
+    const reach = reachByHand.get(hand) ?? 0;
+    return heightMode === "normalized"
+      ? (reach / maxReach) * 100
+      : reach * 100;
+  };
 
   /* ---------------- DIMENSION TRACKING ---------------- */
   const containerRef = useRef<HTMLDivElement>(null);
@@ -98,6 +125,7 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
             data={cellData}
             randomFill={randomFill}
             matrixWidth={matrixWidth}
+            heightPct={heightFor(cellData.hand)}
             onHover={(evs) => {
               setHoveredEVs(evs);
               setHoveredHand(cellData.hand);

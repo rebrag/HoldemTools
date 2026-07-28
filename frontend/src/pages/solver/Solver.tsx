@@ -47,6 +47,11 @@ import {
   pooledCommitChips,
   potSplitChips,
 } from "@/lib/solver/postflopNode";
+import {
+  loadMatrixHeightMode,
+  saveMatrixHeightMode,
+  type MatrixHeightMode,
+} from "@/lib/solver/matrixHeight";
 import { usePostflopSession } from "@/hooks/usePostflopSession";
 import usePostflopIndex from "@/hooks/usePostflopIndex";
 import PostflopLine from "./PostflopLine";
@@ -233,6 +238,10 @@ const Solver = ({ user }: SolverProps) => {
       return true;
     }
   });
+
+  // Matrix cell-height mode (persisted): normalized / range / full
+  const [matrixHeightMode, setMatrixHeightMode] =
+    useState<MatrixHeightMode>(loadMatrixHeightMode);
 
   // Sim info popover open state (for click on mobile)
   const [simInfoOpen, setSimInfoOpen] = useState(false);
@@ -997,6 +1006,10 @@ const Solver = ({ user }: SolverProps) => {
     }
   }, [singleRangeView]);
 
+  useEffect(() => {
+    saveMatrixHeightMode(matrixHeightMode);
+  }, [matrixHeightMode]);
+
   // Postflop modal side-effects
   useEffect(() => {
     if (!POSTFLOP_ENABLED) return;
@@ -1143,6 +1156,23 @@ const Solver = ({ user }: SolverProps) => {
   const activeComboDetail =
     pf.view && activePlayer === pf.view.actorSeat ? pf.view.actorCombos : null;
 
+  /* Per-hand-class reach for each postflop plate, keyed the same way the
+   * plate-sync effect names the files. Undefined outside a postflop session,
+   * which the matrix renders as full-height cells (preflop has no weights). */
+  const reachByFile = useMemo<
+    Record<string, Map<string, number> | null> | undefined
+  >(
+    () =>
+      pf.view
+        ? {
+            [`${pf.view.actorSeat}_postflop.json`]: pf.view.actorClassReach,
+            [`${pf.view.opponentSeat}_postflop.json`]:
+              pf.view.opponentClassReach,
+          }
+        : undefined,
+    [pf.view]
+  );
+
   /* Shared between the classic header layout and the desktop study strip. In
    * the study strip the Line fills its flex cell, so no measured matchWidth. */
   const lineNode = pf.view ? (
@@ -1283,6 +1313,8 @@ const Solver = ({ user }: SolverProps) => {
               icm={metadata.icm}
               singleRangeView={singleRangeView}
               onToggleSingleRange={() => setSingleRangeView((v) => !v)}
+              heightMode={matrixHeightMode}
+              onHeightModeChange={setMatrixHeightMode}
               line={lineNode}
               libraryButton={libraryButton}
               lineWrapperRef={lineWrapperRef}
@@ -1297,6 +1329,8 @@ const Solver = ({ user }: SolverProps) => {
               fullWidth
               singleRangeView={singleRangeView}
               onToggleSingleRange={() => setSingleRangeView((v) => !v)}
+              heightMode={matrixHeightMode}
+              onHeightModeChange={setMatrixHeightMode}
               simName={metadata.name}
               playerCount={playerCount}
               avgStack={avgStack}
@@ -1349,6 +1383,8 @@ const Solver = ({ user }: SolverProps) => {
                 actualPot={actualPot}
                 isICMSim={isICMSim}
                 randomFillEnabled={randomFillEnabled}
+                heightMode={matrixHeightMode}
+                reachByFile={reachByFile}
                 onActionClick={handleActionClick}
                 windowWidth={windowWidth}
                 windowHeight={windowHeight}
@@ -1371,6 +1407,8 @@ const Solver = ({ user }: SolverProps) => {
                 actualPot={actualPot}
                 isICMSim={isICMSim}
                 randomFillEnabled={randomFillEnabled}
+                heightMode={matrixHeightMode}
+                reachByFile={reachByFile}
                 onActionClick={handleActionClick}
                 windowWidth={windowWidth}
                 windowHeight={windowHeight}
@@ -1391,6 +1429,8 @@ const Solver = ({ user }: SolverProps) => {
                 actualPot={actualPot}
                 isICMSim={isICMSim}
                 randomFillEnabled={randomFillEnabled}
+                heightMode={matrixHeightMode}
+                reachByFile={reachByFile}
                 onActionClick={handleActionClick}
                 windowWidth={windowWidth}
                 windowHeight={windowHeight}
@@ -1410,6 +1450,8 @@ const Solver = ({ user }: SolverProps) => {
                 actualPot={actualPot}
                 isICMSim={isICMSim}
                 randomFillEnabled={randomFillEnabled}
+                heightMode={matrixHeightMode}
+                reachByFile={reachByFile}
                 onActionClick={handleActionClick}
                 windowWidth={windowWidth}
                 windowHeight={windowHeight}

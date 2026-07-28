@@ -1,6 +1,10 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { PioSolutionDoc } from "@/lib/solver/postflopClient";
-import { buildComboDetail, type ComboDetail } from "@/lib/solver/comboDetail";
+import {
+  buildClassReach,
+  buildComboDetail,
+  type ComboDetail,
+} from "@/lib/solver/comboDetail";
 import { buildNodeStats, type NodeStats } from "@/lib/solver/nodeStats";
 import type {
   BoardManifest,
@@ -103,6 +107,9 @@ export type PostflopView = {
   actions: { pioLabel: string; display: string }[];
   /** Per-combo strategy/EV/equity for the acting seat; null pre-schema-4. */
   actorCombos: ComboDetail | null;
+  /** Hand class -> reach 0..1 for each plate's seat; null pre-schema-4. */
+  actorClassReach: Map<string, number> | null;
+  opponentClassReach: Map<string, number> | null;
   /** Range-wide EV / equity / combo count per seat; null pre-schema-4. */
   nodeStats: NodeStats | null;
   loading: boolean;
@@ -404,6 +411,7 @@ export function usePostflopSession() {
       ...boardToCards(core.manifest.board),
       ...dealtCards(core.currentNodeId),
     ];
+    const boardSet = new Set(board);
 
     const actorRole = currentDoc?.position === "IP" ? "ip" : "oop";
     const actorSeat = actorRole === "ip" ? core.ipSeat : core.oopSeat;
@@ -432,10 +440,12 @@ export function usePostflopSession() {
 
     // Opponent plate: nearest ancestor where they acted...
     let opponentDoc: PioSolutionDoc | null = null;
+    let opponentSuffix: string | null = null;
     for (let p = parentOf(core.currentNodeId); p; p = parentOf(p)) {
       const meta = metaRef.current[toSuffix(p)];
       if (meta?.type === opponentType) {
         opponentDoc = docs[toSuffix(p)] ?? null;
+        opponentSuffix = toSuffix(p);
         break;
       }
     }
@@ -445,6 +455,7 @@ export function usePostflopSession() {
       const meta = metaRef.current[previewSuffix];
       if (meta?.type === opponentType) {
         opponentDoc = docs[previewSuffix] ?? null;
+        opponentSuffix = previewSuffix;
       }
     }
 
@@ -525,6 +536,18 @@ export function usePostflopSession() {
         currentDoc,
         handOrderRef.current[currentSuffix],
         actionMap.map((a) => a.display)
+      ),
+      actorClassReach: buildClassReach(
+        currentDoc,
+        handOrderRef.current[currentSuffix],
+        actorRole,
+        boardSet
+      ),
+      opponentClassReach: buildClassReach(
+        opponentDoc,
+        opponentSuffix ? handOrderRef.current[opponentSuffix] : null,
+        actorRole === "ip" ? "oop" : "ip",
+        boardSet
       ),
       nodeStats: buildNodeStats(
         currentDoc,

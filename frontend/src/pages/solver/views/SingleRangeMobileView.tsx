@@ -28,6 +28,8 @@ const SingleRangeMobileView = ({
   actualPot,
   isICMSim,
   randomFillEnabled,
+  heightMode,
+  reachByFile,
   onActionClick,
   windowWidth,
   windowHeight,
@@ -113,6 +115,10 @@ const SingleRangeMobileView = ({
               gridData={activeGrid}
               randomFillEnabled={randomFillEnabled && !!activeData}
               isICMSim={isICMSim}
+              heightMode={heightMode}
+              reachByHand={
+                activeFile ? reachByFile?.[activeFile] ?? null : null
+              }
             />
           </div>
 
