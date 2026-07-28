@@ -23,6 +23,7 @@ const SingleRangeMobileView = ({
   loading,
   alivePlayers,
   playerBets,
+  potCommitted,
   activePlayer,
   actualPot,
   isICMSim,
@@ -41,6 +42,7 @@ const SingleRangeMobileView = ({
     plateData,
     alivePlayers,
     playerBets,
+    potCommitted,
     activePlayer,
   });
 

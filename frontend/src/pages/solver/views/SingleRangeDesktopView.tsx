@@ -16,6 +16,7 @@ const SingleRangeDesktopView = ({
   loading,
   alivePlayers,
   playerBets,
+  potCommitted,
   activePlayer,
   actualPot,
   isICMSim,
@@ -33,6 +34,7 @@ const SingleRangeDesktopView = ({
     plateData,
     alivePlayers,
     playerBets,
+    potCommitted,
     activePlayer,
   });
 
