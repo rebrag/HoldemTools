@@ -64,6 +64,9 @@ interface PlateProps {
   randomFillEnabled?: boolean;
   alive: boolean;
   playerBet?: number;
+  /** Chips this seat has already pushed into the pot (preflop money and
+   *  matched postflop streets); comes off the stack like the live bet does. */
+  potCommitted?: number;
   isICMSim?: boolean;
   plateWidth?: number;
   dmWidthPx?: number;
@@ -84,6 +87,7 @@ const Plate: React.FC<PlateProps> = ({
   randomFillEnabled = false,
   alive,
   playerBet = 0,
+  potCommitted = 0,
   isICMSim = false,
   plateWidth,
   dmWidthPx,
@@ -133,7 +137,7 @@ const Plate: React.FC<PlateProps> = ({
   const dmWidth = compact && dmWidthPx ? dmWidthPx : undefined;
   const sidebarWidth = compact && sidebarWidthPx ? sidebarWidthPx : undefined;
 
-  const stackBB = (displayData?.bb ?? 0) - playerBet;
+  const stackBB = (displayData?.bb ?? 0) - potCommitted - playerBet;
   const betBB = playerBet;
 
   const TopBadges = (

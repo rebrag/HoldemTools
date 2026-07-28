@@ -42,11 +42,16 @@ import {
   pollForBoardManifest,
   type PostflopIndexEntry,
 } from "@/lib/solver/postflopLibrary";
-import { boardToCards, docToJsonData, potSplitChips } from "@/lib/solver/postflopNode";
+import {
+  boardToCards,
+  docToJsonData,
+  pooledCommitChips,
+  potSplitChips,
+} from "@/lib/solver/postflopNode";
 import { usePostflopSession } from "@/hooks/usePostflopSession";
 import usePostflopIndex from "@/hooks/usePostflopIndex";
 import PostflopLine from "./PostflopLine";
-import { usePreflopLineNodes } from "./usePreflopLineNodes";
+import { preflopNodeFiles, usePreflopLineNodes } from "./usePreflopLineNodes";
 import PostflopLibrary from "./PostflopLibrary";
 import PostflopCardPicker from "./PostflopCardPicker";
 import { Library } from "lucide-react";
@@ -172,6 +177,11 @@ const Solver = ({ user }: SolverProps) => {
   const isICMSim = Array.isArray(metadata.icm) && metadata.icm.length > 0;
   const [potSize, setPotSize] = useState<number>(0);
   const [playerBets, setPlayerBets] = useState<Record<string, number>>({});
+  /* Chips each seat has already pushed into the middle, in bb. Preflop this
+   * stays empty - bets sit in front of the seats until the flop - and the
+   * postflop session fills it with the preflop money plus every matched
+   * street, so a called bet keeps leaving the stack once it joins the pot. */
+  const [potCommitted, setPotCommitted] = useState<Record<string, number>>({});
 
   const [tourRun, setTourRun] = useState(false);
   const [tourReady, setTourReady] = useState(false);
@@ -199,6 +209,15 @@ const Solver = ({ user }: SolverProps) => {
     startedAt: number;
   } | null>(null);
   const pendingCancelRef = useRef(false);
+  /* Preflop line being walked back into after leaving a board: the actions to
+   * replay from the root, and how many of them have been applied. See the
+   * replay effect below. */
+  const [preflopReplay, setPreflopReplay] = useState<{
+    folder: string;
+    actions: string[];
+    files: string[];
+    step: number;
+  } | null>(null);
 
   // Single-range view toggle (persisted)
   const [singleRangeView, setSingleRangeView] = useState<boolean>(() => {
@@ -370,6 +389,8 @@ const Solver = ({ user }: SolverProps) => {
       setPlateData({});
       setFolder(selectedFolder);
       setPreflopLine(["Root"]);
+      setPotCommitted({});
+      setPreflopReplay(null);
       setRandomFillEnabled(false);
       const initialAlive: Record<string, boolean> = {};
       Object.keys(freshMapping).forEach((pos) => (initialAlive[pos] = true));
@@ -645,6 +666,18 @@ const Solver = ({ user }: SolverProps) => {
     ]
   );
 
+  /* Preflop nodes of the session's line, replayed from the sim's plate files:
+   * the postflop Line renders them as cards, and their committed-chip totals
+   * are what keeps a folded seat's blind off its stack. The ante only matters
+   * for % raise replay accuracy; use it when the session's folder is the one
+   * whose metadata is loaded. */
+  const pfPreflop = usePreflopLineNodes(
+    API_BASE_URL,
+    pf.view?.manifest.preflop.folder ?? null,
+    pf.view?.manifest.preflop.line ?? null,
+    pf.view && pf.view.manifest.preflop.folder === folder ? metadata.ante : 0
+  );
+
   // Sync the postflop session into the plate state: the acting seat's plate
   // shows the current node; the other seat shows their latest decision (or
   // the check-response preview at the root). Postflop plates use
@@ -696,35 +729,158 @@ const Solver = ({ user }: SolverProps) => {
     // card picker is open the street's betting is already matched, so the
     // chips are swept in the way a dealer would before dealing the next card.
     const chanceNode = view.picker?.chanceNodeId ?? null;
+    const moneyNode = chanceNode ?? view.currentNodeId;
+    const streetComplete = chanceNode != null;
     const money = potSplitChips(
-      chanceNode ?? view.currentNodeId,
+      moneyNode,
       view.manifest.pot_chips ?? 0,
-      chanceNode != null
+      streetComplete
     );
     setPlayerBets({
       [view.oopSeat]: money.oopChips / 100,
       [view.ipSeat]: money.ipChips / 100,
     });
+    // What each seat has already paid into the pot - their preflop money plus
+    // any street that has been matched - so the seat stacks lose those chips
+    // even though they no longer show as bets. The preflop part comes off the
+    // manifest for the two seats still in the hand (exact and available
+    // immediately); the line replay covers the seats that folded, and boards
+    // solved before effective_stack_chips was recorded.
+    const preflopFor = (seat: string) =>
+      view.preflopCommitChips > 0
+        ? view.preflopCommitChips / 100
+        : pfPreflop?.committed?.[seat] ?? 0;
+    setPotCommitted({
+      ...(pfPreflop?.committed ?? {}),
+      [view.oopSeat]:
+        preflopFor(view.oopSeat) +
+        pooledCommitChips(moneyNode, "oop", 0, streetComplete) / 100,
+      [view.ipSeat]:
+        preflopFor(view.ipSeat) +
+        pooledCommitChips(moneyNode, "ip", 0, streetComplete) / 100,
+    });
     // potSize is the inclusive pot (live bets included), matching preflop;
     // actualPot subtracts what's still in front of the players.
     setPotSize((money.potChips + money.oopChips + money.ipChips) / 100);
-    // NOTE: deliberately depends only on pf.view. positionOrder is derived
-    // from plateMapping, which this effect writes - including it loops.
-  }, [pf.view]);
+    // NOTE: beyond the session view this depends only on the line replay.
+    // positionOrder is derived from plateMapping, which this effect writes -
+    // including it loops.
+  }, [pf.view, pfPreflop]);
+
+  /* Put the preflop tree back at the root of the folder that is already open,
+   * keeping the plate JSON fetched so far so walking a line again costs no
+   * requests. Unlike actuallyOpenFolder this is not a folder change: the sim,
+   * its metadata, and the plate cache all stay put. */
+  const resetPreflopToRoot = useCallback(() => {
+    const freshMapping = getInitialMapping(playerCount);
+    const seats = Object.keys(freshMapping);
+    setLoadedPlates(defaultPlateNames);
+    setPlateMapping(freshMapping);
+    setPreflopLine(["Root"]);
+    setRandomFillEnabled(false);
+    setAlivePlayers(Object.fromEntries(seats.map((pos) => [pos, true])));
+    setActivePlayer(seats[(seats.indexOf("BB") + 1) % seats.length]);
+    const resetBets: Record<string, number> =
+      playerCount === 2 ? { BTN: 0.5, BB: 1 } : { SB: 0.5, BB: 1 };
+    setPlayerBets(resetBets);
+    setPotCommitted({});
+    setPotSize(
+      Object.values(resetBets).reduce((s, b) => s + b, 0) + metadata.ante
+    );
+    lastClickRef.current = null;
+  }, [playerCount, defaultPlateNames, metadata.ante]);
 
   // Leave postflop: close the session and reset the table to a clean root.
   const exitPostflop = useCallback(() => {
     pendingCancelRef.current = true;
     setPostflopPending(null);
+    setPreflopReplay(null);
     pf.close();
     setCurrentBoard([]);
-    actuallyOpenFolder(folderRef.current);
-    // Same-folder reopen skips the metadata effect, so reset blinds/pot here.
-    const resetBets: Record<string, number> =
-      playerCount === 2 ? { BTN: 0.5, BB: 1 } : { SB: 0.5, BB: 1 };
-    setPlayerBets(resetBets);
-    setPotSize(Object.values(resetBets).reduce((s, b) => s + b, 0) + metadata.ante);
-  }, [pf, actuallyOpenFolder, playerCount, metadata.ante]);
+    resetPreflopToRoot();
+  }, [pf, resetPreflopToRoot]);
+
+  /**
+   * Leave the board and land back in the preflop tree at preflop node `index`.
+   * Clicking the action the line took returns to that decision (the seat is up
+   * to act again); any other option is taken instead, branching the line.
+   * The tree is walked forward from the root one action per render - each
+   * node's plate is fetched as a side-effect of the previous action - so the
+   * jump lands on exactly the state a user clicking through would reach.
+   */
+  const jumpToPreflopNode = useCallback(
+    (index: number, action: string) => {
+      const view = pf.view;
+      if (!view) return;
+      const rawLine = view.manifest.preflop.line ?? [];
+      const lineActions = rawLine[0] === "Root" ? rawLine.slice(1) : rawLine;
+      if (index < 0 || index >= lineActions.length) return;
+
+      const actions =
+        action === lineActions[index]
+          ? lineActions.slice(0, index)
+          : [...lineActions.slice(0, index), action];
+      const files = preflopNodeFiles(actions);
+      if (!files) return; // an action label with no node number - cannot replay
+
+      // The session's sim is the one already open in every reachable flow; if
+      // it somehow is not, land on its root rather than replaying a line into
+      // the wrong tree.
+      const pfFolder = view.manifest.preflop.folder ?? folder;
+
+      pendingCancelRef.current = true;
+      setPostflopPending(null);
+      pf.close();
+      setCurrentBoard([]);
+      resetPreflopToRoot();
+      setPreflopReplay(
+        actions.length && pfFolder === folder
+          ? { folder: pfFolder, actions, files, step: 0 }
+          : null
+      );
+    },
+    // pf.view / pf.close are the only members used; pf itself is a fresh
+    // object every render, which would defeat this memo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pf.view, pf.close, resetPreflopToRoot, folder]
+  );
+
+  /* Drive a pending preflop replay: apply the next action as soon as its node
+   * plate is available. Taking an action queues the fetch for the node after
+   * it, so the walk advances a step at a time as the data lands. */
+  useEffect(() => {
+    if (!preflopReplay) return;
+    if (preflopReplay.folder !== folder) return; // a folder switch is settling
+    if (preflopReplay.step >= preflopReplay.actions.length) {
+      setPreflopReplay(null);
+      return;
+    }
+    // The line must hold exactly the actions replayed so far; anything else
+    // means a click landed mid-walk, so drop the replay rather than apply the
+    // rest of it to a line that has moved on.
+    if (preflopLine.length - 1 !== preflopReplay.step) {
+      setPreflopReplay(null);
+      return;
+    }
+    const file = preflopReplay.files[preflopReplay.step];
+    // A node the sim does not contain: stop where the walk got to rather than
+    // waiting on a plate that will never arrive.
+    if (availableJsonFiles.length > 0 && !availableJsonFiles.includes(file)) {
+      setPreflopReplay(null);
+      return;
+    }
+    if (!loadedPlates.includes(file) || !plateData[file]) return;
+    handleActionClick(preflopReplay.actions[preflopReplay.step], file);
+    setPreflopReplay((prev) => (prev ? { ...prev, step: prev.step + 1 } : prev));
+  }, [
+    preflopReplay,
+    folder,
+    preflopLine,
+    availableJsonFiles,
+    loadedPlates,
+    plateData,
+    handleActionClick,
+  ]);
 
   // Open a previously solved board from the library (tier-gated like folders).
   const openSolvedBoard = useCallback(
@@ -1043,31 +1199,22 @@ const Solver = ({ user }: SolverProps) => {
   const activeComboDetail =
     pf.view && activePlayer === pf.view.actorSeat ? pf.view.actorCombos : null;
 
-  /* Preflop node cards for the postflop Line (GTO Wizard style). The ante
-   * only matters for % raise replay accuracy; use it when the session's
-   * folder is the one whose metadata is loaded. */
-  const pfPreflopNodes = usePreflopLineNodes(
-    API_BASE_URL,
-    pf.view?.manifest.preflop.folder ?? null,
-    pf.view?.manifest.preflop.line ?? null,
-    pf.view && pf.view.manifest.preflop.folder === folder ? metadata.ante : 0
-  );
-
   /* Shared between the classic header layout and the desktop study strip. In
    * the study strip the Line fills its flex cell, so no measured matchWidth. */
   const lineNode = pf.view ? (
     <PostflopLine
       preflopLine={pf.view.manifest.preflop.line}
-      preflopNodes={pfPreflopNodes}
+      preflopNodes={pfPreflop?.nodes ?? null}
       board={pf.view.board}
       potBB={pf.view.manifest.pot_chips != null ? pf.view.manifest.pot_chips / 100 : null}
       lineNodes={pf.view.lineNodes}
       notice={pf.view.notice}
       onJump={pf.jumpTo}
       onPickAction={(parentId, display) => void pf.pickActionAt(parentId, display)}
+      onPreflopJump={jumpToPreflopNode}
       onExit={exitPostflop}
       actorSeat={pf.view.actorSeat}
-      actorStackBB={pf.view.manifest.stacks_map?.[pf.view.actorSeat] ?? null}
+      actorStackBB={pf.view.actorStackBB}
       actions={pf.view.actions}
       onActionClick={(display) => void pf.clickAction(display)}
       actionsDisabled={!!pf.view.pendingStreet}
@@ -1251,6 +1398,7 @@ const Solver = ({ user }: SolverProps) => {
                 loading={loading}
                 alivePlayers={alivePlayers}
                 playerBets={playerBets}
+                potCommitted={potCommitted}
                 activePlayer={activePlayer}
                 pot={potSize}
                 actualPot={actualPot}
@@ -1270,6 +1418,7 @@ const Solver = ({ user }: SolverProps) => {
                 loading={loading}
                 alivePlayers={alivePlayers}
                 playerBets={playerBets}
+                potCommitted={potCommitted}
                 activePlayer={activePlayer}
                 pot={potSize}
                 actualPot={actualPot}
@@ -1289,6 +1438,7 @@ const Solver = ({ user }: SolverProps) => {
                 loading={loading}
                 alivePlayers={alivePlayers}
                 playerBets={playerBets}
+                potCommitted={potCommitted}
                 activePlayer={activePlayer}
                 pot={potSize}
                 actualPot={actualPot}
@@ -1307,6 +1457,7 @@ const Solver = ({ user }: SolverProps) => {
                 loading={loading}
                 alivePlayers={alivePlayers}
                 playerBets={playerBets}
+                potCommitted={potCommitted}
                 activePlayer={activePlayer}
                 pot={potSize}
                 actualPot={actualPot}

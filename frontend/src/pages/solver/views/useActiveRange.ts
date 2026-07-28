@@ -28,10 +28,19 @@ export function useActiveRange(args: {
   plateData: Record<string, JsonData>;
   alivePlayers: Record<string, boolean>;
   playerBets: Record<string, number>;
+  /** Chips each seat has already put in the pot (see views/types.ts). */
+  potCommitted?: Record<string, number>;
   activePlayer: string;
 }): ActiveRange {
-  const { positions, files, plateData, alivePlayers, playerBets, activePlayer } =
-    args;
+  const {
+    positions,
+    files,
+    plateData,
+    alivePlayers,
+    playerBets,
+    potCommitted,
+    activePlayer,
+  } = args;
 
   const activeIndex = positions.findIndex((p) => p === activePlayer);
   const activeFile = activeIndex >= 0 ? files[activeIndex] : undefined;
@@ -46,7 +55,10 @@ export function useActiveRange(args: {
     const data = file ? plateData[file] : undefined;
     const alive = alivePlayers[pos] ?? true;
     const bet = playerBets[pos] ?? 0;
-    const stackBB = data ? (data.bb ?? 0) - bet : null;
+    // data.bb is the seat's starting stack, so both the chips in front of them
+    // and the ones already swept into the pot have to come off it.
+    const committed = potCommitted?.[pos] ?? 0;
+    const stackBB = data ? (data.bb ?? 0) - committed - bet : null;
     return {
       key: pos,
       label: pos,

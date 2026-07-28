@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { stubSolverApi, type ApiStub } from "./fixtures/api";
 import fixture from "./fixtures/postflop.json" with { type: "json" };
 
 /**
@@ -13,11 +14,13 @@ import fixture from "./fixtures/postflop.json" with { type: "json" };
  * dropping per-combo data, or the panel going back to painting class averages.
  */
 
-const { board, index, manifest, flopBundle } = fixture;
+const { stacks, board, index, manifest, flopBundle } = fixture;
 
 /* HandBreakdown only exists in the desktop study layout; the mobile single-range
    view renders the matrix and ColorKey alone. */
 test.skip(({ isMobile }) => !!isMobile, "study layout is desktop-only");
+
+let api: ApiStub;
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -25,29 +28,26 @@ test.beforeEach(async ({ page }) => {
     // The study layout (matrix beside the breakdown panel) is desktop-only and
     // is the only layout that renders HandBreakdown.
     window.localStorage.setItem("singleRangeView", "1");
+    // The solved-flops library is auth-gated; playwright.config compiles the
+    // dev auth bypass in, and this flips its store to signed in.
     window.localStorage.setItem("ht_dev_signed_in", "true");
   });
 
-  /* One dispatcher for every API call, so the spec is hermetic.
-   *
-   * A per-endpoint set of routes is not enough: anything left unstubbed reaches
-   * the real API, and whether that succeeds depends on the dev port being in the
-   * deployed CORS allowlist. On a blocked port the calls fail, the page stays
-   * empty, and the postflop plate is the only data around - so the test passed
-   * for the wrong reason. On an allowed port a real preflop sim loads and takes
-   * over the matrix. Serving everything here removes the network from the
-   * picture entirely. */
-  await page.route("**/api/**", (route) => {
-    const url = route.request().url();
-    if (url.includes("piosolutionsIndex")) return route.fulfill({ json: index });
-    if (url.includes("/manifest")) return route.fulfill({ json: manifest });
-    if (url.includes("/streets/r.0.json")) return route.fulfill({ json: flopBundle });
-    // Everything else (folder lists, plate files, metadata) resolves empty, so
-    // no preflop sim loads and no "Error fetching files" banner appears.
-    return route.fulfill({ json: [] });
+  api = await stubSolverApi(page, {
+    postflop: { index, manifest, streets: { "r.0": flopBundle }, stacks },
   });
 
   await page.goto("/solutions");
+});
+
+/* Nothing may reach the deployed API. Left unstubbed, whether a call succeeds
+   depends on the dev port sitting in the deployed CORS allowlist: blocked, the
+   page stays empty and the postflop plate is the only data around, so these
+   tests would pass for the wrong reason; allowed, a real preflop sim loads and
+   takes over the matrix. */
+test.afterEach(() => {
+  // Skipped projects never run beforeEach, so there is no stub to check.
+  if (api) expect(api.unhandled).toEqual([]);
 });
 
 /** Open the solved-flops library and load the fixture board. */

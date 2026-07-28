@@ -46,7 +46,7 @@ const ComboChip: React.FC<{ c1: string; c2: string; dim?: boolean }> = ({
   dim,
 }) => (
   <span
-    className={`inline-flex items-center rounded-[3px] bg-slate-100 px-1 py-px text-[10px] font-bold leading-none text-gray-900 shadow-sm ring-1 ring-black/20 ${
+    className={`inline-flex items-center rounded-[3px] bg-slate-100 px-1.5 py-0.5 text-[13px] font-bold leading-none text-gray-900 shadow-sm ring-1 ring-black/20 ${
       dim ? "opacity-60" : ""
     }`}
   >
@@ -92,7 +92,7 @@ const ComboTile: React.FC<Omit<ComboTileData, "key">> = React.memo(
       data-testid="combo-tile"
       data-combo={`${c1}${c2}`}
       data-blocked={blocked ? "1" : "0"}
-      className="relative flex h-full min-h-[76px] flex-col justify-between overflow-hidden rounded-[4px] bg-slate-900/60 ring-1 ring-black/30"
+      className="relative flex h-full min-h-[82px] flex-col justify-between overflow-hidden rounded-[4px] bg-slate-900/60 ring-1 ring-black/30"
     >
       {/* stacked action-mix background */}
       {!blocked && (
@@ -280,7 +280,7 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
             {Array.from({ length: 4 }).map((_, i) => (
               <div
                 key={i}
-                className="min-h-[76px] rounded-[4px] bg-slate-200/20 animate-pulse"
+                className="min-h-[82px] rounded-[4px] bg-slate-200/20 animate-pulse"
               />
             ))}
           </div>
@@ -299,7 +299,7 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
               gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
               // Fill the panel height (tiles stretch like the reference);
               // overflow past the minimum row height scrolls instead.
-              gridAutoRows: "minmax(76px, 1fr)",
+              gridAutoRows: "minmax(82px, 1fr)",
             }}
           >
             {combos.map(({ key, ...tile }) => (
