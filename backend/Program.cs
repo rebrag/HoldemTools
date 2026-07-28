@@ -96,23 +96,48 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 });
 
 // === CORS ===
+//
+// Every allowed origin is decided by the single predicate below. Splitting the
+// rules between WithOrigins(...) and SetIsOriginAllowed(...) does NOT combine
+// them: WithOrigins installs a predicate that consults its list, and a later
+// SetIsOriginAllowed overwrites it outright, silently dropping the whole list.
+//
+// Vercel preview deployments get a fresh subdomain per push, so they can only
+// be matched by suffix. The leading dot matters - EndsWith("vercel.app") would
+// also accept an attacker-registered "evilvercel.app".
+//
+// Keep this the only CORS layer. Populating the App Service "Allowed Origins"
+// blade in Azure makes the platform answer preflights instead, which shadows
+// this policy entirely and cannot express the wildcard below.
 const string CorsPolicy = "AllowWebClients";
+
+var allowedOrigins = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+{
+    "https://www.holdemtools.com",
+    "https://holdemtools.com",
+};
+
+// Vite dev servers. Each git worktree needs its own port (see the VITE_DEV_PORT
+// note in frontend/CLAUDE.md), so allow the small range parallel checkouts use
+// rather than editing this list per worktree.
+for (var port = 5173; port <= 5179; port++)
+{
+    allowedOrigins.Add($"http://localhost:{port}");
+    allowedOrigins.Add($"https://localhost:{port}");
+}
+
+static bool IsVercelPreview(string origin) =>
+    Uri.TryCreate(origin, UriKind.Absolute, out var uri)
+    && uri.Scheme == Uri.UriSchemeHttps
+    && uri.Host.EndsWith(".vercel.app", StringComparison.OrdinalIgnoreCase);
+
 builder.Services.AddCors(opts =>
 {
     opts.AddPolicy(CorsPolicy, policy =>
     {
         policy
-            .WithOrigins(
-                "https://www.holdemtools.com",
-                "https://holdemtools.com",
-                "http://localhost:5173",
-                "https://localhost:5173"
-            )
             .SetIsOriginAllowed(origin =>
-            {
-                try { return new Uri(origin).Host.EndsWith("vercel.app", StringComparison.OrdinalIgnoreCase); }
-                catch { return false; }
-            })
+                allowedOrigins.Contains(origin) || IsVercelPreview(origin))
             .AllowAnyHeader()
             .AllowAnyMethod();
         // .AllowCredentials();
