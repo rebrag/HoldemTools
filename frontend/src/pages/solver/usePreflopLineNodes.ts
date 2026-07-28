@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { getActionNumber } from "@/lib/solver/constants";
+import { plateActions } from "@/lib/solver/utils";
 import type { JsonData } from "@/lib/solver/utils";
 
 export interface PreflopLineNode {
@@ -31,14 +32,6 @@ export interface PreflopLineReplay {
    */
   committed: Record<string, number>;
 }
-
-/** Same option derivation the preflop Line uses for a seat's plate. */
-const nodeOptions = (data: JsonData): string[] => {
-  const acts = Object.keys(data)
-    .filter((k) => k !== "Position" && k !== "bb")
-    .map((k) => (k === "c" ? "Call" : k));
-  return Array.from(new Set(acts));
-};
 
 /**
  * Filenames of the nodes visited along the line ("Root" excluded): file `i` is
@@ -120,7 +113,7 @@ export function usePreflopLineNodes(
       nodes.push({
         seat,
         stackBB: stack - before,
-        options: nodeOptions(data),
+        options: plateActions(data),
         taken: action,
       });
 
