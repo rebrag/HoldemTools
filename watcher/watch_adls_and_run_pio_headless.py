@@ -839,7 +839,7 @@ def process_gametree_json(
     is_icm: Optional[bool] = None
     seat_meta: Optional[list] = None
     hand_bb: Optional[float] = None
-    chip_scale: Optional[int] = None
+    chip_scale: Optional[float] = None
 
     try:
         obj = json.loads(raw)

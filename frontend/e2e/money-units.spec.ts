@@ -138,16 +138,41 @@ test("chip scale keeps amounts whole and the pot precise", () => {
   expect(pickChipScale([1500, 25000], 1500)).toBe(1); // tournament
   // Micro stakes need a deeper scale to clear the pot floor at all.
   expect(pickChipScale([0.11, 2], 0.11)).toBe(10000);
-  // Thousandths are still expressible, and the ladder reaches for them.
-  expect(pickChipScale([12.345, 100], 12.345)).toBe(1000);
-  // Finer than the ladder goes: fall back to 100 and round, rather than emit
-  // a fraction Pio would reject.
-  expect(pickChipScale([12.345678, 100], 12.345678)).toBe(100);
+  // Thousandths are expressible, but only as far as the 16-bit ceiling allows:
+  // 100 at x1000 would be 100000, so this settles for x100 and rounds.
+  expect(pickChipScale([12.345, 100], 12.345)).toBe(100);
 });
 
-test("a scale is never chosen that leaves the pot too coarse", () => {
-  // The regression this guards: raw chips for an $11 pot make a 33% bet
-  // resolve to 4 chips (36%). Any scale we pick must clear the floor.
+/* PioSOLVER stores the pot and both stacks in 16 bits and refuses the tree
+   above 65535 - "consider dividing stacks/pot by 10 or 100". This is the bug
+   that killed three real solves: a $735 effective stack at 100 chips per dollar
+   is 73500, and PioViewer rejected it outright at set_eff_stack. */
+test("no scale is ever chosen that breaks Pio's 16-bit chip limit", () => {
+  // The exact hand that failed: $31 flop pot, $735 effective, $1985 deepest seat.
+  const scale = pickChipScale([31, 735, 1985], 31);
+  expect(735 * scale).toBeLessThanOrEqual(65535);
+  expect(1985 * scale).toBeLessThanOrEqual(65535);
+  expect(scale).toBe(10);
+
+  // The ceiling holds across the range, including hands played for more chips
+  // than Pio can hold at all, where the scale has to drop below 1.
+  for (const [values, pot] of [
+    [[11, 97.5], 11],
+    [[150, 700], 150],
+    [[31, 735, 1985], 31],
+    [[1500, 25000], 1500],
+    [[8000, 250000], 8000], // deep MTT: needs a fraction of a chip per unit
+    [[50000, 3_000_000], 50000], // absurdly deep
+  ] as [number[], number][]) {
+    const s = pickChipScale(values, pot);
+    for (const v of [...values, pot]) {
+      expect(Math.round(v * s)).toBeLessThanOrEqual(65535);
+    }
+  }
+});
+
+test("the pot floor is honoured whenever the ceiling leaves room for it", () => {
+  // Raw chips for an $11 pot would make a 33% bet resolve to 4 chips (36%).
   for (const [values, pot] of [
     [[11, 97.5], 11],
     [[150, 700], 150],
