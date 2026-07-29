@@ -78,13 +78,48 @@ export interface TreeSizes {
   river: StreetSizes;
 }
 
+/** Pio rounds every bet to a whole chip, so the config has to express money as
+ *  integers. Scale by the smallest power of ten that both keeps every amount
+ *  whole and leaves the pot enough chips for percentage sizes to resolve: at a
+ *  pot of 11 chips a 33% bet rounds to 4, which is really 36%. */
+const CHIP_SCALES = [1, 10, 100, 1000, 10000] as const;
+const POT_CHIP_FLOOR = 500;
+
+const isIntegral = (value: number, scale: number): boolean => {
+  const scaled = value * scale;
+  return Math.abs(scaled - Math.round(scaled)) <= 1e-6 * Math.max(1, Math.abs(scaled));
+};
+
+/**
+ * Pio chips per one unit of the hand's money.
+ *
+ * Both conditions grow monotonically with the scale, so the first ladder entry
+ * that satisfies them is the smallest one that does - the two can never pull
+ * in opposite directions.
+ */
+export const pickChipScale = (moneyValues: number[], potMoney: number): number => {
+  for (const scale of CHIP_SCALES) {
+    const whole = moneyValues.every((v) => isIntegral(v, scale));
+    if (whole && Math.round(potMoney * scale) >= POT_CHIP_FLOOR) return scale;
+  }
+  /* Finer than the ladder can express (sub-hundredth-of-a-chip amounts).
+   * Round at 100 rather than emit a fraction Pio would reject; the config
+   * stays internally consistent, it just loses a sliver of precision. */
+  console.warn("pickChipScale: no exact scale for", moneyValues, "- rounding at 100");
+  return 100;
+};
+
 /** Everything that goes into the tree text except the board. Weights are
- *  0..1 per 169 hand class; chip fields are Pio chips = bb * 100. */
+ *  0..1 per 169 hand class; chip fields are Pio chips, `chipScale` of them
+ *  per unit of the solve's display money. */
 export interface TreeParams {
   rangeOOP: Record<string, number>; // -> #Range0#
   rangeIP: Record<string, number>; // -> #Range1#
   potChips: number;
   effectiveStackChips: number;
+  /** Pio chips per unit of display money. 100 for a preflop sim, where the
+   *  display money is big blinds; chosen by pickChipScale for a recorded hand. */
+  chipScale: number;
   allinThreshold: number;
   addAllinOnlyIfLessThanThisTimesThePot: number;
   mergeSimilarBets: boolean;

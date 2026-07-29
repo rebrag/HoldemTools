@@ -34,6 +34,7 @@ const MultiRangeMobileView = ({
   activePlayer,
   pot,
   actualPot,
+  money,
   isICMSim,
   randomFillEnabled,
   heightMode,
@@ -115,6 +116,7 @@ const MultiRangeMobileView = ({
 
   return (
     <MultiRangeFrame
+      money={money}
       compact
       containerRef={container.ref}
       containerStyle={{
@@ -151,6 +153,7 @@ const MultiRangeMobileView = ({
               >
                 {col.map(([posKey, file]) => (
                   <Plate
+                    money={money}
                     key={posKey}
                     plateId={file}
                     file={file}

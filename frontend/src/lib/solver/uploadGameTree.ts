@@ -26,6 +26,9 @@ export type UploadGameTreeBody = {
   /** The hand's big blind in real chips - lets the viewer convert bb values
    *  back into the hand's own currency. */
   bigBlind?: number;
+  /** Pio chips per unit of the hand's money, so the viewer can convert the
+   *  solved numbers back. Omitted by sims, which use 100 chips per big blind. */
+  chipScale?: number;
 };
 
 export async function uploadGameTree(body: UploadGameTreeBody) {

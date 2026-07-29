@@ -13,34 +13,47 @@ export const streetNameForBoard = (board?: string[]): string => {
   return "River";
 };
 
-/** How money is displayed in the postflop viewer. "chips" is only offered for
- *  hand-history solves, whose manifest carries the hand's big blind size. */
+/** How money is displayed in the postflop viewer.
+ *
+ *  Every amount handed to `fmtMoney` is already in the solve's own display
+ *  money: big blinds for a preflop sim, the hand's chips for a recorded hand.
+ *  A sim passes no MoneyDisplay at all, which is why every shared component
+ *  keeps its plain "bb" label without a single conditional. */
 export type MoneyDisplay = {
-  mode: "chips" | "bb";
-  /** Real chips per big blind (from the recorded hand). */
+  mode: "money" | "bb";
+  /** Display money per big blind (the recorded hand's big blind size). */
   bbSize: number;
   onToggle: () => void;
 };
+
+export type MoneyOpts = Pick<MoneyDisplay, "mode" | "bbSize">;
 
 const fmtChipAmount = (n: number): string => {
   const rounded = Math.round(n * 100) / 100;
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/0$/, "");
 };
 
-/** Format a bb amount in the chosen display unit ("2.75" chips / "5.5 bb"). */
-export const fmtMoney = (
-  bbAmount: number,
-  money?: Pick<MoneyDisplay, "mode" | "bbSize"> | null
-): string =>
-  money && money.mode === "chips"
-    ? fmtChipAmount(bbAmount * money.bbSize)
-    : `${fmtBB(bbAmount, 1)} bb`;
+/** The amount in the chosen unit, with no unit suffix - for tight layouts
+ *  like the postflop line's cards, which have never shown one. */
+export const fmtMoneyValue = (amount: number, money?: MoneyOpts | null): string => {
+  if (!money) return fmtBB(amount, 1);
+  if (money.mode === "bb") {
+    return money.bbSize > 0 ? fmtBB(amount / money.bbSize, 1) : fmtChipAmount(amount);
+  }
+  return fmtChipAmount(amount);
+};
+
+/** Render an amount of display money ("2.75" / "5.5 bb"). */
+export const fmtMoney = (amount: number, money?: MoneyOpts | null): string => {
+  const value = fmtMoneyValue(amount, money);
+  return !money || money.mode === "bb" ? `${value} bb` : value;
+};
 
 /** "Flop · Pot 12.5 bb" - matches the hand replayer's pot label. */
 export const solverPotLabel = (
   pot: number,
   board?: string[],
-  money?: Pick<MoneyDisplay, "mode" | "bbSize"> | null
+  money?: MoneyOpts | null
 ): string =>
   `${streetNameForBoard(board)} · Pot ${fmtMoney(Math.max(0, pot), money)}`;
 

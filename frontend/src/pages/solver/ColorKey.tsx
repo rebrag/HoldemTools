@@ -5,6 +5,8 @@ import { motion } from "framer-motion";
 
 interface ColorKeyProps {
   data?: HandCellData[];
+  /** Units of the bet labels per big blind; see getColorForAction. */
+  sizeRef?: number;
   loading?: boolean;
   onActionClick?: (action: string) => void;
 }
@@ -13,6 +15,7 @@ const BOX_HEIGHT = "calc(23px)";
 
 const ColorKey: React.FC<ColorKeyProps> = ({
   data,
+  sizeRef = 1,
   loading,
   onActionClick = () => {},
 }) => {
@@ -77,7 +80,7 @@ const ColorKey: React.FC<ColorKeyProps> = ({
   return (
     <div className="flex gap-0.5 mb-0.5 w-full">
       {ordered.map((action) => {
-        const base = getColorForAction(action);
+        const base = getColorForAction(action, sizeRef);
         const hover = shadeColor(base, -30);
 
         return (

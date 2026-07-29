@@ -82,7 +82,14 @@ const mixHex = (c1: string, c2: string, t: number): string => {
   );
 };
 
-export const getColorForAction = (action: string): string => {
+/**
+ * `sizeRef` is how much of the label's unit makes one big blind. It is 1 when
+ * the label is already in big blinds (every preflop sim), and the hand's big
+ * blind when the label is in a recorded hand's own money - a "Bet 50" in a
+ * $5 game is 10bb, and without this every bet at a real stake would exceed
+ * the ramp's ceiling and render the same darkest shade.
+ */
+export const getColorForAction = (action: string, sizeRef = 1): string => {
   const a = (action ?? "").trim();
   const n = a.toLowerCase();
   if (isPassive(n)) return ACTION_GREEN;
@@ -93,7 +100,8 @@ export const getColorForAction = (action: string): string => {
   if (size != null) {
     // Log ramp so small flop bets and large river bets both spread across the
     // gradient (~0.5bb → light, ~40bb+ → dark).
-    const t = Math.max(0, Math.min(1, Math.log2(size + 1) / Math.log2(41)));
+    const sizeBB = size / (sizeRef > 0 ? sizeRef : 1);
+    const t = Math.max(0, Math.min(1, Math.log2(sizeBB + 1) / Math.log2(41)));
     return mixHex(BET_LIGHT, BET_DARK, t);
   }
   if (isBetOrRaise(a)) return BET_LIGHT; // bet/raise with no parsable size

@@ -83,6 +83,9 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   viewH,
   topOffset,
 }) => {
+  /* Bet labels carry the solve's money; the colour ramp is calibrated in
+   * big blinds, so tell it how much money makes one. */
+  const sizeRef = money?.bbSize && money.bbSize > 0 ? money.bbSize : 1;
   /* The hand class whose combos the breakdown shows: follows the pointer
    * across matrix cells and sticks to the last one hovered. */
   const [selectedHand, setSelectedHand] = useState<string | null>(null);
@@ -120,6 +123,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
         >
           <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
             <DecisionMatrix
+              money={money}
               gridData={activeGrid}
               randomFillEnabled={randomFillEnabled && activeDataLoaded}
               isICMSim={isICMSim}
@@ -161,12 +165,14 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
           />
 
           <ActionSummary
+            sizeRef={sizeRef}
             data={activeGrid}
             loading={!activeDataLoaded}
             onActionClick={(action) => activeFile && onActionClick(action, activeFile)}
           />
 
           <HandBreakdown
+            sizeRef={sizeRef}
             data={activeGrid}
             hand={selectedHand}
             board={board}

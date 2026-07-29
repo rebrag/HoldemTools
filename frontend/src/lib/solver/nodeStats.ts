@@ -16,22 +16,21 @@ export interface SeatNodeStats {
   equity: number | null;
   /** EV in the solve's own units. */
   ev: number | null;
-  /** EV in bb, only when the solve is chip-denominated (see `chipEv`). */
-  evBB: number | null;
+  /** EV in the solve's display money - big blinds for a preflop sim, the
+   *  hand's own chips for a recorded hand. Only when the solve is
+   *  chip-denominated (see `chipEv`). */
+  evMoney: number | null;
 }
 
 export interface NodeStats {
   oop: SeatNodeStats;
   ip: SeatNodeStats;
   /**
-   * Whether EV is chip-denominated, so `evBB` is meaningful. ICM solves report
-   * EV in tournament-equity units instead, which have no bb conversion.
+   * Whether EV is chip-denominated, so `evMoney` is meaningful. ICM solves
+   * report EV in tournament-equity units instead, which have no conversion.
    */
   chipEv: boolean;
 }
-
-/** bb are 100 chips everywhere in the postflop pipeline. */
-const CHIPS_PER_BB = 100;
 
 const finite = (v: number | null | undefined): v is number =>
   typeof v === "number" && Number.isFinite(v);
@@ -40,14 +39,16 @@ const finite = (v: number | null | undefined): v is number =>
  * Build the display stats for both seats.
  *
  * `potChips` is only used to decide whether EV is in chips, which decides
- * whether a bb conversion is meaningful. ICM boards report EV in
+ * whether converting it to money is meaningful. ICM boards report EV in
  * tournament-equity units - one of ours sums to 3.93 against a 550-chip pot -
- * so dividing those by 100 would produce a confident-looking wrong number.
+ * so scaling those would produce a confident-looking wrong number.
  */
 export function buildNodeStats(
   doc: PioSolutionDoc | null | undefined,
   seats: { oop: string; ip: string },
-  potChips?: number | null
+  potChips?: number | null,
+  /** Pio chips per unit of display money; defaults to the 100-per-bb sims use. */
+  chipScale?: number | null
 ): NodeStats | null {
   const stats = doc?.seat_stats;
   if (!stats) return null;
@@ -76,7 +77,7 @@ export function buildNodeStats(
       combos: finite(s?.combos) ? s!.combos! : null,
       equity: finite(s?.equity) ? s!.equity! : null,
       ev,
-      evBB: chipEv && ev != null ? ev / CHIPS_PER_BB : null,
+      evMoney: chipEv && ev != null ? ev / (chipScale ?? 100) : null,
     };
   };
 

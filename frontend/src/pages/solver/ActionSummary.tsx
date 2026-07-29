@@ -12,6 +12,8 @@ import "./App.css";
 
 interface ActionSummaryProps {
   data: HandCellData[];
+  /** Units of the bet labels per big blind; see getColorForAction. */
+  sizeRef?: number;
   loading?: boolean;
   onActionClick?: (action: string) => void;
 }
@@ -29,19 +31,23 @@ const PANEL_MIN_H = 72; // px, matches the skeleton so loading never shifts layo
 
 const ActionSummary: React.FC<ActionSummaryProps> = ({
   data,
+  sizeRef = 1,
   loading,
   onActionClick = () => {},
 }) => {
-  const aggregates = useMemo(() => computeActionAggregates(data), [data]);
+  const aggregates = useMemo(
+    () => computeActionAggregates(data, sizeRef),
+    [data, sizeRef]
+  );
 
   /* Distribution bar: normalize the per-action shares so the slots sum to 100
    * even when weights drift slightly from 1 per hand. */
   const barSegments = useMemo(() => {
     const total = aggregates.reduce((s, a) => s + a.combos, 0);
-    if (total <= 0) return buildSegmentSlots({});
+    if (total <= 0) return buildSegmentSlots({}, sizeRef);
     const shares: Record<string, number> = {};
     for (const a of aggregates) shares[a.action] = a.combos / total;
-    return buildSegmentSlots(shares);
+    return buildSegmentSlots(shares, sizeRef);
   }, [aggregates]);
 
   const isLoading = (loading ?? false) || aggregates.length === 0;

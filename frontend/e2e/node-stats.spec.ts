@@ -29,16 +29,16 @@ const ICM = doc([1.07, 0.368, 734.94], [2.863, 0.632, 352.665]);
 test("chip solves convert EV to bb", () => {
   const s = buildNodeStats(CHIP, SEATS, 700)!;
   expect(s.chipEv).toBe(true);
-  expect(s.oop.evBB).toBeCloseTo(3.82, 2);
-  expect(s.ip.evBB).toBeCloseTo(3.2, 2);
+  expect(s.oop.evMoney).toBeCloseTo(3.82, 2);
+  expect(s.ip.evMoney).toBeCloseTo(3.2, 2);
   expect(s.oop.seat).toBe("SB");
 });
 
 test("ICM solves report no bb, because EV is not chips", () => {
   const s = buildNodeStats(ICM, SEATS, 550)!;
   expect(s.chipEv).toBe(false);
-  expect(s.oop.evBB).toBeNull();
-  expect(s.ip.evBB).toBeNull();
+  expect(s.oop.evMoney).toBeNull();
+  expect(s.ip.evMoney).toBeNull();
   // The raw value is still carried, so the panel can show it unitless.
   expect(s.oop.ev).toBeCloseTo(1.07, 2);
 });
@@ -51,5 +51,5 @@ test("missing or partial stats degrade to nulls, not NaN", () => {
   const oneSided = doc([554.41, 0, 100], [0, 0, 0]);
   const s = buildNodeStats(oneSided, SEATS, 550)!;
   expect(s.oop.equity).toBe(0);
-  expect(Number.isNaN(s.oop.evBB ?? 0)).toBe(false);
+  expect(Number.isNaN(s.oop.evMoney ?? 0)).toBe(false);
 });
