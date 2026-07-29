@@ -69,11 +69,11 @@ export function betSize(label: string): number | null {
   return m ? parseFloat(m[1]) : null;
 }
 
-const hexToRgb = (h: string): [number, number, number] => {
+export const hexToRgb = (h: string): [number, number, number] => {
   const n = parseInt(h.slice(1), 16);
   return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
 };
-const mixHex = (c1: string, c2: string, t: number): string => {
+export const mixHex = (c1: string, c2: string, t: number): string => {
   const a = hexToRgb(c1);
   const b = hexToRgb(c2);
   const ch = (i: number) => Math.round(a[i] + (b[i] - a[i]) * t);

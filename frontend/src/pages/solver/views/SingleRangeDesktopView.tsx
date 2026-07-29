@@ -7,7 +7,7 @@ import useElementSize from "@/hooks/useElementSize";
 import SingleRangeStudy from "../SingleRangeStudy";
 import useActiveRange from "./useActiveRange";
 import useTopOffset from "./useTopOffset";
-import type { SingleRangeViewProps } from "./types";
+import type { SingleRangeDesktopViewProps } from "./types";
 
 const SingleRangeDesktopView = ({
   files,
@@ -22,6 +22,11 @@ const SingleRangeDesktopView = ({
   isICMSim,
   randomFillEnabled,
   heightMode,
+  onHeightModeChange,
+  singleRangeView,
+  onToggleSingleRange,
+  displayMode,
+  onDisplayModeChange,
   reachByFile,
   onActionClick,
   windowWidth,
@@ -33,9 +38,9 @@ const SingleRangeDesktopView = ({
   seatNames,
   tableSeatsOverride,
   money,
-}: SingleRangeViewProps) => {
+}: SingleRangeDesktopViewProps) => {
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
-  const { ref: wrapRef, top: topOffset } = useTopOffset();
+  const { ref: wrapRef, top: topOffset, bottomInset } = useTopOffset();
   const { activeFile, activeData, activeGrid, tableSeats } = useActiveRange({
     positions,
     files,
@@ -58,7 +63,7 @@ const SingleRangeDesktopView = ({
       {/* Same max width as the study top strip so the columns align with it. */}
       <div
         ref={container.ref}
-        className="relative z-10 mx-auto w-full max-w-[1480px]"
+        className="relative z-10 mx-auto w-full max-w-[1800px]"
       >
         <SingleRangeStudy
           tableSeats={tableSeatsOverride ?? tableSeats}
@@ -72,11 +77,17 @@ const SingleRangeDesktopView = ({
           isICMSim={isICMSim}
           randomFillEnabled={randomFillEnabled}
           heightMode={heightMode}
+          onHeightModeChange={onHeightModeChange}
+          singleRangeView={singleRangeView}
+          onToggleSingleRange={onToggleSingleRange}
+          displayMode={displayMode}
+          onDisplayModeChange={onDisplayModeChange}
           reachByHand={activeFile ? reachByFile?.[activeFile] ?? null : null}
           onActionClick={onActionClick}
           baseW={studyW}
           viewH={vh}
           topOffset={topOffset}
+          bottomInset={bottomInset}
           comboDetail={comboDetail}
           nodeStats={nodeStats}
           actorSeat={actorSeat}

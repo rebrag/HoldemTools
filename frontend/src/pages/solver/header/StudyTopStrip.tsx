@@ -1,25 +1,25 @@
 // StudyTopStrip.tsx
 //
 // Header for the desktop single-range "study" layout: compact SimSelect box
-// with the Line strip beside it. The line and library button are passed in as
-// slots because Solver builds them (they need the postflop session).
+// with the Line strip beside it. The line is passed in as a slot because
+// Solver builds it (it needs the postflop session); the solved-flops library
+// button rides inside SimSelect's own control row, forwarded through
+// SimSelectProps.
 import type { ReactNode, Ref } from "react";
 import SimSelect, { type SimSelectProps } from "../SimSelect";
 
 interface StudyTopStripProps extends SimSelectProps {
   line: ReactNode;
-  libraryButton: ReactNode;
   lineWrapperRef: Ref<HTMLDivElement>;
 }
 
 const StudyTopStrip = ({
   line,
-  libraryButton,
   lineWrapperRef,
   ...simSelectProps
 }: StudyTopStripProps) => (
   <div className="px-2 sm:px-4 mt-1">
-    <div className="mx-auto w-full max-w-[1480px]">
+    <div className="mx-auto w-full max-w-[1800px]">
       <div className="relative z-50 flex items-stretch gap-3">
         <div
           data-intro-target="folder-selector"
@@ -33,7 +33,6 @@ const StudyTopStrip = ({
         >
           {line}
         </div>
-        {libraryButton}
       </div>
     </div>
   </div>

@@ -1,21 +1,17 @@
 // Compact sim picker for the desktop study strip: sim name + info popover on
 // top, a "Select Sim" search input below that opens the same dropdown (and
 // keyboard nav / tier gating) as the wide FolderSelector, plus the filter
-// popover and the Single Range toggle. Replaces FolderSelector in that view.
-import React, { useEffect, useRef, useState } from "react";
+// popover and the solved-flops library button. Replaces FolderSelector in that
+// view. The matrix's own controls (display mode, single-range toggle, cell
+// height) live above the matrix instead - see SingleRangeStudy.
+import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import { Info } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import type { FolderMetadata } from "@/hooks/useFolders";
 import type { Tier } from "@/lib/stripe/stripeTiers";
 import FolderSelectorDropdown from "./FolderSelectorDropdown";
 import { useFolderSearch, parseFolderSafe } from "./useFolderSearch";
-import {
-  FolderFilterPanel,
-  FilterIcon,
-  MatrixHeightModePill,
-  SingleRangeTogglePill,
-} from "./FolderSelector";
-import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
+import { FolderFilterPanel, FilterIcon } from "./FolderSelector";
 
 export interface SimSelectProps {
   folders: string[];
@@ -30,11 +26,9 @@ export interface SimSelectProps {
   ante?: number;
   icm?: number[];
 
-  singleRangeView: boolean;
-  onToggleSingleRange: () => void;
-
-  heightMode?: MatrixHeightMode;
-  onHeightModeChange?: (mode: MatrixHeightMode) => void;
+  /** Solved-flops library button. A slot because Solver owns the postflop
+   *  index and the modal; this panel only owns the row it sits in. */
+  libraryButton?: ReactNode;
 }
 
 const SimSelect: React.FC<SimSelectProps> = ({
@@ -48,10 +42,7 @@ const SimSelect: React.FC<SimSelectProps> = ({
   avgStack,
   ante = 0,
   icm,
-  singleRangeView,
-  onToggleSingleRange,
-  heightMode,
-  onHeightModeChange,
+  libraryButton,
 }) => {
   const reduceMotion = useReducedMotion();
 
@@ -172,7 +163,7 @@ const SimSelect: React.FC<SimSelectProps> = ({
         </div>
       </div>
 
-      {/* Row 2: Select Sim input + filter + Single Range toggle */}
+      {/* Row 2: Select Sim input + filter + solved-flops library */}
       <div className="flex items-stretch gap-1">
         <div ref={inputWrapRef} className="relative min-w-0 flex-1">
           <input
@@ -253,19 +244,7 @@ const SimSelect: React.FC<SimSelectProps> = ({
           )}
         </div>
 
-        <SingleRangeTogglePill
-          singleRangeView={singleRangeView}
-          onToggle={onToggleSingleRange}
-          compact
-        />
-
-        {heightMode && onHeightModeChange && (
-          <MatrixHeightModePill
-            heightMode={heightMode}
-            onChange={onHeightModeChange}
-            compact
-          />
-        )}
+        {libraryButton}
       </div>
 
       {/* Dropdown (portal, anchored to the input) */}
