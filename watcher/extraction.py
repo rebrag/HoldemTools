@@ -791,9 +791,15 @@ def build_board_context(
         "seat_meta": _normalize_seat_meta(seat_meta),
         # The hand's big blind in real chips (hand-history uploads only).
         "hand_bb": hand_bb if isinstance(hand_bb, (int, float)) else None,
-        # Pio chips per unit of the hand's money. Absent (None) means this
-        # solve uses the original convention of 100 chips per big blind.
-        "chip_scale": int(chip_scale) if isinstance(chip_scale, int) and chip_scale > 0 else None,
+        # Pio chips per unit of the hand's money. Absent (None) means this solve
+        # uses the original convention of 100 chips per big blind. May be below
+        # 1: Pio caps setup chips at 65535, so a big-stack hand is divided down
+        # rather than multiplied up.
+        "chip_scale": (
+            float(chip_scale)
+            if isinstance(chip_scale, (int, float)) and not isinstance(chip_scale, bool) and chip_scale > 0
+            else None
+        ),
         "summary": {
             "ev_oop": sanitize_float(stats.get("ev_oop")),
             "ev_ip": sanitize_float(stats.get("ev_ip")),

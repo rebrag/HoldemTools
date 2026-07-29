@@ -447,10 +447,22 @@ const TreeBuildingModal = ({
             {numField("Starting pot", potMoney, setPotMoney, moneyLabel)}
             {numField("Effective stacks", effMoney, setEffMoney, moneyLabel)}
           </div>
-          {potChips > 0 && potChips < 500 && (
+          {/* Pio rounds each bet to a whole chip, so the error on a size is
+              about half a chip. That only becomes visible in a small pot, and a
+              deep hand routinely lands near 300 chips once the 65535 ceiling
+              caps the scale - which is fine, so only speak up under ~1%. */}
+          {potChips > 0 && potChips < 150 && (
             <p className="text-[11px] text-amber-300">
-              This pot is only {potChips} solver chips, so percentage bet sizes
-              round coarsely - a 33% bet could land a few percent off.
+              This pot is only {potChips} solver chips, so a percentage bet size
+              can land about {((1.5 / potChips) * 100).toFixed(1)}% off what you
+              asked for.
+            </p>
+          )}
+          {(potChips > 65535 || effChips > 65535) && (
+            <p className="text-[11px] text-amber-300">
+              PioSOLVER refuses a pot or stack above 65535 chips, and this tree is
+              at {Math.max(potChips, effChips)}. Lower the effective stack, or the
+              solve will come back empty.
             </p>
           )}
 
