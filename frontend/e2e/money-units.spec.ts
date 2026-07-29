@@ -22,6 +22,7 @@ import {
   preflopCommitChips,
   stackBehindChips,
 } from "../src/lib/solver/postflopNode";
+import { fmtMoney } from "../src/pages/solver/boardDisplay";
 
 /* These run once, not per browser project. */
 test.skip(({ isMobile }) => !!isMobile, "pure logic - desktop project only");
@@ -171,17 +172,52 @@ test("no scale is ever chosen that breaks Pio's 16-bit chip limit", () => {
   }
 });
 
-test("the pot floor is honoured whenever the ceiling leaves room for it", () => {
-  // Raw chips for an $11 pot would make a 33% bet resolve to 4 chips (36%).
+/* Bigger is better: Pio rounds bets to whole chips, so the scale should spend
+   all the headroom the limit allows rather than settle for merely adequate. */
+test("the scale is the largest one that fits, never merely a workable one", () => {
   for (const [values, pot] of [
     [[11, 97.5], 11],
-    [[150, 700], 150],
+    [[25, 738], 25],
+    [[150, 700, 2000], 150],
+    [[600, 5000], 600],
     [[1500, 25000], 1500],
+    [[8000, 250000], 8000],
   ] as [number[], number][]) {
     const scale = pickChipScale(values, pot);
-    expect(Math.round(pot * scale)).toBeGreaterThanOrEqual(500);
-    for (const v of values) expect(Math.abs(v * scale - Math.round(v * scale))).toBeLessThan(1e-6);
+    const largest = Math.max(...values, pot);
+    // One rung further up would break the limit, so this rung is maximal.
+    expect((pot + 2 * largest) * scale * 10).toBeGreaterThan(65535);
+    for (const v of [...values, pot]) {
+      expect(Math.round(v * scale)).toBeLessThanOrEqual(65535);
+    }
   }
+});
+
+/* The scale exists only so Pio gets whole numbers. It must never reach the
+   screen: the solution has to read back in the amounts the hand was played for. */
+test("the viewer shows the hand's own amounts, not the scaled chips", () => {
+  const scale = pickChipScale([25, 738], 25); // x10, so the config is in dimes
+  const money = { mode: "money" as const, bbSize: 5 };
+
+  expect(fmtMoney(250 / scale, money)).toBe("25"); // the $25 pot
+  expect(fmtMoney(7380 / scale, money)).toBe("738"); // the $738 stack
+  // A $12 bet into that pot is 120 chips, and reads back as the amount bet.
+  expect(formatPioAction("b120", "r:0", null, scale)).toBe("Bet 12");
+  // Cents survive too, at whatever precision the scale carries.
+  expect(formatPioAction("b125", "r:0", null, scale)).toBe("Bet 12.5");
+  // And the same solve can still be read in big blinds on demand.
+  expect(fmtMoney(250 / scale, { mode: "bb", bbSize: 5 })).toBe("5 bb");
+});
+
+/* The reported failure: a $25 pot with $738 effective went out as #Pot#2500 /
+   #EffectiveStacks#73800, and Pio refused 73800 at set_eff_stack. */
+test("a $25 pot with a $738 stack fits inside Pio's limit", () => {
+  const scale = pickChipScale([25, 738], 25);
+  expect(scale).toBe(10);
+  expect(Math.round(25 * scale)).toBe(250);
+  expect(Math.round(738 * scale)).toBe(7380);
+  // What it used to emit, for the record.
+  expect(738 * 100).toBeGreaterThan(65535);
 });
 
 test("preflop commit and stack-behind math follow the scale", () => {
