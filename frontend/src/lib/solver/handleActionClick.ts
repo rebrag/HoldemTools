@@ -300,6 +300,9 @@ export function handleActionClickImpl(
       rangeIP: parseRangeText(range1),
       potChips,
       effectiveStackChips: effStackChips,
+      // A sim's money is big blinds, which this pipeline has always expressed
+      // as 100 chips each.
+      chipScale: 100,
       allinThreshold: 60,
       addAllinOnlyIfLessThanThisTimesThePot: 250,
       mergeSimilarBets: true,

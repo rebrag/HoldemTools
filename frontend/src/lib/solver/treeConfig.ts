@@ -78,13 +78,82 @@ export interface TreeSizes {
   river: StreetSizes;
 }
 
+/** Pio rounds every bet to a whole chip, so the config has to express money as
+ *  integers. Scale by the smallest power of ten that both keeps every amount
+ *  whole and leaves the pot enough chips for percentage sizes to resolve: at a
+ *  pot of 11 chips a 33% bet rounds to 4, which is really 36%. */
+const CHIP_SCALES = [0.01, 0.1, 1, 10, 100, 1000, 10000] as const;
+const POT_CHIP_FLOOR = 500;
+/**
+ * PioSOLVER keeps the pot and both stack sizes in 16 bits and rejects the tree
+ * outright above 65535 ("consider dividing stacks/pot by 10 or 100"), so this
+ * is a hard ceiling, not a preference - a \$735 stack at 100 chips per dollar
+ * is 73500 and never builds. Leave a little headroom under the limit.
+ */
+const PIO_MAX_CHIPS = 60000;
+
+const isIntegral = (value: number, scale: number): boolean => {
+  const scaled = value * scale;
+  return Math.abs(scaled - Math.round(scaled)) <= 1e-6 * Math.max(1, Math.abs(scaled));
+};
+
+/**
+ * Pio chips per one unit of the hand's money.
+ *
+ * Three things pull on the scale, and they do NOT all point the same way:
+ *   - Pio's 16-bit ceiling caps it (hard - the tree is refused above 65535).
+ *   - Keeping amounts whole pushes it up (Pio only takes integers).
+ *   - Giving the pot enough chips to resolve percentage bets pushes it up too.
+ *
+ * So the ceiling is applied first and wins; the other two are preferences
+ * satisfied within whatever room it leaves. A deep hand can exhaust that room -
+ * \$735 effective into a \$31 pot cannot have both a 500-chip pot and a stack
+ * under 65535 - and then the best available resolution is the answer.
+ */
+export const pickChipScale = (moneyValues: number[], potMoney: number): number => {
+  const values = [...moneyValues, potMoney].filter((v) => Number.isFinite(v) && v > 0);
+  const largest = values.length ? Math.max(...values) : potMoney;
+
+  const allowed = CHIP_SCALES.filter((s) => largest * s <= PIO_MAX_CHIPS);
+  if (allowed.length === 0) {
+    // Even a hundredth of a chip per unit overflows, so the hand is playing for
+    // more than ~6.5m chips. Nothing legal is left; take the smallest scale.
+    console.warn(
+      "pickChipScale: largest amount", largest, "exceeds Pio's 16-bit limit at every scale"
+    );
+    return CHIP_SCALES[0];
+  }
+
+  // Smallest scale that is exact and leaves the pot workable.
+  for (const scale of allowed) {
+    if (values.every((v) => isIntegral(v, scale)) && Math.round(potMoney * scale) >= POT_CHIP_FLOOR) {
+      return scale;
+    }
+  }
+  // Nothing clears the pot floor within the ceiling: take the most resolution
+  // the ceiling allows, preferring one that is still exact.
+  const bestFirst = [...allowed].reverse();
+  const exact = bestFirst.find((scale) => values.every((v) => isIntegral(v, scale)));
+  if (exact) return exact;
+
+  const fallback = bestFirst[0];
+  console.warn(
+    "pickChipScale: no exact scale for", moneyValues, "- rounding at", fallback
+  );
+  return fallback;
+};
+
 /** Everything that goes into the tree text except the board. Weights are
- *  0..1 per 169 hand class; chip fields are Pio chips = bb * 100. */
+ *  0..1 per 169 hand class; chip fields are Pio chips, `chipScale` of them
+ *  per unit of the solve's display money. */
 export interface TreeParams {
   rangeOOP: Record<string, number>; // -> #Range0#
   rangeIP: Record<string, number>; // -> #Range1#
   potChips: number;
   effectiveStackChips: number;
+  /** Pio chips per unit of display money. 100 for a preflop sim, where the
+   *  display money is big blinds; chosen by pickChipScale for a recorded hand. */
+  chipScale: number;
   allinThreshold: number;
   addAllinOnlyIfLessThanThisTimesThePot: number;
   mergeSimilarBets: boolean;

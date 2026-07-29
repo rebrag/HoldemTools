@@ -2,9 +2,7 @@
 // and weighted combo count. The acting seat is ringed.
 import React from "react";
 import type { NodeStats, SeatNodeStats } from "@/lib/solver/nodeStats";
-import type { MoneyDisplay } from "./boardDisplay";
-
-type MoneyOpts = Pick<MoneyDisplay, "mode" | "bbSize">;
+import type { MoneyOpts } from "./boardDisplay";
 
 interface SeatStatsPanelProps {
   stats: NodeStats | null;
@@ -39,14 +37,18 @@ const METRICS: Metric[] = [
     // additionally convert bb EV into the hand's real chips.
     text: (s, chipEv, money) => {
       if (!chipEv) return s.ev != null ? fmt(s.ev, 2) : null;
-      if (s.evBB == null) return null;
-      return money && money.mode === "chips"
-        ? fmt(s.evBB * money.bbSize, 2)
-        : `${fmt(s.evBB, 2)} bb`;
+      if (s.evMoney == null) return null;
+      // evMoney is already in the solve's display money. Sims (no MoneyDisplay)
+      // and the bb mode both render big blinds; only the money mode does not.
+      // Fixed 2 decimals here rather than fmtMoney's variable precision, so the
+      // three metric columns stay aligned.
+      const inBB = !money || money.mode === "bb";
+      const value = money && money.mode === "bb" ? s.evMoney / (money.bbSize || 1) : s.evMoney;
+      return inBB ? `${fmt(value, 2)} bb` : fmt(value, 2);
     },
     title: (chipEv, money) =>
       chipEv
-        ? money && money.mode === "chips"
+        ? money && money.mode === "money"
           ? "Average amount this range wins at this node, in the hand's own chips."
           : "Average chips this range wins at this node, in big blinds."
         : "This solve is ICM, so EV is in tournament-equity units rather than chips - there is no bb conversion.",

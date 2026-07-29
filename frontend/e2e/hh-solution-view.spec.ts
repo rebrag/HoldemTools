@@ -11,15 +11,17 @@ import fixture from "./fixtures/postflop.json" with { type: "json" };
  * QsKh3c fixture with the metadata grafted on.
  */
 
-const { board, index, manifest, flopBundle } = fixture;
+const { stacks, board, index, manifest, flopBundle } = fixture;
 
 /* The full study layout (table + seat stats) is desktop-only; the mobile view
    still shows the table, but the assertions here target the desktop layout. */
 test.skip(({ isMobile }) => !!isMobile, "study layout is desktop-only");
 
-// The fixture pot is 550 pio-chips = 5.5bb; with a 2-chip big blind the
-// chips display reads 11 while the bb display reads 5.5.
+/* A money-denominated solve: the numbers in the manifest are the hand's own
+   chips, scaled by chip_scale so Pio could use whole integers. The fixture pot
+   of 550 Pio chips at scale 100 is $5.50, which is 2.75bb at a $2 big blind. */
 const HAND_BB = 2;
+const CHIP_SCALE = 100;
 
 /* Hand-history solves live under a synthetic {stacks} id that is NOT a
    preflop sim folder - opening one must not switch the sim (that used to
@@ -36,6 +38,7 @@ const hhManifest = {
   stacks: HH_STACKS,
   preflop: { ...manifest.preflop, folder: HH_STACKS },
   hand_bb: HAND_BB,
+  chip_scale: CHIP_SCALE,
   seat_meta: [
     { pos: "BTN", name: "FoldedFred", stack_chips: 9475, folded: true, hero: false, cards: ["Ah", "Kd"] },
     { pos: "SB", name: "VillainSam", stack_chips: 1800, folded: false, hero: false, cards: ["Qd", "Qh"] },
@@ -45,8 +48,8 @@ const hhManifest = {
 
 /* The fixture's node EVs are not chip-denominated, so `chipEv` reads them as
    ICM and (correctly) refuses any unit conversion. Give the root node
-   chip-scale EVs (sum == pot) so the bb <-> chips EV toggle is exercised:
-   OOP 200 chips = 2 bb = 4 hand-chips at a 2-chip big blind. */
+   chip-scale EVs (sum == pot) so the money <-> bb EV toggle is exercised:
+   OOP 200 Pio chips = $2.00, which is 1.00bb at a $2 big blind. */
 const fixtureRoot = (flopBundle.nodes as Record<string, { seat_stats?: { oop: object; ip: object } }>)["r.0"];
 const hhBundle = {
   ...flopBundle,
@@ -109,22 +112,58 @@ test("the hand's full table renders: names, folded seat, hole cards", async ({ p
 test("money defaults to the hand's chips and toggles to bb (pot + EV)", async ({ page }) => {
   await openBoard(page);
 
-  // Default: the hand's own chips (5.5bb * 2 = 11), no bb suffix.
-  await expect(page.getByText(/Pot 11\b/)).toBeVisible();
+  // Default: the hand's own money. 550 Pio chips / scale 100 = $5.50.
+  await expect(page.getByText(/Pot 5\.5\b/)).toBeVisible();
+  await expect(page.getByText(/Pot 5\.5 bb/)).toHaveCount(0);
 
-  // OOP EV: 200 pio-chips = 2 bb = 4 hand-chips at the 2-chip big blind.
+  // OOP EV: 200 Pio chips / 100 = $2.00, which is 1.00bb at a $2 big blind.
   const evCell = page
     .locator('[data-testid="seat-stats-row"][data-role="oop"] [data-metric="EV"]')
     .first();
-  await expect(evCell).toContainText("4.00");
+  await expect(evCell).toContainText("2.00");
   await expect(evCell).not.toContainText("bb");
 
   // Toggle to big blinds.
   await page.getByRole("button", { name: /show in bb/i }).click();
-  await expect(page.getByText(/Pot 5\.5 bb/)).toBeVisible();
-  await expect(evCell).toContainText("2.00 bb");
+  await expect(page.getByText(/Pot 2\.8 bb/)).toBeVisible();
+  await expect(evCell).toContainText("1.00 bb");
 
-  // And back to chips.
+  // And back to the hand's money.
   await page.getByRole("button", { name: /show in chips/i }).click();
-  await expect(page.getByText(/Pot 11\b/)).toBeVisible();
+  await expect(page.getByText(/Pot 5\.5\b/)).toBeVisible();
+});
+
+/* The regression fence for the default: a preflop-sim solve carries no
+   chip_scale, so it must keep reading as big blinds and must not offer the
+   money toggle. This is the guarantee that made the whole change safe to
+   ship - every board solved before chip_scale existed lands here. */
+test.describe("a board with no chip scale", () => {
+  let simApi: ApiStub;
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem("tourSeen", "1");
+      window.localStorage.setItem("singleRangeView", "1");
+      window.localStorage.setItem("ht_dev_signed_in", "true");
+    });
+    simApi = await stubSolverApi(page, {
+      // The untouched fixture: no chip_scale, no hand_bb, no seat_meta.
+      postflop: { index, manifest, streets: { "r.0": hhBundle }, stacks },
+    });
+    await page.goto("/solutions");
+  });
+
+  test.afterEach(() => {
+    if (simApi) expect(simApi.unhandled).toEqual([]);
+  });
+
+  test("stays in big blinds and offers no money toggle", async ({ page }) => {
+    await openBoard(page);
+
+    await expect(page.getByText(/Pot 5\.5 bb/)).toBeVisible();
+    await expect(page.getByRole("button", { name: /show in (bb|chips)/i })).toHaveCount(0);
+    await expect(
+      page.locator('[data-testid="seat-stats-row"][data-role="oop"] [data-metric="EV"]').first()
+    ).toContainText("bb");
+  });
 });

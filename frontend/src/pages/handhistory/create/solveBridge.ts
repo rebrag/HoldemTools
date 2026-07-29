@@ -6,13 +6,17 @@
 // canonical names), per-street bet sizes from the actual bets, seeded ranges
 // from canned charts, and the seat metadata shown in the solutions viewer.
 //
-// Units: the hand-history engine runs in raw chips with engine.bb as the
-// big-blind rate; Pio tree configs use chips = bb * 100.
+// Units: the solve runs in the hand's OWN money. The engine already works in
+// raw chips, so nothing is converted to big blinds here - the amounts are
+// multiplied by a per-hand `chipScale` only because Pio needs whole numbers
+// (see pickChipScale). engine.bb survives just as the big-blind size, which
+// the viewer uses for its optional bb display.
 import type { Engine, EngineAction } from "./engine";
 import {
   DEFAULT_TREE_SIZES,
   POSTFLOP_ORDER,
   cloneTreeSizes,
+  pickChipScale,
   type TreeParams,
   type TreeSizes,
 } from "@/lib/solver/treeConfig";
@@ -24,8 +28,9 @@ export interface FlopPlayerInfo {
   name: string;
   hhPos: string;
   solverPos: string;
-  startStackBB: number;
-  flopStackBB: number;
+  /** Stacks in the hand's own money (chips/dollars), not big blinds. */
+  startStack: number;
+  flopStack: number;
 }
 
 export type HandSolveExtract =
@@ -52,6 +57,8 @@ export type HandSolveExtract =
       seats: SeatMeta[];
       /** The hand's big blind in real chips (drives the viewer's chip display). */
       bigBlind: number;
+      /** Pio chips per unit of the hand's money - see pickChipScale. */
+      chipScale: number;
     };
 
 /** Hand-history position labels the solver doesn't use, remapped per
@@ -253,26 +260,34 @@ export function extractHandSolve(args: {
     name: players[idx].name,
     hhPos: players[idx].pos,
     solverPos,
-    startStackBB: players[idx].startingStack / bb,
-    flopStackBB: players[idx].stack / bb,
+    startStack: players[idx].startingStack,
+    flopStack: players[idx].stack,
   });
   const oop = info(oopIdx, oopPos);
   const ip = info(ipIdx, ipPos);
 
-  const potChips = Math.round((engine.streetMeta[1].potStart / bb) * 100);
-  const effectiveStackChips = Math.round(
-    (Math.min(players[oopIdx].stack, players[ipIdx].stack) / bb) * 100
+  /* The solve runs in the hand's own money, not big blinds. Every amount that
+   * becomes an integer in the config or the manifest has to survive the
+   * scaling, so they all go into the choice. */
+  const potMoney = engine.streetMeta[1].potStart;
+  const effectiveStackMoney = Math.min(players[oopIdx].stack, players[ipIdx].stack);
+  const chipScale = pickChipScale(
+    [potMoney, effectiveStackMoney, ...players.map((p) => p.stack)],
+    potMoney
   );
+  const potChips = Math.round(potMoney * chipScale);
+  const effectiveStackChips = Math.round(effectiveStackMoney * chipScale);
 
   const flopFromBoard = board.slice(0, 3);
   const flopCards = flopFromBoard.every((c): c is string => !!c)
     ? [...flopFromBoard] as string[]
     : [];
 
-  // Folder tokens use HAND-START stacks: the viewer treats folder-derived
-  // stacks as starting stacks and subtracts preflop money itself.
+  /* Folder tokens use HAND-START stacks in the hand's money, so the library
+   * reads "750SB_2000UTG" rather than the same hand's bb count. The viewer
+   * treats them as starting stacks and subtracts the preflop money itself. */
   const token = (p: FlopPlayerInfo) =>
-    `${Math.max(1, Math.round(p.startStackBB))}${p.solverPos}`;
+    `${Math.max(1, Math.round(p.startStack))}${p.solverPos}`;
   const folder = `${token(oop)}_${token(ip)}`;
 
   // Display line for the solutions library, from the two flop players'
@@ -302,8 +317,7 @@ export function extractHandSolve(args: {
   const roleOOP = preflopRoleOf(engine.streetActions[0], oopIdx, oopPos);
   const roleIP = preflopRoleOf(engine.streetActions[0], ipIdx, ipPos);
 
-  const stackChipsAtFlop = (idx: number) =>
-    Math.round((players[idx].stack / bb) * 100);
+  const stackChipsAtFlop = (idx: number) => Math.round(players[idx].stack * chipScale);
 
   // Stacks literal: OOP first, IP second, then everyone else - Pio matches
   // these positionally against Range0/Range1. Literal "\n" separators.
@@ -317,6 +331,7 @@ export function extractHandSolve(args: {
     rangeIP: getDefaultRange(ipPos, roleIP),
     potChips,
     effectiveStackChips,
+    chipScale,
     allinThreshold: 60,
     addAllinOnlyIfLessThanThisTimesThePot: 250,
     mergeSimilarBets: true,
@@ -347,5 +362,6 @@ export function extractHandSolve(args: {
     params,
     seats,
     bigBlind: bb,
+    chipScale,
   };
 }

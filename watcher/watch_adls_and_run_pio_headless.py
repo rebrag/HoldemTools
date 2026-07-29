@@ -103,8 +103,15 @@ TREE_SCRIPT_BASENAME = os.getenv("PIO_TREE_SCRIPT_BASENAME", "temp")
 # Where we want .cfr files (subdir under Pio dir)
 CFR_SUBDIR = os.getenv("PIO_CFR_SUBDIR", "Solved")
 
-# Accuracy (in % exploitability, e.g. 0.5 means solve until ~0.5% exploit)
+# Accuracy in CHIPS of exploitability, the value handed to Pio's set_accuracy.
+# Used only as the floor/fallback: the effective accuracy is normally derived
+# from the tree's own pot (see PIO_ACCURACY_POT_FRACTION), because solves no
+# longer share one chip scale.
 ACCURACY = float(os.getenv("PIO_ACCURACY", "0.05"))
+# Exploitability target as a fraction of the pot. 0.002 is ~1 chip on the
+# 550-chip pot a typical preflop-sim solve produces, i.e. what this pipeline
+# has effectively been running at. Set to 0 to force the absolute PIO_ACCURACY.
+ACCURACY_POT_FRACTION = float(os.getenv("PIO_ACCURACY_POT_FRACTION", "0.002"))
 
 # pyosolver Pio dir (where PioSOLVER2-edge.exe lives)
 PIO_DIR_FOR_PYOSOLVER = os.getenv("PIO_DIR_FOR_PYOSOLVER", r"C:\PioSOLVER")
@@ -377,6 +384,13 @@ def get_board_name(text: str, fallback_name: str) -> str:
     stem = fallback_name.rsplit(".", 1)[0]
     log(f"  -> No board found in text, using fallback filename stem '{stem}'")
     return stem
+
+
+def get_config_pot(text: str) -> Optional[int]:
+    """Parse '#Pot#1500' -> 1500. Solves no longer share one chip scale, so
+    the pot is what the accuracy target is measured against."""
+    m = re.search(r"#Pot#(\d+)", text)
+    return int(m.group(1)) if m else None
 
 
 def save_current_parameters_simple(main_win, script_basename: str) -> bool:
@@ -664,6 +678,7 @@ def solve_tree_to_cfr(
     tree_script_path: str,
     board: str,
     cfr_full: Optional[str] = None,
+    pot_chips: Optional[int] = None,
 ) -> Tuple[str, str, Dict[str, Optional[float]]]:
     """
     Given a TreeBuilding .txt (from Save current parameters),
@@ -683,11 +698,49 @@ def solve_tree_to_cfr(
     resp_present = pio.send_cmd("is_tree_present", log_cmd=False)
     log(f"  [UPI] is_tree_present before load_script_silent: {resp_present}")
 
-    # set accuracy
-    pio.send_cmd(f"set_accuracy {ACCURACY}")
+    # Accuracy, in chips of exploitability. It has to track the pot: solves no
+    # longer all run at the same scale (a recorded hand is solved in its own
+    # money), so a fixed chip value would be loose at one stake and unreachable
+    # at another. The mode word is always sent - Pio otherwise keeps whatever
+    # mode the process was last put in, which nothing here sets.
+    accuracy = ACCURACY
+    if ACCURACY_POT_FRACTION > 0 and pot_chips and pot_chips > 0:
+        accuracy = max(pot_chips * ACCURACY_POT_FRACTION, 1e-4)
+        log(
+            f"  [UPI] accuracy {accuracy:.4g} chips "
+            f"({ACCURACY_POT_FRACTION:.4%} of a {pot_chips}-chip pot)"
+        )
+    acc_resp = pio.send_cmd(f"set_accuracy {accuracy} chips")
+    # Logged because it is the only evidence Pio accepted the command; an
+    # unsupported argument shows up here rather than as a bad solve.
+    log(f"  [UPI] set_accuracy -> {acc_resp.strip() if acc_resp else '(no reply)'}")
 
     # load script
     pio.send_cmd(f'load_script_silent "{tree_script_path}"')
+
+    # `load_script_silent` answers "ok!" for the script, which says nothing
+    # about whether the tree it ends with actually got built. Going straight to
+    # `go` on an absent tree wasted the whole job: `go` and then `dump_tree`
+    # both failed with "missing/incorrect tree", and the only clue was two
+    # error lines several steps after the real problem. Confirm the tree exists
+    # and say so plainly if it does not.
+    build_timeout = float(os.getenv("PIO_TREE_BUILD_WAIT_SECS", "180"))
+    build_started = time.time()
+    while True:
+        present = (pio.send_cmd("is_tree_present", log_cmd=False) or "").strip().lower()
+        if present.startswith("true"):
+            log(f"  [UPI] tree present after {time.time() - build_started:.1f}s")
+            break
+        if time.time() - build_started > build_timeout:
+            info = pio.send_cmd("show_tree_info", log_cmd=False)
+            raise RuntimeError(
+                f"PioSOLVER built no tree for board {board} "
+                f"(is_tree_present={present!r} after {build_timeout:.0f}s). The tree "
+                f"script is at {tree_script_path}; paste the same config into "
+                "PioViewer and build it by hand to see what it rejects. "
+                f"show_tree_info: {info.strip()[:400]!r}"
+            )
+        time.sleep(1.0)
 
     # solve. 'go' returns immediately; the real completion signal is
     # wait_for_solver's "wait_for_solver ok!" response, which arrives only
@@ -697,6 +750,15 @@ def solve_tree_to_cfr(
     wait_resp = pio.send_cmd_await(
         "wait_for_solver", marker="wait_for_solver ok!", timeout=solve_timeout
     )
+
+    # send_cmd_await gives up quietly on timeout, which used to mean a
+    # half-solved tree got dumped, uploaded and served as if it were finished.
+    # An unconverged solve is worse than no solve: nothing downstream marks it.
+    if "wait_for_solver ok!" not in (wait_resp or ""):
+        raise RuntimeError(
+            f"solver did not converge within {solve_timeout:.0f}s for board {board} "
+            "- refusing to dump a partially solved tree"
+        )
 
     stats = parse_wait_stats(wait_resp)
     log(f"  [UPI] final stats: {stats}")
@@ -777,6 +839,7 @@ def process_gametree_json(
     is_icm: Optional[bool] = None
     seat_meta: Optional[list] = None
     hand_bb: Optional[float] = None
+    chip_scale: Optional[float] = None
 
     try:
         obj = json.loads(raw)
@@ -788,6 +851,7 @@ def process_gametree_json(
             is_icm = obj.get("IsICM")
             seat_meta = obj.get("Seats")
             hand_bb = obj.get("BigBlind")
+            chip_scale = obj.get("ChipScale")
         else:
             text = raw
         if not isinstance(text, str) or not text.strip():
@@ -847,7 +911,11 @@ def process_gametree_json(
 
     # Headless solve via Pio console (this uses the passed-in `pio`)
     cfr_path, wait_output, stats = solve_tree_to_cfr(
-        pio, tree_script_path, board_name, cfr_full=cfr_target
+        pio,
+        tree_script_path,
+        board_name,
+        cfr_full=cfr_target,
+        pot_chips=get_config_pot(text),
     )
 
     log(
@@ -881,6 +949,7 @@ def process_gametree_json(
         is_icm=is_icm,
         seat_meta=seat_meta,
         hand_bb=hand_bb,
+        chip_scale=chip_scale,
     )
     stacks = ctx["stacks"] or "nostacks"
     node_name = ctx["node_name"] or "nonode"

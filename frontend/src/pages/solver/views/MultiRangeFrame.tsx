@@ -11,7 +11,7 @@ import { PokerTableBackdrop } from "@/components/PokerTableSurface";
 import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
 import DecisionMatrix from "../DecisionMatrix";
 import type { PlateZoomPayload } from "../Plate";
-import { fmtBB } from "./useActiveRange";
+import { fmtMoney, type MoneyOpts } from "../boardDisplay";
 
 interface MultiRangeFrameProps {
   /** Narrow (mobile) styling: tighter padding, smaller badge, fixed height. */
@@ -26,6 +26,8 @@ interface MultiRangeFrameProps {
   loading: boolean;
   /** Chips actually in the pot (excludes bets still in front of players). */
   actualPot?: number;
+  /** Chips/bb display; absent for sims, which always read as big blinds. */
+  money?: MoneyOpts | null;
   /** Matrix cell-height mode, carried into the zoom overlay's matrix. */
   heightMode?: MatrixHeightMode;
   children: ReactNode;
@@ -40,6 +42,7 @@ const MultiRangeFrame = ({
   onClearZoom,
   loading,
   actualPot,
+  money,
   heightMode,
   children,
 }: MultiRangeFrameProps) => {
@@ -115,7 +118,7 @@ const MultiRangeFrame = ({
           {actualPot != null && actualPot > 0 && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
               <div className={badgeClass}>
-                <strong>Pot:</strong> {fmtBB(Math.max(0, actualPot), 1)} bb
+                <strong>Pot:</strong> {fmtMoney(Math.max(0, actualPot), money)}
               </div>
             </div>
           )}

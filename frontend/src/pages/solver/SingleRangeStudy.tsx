@@ -61,6 +61,8 @@ interface SingleRangeStudyProps {
   comboDetail?: ComboDetail | null;
   /** Range-wide per-seat numbers for the current postflop node. */
   nodeStats?: NodeStats | null;
+  /** Pio chips per unit of display money (manifest chip_scale; 100 for sims). */
+  chipScale?: number;
   /** Seat acting at that node. */
   actorSeat?: string;
   /** Position -> real player name (hand-history solves). */
@@ -111,6 +113,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   onActionClick,
   comboDetail,
   nodeStats,
+  chipScale,
   actorSeat,
   seatNames,
   money,
@@ -119,6 +122,10 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   topOffset,
   bottomInset = 0,
 }) => {
+  /* Bet labels carry the solve's money; the colour ramp is calibrated in
+   * big blinds, so tell it how much money makes one. */
+  const sizeRef = money?.bbSize && money.bbSize > 0 ? money.bbSize : 1;
+
   /* Which hand the breakdown shows. A click pins a class (and clicking it
    * again unpins); while nothing is pinned the pointer drives the panel, and
    * the last hovered class sticks so the panel doesn't blank every time the
@@ -204,6 +211,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
           </div>
           <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
             <DecisionMatrix
+              money={money}
               gridData={activeGrid}
               randomFillEnabled={randomFillEnabled && activeDataLoaded}
               isICMSim={isICMSim}
@@ -250,12 +258,14 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
           />
 
           <ActionSummary
+            sizeRef={sizeRef}
             data={activeGrid}
             loading={!activeDataLoaded}
             onActionClick={(action) => activeFile && onActionClick(action, activeFile)}
           />
 
           <HandBreakdown
+            sizeRef={sizeRef}
             data={activeGrid}
             hand={shownHand}
             board={board}
@@ -263,6 +273,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
             displayMode={effectiveMode}
             evRange={displayData?.evRange ?? null}
             chipEv={nodeStats?.chipEv}
+            chipScale={chipScale}
             money={money}
             loading={!activeDataLoaded}
             className="min-h-0 flex-1"

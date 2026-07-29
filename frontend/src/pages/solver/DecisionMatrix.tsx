@@ -12,6 +12,7 @@ import { ALL_ACTIONS } from "@/lib/solver/constants";
 import { HAND_ORDER } from "@/lib/solver/handOrder";
 import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
 import type { MatrixDisplayData } from "@/lib/solver/matrixDisplayMode";
+import { fmtMoney, type MoneyOpts } from "./boardDisplay";
 
 /* ---------- props ---------- */
 interface DecisionMatrixProps extends HTMLAttributes<HTMLDivElement> {
@@ -24,6 +25,8 @@ interface DecisionMatrixProps extends HTMLAttributes<HTMLDivElement> {
   reachByHand?: Map<string, number> | null;
   /** EV/Equity heat coloring (study view); null keeps the strategy render. */
   displayData?: MatrixDisplayData | null;
+  /** Chips/bb display for the EV tooltip; absent for sims (big blinds). */
+  money?: MoneyOpts | null;
   onMatrixClick?: () => void;
   /** The pinned hand class, ringed in the grid (study view's breakdown). */
   selectedHand?: string | null;
@@ -54,12 +57,16 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
   heightMode = "normalized",
   reachByHand,
   displayData,
+  money,
   onMatrixClick,
   selectedHand,
   onHandSelect,
   onHandHover,
   ...rest
 }) => {
+  /* Bet labels carry the solve's money; the colour ramp is calibrated in
+   * big blinds, so tell it how much money makes one. */
+  const sizeRef = money?.bbSize && money.bbSize > 0 ? money.bbSize : 1;
   /* ---------------- ORDERED DATA  ----------------
    * Substitute the blank-cell fallback here (inside the memo) so every cell —
    * real or blank — keeps a stable object reference across re-renders. HandCell's
@@ -133,6 +140,7 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
       {orderedGridData.map((cellData) => {
         return (
           <HandCell
+            sizeRef={sizeRef}
             key={cellData.hand}
             data={cellData}
             randomFill={randomFill}
@@ -166,7 +174,7 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
             .map(([action, ev]) => {
               let display = "N/A";
               if (ev != null && !isNaN(ev)) {
-                display = isICMSim ? `$${ev.toFixed(2)}` : `${ev.toFixed(2)} bb`;
+                display = isICMSim ? `$${ev.toFixed(2)}` : fmtMoney(ev, money);
               }
               return (
                 <div key={action}>

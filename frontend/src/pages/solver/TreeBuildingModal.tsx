@@ -71,6 +71,9 @@ export interface TreeBuildingInit {
   flopCards: string[];
   oopLabel: string;
   ipLabel: string;
+  /** Unit shown beside the pot and stacks. Sims are in big blinds; a recorded
+   *  hand is in its own chips. */
+  moneyLabel?: string;
 }
 
 interface TreeBuildingModalProps {
@@ -165,8 +168,15 @@ const TreeBuildingModal = ({
   const [flopInputError, setFlopInputError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState<boolean>(init.flopCards.length < 3);
 
-  const [potBB, setPotBB] = useState<string>(String(init.params.potChips / 100));
-  const [effBB, setEffBB] = useState<string>(String(init.params.effectiveStackChips / 100));
+  /* Pio needs whole chips, so the amounts were scaled on the way in. The
+   * scale is frozen: the seat stacks and the ICM literal were scaled with it
+   * and are not editable here, so re-deriving it would desync them. */
+  const scale = init.params.chipScale || 100;
+  const moneyLabel = init.moneyLabel ?? "bb";
+  const [potMoney, setPotMoney] = useState<string>(String(init.params.potChips / scale));
+  const [effMoney, setEffMoney] = useState<string>(
+    String(init.params.effectiveStackChips / scale)
+  );
   const [allinThreshold, setAllinThreshold] = useState<string>(String(init.params.allinThreshold));
   const [addAllinCap, setAddAllinCap] = useState<string>(
     String(init.params.addAllinOnlyIfLessThanThisTimesThePot)
@@ -205,8 +215,8 @@ const TreeBuildingModal = ({
 
   const usedCards = useMemo(() => new Set(flopCards), [flopCards]);
 
-  const potChips = Math.round(Number(potBB) * 100);
-  const effChips = Math.round(Number(effBB) * 100);
+  const potChips = Math.round(Number(potMoney) * scale);
+  const effChips = Math.round(Number(effMoney) * scale);
 
   const sizesOk = (s: TreeSizes) =>
     [s.flop, s.turn, s.river].every(
@@ -434,9 +444,27 @@ const TreeBuildingModal = ({
 
           {/* Pot / stacks */}
           <div className="flex flex-wrap gap-x-6 gap-y-2">
-            {numField("Starting pot", potBB, setPotBB, "bb")}
-            {numField("Effective stacks", effBB, setEffBB, "bb")}
+            {numField("Starting pot", potMoney, setPotMoney, moneyLabel)}
+            {numField("Effective stacks", effMoney, setEffMoney, moneyLabel)}
           </div>
+          {/* Pio rounds each bet to a whole chip, so the error on a size is
+              about half a chip. That only becomes visible in a small pot, and a
+              deep hand routinely lands near 300 chips once the 65535 ceiling
+              caps the scale - which is fine, so only speak up under ~1%. */}
+          {potChips > 0 && potChips < 150 && (
+            <p className="text-[11px] text-amber-300">
+              This pot is only {potChips} solver chips, so a percentage bet size
+              can land about {((1.5 / potChips) * 100).toFixed(1)}% off what you
+              asked for.
+            </p>
+          )}
+          {(potChips > 65535 || effChips > 65535) && (
+            <p className="text-[11px] text-amber-300">
+              PioSOLVER refuses a pot or stack above 65535 chips, and this tree is
+              at {Math.max(potChips, effChips)}. Lower the effective stack, or the
+              solve will come back empty.
+            </p>
+          )}
 
           {/* IP sizes */}
           <div>

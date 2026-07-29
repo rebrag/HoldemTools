@@ -112,16 +112,19 @@ export function potSplitChips(
  * their full starting stack rather than a wrong number.
  */
 export function preflopCommitChips(
-  stacksMapBB: Record<string, number> | undefined,
+  /** Starting stacks from the folder tokens, in the solve's display money
+   *  (big blinds for sims, the hand's own chips for hand-history solves). */
+  stacksMap: Record<string, number> | undefined,
   seats: string[],
-  effectiveStackChips?: number | null
+  effectiveStackChips?: number | null,
+  chipScale = 100
 ): number {
-  if (!stacksMapBB || effectiveStackChips == null || effectiveStackChips <= 0) return 0;
+  if (!stacksMap || effectiveStackChips == null || effectiveStackChips <= 0) return 0;
   const stacks = seats
-    .map((seat) => stacksMapBB[seat])
-    .filter((bb): bb is number => bb != null);
+    .map((seat) => stacksMap[seat])
+    .filter((v): v is number => v != null);
   if (stacks.length === 0) return 0;
-  return Math.max(0, Math.round(Math.min(...stacks) * 100) - effectiveStackChips);
+  return Math.max(0, Math.round(Math.min(...stacks) * chipScale) - effectiveStackChips);
 }
 
 /**
@@ -161,6 +164,11 @@ export function stackBehindChips(
   );
 }
 
+/** "13.40" -> "13.4", "150.0" -> "150". Never emits a thousands separator:
+ *  lib/solver/utils.ts reads the first number out of the label. */
+const trimTrailingZeros = (s: string): string =>
+  s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s;
+
 /**
  * Human label for a raw pio action at a given node.
  * "c" -> Check | Call, "f" -> Fold, "bNNN" -> Bet X bb | Raise to X bb.
@@ -171,7 +179,11 @@ export function stackBehindChips(
 export function formatPioAction(
   pioLabel: string,
   nodeId: string,
-  effectiveStackChips?: number | null
+  effectiveStackChips?: number | null,
+  /** Pio chips per unit of the solve's display money. Passing it marks the
+   *  solve as money-denominated (a recorded hand); leaving it out is a
+   *  preflop sim, whose numbers are big blinds at 100 chips each. */
+  chipScale?: number | null
 ): string {
   if (pioLabel === "f") return "Fold";
   if (pioLabel === "c" || pioLabel === "x" || pioLabel === "check") {
@@ -182,8 +194,18 @@ export function formatPioAction(
     const chips = Number(m[1]);
     if (effectiveStackChips != null && effectiveStackChips > 0) {
       const remaining = effectiveStackChips - priorStreetCommitChips(nodeId);
-      // 1-chip tolerance: a bet leaving 0.01bb behind is all-in for display.
+      // 1 raw Pio chip of tolerance - the smallest amount the solve can
+      // express, whatever the scale.
       if (remaining > 0 && chips >= remaining - 1) return "ALLIN";
+    }
+    if (chipScale != null) {
+      // The scale is a power of ten and `chips` is an integer, so this many
+      // decimals renders it losslessly. That matters beyond looks: the label
+      // doubles as a JsonData key, and two bets that round onto the same
+      // string would overwrite each other and misdirect node navigation.
+      const decimals = Math.max(0, Math.round(Math.log10(chipScale)));
+      const text = trimTrailingZeros((chips / chipScale).toFixed(decimals));
+      return facingBet(nodeId) ? `Raise to ${text}` : `Bet ${text}`;
     }
     const bb = chips / 100;
     const amount = Number.isInteger(bb) ? String(bb) : bb.toFixed(1);
@@ -196,12 +218,13 @@ export function formatPioAction(
 export function displayActionMap(
   doc: PioSolutionDoc,
   nodeId: string,
-  effectiveStackChips?: number | null
+  effectiveStackChips?: number | null,
+  chipScale?: number | null
 ): { pioLabel: string; display: string }[] {
   const actions = doc.root_169?.strategy.actions ?? [];
   return actions.map((pioLabel) => ({
     pioLabel,
-    display: formatPioAction(pioLabel, nodeId, effectiveStackChips),
+    display: formatPioAction(pioLabel, nodeId, effectiveStackChips, chipScale),
   }));
 }
 
@@ -215,9 +238,13 @@ export function docToJsonData(
   role: "oop" | "ip",
   seat: string,
   bb: number,
-  effectiveStackChips?: number | null
+  effectiveStackChips?: number | null,
+  chipScale?: number | null
 ): JsonData {
   const json: JsonData = { Position: seat, bb } as JsonData;
+  /* Pio reports EV in raw chips; the grid renders it as money, so scale it
+   * here rather than leaving the tooltip to label chips as big blinds. */
+  const evScale = chipScale ?? 100;
   const root = doc.root_169;
   if (!root) return json;
 
@@ -233,11 +260,12 @@ export function docToJsonData(
       const weight = row[handIdx] ?? 0;
       const perActionEv = perAction?.[hand]?.[1];
       const ev = perActionEv ?? evArray?.[handIdx] ?? 0;
-      handMap[hand] = [weight, ev ?? 0];
+      handMap[hand] = [weight, (ev ?? 0) / evScale];
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (json as any)[formatPioAction(pioLabel, nodeId, effectiveStackChips)] = handMap;
+    (json as any)[formatPioAction(pioLabel, nodeId, effectiveStackChips, chipScale)] =
+      handMap;
   });
 
   return json;

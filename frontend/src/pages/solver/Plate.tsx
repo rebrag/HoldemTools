@@ -15,6 +15,7 @@ import DealerButton from "./DealerButton";
 import { motion } from "framer-motion";
 import AutoFitText from "@/components/AutoFitText";
 import { HAND_ORDER } from "@/lib/solver/handOrder";
+import { fmtMoney, type MoneyOpts } from "./boardDisplay";
 
 /* ── helpers ── */
 const EMPTY_GRID: HandCellData[] = HAND_ORDER.map((hand) => ({
@@ -81,6 +82,8 @@ interface PlateProps {
   compact?: boolean;
   heightMode?: MatrixHeightMode;
   reachByHand?: Map<string, number> | null;
+  /** Chips/bb display; absent for sims, which always read as big blinds. */
+  money?: MoneyOpts | null;
 }
 
 /* ──────────────────── component ──────────────────── */
@@ -104,7 +107,11 @@ const Plate: React.FC<PlateProps> = ({
   compact = false,
   heightMode,
   reachByHand = null,
+  money,
 }) => {
+  /* Bet labels carry the solve's money; the colour ramp is calibrated in
+   * big blinds, so tell it how much money makes one. */
+  const sizeRef = money?.bbSize && money.bbSize > 0 ? money.bbSize : 1;
   const [displayData, setDisplayData] = useState<JsonData | undefined>(data);
   useEffect(() => {
     if (data) setDisplayData(data);
@@ -160,7 +167,7 @@ const Plate: React.FC<PlateProps> = ({
         </div>
         <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
           <AutoFitText title="Stack">
-            <strong>Stack:</strong>&nbsp;{fmt(stackBB, 1)}&nbsp;bb
+            <strong>Stack:</strong>&nbsp;{fmtMoney(stackBB, money)}
           </AutoFitText>
         </div>
       </div>
@@ -184,7 +191,7 @@ const Plate: React.FC<PlateProps> = ({
           {betBB !== 0 && (
             <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
               <AutoFitText title="Bet">
-                <strong>Bet:</strong> {fmt(betBB, 1)} bb
+                <strong>Bet:</strong> {fmtMoney(betBB, money)}
               </AutoFitText>
             </div>
           )}
@@ -282,6 +289,7 @@ const Plate: React.FC<PlateProps> = ({
                     >
                       <ZoomableGrid isActive={isActive}>
                         <DecisionMatrix
+                          money={money}
                           gridData={gridData}
                           randomFillEnabled={randomFillEnabled && !!displayData}
                           isICMSim={isICMSim}
@@ -306,12 +314,12 @@ const Plate: React.FC<PlateProps> = ({
                       <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0.5 pt-0 pb-0 shadow text-center overflow-hidden">
                         <AutoFitText title="Position and Stack">
                           <strong>{displayData?.Position ?? ""}</strong>&nbsp;
-                          {fmt(stackBB, 1)}bb
+                          {fmtMoney(stackBB, money)}
                         </AutoFitText>
                         {betBB !== 0 && (
                           <AutoFitText title="Bet">
                             <strong>Bet:</strong>&nbsp;
-                            {fmt(betBB, 1)}&nbsp;bb
+                            {fmtMoney(betBB, money)}
                           </AutoFitText>
                         )}
                       </div>
@@ -319,6 +327,7 @@ const Plate: React.FC<PlateProps> = ({
 
                     <div className="ck-bottom">
                       <ColorKey
+                        sizeRef={sizeRef}
                         data={gridData}
                         loading={keyLoading}
                         onActionClick={(action) => onActionClick(action, file)}
@@ -354,6 +363,7 @@ const Plate: React.FC<PlateProps> = ({
                   <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
                     <ZoomableGrid isActive={isActive}>
                       <DecisionMatrix
+                        money={money}
                         gridData={gridData}
                         randomFillEnabled={randomFillEnabled && !!displayData}
                         isICMSim={isICMSim}
@@ -366,6 +376,7 @@ const Plate: React.FC<PlateProps> = ({
 
                 <div className="select-none flex w-full items-center justify-end mt-0.5">
                   <ColorKey
+                    sizeRef={sizeRef}
                     data={gridData}
                     loading={keyLoading}
                     onActionClick={(action) => onActionClick(action, file)}

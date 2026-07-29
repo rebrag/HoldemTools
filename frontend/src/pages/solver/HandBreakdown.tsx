@@ -29,7 +29,7 @@ import {
   type MatrixDisplayMode,
   type ValueRange,
 } from "@/lib/solver/matrixDisplayMode";
-import type { MoneyDisplay } from "./boardDisplay";
+import { fmtMoneyValue, type MoneyDisplay } from "./boardDisplay";
 import useElementSize from "@/hooks/useElementSize";
 import "./App.css";
 
@@ -45,10 +45,14 @@ interface HandBreakdownProps {
   displayMode?: MatrixDisplayMode;
   /** EV normalization the matrix used, so both share one heat scale. */
   evRange?: ValueRange | null;
-  /** Whether combo EVs are chip-denominated (bb-convertible); ICM is not. */
+  /** Whether combo EVs are chip-denominated (money-convertible); ICM is not. */
   chipEv?: boolean;
+  /** Pio chips per unit of display money (manifest chip_scale; 100 for sims). */
+  chipScale?: number;
   /** Chips/bb display toggle (hand-history solves only). */
   money?: Pick<MoneyDisplay, "mode" | "bbSize">;
+  /** Units of the bet labels per big blind; see getColorForAction. */
+  sizeRef?: number;
   loading?: boolean;
   className?: string;
 }
@@ -230,6 +234,7 @@ ComboTile.displayName = "ComboTile";
 const TILE_MIN_W = 150; // px per grid column before adding another
 
 const HandBreakdown: React.FC<HandBreakdownProps> = ({
+  sizeRef = 1,
   data,
   hand,
   board,
@@ -237,6 +242,7 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
   displayMode = "strategy",
   evRange,
   chipEv,
+  chipScale,
   money,
   loading,
   className,
@@ -266,12 +272,12 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
 
   const boardSet = useMemo(() => new Set(board ?? []), [board]);
 
-  /* Per-combo EVs arrive in chips (bb = chips/100 when the solve is
-   * chip-denominated); class-level fallback EVs are already in bb / $. */
+  /* Per-combo EVs arrive in Pio chips; `chipScale` of them make one unit of
+   * the solve's display money (100/bb for sims, the manifest's chip_scale for
+   * recorded hands). ICM EVs are tournament equity, shown raw - no scale. */
   const fmtComboEv = (evChips: number): string => {
     if (chipEv === false) return evChips.toFixed(2);
-    const bb = evChips / 100;
-    return money?.mode === "chips" ? (bb * money.bbSize).toFixed(2) : bb.toFixed(2);
+    return fmtMoneyValue(evChips / (chipScale ?? 100), money);
   };
 
   const combos = useMemo<ComboTileData[]>(() => {
@@ -288,9 +294,10 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
             const ev = cell!.evs[action];
             return {
               action,
+              // Class EVs are already in the solve's display money.
               value:
                 typeof ev === "number" && Number.isFinite(ev)
-                  ? ev.toFixed(2)
+                  ? fmtMoneyValue(ev, money)
                   : "-",
             };
           })
@@ -298,7 +305,8 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
             action,
             value: fmtPct(classMix[action] || 0),
           }));
-    const classSegments = mode === "strategy" ? buildSegmentSlots(classMix) : [];
+    const classSegments =
+      mode === "strategy" ? buildSegmentSlots(classMix, sizeRef) : [];
     const classBg =
       mode === "ev" && evRange
         ? (() => {
@@ -390,7 +398,7 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
           action,
           value: fmtPct(mix[action]),
         })),
-        segments: buildSegmentSlots(mix),
+        segments: buildSegmentSlots(mix, sizeRef),
         bg: null,
         weight: detail.weight,
       };
@@ -406,6 +414,8 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
     displayMode,
     evRange,
     chipEv,
+    chipScale,
+    sizeRef,
     money?.mode,
     money?.bbSize,
   ]);

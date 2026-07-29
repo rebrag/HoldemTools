@@ -55,8 +55,12 @@ export type BoardManifest = {
   seats: { oop: string | null; ip: string | null };
   /** Absent on solver-page uploads and pre-existing boards. */
   seat_meta?: SeatMetaEntry[] | null;
-  /** The hand's big blind in real chips (hand-history uploads only). */
+  /** The hand's big blind in display money (hand-history uploads only). */
   hand_bb?: number | null;
+  /** Pio chips per one unit of this solve's display money. Absent means the
+   *  original convention - 100 chips per big blind - which is what every
+   *  preflop-sim solve and every board solved before this field uses. */
+  chip_scale?: number | null;
   stacks_map: Record<string, number>;
   pot_chips: number | null;
   /** Chips behind each player at flop start (from Pio's show_effective_stack);

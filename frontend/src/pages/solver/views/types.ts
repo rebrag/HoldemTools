@@ -61,6 +61,9 @@ export interface SingleRangeViewProps extends SolverRangeBaseProps {
   comboDetail?: ComboDetail | null;
   /** Range-wide per-seat numbers for the current postflop node. */
   nodeStats?: NodeStats | null;
+  /** Pio chips per unit of display money at the current postflop node
+   *  (manifest chip_scale; 100 for sims). Converts per-combo EVs for display. */
+  chipScale?: number;
   /** Seat acting at that node, badged in the stats panel. */
   actorSeat?: string;
   /** Matrix display mode (Strategy / EV / Equity) - desktop study view only. */

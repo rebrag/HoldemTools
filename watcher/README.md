@@ -55,7 +55,12 @@ The full `.cfr` save stays local in `C:\PioSOLVER\Solved` under a name unique pe
 
 **Schema note:** `extraction.py` is the source of truth for the manifest / street-bundle / node-doc shapes consumed by `frontend/src/lib/solver/postflopLibrary.ts` and `frontend/src/lib/solver/postflopClient.ts`.
 The tree-config text the watcher receives is built by `frontend/src/lib/solver/treeConfig.ts` `buildTreeConfigText` (`#Range0#` = OOP, `#Range1#` = IP, `#ICM.Stacks#` OOP-first), with the values coming either from a preflop-sim line (`handleActionClick.ts`) or from a recorded hand (`frontend/src/pages/handhistory/create/solveBridge.ts`).
-Hand-history uploads also carry an optional `Seats` list (pos, name, flop-time stack in bb*100 chips, folded, hero, known hole cards) and a `BigBlind` (the hand's big blind in real chips); the watcher echoes them into the manifest as `seat_meta` / `hand_bb` so the solutions viewer can show the real table (names, stacks, cards) and offer a chips/bb display toggle.
+**Money units:** a preflop-sim solve is denominated in big blinds at 100 Pio chips each, the way this pipeline always was.
+A hand-history solve is denominated in the recorded hand's **own money**, multiplied by a per-board `ChipScale` (a power of ten) only because Pio needs whole chips - the scale is picked so every amount stays integral and the pot keeps at least ~500 chips, which is what stops percentage bet sizes rounding coarsely.
+The watcher echoes it into the manifest as `chip_scale`; **absent means the old bb convention**, so every board solved before this keeps rendering correctly.
+Folder tokens follow the same unit, so a hand-history board reads `750SB_2000UTG` rather than the same hand's big-blind count.
+
+Hand-history uploads also carry an optional `Seats` list (pos, name, flop-time stack in `ChipScale` chips, folded, hero, known hole cards) and a `BigBlind` (the hand's big blind in its own money); the watcher echoes them as `seat_meta` / `hand_bb` so the solutions viewer can show the real table (names, stacks, cards) and offer a chips/bb display toggle.
 
 ## Files
 
@@ -85,8 +90,8 @@ Because it drives the GUI, the desktop must be unlocked and the clipboard is tak
 - Only **today's UTC** `gametrees/yyyy/MM/dd/` folder is watched, and files that already exist at startup are skipped.
 Start the watcher **before** requesting solves from the frontend.
 - Only **one** watcher instance may run - two fight over the PioViewer GUI.
-- `PIO_ACCURACY` is in **chips** (1 chip is roughly a 9s solve; small bb-scale values blow the frontend's ~160s poll window).
-- Solve accuracy and CFR wait time are tunable via `PIO_ACCURACY` and `PIO_CFR_WAIT_SECS` in `.env`.
+- Solve accuracy is a **fraction of the pot** (`PIO_ACCURACY_POT_FRACTION`, default 0.002 - about 1 chip on a typical 550-chip sim pot). Hand-history solves are denominated in the hand's own money, so pot magnitude varies per board and an absolute chip target would be loose at one stake and unreachable at another. `PIO_ACCURACY` remains as an absolute chips fallback.
+- Solve accuracy and CFR wait time are tunable via `PIO_ACCURACY_POT_FRACTION` / `PIO_ACCURACY` and `PIO_CFR_WAIT_SECS` in `.env`. A solve that does not converge inside `PIO_SOLVE_WAIT_SECS` now raises instead of uploading a partially solved tree.
 - A deprecated "withsave" watcher variant existed in the old repo; it was intentionally NOT copied here (its companion uploaded a stub JSON to a path the API never reads).
 
 ## Run

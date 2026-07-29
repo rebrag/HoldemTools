@@ -34,6 +34,7 @@ const SingleRangeDesktopView = ({
   board,
   comboDetail,
   nodeStats,
+  chipScale,
   actorSeat,
   seatNames,
   tableSeatsOverride,
@@ -50,6 +51,7 @@ const SingleRangeDesktopView = ({
     potCommitted,
     activePlayer,
     seatNames,
+    money,
   });
 
   const vh = windowHeight || 640;
@@ -90,6 +92,7 @@ const SingleRangeDesktopView = ({
           bottomInset={bottomInset}
           comboDetail={comboDetail}
           nodeStats={nodeStats}
+          chipScale={chipScale}
           actorSeat={actorSeat}
           seatNames={seatNames}
           money={money}

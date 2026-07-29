@@ -87,6 +87,7 @@ namespace PokerRangeAPI2.Controllers
                 req.AlivePositions,
                 Seats = seats,
                 req.BigBlind,
+                ChipScale = SanitizeChipScale(req.ChipScale),
                 UploadedAtUtc = now
             };
 
@@ -118,6 +119,19 @@ namespace PokerRangeAPI2.Controllers
             var name = (s ?? "").Trim();
             return name.Length <= 32 ? name : name[..32];
         }
+
+        // Pio chips per unit of the hand's money. Only the powers of ten the
+        // client can pick are accepted; anything else is dropped, which the
+        // watcher and the viewer both read as the default bb convention. Scales
+        // below 1 exist because Pio caps setup chips at 65535, so a big-stack
+        // hand has to be divided down rather than multiplied up.
+        private static readonly double[] AllowedChipScales =
+            { 0.01, 0.1, 1, 10, 100, 1000, 10000 };
+
+        private static double? SanitizeChipScale(double? scale) =>
+            scale.HasValue && AllowedChipScales.Any(s => Math.Abs(s - scale.Value) < 1e-9)
+                ? scale
+                : null;
 
         // Hole cards from the recorded hand: keep only valid "As"-style codes
         // (PLO5 hands can carry up to five).
@@ -151,6 +165,11 @@ namespace PokerRangeAPI2.Controllers
 
         // The hand's big blind in real chips (viewer's chips display).
         public double? BigBlind { get; set; }
+
+        // Pio chips per unit of the hand's money, so the viewer can convert
+        // the solved numbers back. Absent means the original bb convention.
+        // May be below 1 for hands played for more chips than Pio can hold.
+        public double? ChipScale { get; set; }
     }
 
     public class SeatMetaDto

@@ -46,6 +46,8 @@ interface HandCellProps {
   onSelect?: () => void;
   onHover?: (evs: Record<string, number>) => void;
   onLeave?: () => void;
+  /** Units of the bet labels per big blind; see getColorForAction. */
+  sizeRef?: number;
 }
 
 const HandCell: React.FC<HandCellProps> = ({
@@ -57,6 +59,7 @@ const HandCell: React.FC<HandCellProps> = ({
   solidColor,
   selected,
   onSelect,
+  sizeRef = 1,
   onHover,
   onLeave,
 }) => {
@@ -121,7 +124,7 @@ const HandCell: React.FC<HandCellProps> = ({
       const prev = bySlot[slot]; // overflow bets/others merge into the last slot
       bySlot[slot] = {
         width: (prev?.width ?? 0) + width,
-        color: prev?.color ?? getColorForAction(action),
+        color: prev?.color ?? getColorForAction(action, sizeRef),
       };
     }
 
@@ -132,7 +135,7 @@ const HandCell: React.FC<HandCellProps> = ({
         backgroundColor: bySlot[slot]?.color ?? "transparent",
       },
     }));
-  }, [data.actions, isRandomFill, randomizedAction]);
+  }, [data.actions, isRandomFill, randomizedAction, sizeRef]);
 
   /* ───────── pocket-pair border style ───────── */
   const isPair = data.hand.length === 2 && data.hand[0] === data.hand[1];
@@ -237,6 +240,7 @@ function areEqual(prev: HandCellProps, next: HandCellProps) {
     prev.selected === next.selected &&
     prev.stripes === next.stripes &&
     prev.solidColor === next.solidColor &&
+    prev.sizeRef === next.sizeRef &&
     prev.data.actions === next.data.actions &&
     prev.data.evs === next.data.evs
   );
