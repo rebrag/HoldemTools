@@ -709,6 +709,33 @@ def parse_gametree_path(
     return stacks, node_name, (yyyy, mm, dd)
 
 
+def _normalize_seat_meta(seats: Any) -> Optional[List[Dict[str, Any]]]:
+    """Accept the upload's Seats list (PascalCase from the C# API, snake_case
+    from a manifest round-trip) and normalize to the manifest shape.
+    stack_chips is measured at the flop, in Pio chips (bb * 100)."""
+    if not isinstance(seats, list):
+        return None
+    out: List[Dict[str, Any]] = []
+    for s in seats:
+        if not isinstance(s, dict):
+            continue
+        pos = s.get("pos") or s.get("Pos")
+        if not pos:
+            continue
+        cards = s.get("cards", s.get("Cards"))
+        out.append(
+            {
+                "pos": str(pos),
+                "name": str(s.get("name") or s.get("Name") or ""),
+                "stack_chips": s.get("stack_chips", s.get("StackChips")),
+                "folded": bool(s.get("folded", s.get("Folded", False))),
+                "hero": bool(s.get("hero", s.get("Hero", False))),
+                "cards": [str(c) for c in cards] if isinstance(cards, list) else None,
+            }
+        )
+    return out or None
+
+
 def build_board_context(
     board: str,
     cfr_file: str,
@@ -720,6 +747,8 @@ def build_board_context(
     acting_pos: Optional[str],
     preflop_line: Optional[List[str]] = None,
     is_icm: Optional[bool] = None,
+    seat_meta: Optional[List[Dict[str, Any]]] = None,
+    hand_bb: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Shared per-board fields used by every node doc and the manifest."""
     stacks, node_name, (yyyy, mm, dd) = parse_gametree_path(src_gametree_path, base_prefix)
@@ -758,6 +787,9 @@ def build_board_context(
         "date": {"year": yyyy, "month": mm, "day": dd},
         "preflop_line": preflop_line,
         "is_icm": bool(is_icm),
+        "seat_meta": _normalize_seat_meta(seat_meta),
+        # The hand's big blind in real chips (hand-history uploads only).
+        "hand_bb": hand_bb if isinstance(hand_bb, (int, float)) else None,
         "summary": {
             "ev_oop": sanitize_float(stats.get("ev_oop")),
             "ev_ip": sanitize_float(stats.get("ev_ip")),
@@ -798,6 +830,8 @@ def context_from_manifest(
         acting_pos=pre.get("acting_pos"),
         preflop_line=pre.get("line"),
         is_icm=pre.get("icm"),
+        seat_meta=manifest.get("seat_meta"),
+        hand_bb=manifest.get("hand_bb"),
     )
     ctx["stacks"] = manifest.get("stacks") or ctx["stacks"]
     ctx["node_name"] = manifest.get("node_name") or ctx["node_name"]
@@ -1020,6 +1054,11 @@ def build_manifest(
             "gametree_path": ctx["gametree_path"],
         },
         "seats": {"oop": ctx["oop_seat"], "ip": ctx["ip_seat"]},
+        # Optional (hand-history uploads): real player names/stacks/cards and
+        # the hand's big blind for the viewer's chip display. Preserved from
+        # the existing manifest on re-extracts.
+        "seat_meta": ctx.get("seat_meta") or (existing or {}).get("seat_meta"),
+        "hand_bb": ctx.get("hand_bb") or (existing or {}).get("hand_bb"),
         "stacks_map": ctx["stacks_map"],
         "pot_chips": ctx.get("pot_chips"),
         "effective_stack_chips": ctx.get("effective_stack_chips")

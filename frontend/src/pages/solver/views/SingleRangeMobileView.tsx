@@ -11,6 +11,7 @@ import PokerTable from "@/components/PokerTable";
 import DecisionMatrix from "../DecisionMatrix";
 import ColorKey from "../ColorKey";
 import SolverTableCenter from "../SolverTableCenter";
+import MoneyToggle from "../MoneyToggle";
 import { boardCardWidth, solverPotLabel } from "../boardDisplay";
 import useActiveRange from "./useActiveRange";
 import useTopOffset from "./useTopOffset";
@@ -35,6 +36,9 @@ const SingleRangeMobileView = ({
   windowHeight,
   board,
   onPlateContentRef,
+  seatNames,
+  tableSeatsOverride,
+  money,
 }: SingleRangeViewProps) => {
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
   const { ref: wrapRef, top } = useTopOffset();
@@ -46,6 +50,7 @@ const SingleRangeMobileView = ({
     playerBets,
     potCommitted,
     activePlayer,
+    seatNames,
   });
 
   const vh = windowHeight || 640;
@@ -85,16 +90,17 @@ const SingleRangeMobileView = ({
         </div>
 
         {/* Poker table (definite width so it doesn't collapse) */}
-        <div className="flex-shrink-0" style={{ width: tableW }}>
+        <div className="relative flex-shrink-0" style={{ width: tableW }}>
+          <MoneyToggle money={money} className="absolute -top-1 right-0 z-20" />
           <PokerTable
-            size={positions.length}
-            seats={tableSeats}
+            size={tableSeatsOverride?.length ?? positions.length}
+            seats={tableSeatsOverride ?? tableSeats}
             className="w-full"
             maxWidthClassName="max-w-none"
             aspectClassName="aspect-[7/5]"
             potAmount={actualPot != null ? Math.max(0, actualPot) : undefined}
             potLabel={
-              actualPot != null ? solverPotLabel(actualPot, board) : undefined
+              actualPot != null ? solverPotLabel(actualPot, board, money) : undefined
             }
             center={
               board && board.length > 0 ? (

@@ -32,6 +32,11 @@ import { actionsFromEngine, buildReplayData, encodeReplay, rebuildFrames } from 
 import { serializeHand, type EquityInfo, type StreetEquity } from "./serialize";
 import { useShowdownEquity, type EquityRequest } from "./useShowdownEquity";
 import { evalWinners, exactEquity } from "@/lib/handEval";
+import TreeBuildingModal, { type TreeBuildingInit } from "@/pages/solver/TreeBuildingModal";
+import { POSTFLOP_ENABLED } from "@/lib/solver/constants";
+import { buildTreeConfigText } from "@/lib/solver/treeConfig";
+import { uploadGameTree } from "@/lib/solver/uploadGameTree";
+import { extractHandSolve, type HandSolveExtract } from "./solveBridge";
 import { parseGameString } from "./parseGameString";
 import { parseHandDefaults, type HandDefaults } from "./parseHandDefaults";
 import type { HandHistory } from "../types";
@@ -187,6 +192,22 @@ const CreateHandHistory: React.FC<Props> = ({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [unitMode, setUnitMode] = useState<"bb" | "chips">("chips");
   const autoSavedRef = useRef(false);
+
+  // Postflop solve offer: when the completed hand saw a heads-up flop, the
+  // tree-building modal opens over the recorder while the auto-save runs in
+  // the background; navigation to the list is deferred until it closes.
+  const [solveOffer, setSolveOffer] = useState<Extract<
+    HandSolveExtract,
+    { eligible: true }
+  > | null>(null);
+  const [solveBusy, setSolveBusy] = useState(false);
+  const [solveNotice, setSolveNotice] = useState<string | null>(null);
+  const [solveError, setSolveError] = useState<string | null>(null);
+  const solveOfferedRef = useRef(false);
+  // Save/navigation handshake: "ok"/"error" once the deferred save resolves;
+  // pendingNavRef is set when the modal closed before the save finished.
+  const savedRef = useRef<"idle" | "ok" | "error">("idle");
+  const pendingNavRef = useRef(false);
   // Defaults seeding (standalone mode): copy the most recent saved hand's setup
   // once, unless the user has already touched the form or hit Clear all.
   const seededRef = useRef(false);
@@ -530,7 +551,7 @@ const CreateHandHistory: React.FC<Props> = ({
     setWinnerSel([]);
   };
 
-  const saveHand = async () => {
+  const saveHand = async (opts?: { deferNavigate?: boolean }) => {
     if (!serialized || !engine) return;
     // The persisted text carries an invisible, machine-readable replay payload
     // appended after the human-readable history. It rides through both the
@@ -561,8 +582,17 @@ const CreateHandHistory: React.FC<Props> = ({
       });
       if (!res.ok) throw new Error(`Save failed (${res.status})`);
       clearSetupDraft();
-      navigate("/hand-history");
+      // While the solve modal is up, the save completes silently in the
+      // background; navigation happens when the modal is dismissed (or right
+      // now, if it was dismissed while the save was still in flight).
+      if (opts?.deferNavigate) {
+        savedRef.current = "ok";
+        if (pendingNavRef.current) navigate("/hand-history");
+      } else {
+        navigate("/hand-history");
+      }
     } catch (e: unknown) {
+      savedRef.current = "error";
       setSaveError(e instanceof Error ? e.message : "Save failed.");
     } finally {
       setSaving(false);
@@ -585,6 +615,21 @@ const CreateHandHistory: React.FC<Props> = ({
     setEngine(ne);
   }, [engine, showdown, evalGame]);
 
+  // When the completed hand saw a heads-up flop (with real postflop play),
+  // offer to upload a game tree for solving. Computed synchronously so the
+  // auto-save effect below can defer navigation in the same commit.
+  const solveExtract = useMemo(() => {
+    if (embedded || !user || !POSTFLOP_ENABLED) return null;
+    if (!engine || !engine.done) return null;
+    const ex = extractHandSolve({
+      engine,
+      history,
+      board: state.board,
+      buttonSeat: state.buttonSeat,
+    });
+    return ex.eligible ? ex : null;
+  }, [embedded, user, engine, history, state.board, state.buttonSeat]);
+
   // Once the hand is fully resolved (winners on every board) and any all-in
   // equity has been computed, save it automatically. The ref guards re-firing.
   // Skipped in embedded mode, where the user confirms with an explicit button.
@@ -598,10 +643,86 @@ const CreateHandHistory: React.FC<Props> = ({
     const equityReady = !equityReq || preEq != null;
     if (isComplete && equityReady && serialized && !autoSavedRef.current && !saving) {
       autoSavedRef.current = true;
-      void saveHand();
+      void saveHand({ deferNavigate: !!solveExtract });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, serialized, equityReq, preEq]);
+
+  // Open the tree-building modal alongside the auto-save (once per hand).
+  useEffect(() => {
+    if (!solveExtract || solveOfferedRef.current) return;
+    const isComplete =
+      !!engine &&
+      engine.done &&
+      !!engine.winners &&
+      (engine.numBoards === 1 || !!engine.winners2);
+    if (!isComplete) return;
+    solveOfferedRef.current = true;
+    setSolveOffer(solveExtract);
+  }, [solveExtract, engine]);
+
+  /** Close the solve modal and perform (or queue) the deferred navigation. */
+  const finishSolveFlow = () => {
+    setSolveOffer(null);
+    setSolveNotice(null);
+    setSolveError(null);
+    setSolveBusy(false);
+    if (savedRef.current === "ok") {
+      navigate("/hand-history");
+    } else if (savedRef.current === "idle") {
+      // Save still in flight - it navigates on completion.
+      pendingNavRef.current = true;
+    }
+    // savedRef "error": stay put so the existing save-error UI (with its
+    // manual Save button) is visible.
+  };
+
+  const confirmSolveUpload = async ({
+    params,
+    flopCards,
+  }: {
+    params: Parameters<typeof buildTreeConfigText>[0];
+    flopCards: string[];
+  }) => {
+    if (!solveOffer) return;
+    setSolveBusy(true);
+    setSolveError(null);
+    try {
+      const text = buildTreeConfigText(params, flopCards);
+      await uploadGameTree({
+        folder: solveOffer.folder,
+        line: solveOffer.preflopLine,
+        actingPos: solveOffer.actingPos,
+        isICM: false,
+        text,
+        alivePositions: solveOffer.alivePositions,
+        seats: solveOffer.seats,
+        bigBlind: solveOffer.bigBlind,
+      });
+      setSolveNotice(
+        "Solve requested - it will appear under Solved Flops on the Solutions page (usually 2-10 min)."
+      );
+      window.setTimeout(finishSolveFlow, 2400);
+    } catch (e: unknown) {
+      setSolveError(e instanceof Error ? e.message : "Upload failed.");
+    } finally {
+      setSolveBusy(false);
+    }
+  };
+
+  const solveInit = useMemo<TreeBuildingInit | null>(() => {
+    if (!solveOffer) return null;
+    const label = (p: typeof solveOffer.oop, role: string) =>
+      p.name && p.name !== p.hhPos && p.name !== p.solverPos
+        ? `${p.name} · ${p.solverPos} (${role})`
+        : `${p.solverPos} (${role})`;
+    return {
+      params: solveOffer.params,
+      flopCards: solveOffer.flopCards,
+      oopLabel: label(solveOffer.oop, "OOP"),
+      ipLabel: label(solveOffer.ip, "IP"),
+    };
+  }, [solveOffer]);
 
   const needWinner =
     !!engine &&
@@ -628,6 +749,19 @@ const CreateHandHistory: React.FC<Props> = ({
 
   return (
     <div className="mx-auto max-w-6xl px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+      {/* Postflop solve offer: opens over the recorder the moment a hand that
+          saw a heads-up flop completes, while the auto-save runs behind it. */}
+      {solveOffer && solveInit && (
+        <TreeBuildingModal
+          init={solveInit}
+          solvedForLine={[]}
+          busy={solveBusy}
+          notice={solveNotice}
+          error={solveError}
+          onClose={finishSolveFlow}
+          onConfirm={(r) => void confirmSolveUpload(r)}
+        />
+      )}
       {embedded && (
         <div className="mb-4 flex items-center justify-between gap-3">
           <h1 className="text-lg font-semibold text-white">Create Hand History</h1>
@@ -795,7 +929,7 @@ const CreateHandHistory: React.FC<Props> = ({
                 <button
                   type="button"
                   disabled={saving}
-                  onClick={saveHand}
+                  onClick={() => void saveHand()}
                   className="inline-flex items-center rounded-full bg-emerald-600 px-5 py-1.5 text-sm font-semibold text-white shadow-md shadow-emerald-500/40 transition hover:bg-emerald-500 disabled:opacity-60"
                 >
                   {embedded ? "Add to session" : saving ? "Saving…" : "Save hand history"}

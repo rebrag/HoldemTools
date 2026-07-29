@@ -1,6 +1,5 @@
 // src/components/Solver.tsx
 import { useState, useCallback, useLayoutEffect, useEffect, useMemo, useRef } from "react";
-import type { ChangeEvent } from "react";
 import SingleRangeDesktopView from "./views/SingleRangeDesktopView";
 import SingleRangeMobileView from "./views/SingleRangeMobileView";
 import MultiRangeDesktopView from "./views/MultiRangeDesktopView";
@@ -33,8 +32,9 @@ import { startSubscriptionCheckout } from "@/lib/stripe/checkout";
 import { uploadGameTree } from "@/lib/solver/uploadGameTree";
 import { useCurrentTier } from "@/context/TierContext";
 import PlayingCard from "@/components/PlayingCard";
-import FlopPickerModal from "./FlopPickerModal";
+import TreeBuildingModal, { type TreeBuildingInit } from "./TreeBuildingModal";
 import { handleActionClickImpl, type PendingFlopUpload } from "@/lib/solver/handleActionClick";
+import { POSTFLOP_ORDER, buildTreeConfigText, type TreeParams } from "@/lib/solver/treeConfig";
 import { parseGametreePathForSolution } from "@/lib/solver/postflopClient";
 import {
   fetchBoardManifest,
@@ -59,69 +59,12 @@ import { preflopNodeFiles, usePreflopLineNodes } from "./usePreflopLineNodes";
 import PostflopLibrary from "./PostflopLibrary";
 import PostflopCardPicker from "./PostflopCardPicker";
 import { Library } from "lucide-react";
+import { fmtMoney, type MoneyDisplay } from "./boardDisplay";
+import type { PokerTableSeat } from "@/components/PokerTable";
 
 // Toggle experimental postflop pipeline (upload + polling).
 // Off unless VITE_POSTFLOP_ENABLED=true (frontend/.env locally; Vercel env var in prod).
-const POSTFLOP_ENABLED = import.meta.env.VITE_POSTFLOP_ENABLED === "true";
-
-const RANKS = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"] as const;
-const SUITS = ["h", "d", "c", "s"] as const;
-const ALL_CARDS: string[] = RANKS.flatMap((r) => SUITS.map((s) => `${r}${s}`));
-
-function parseFlopInputString(raw: string): { cards: string[]; error: string | null } {
-  const stripped = raw.replace(/[^a-zA-Z0-9]/g, "").trim();
-  if (!stripped) return { cards: [], error: null };
-
-  const upper = stripped.toUpperCase();
-
-  if (upper.length > 6) {
-    return {
-      cards: [],
-      error: 'Please enter at most 3 cards, e.g. "AhKd9c" or "Ah Kd 9c".',
-    };
-  }
-
-  if (upper.length % 2 !== 0) {
-    return {
-      cards: [],
-      error: 'Finish the card you\'re typing, e.g. "9c".',
-    };
-  }
-
-  const parsed: string[] = [];
-
-  for (let i = 0; i < upper.length; i += 2) {
-    const rank = upper[i];
-    const suitChar = upper[i + 1];
-
-    if (!RANKS.includes(rank as (typeof RANKS)[number])) {
-      return {
-        cards: [],
-        error: `Unknown rank "${rank}". Use A,K,Q,J,T,9..2.`,
-      };
-    }
-
-    const suitLower = suitChar.toLowerCase();
-    if (!SUITS.includes(suitLower as (typeof SUITS)[number])) {
-      return {
-        cards: [],
-        error: `Unknown suit "${suitChar}". Use h,d,c,s.`,
-      };
-    }
-
-    const code = `${rank}${suitLower}`;
-    if (parsed.includes(code)) {
-      return {
-        cards: [],
-        error: "Cards must be unique.",
-      };
-    }
-
-    parsed.push(code);
-  }
-
-  return { cards: parsed, error: null };
-}
+import { POSTFLOP_ENABLED } from "@/lib/solver/constants";
 
 const tourSteps = [
   { element: '[data-intro-target="folder-selector"]', intro: "Choose a pre-flop sim here.", position: "bottom" },
@@ -198,9 +141,6 @@ const Solver = ({ user }: SolverProps) => {
   // Postflop modal
   const [pendingFlopUpload, setPendingFlopUpload] = useState<PendingFlopUpload | null>(null);
   const [showFlopModal, setShowFlopModal] = useState(false);
-  const [flopCards, setFlopCards] = useState<string[]>([]);
-  const [flopInput, setFlopInput] = useState<string>("");
-  const [flopInputError, setFlopInputError] = useState<string | null>(null);
 
   const [currentBoard, setCurrentBoard] = useState<string[]>([]);
 
@@ -261,7 +201,6 @@ const Solver = ({ user }: SolverProps) => {
         .map(([pos]) => pos),
     [alivePlayers]
   );
-  const canConfirmFlop = flopCards.length === 3 && alivePositions.length === 2;
 
   const defaultPlateNames = useMemo(() => {
     const filesArray: string[] = [];
@@ -974,7 +913,11 @@ const Solver = ({ user }: SolverProps) => {
         return;
       }
 
-      if (entry.stacks !== folderRef.current) {
+      // Hand-history solves live under a synthetic {stacks} name that is NOT
+      // a preflop sim folder - opening it would 404 the sim file fetches
+      // ("Error fetching files"). The postflop session is self-contained, so
+      // only switch folders when the entry belongs to a real sim.
+      if (entry.stacks !== folderRef.current && folders.includes(entry.stacks)) {
         actuallyOpenFolder(entry.stacks);
       }
 
@@ -986,7 +929,7 @@ const Solver = ({ user }: SolverProps) => {
       setCurrentBoard(boardToCards(entry.board));
       await pf.open(manifest);
     },
-    [uid, folderMetaMap, tier, tierLoading, actuallyOpenFolder, pf]
+    [uid, folderMetaMap, folders, tier, tierLoading, actuallyOpenFolder, pf]
   );
 
   useKeyboardShortcuts({
@@ -1014,58 +957,37 @@ const Solver = ({ user }: SolverProps) => {
   useEffect(() => {
     if (!POSTFLOP_ENABLED) return;
     if (pendingFlopUpload && alivePositions.length === 2) {
-      setFlopCards([]);
-      setFlopInput("");
-      setFlopInputError(null);
       setShowFlopModal(true);
     }
   }, [pendingFlopUpload, alivePositions.length]);
 
-  useEffect(() => {
-    if (!showFlopModal) return;
-    if (flopCards.length === 0) {
-      setFlopInput("");
-    } else {
-      setFlopInput(flopCards.join(" "));
-    }
-  }, [flopCards, showFlopModal]);
-
   const closeFlopModal = () => {
     setShowFlopModal(false);
     setPendingFlopUpload(null);
-    setFlopCards([]);
-    setFlopInput("");
-    setFlopInputError(null);
   };
 
-  const onPickFlopCard = (code: string) => {
-    setFlopCards((prev) => {
-      if (prev.includes(code)) return prev.filter((c) => c !== code);
-      if (prev.length >= 3) return prev;
-      return [...prev, code];
-    });
-  };
+  /** Everything the tree-building modal needs to open, prefilled from the
+   *  pending preflop-call upload. OOP/IP labels follow POSTFLOP_ORDER, the
+   *  same ordering the watcher uses to assign Range0/Range1 to seats. */
+  const treeInit = useMemo<TreeBuildingInit | null>(() => {
+    if (!pendingFlopUpload || alivePositions.length !== 2) return null;
+    const order = POSTFLOP_ORDER as readonly string[];
+    const sorted = [...alivePositions].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+    return {
+      params: pendingFlopUpload.params,
+      flopCards: [],
+      oopLabel: `${sorted[0]} (OOP)`,
+      ipLabel: `${sorted[1]} (IP)`,
+    };
+  }, [pendingFlopUpload, alivePositions]);
 
-  const handleFlopInputChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setFlopInput(value);
-    const { cards, error } = parseFlopInputString(value);
-    setFlopInputError(error);
-    if (!error) setFlopCards(cards);
-  };
-
-  const randomizeFlop = useCallback(() => {
-    const deck = [...ALL_CARDS];
-    for (let i = deck.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [deck[i], deck[j]] = [deck[j], deck[i]];
-    }
-    const next = deck.slice(0, 3);
-    setFlopCards(next);
-    setFlopInputError(null);
-  }, []);
-
-  const confirmFlopAndUpload = async () => {
+  const confirmFlopAndUpload = async ({
+    params,
+    flopCards,
+  }: {
+    params: TreeParams;
+    flopCards: string[];
+  }) => {
     if (!pendingFlopUpload || flopCards.length !== 3) return;
     if (alivePositions.length !== 2) {
       console.warn(
@@ -1077,7 +999,6 @@ const Solver = ({ user }: SolverProps) => {
 
     setCurrentBoard([...flopCards]);
 
-    const boardStr = flopCards.join(" ");
     const boardName = flopCards.join("");
 
     const {
@@ -1085,12 +1006,9 @@ const Solver = ({ user }: SolverProps) => {
       actingPosition,
       preflopLine: pfLine,
       isICMSim: pfICM,
-      linesBeforeBoard,
-      linesAfterBoard,
     } = pendingFlopUpload;
 
-    const allLines = [...linesBeforeBoard, `#Board#${boardStr}`, ...linesAfterBoard];
-    const adjustedText = allLines.join("\n");
+    const adjustedText = buildTreeConfigText(params, flopCards);
 
     try {
       const result = await uploadGameTree({
@@ -1139,8 +1057,6 @@ const Solver = ({ user }: SolverProps) => {
     }
   };
 
-  const usedSetForFlop = useMemo(() => new Set<string>(flopCards), [flopCards]);
-
   // Boards already solved for the exact line being requested (skip re-solving)
   const solvedForPendingLine = useMemo(
     () =>
@@ -1155,6 +1071,60 @@ const Solver = ({ user }: SolverProps) => {
    * viewing the opponent's plate falls back to hand-class averages. */
   const activeComboDetail =
     pf.view && activePlayer === pf.view.actorSeat ? pf.view.actorCombos : null;
+
+  /* Chips/bb display for hand-history solves. Defaults to the hand's own
+   * chips; sims have no chip scale, so the toggle only exists when the
+   * manifest carries the hand's big blind. */
+  const [pfMoneyMode, setPfMoneyMode] = useState<"chips" | "bb">("chips");
+  const pfManifest = pf.view?.manifest;
+  useEffect(() => {
+    setPfMoneyMode("chips");
+  }, [pfManifest]);
+  const pfHandBB = pf.view?.handBB ?? null;
+  const pfMoney = useMemo<MoneyDisplay | undefined>(
+    () =>
+      pfHandBB
+        ? {
+            mode: pfMoneyMode,
+            bbSize: pfHandBB,
+            onToggle: () => setPfMoneyMode((m) => (m === "chips" ? "bb" : "chips")),
+          }
+        : undefined,
+    [pfHandBB, pfMoneyMode]
+  );
+
+  /* Hand-history solves carry the full table (seat_meta): render every player
+   * from the hand - real names, stacks, folded state, and known hole cards -
+   * instead of the sim-derived seats. */
+  const hhTableSeats = useMemo<PokerTableSeat[] | undefined>(() => {
+    const view = pf.view;
+    if (!view?.seatMeta?.length) return undefined;
+    const fmtOpts =
+      pfMoney && pfMoney.mode === "chips"
+        ? { mode: "chips" as const, bbSize: pfMoney.bbSize }
+        : null;
+    return view.seatMeta.map((s) => {
+      const live = s.pos === view.oopSeat || s.pos === view.ipSeat;
+      const behindBB = live
+        ? view.liveStacksBB[s.pos] ?? (s.stack_chips != null ? s.stack_chips / 100 : null)
+        : s.stack_chips != null
+          ? s.stack_chips / 100
+          : null;
+      const betBB = live ? playerBets[s.pos] ?? 0 : 0;
+      return {
+        key: s.pos,
+        label: s.name && s.name !== s.pos ? s.name : s.pos,
+        stackText: behindBB != null ? fmtMoney(behindBB, fmtOpts) : undefined,
+        committedAmount: betBB > 0 ? betBB : undefined,
+        committedText: betBB > 0 ? fmtMoney(betBB, fmtOpts) : undefined,
+        holeCards: s.cards?.length ? s.cards : live ? [null, null] : undefined,
+        isButton: s.pos === "BTN",
+        isActive: live && s.pos === activePlayer,
+        isHero: s.hero,
+        folded: s.folded,
+      };
+    });
+  }, [pf.view, pfMoney, playerBets, activePlayer]);
 
   /* Per-hand-class reach for each postflop plate, keyed the same way the
    * plate-sync effect names the files. Undefined outside a postflop session,
@@ -1243,23 +1213,14 @@ const Solver = ({ user }: SolverProps) => {
     <>
       <Steps enabled={tourRun} steps={tourSteps} initialStep={0} onExit={() => setTourRun(false)} />
 
-      {/* FLOP PICKER MODAL */}
-      {POSTFLOP_ENABLED && showFlopModal && pendingFlopUpload && (
-        <FlopPickerModal
-          flopCards={flopCards}
-          flopInput={flopInput}
-          flopInputError={flopInputError}
-          solvedForPendingLine={solvedForPendingLine}
-          usedCards={usedSetForFlop}
-          canConfirm={canConfirmFlop}
+      {/* TREE BUILDING MODAL */}
+      {POSTFLOP_ENABLED && showFlopModal && treeInit && (
+        <TreeBuildingModal
+          init={treeInit}
+          solvedForLine={solvedForPendingLine}
+          busy={false}
           onClose={closeFlopModal}
-          onPickCard={onPickFlopCard}
-          onRemoveCardAt={(idx) =>
-            setFlopCards((prev) => prev.filter((_c, i) => i !== idx))
-          }
-          onInputChange={handleFlopInputChange}
-          onRandomize={randomizeFlop}
-          onConfirm={() => void confirmFlopAndUpload()}
+          onConfirm={(result) => void confirmFlopAndUpload(result)}
           onOpenSolvedBoard={(entry) => {
             closeFlopModal();
             void openSolvedBoard(entry);
@@ -1392,6 +1353,9 @@ const Solver = ({ user }: SolverProps) => {
                 comboDetail={activeComboDetail}
                 nodeStats={pf.view?.nodeStats ?? null}
                 actorSeat={pf.view?.actorSeat}
+                seatNames={pf.view?.seatNames}
+                tableSeatsOverride={hhTableSeats}
+                money={pfMoney}
               />
             ) : mode === "single-mobile" ? (
               <SingleRangeMobileView
@@ -1414,6 +1378,9 @@ const Solver = ({ user }: SolverProps) => {
                 windowHeight={windowHeight}
                 board={pf.view ? pf.view.board : currentBoard}
                 onPlateContentRef={setPlateContentEl}
+                seatNames={pf.view?.seatNames}
+                tableSeatsOverride={hhTableSeats}
+                money={pfMoney}
               />
             ) : mode === "multi-desktop" ? (
               <MultiRangeDesktopView

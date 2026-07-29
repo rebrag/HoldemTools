@@ -2,14 +2,21 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import { getActionNumber, numberToActionMap } from "@/lib/solver/constants";
 import type { JsonData } from "@/lib/solver/utils";
+import {
+  DEFAULT_TREE_SIZES,
+  cloneTreeSizes,
+  parseRangeText,
+  type TreeParams,
+} from "@/lib/solver/treeConfig";
 
 export interface PendingFlopUpload {
   folder: string;
   actingPosition: string;
   preflopLine: string[];
   isICMSim: boolean;
-  linesBeforeBoard: string[];
-  linesAfterBoard: string[];
+  /** Everything the tree-building modal needs; the final config text is
+   *  produced by buildTreeConfigText(params, flopCards) at confirm time. */
+  params: TreeParams;
 }
 
 export interface HandleActionClickContext {
@@ -282,61 +289,33 @@ export function handleActionClickImpl(
       positionOrder.includes(lastRangePos) &&
       positionOrder.indexOf(callingPos) > positionOrder.indexOf(lastRangePos);
 
-    const linesBeforeBoard: string[] = [
-      "#Type#NoLimit",
-      `#Range0#${range0}`,
-      `#Range1#${range1}`,
-      "#ICM.ICMFormat#Pio ICM structure",
-      isICMSim ? "#ICM.Enabled#True" : undefined,
-      `#ICM.Payouts#${payoutsLiteral}`,
-      `#ICM.Stacks#${stacksLiteral}`,
-    ].filter(Boolean) as string[];
+    const oopSizes = cloneTreeSizes(DEFAULT_TREE_SIZES.oop);
+    // When the caller closes the action from a later seat, the raiser is OOP
+    // and gets a flop bet size (was a conditional #FlopConfig.BetSize#25
+    // splice in the old text-based flow).
+    if (callerLaterThanRaiser) oopSizes.flop.betSize = "25";
 
-    const linesAfterBoard: string[] = [
-      `#Pot#${potChips}`,
-      `#EffectiveStacks#${effStackChips}`,
-      "#AllinThreshold#60",
-      "#AddAllinOnlyIfLessThanThisTimesThePot#250",
-      "#MergeSimilarBets#True",
-      "#MergeSimilarBetsThreshold#12",
-      "#CapEnabled#True",
-      "#CapMode#NoLimit",
-      "#FlopConfig.RaiseSize#33",
-      "#FlopConfig.AddAllin#True",
-      "#TurnConfig.BetSize#50",
-      "#TurnConfig.RaiseSize#a",
-      "#TurnConfig.AddAllin#True",
-      "#RiverConfig.BetSize#30 66",
-      "#RiverConfig.RaiseSize#a",
-      "#RiverConfig.AddAllin#True",
-      "#RiverConfig.DonkBetSize#30",
-      "#FlopConfigIP.BetSize#25",
-      "#FlopConfigIP.RaiseSize#a",
-      "#FlopConfigIP.AddAllin#True",
-      "#TurnConfigIP.BetSize#50",
-      "#TurnConfigIP.RaiseSize#a",
-      "#TurnConfigIP.AddAllin#True",
-      "#RiverConfigIP.BetSize#30 66",
-      "#RiverConfigIP.RaiseSize#a",
-      "#RiverConfigIP.AddAllin#True",
-    ];
+    const params: TreeParams = {
+      rangeOOP: parseRangeText(range0),
+      rangeIP: parseRangeText(range1),
+      potChips,
+      effectiveStackChips: effStackChips,
+      allinThreshold: 60,
+      addAllinOnlyIfLessThanThisTimesThePot: 250,
+      mergeSimilarBets: true,
+      mergeSimilarBetsThreshold: 12,
+      oop: oopSizes,
+      ip: cloneTreeSizes(DEFAULT_TREE_SIZES.ip),
+      icm: { enabled: isICMSim, payoutsLiteral, stacksLiteral },
+    };
 
-    // insert FlopConfig.BetSize#25 right after CapMode when caller > raiser
-    if (callerLaterThanRaiser) {
-      const idx = linesAfterBoard.findIndex((l) => l.startsWith("#CapMode#"));
-      if (idx !== -1) {
-        linesAfterBoard.splice(idx + 1, 0, "#FlopConfig.BetSize#25");
-      }
-    }
-
-    // hand off to Solver to open the flop picker modal
+    // hand off to Solver to open the tree-building modal
     setPendingFlopUpload({
       folder,
       actingPosition: actingPosition ?? "",
       preflopLine: fullLine,
       isICMSim,
-      linesBeforeBoard,
-      linesAfterBoard,
+      params,
     });
   } else if (action !== "ALLIN" && action !== "Fold") {
     // Remember the aggressor's range for the postflop tree upload. Folds must

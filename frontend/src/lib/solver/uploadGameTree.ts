@@ -2,6 +2,19 @@
 // Authenticated: the API takes the uploader's uid from the verified token.
 import { authedFetch } from "@/lib/api";
 
+/** Optional per-seat metadata carried with hand-history uploads so the
+ *  solutions viewer can show real player names/stacks/cards. stackChips is
+ *  measured AT THE FLOP (net of preflop money) in Pio chips = bb * 100. */
+export type SeatMeta = {
+  pos: string;
+  name: string;
+  stackChips: number;
+  folded: boolean;
+  hero: boolean;
+  /** Known hole cards from the recorded hand ("As" style codes). */
+  cards?: string[];
+};
+
 export type UploadGameTreeBody = {
   folder: string;
   line: string[];
@@ -9,6 +22,10 @@ export type UploadGameTreeBody = {
   isICM: boolean;
   text: string;
   alivePositions: string[];
+  seats?: SeatMeta[];
+  /** The hand's big blind in real chips - lets the viewer convert bb values
+   *  back into the hand's own currency. */
+  bigBlind?: number;
 };
 
 export async function uploadGameTree(body: UploadGameTreeBody) {

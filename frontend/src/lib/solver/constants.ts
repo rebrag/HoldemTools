@@ -1,6 +1,10 @@
 // utils/constants.ts
 //import { getColorForAction } from "./utils";
 
+/** Feature flag for the postflop solve pipeline (upload + solved-flops
+ *  library). Read here once so every page gates on the same value. */
+export const POSTFLOP_ENABLED = import.meta.env.VITE_POSTFLOP_ENABLED === "true";
+
 // Consider moving this to a shared helper file or ColorKey.tsx if desired.
 export const actionToNumberMap: Record<string, string> = {
     Fold: "0",

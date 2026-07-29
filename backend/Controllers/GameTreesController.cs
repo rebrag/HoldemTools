@@ -64,7 +64,19 @@ namespace PokerRangeAPI2.Controllers
             string fileName = $"{now:HHmmss}_line={safeLine}_pos={safePos}_icm={(req.IsICM ? 1 : 0)}.json";
             DataLakeFileClient file = dir.GetFileClient(fileName);
 
-            // 👇 Include AlivePositions in the stored JSON
+            // Optional per-seat metadata (hand-history uploads): free-text
+            // names are length-capped and sanitized before storage, and hole
+            // cards are filtered to valid card codes.
+            var seats = req.Seats?.Select(s => new
+            {
+                Pos = Sanitize(s.Pos),
+                Name = TruncateName(s.Name),
+                s.StackChips,
+                s.Folded,
+                s.Hero,
+                Cards = SanitizeCards(s.Cards)
+            }).ToArray();
+
             var payload = new
             {
                 req.Folder,
@@ -72,7 +84,9 @@ namespace PokerRangeAPI2.Controllers
                 req.ActingPos,
                 req.IsICM,
                 req.Text,
-                req.AlivePositions,   // 👈 NEW FIELD
+                req.AlivePositions,
+                Seats = seats,
+                req.BigBlind,
                 UploadedAtUtc = now
             };
 
@@ -96,6 +110,26 @@ namespace PokerRangeAPI2.Controllers
                 sb.Append(bad.Contains(ch) ? '_' : ch);
             return sb.ToString();
         }
+
+        // Seat names are display-only free text; cap the length but keep the
+        // characters (they never become a path segment).
+        private static string TruncateName(string? s)
+        {
+            var name = (s ?? "").Trim();
+            return name.Length <= 32 ? name : name[..32];
+        }
+
+        // Hole cards from the recorded hand: keep only valid "As"-style codes
+        // (PLO5 hands can carry up to five).
+        private static string[]? SanitizeCards(System.Collections.Generic.List<string>? cards)
+        {
+            if (cards == null) return null;
+            var valid = cards
+                .Where(c => c != null && System.Text.RegularExpressions.Regex.IsMatch(c, "^[2-9TJQKA][shdc]$"))
+                .Take(5)
+                .ToArray();
+            return valid.Length > 0 ? valid : null;
+        }
     }
 
     // ========= DTO =========
@@ -109,5 +143,23 @@ namespace PokerRangeAPI2.Controllers
 
         // 👇 NEW: list of alive positions from the frontend (e.g. ["UTG1","BB"])
         public string[] AlivePositions { get; set; } = Array.Empty<string>();
+
+        // Optional per-seat metadata from hand-history uploads. StackChips is
+        // measured at the flop, in Pio chips (bb * 100). Echoed into the
+        // solution manifest so the viewer can show real names/stacks/cards.
+        public System.Collections.Generic.List<SeatMetaDto>? Seats { get; set; }
+
+        // The hand's big blind in real chips (viewer's chips display).
+        public double? BigBlind { get; set; }
+    }
+
+    public class SeatMetaDto
+    {
+        public string Pos { get; set; } = "";
+        public string Name { get; set; } = "";
+        public int StackChips { get; set; }
+        public bool Folded { get; set; }
+        public bool Hero { get; set; }
+        public System.Collections.Generic.List<string>? Cards { get; set; }
     }
 }
