@@ -749,6 +749,7 @@ def build_board_context(
     is_icm: Optional[bool] = None,
     seat_meta: Optional[List[Dict[str, Any]]] = None,
     hand_bb: Optional[float] = None,
+    chip_scale: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Shared per-board fields used by every node doc and the manifest."""
     stacks, node_name, (yyyy, mm, dd) = parse_gametree_path(src_gametree_path, base_prefix)
@@ -790,6 +791,9 @@ def build_board_context(
         "seat_meta": _normalize_seat_meta(seat_meta),
         # The hand's big blind in real chips (hand-history uploads only).
         "hand_bb": hand_bb if isinstance(hand_bb, (int, float)) else None,
+        # Pio chips per unit of the hand's money. Absent (None) means this
+        # solve uses the original convention of 100 chips per big blind.
+        "chip_scale": int(chip_scale) if isinstance(chip_scale, int) and chip_scale > 0 else None,
         "summary": {
             "ev_oop": sanitize_float(stats.get("ev_oop")),
             "ev_ip": sanitize_float(stats.get("ev_ip")),
@@ -832,6 +836,10 @@ def context_from_manifest(
         is_icm=pre.get("icm"),
         seat_meta=manifest.get("seat_meta"),
         hand_bb=manifest.get("hand_bb"),
+        # Mandatory for the re-extract and on-demand river paths, which rebuild
+        # the context from the manifest and never re-read the upload. Dropping
+        # it here would silently re-scale those bundles.
+        chip_scale=manifest.get("chip_scale"),
     )
     ctx["stacks"] = manifest.get("stacks") or ctx["stacks"]
     ctx["node_name"] = manifest.get("node_name") or ctx["node_name"]
@@ -1059,6 +1067,13 @@ def build_manifest(
         # the existing manifest on re-extracts.
         "seat_meta": ctx.get("seat_meta") or (existing or {}).get("seat_meta"),
         "hand_bb": ctx.get("hand_bb") or (existing or {}).get("hand_bb"),
+        # `is not None` rather than `or`: a scale of 0 is not a real value, but
+        # neither should a falsy check decide what unit a solved board is in.
+        "chip_scale": (
+            ctx.get("chip_scale")
+            if ctx.get("chip_scale") is not None
+            else (existing or {}).get("chip_scale")
+        ),
         "stacks_map": ctx["stacks_map"],
         "pot_chips": ctx.get("pot_chips"),
         "effective_stack_chips": ctx.get("effective_stack_chips")

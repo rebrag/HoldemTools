@@ -4,19 +4,21 @@
 import type { MoneyDisplay } from "./boardDisplay";
 
 const MoneyToggle = ({ money, className }: { money?: MoneyDisplay; className?: string }) => {
-  if (!money) return null;
+  // No toggle on a sim, and none when the solve carries no big blind to
+  // convert to - there would be nothing to switch between.
+  if (!money || !(money.bbSize > 0)) return null;
   return (
     <button
       type="button"
       onClick={money.onToggle}
       className={`rounded-full border border-white/20 bg-slate-900/70 px-2.5 py-0.5 text-[11px] font-medium text-gray-200 shadow-sm transition-colors hover:bg-slate-800 hover:text-white ${className ?? ""}`}
       title={
-        money.mode === "chips"
+        money.mode === "money"
           ? "Showing the hand's real chip amounts - switch to big blinds"
           : "Showing big blinds - switch to the hand's real chip amounts"
       }
     >
-      {money.mode === "chips" ? "Show in BB" : "Show in chips"}
+      {money.mode === "money" ? "Show in BB" : "Show in chips"}
     </button>
   );
 };

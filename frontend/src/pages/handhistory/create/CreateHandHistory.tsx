@@ -698,6 +698,10 @@ const CreateHandHistory: React.FC<Props> = ({
         alivePositions: solveOffer.alivePositions,
         seats: solveOffer.seats,
         bigBlind: solveOffer.bigBlind,
+        // Frozen at extract time: the seat stacks and the ICM stacks literal
+        // were scaled with it and are not editable in the panel, so
+        // re-deriving it from an edited pot would desync them.
+        chipScale: solveOffer.chipScale,
       });
       setSolveNotice(
         "Solve requested - it will appear under Solved Flops on the Solutions page (usually 2-10 min)."
@@ -721,6 +725,8 @@ const CreateHandHistory: React.FC<Props> = ({
       flopCards: solveOffer.flopCards,
       oopLabel: label(solveOffer.oop, "OOP"),
       ipLabel: label(solveOffer.ip, "IP"),
+      // The recorded hand's money, not big blinds.
+      moneyLabel: "chips",
     };
   }, [solveOffer]);
 

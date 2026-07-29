@@ -86,7 +86,8 @@ export interface SlotSegment {
 
 /** Assign action weights (fractions 0..1) to the fixed slots as bar widths. */
 export const buildSegmentSlots = (
-  weights: Record<string, number>
+  weights: Record<string, number>,
+  sizeRef = 1
 ): SlotSegment[] => {
   const ordered = orderActionKeys(
     Object.keys(weights).filter((a) => a !== "Position")
@@ -104,7 +105,7 @@ export const buildSegmentSlots = (
     const prev = bySlot[slot];
     bySlot[slot] = {
       width: (prev?.width ?? 0) + (weights[action] || 0) * 100,
-      color: prev?.color ?? getColorForAction(action),
+      color: prev?.color ?? getColorForAction(action, sizeRef),
     };
   }
   return SEGMENT_SLOTS.map((slot) => ({
@@ -115,7 +116,8 @@ export const buildSegmentSlots = (
 };
 
 export const computeActionAggregates = (
-  data: HandCellData[]
+  data: HandCellData[],
+  sizeRef = 1
 ): ActionAggregate[] => {
   /* Keep zero-weight actions: they are still navigable branches (clicking a
    * 0.0% panel shows reactions to that action, matching ColorKey). */
@@ -131,7 +133,7 @@ export const computeActionAggregates = (
     const combos = totals.get(action) ?? 0;
     return {
       action,
-      color: getColorForAction(action),
+      color: getColorForAction(action, sizeRef),
       combos,
       pctOfRange: (combos / TOTAL_COMBOS) * 100,
     };

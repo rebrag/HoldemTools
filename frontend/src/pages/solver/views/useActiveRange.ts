@@ -6,6 +6,7 @@ import {
   type JsonData,
 } from "@/lib/solver/utils";
 import type { PokerTableSeat } from "@/components/PokerTable";
+import { fmtMoney, type MoneyOpts } from "../boardDisplay";
 
 /** "12.5" for fractional bb amounts, "12" for whole ones. */
 export const fmtBB = (n: number, decimals = 1) =>
@@ -33,6 +34,8 @@ export function useActiveRange(args: {
   activePlayer: string;
   /** Position -> real player name (hand-history solves). */
   seatNames?: Record<string, string>;
+  /** Chips/bb display; absent for sims, which always read as big blinds. */
+  money?: MoneyOpts | null;
 }): ActiveRange {
   const {
     positions,
@@ -43,6 +46,7 @@ export function useActiveRange(args: {
     potCommitted,
     activePlayer,
     seatNames,
+    money,
   } = args;
 
   const activeIndex = positions.findIndex((p) => p === activePlayer);
@@ -65,11 +69,11 @@ export function useActiveRange(args: {
     return {
       key: pos,
       label: seatNames?.[pos] ?? pos,
-      stackText: stackBB != null ? `${fmtBB(stackBB, 1)} bb` : undefined,
+      stackText: stackBB != null ? fmtMoney(stackBB, money) : undefined,
       // Numeric bet drives the shared ChipStack + pill (matching the hand
       // recorder); committedText is the pill label.
       committedAmount: bet > 0 ? bet : undefined,
-      committedText: bet > 0 ? `${fmtBB(bet, 1)} bb` : undefined,
+      committedText: bet > 0 ? fmtMoney(bet, money) : undefined,
       holeCards: alive ? [null, null] : undefined,
       isButton: pos === "BTN",
       isActive: pos === activePlayer,

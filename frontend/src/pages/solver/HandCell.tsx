@@ -38,6 +38,8 @@ interface HandCellProps {
   heightPct?: number;
   onHover?: (evs: Record<string, number>) => void;
   onLeave?: () => void;
+  /** Units of the bet labels per big blind; see getColorForAction. */
+  sizeRef?: number;
 }
 
 const HandCell: React.FC<HandCellProps> = ({
@@ -45,6 +47,7 @@ const HandCell: React.FC<HandCellProps> = ({
   randomFill: isRandomFill,
   matrixWidth,
   heightPct = 100,
+  sizeRef = 1,
   onHover,
   onLeave,
 }) => {
@@ -109,7 +112,7 @@ const HandCell: React.FC<HandCellProps> = ({
       const prev = bySlot[slot]; // overflow bets/others merge into the last slot
       bySlot[slot] = {
         width: (prev?.width ?? 0) + width,
-        color: prev?.color ?? getColorForAction(action),
+        color: prev?.color ?? getColorForAction(action, sizeRef),
       };
     }
 
@@ -190,6 +193,7 @@ function areEqual(prev: HandCellProps, next: HandCellProps) {
     prev.randomFill === next.randomFill &&
     prev.matrixWidth === next.matrixWidth &&
     prev.heightPct === next.heightPct &&
+    prev.sizeRef === next.sizeRef &&
     prev.data.actions === next.data.actions &&
     prev.data.evs === next.data.evs
   );

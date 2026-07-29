@@ -43,8 +43,9 @@ export type PostflopSessionLineNode =
       /** The decision node itself (base for branching to other options). */
       parentId: string;
       seat: string;
-      /** Chips behind the seat when they faced this decision, in bb. */
-      stackBB: number | null;
+      /** Chips behind the seat when they faced this decision, in the solve's
+       *  display money. */
+      stackMoney: number | null;
       /** Display labels of every action available at the decision node. */
       options: string[];
       taken: string;
@@ -98,18 +99,23 @@ export type PostflopView = {
   usedCards: Set<string>;
   actorSeat: string;
   actorDoc: PioSolutionDoc | null;
-  /** Chips behind the acting seat at the current node, in bb. */
-  actorStackBB: number | null;
+  /** Chips behind the acting seat at the current node, in display money. */
+  actorStackMoney: number | null;
   /** Position -> real player name, when the manifest carries hand-history
    *  seat metadata (empty otherwise). */
   seatNames: Record<string, string>;
   /** Full hand-history seat list (table order), null on sim uploads. */
   seatMeta: SeatMetaEntry[] | null;
-  /** Chips behind each of the two live seats at the CURRENT node, in bb
-   *  (their bet on the current street already deducted). */
-  liveStacksBB: Record<string, number | null>;
-  /** The recorded hand's big blind in real chips, null on sim uploads. */
+  /** Chips behind each of the two live seats at the CURRENT node, in display
+   *  money (their bet on the current street already deducted). */
+  liveStacksMoney: Record<string, number | null>;
+  /** The recorded hand's big blind in display money, null on sim uploads. */
   handBB: number | null;
+  /** Pio chips per unit of display money (100 for sims and legacy boards). */
+  chipScale: number;
+  /** True when this solve is denominated in a recorded hand's own chips
+   *  rather than big blinds - what gates the chips/bb toggle. */
+  moneyDenominated: boolean;
   opponentSeat: string;
   opponentDoc: PioSolutionDoc | null;
   /** Chips (not bb) each remaining seat committed preflop - see the seat
@@ -227,7 +233,8 @@ export function usePostflopSession() {
     const match = displayActionMap(
       parentDoc,
       parentNodeId,
-      c.manifest.effective_stack_chips
+      c.manifest.effective_stack_chips,
+      c.manifest.chip_scale
     ).find(
       (a) => a.display === displayLabel || a.pioLabel === displayLabel
     );
@@ -429,13 +436,20 @@ export function usePostflopSession() {
     const opponentSeat = actorRole === "ip" ? core.oopSeat : core.ipSeat;
     const opponentType = actorRole === "ip" ? "OOP_DEC" : "IP_DEC";
 
+    /* Pio chips per unit of this solve's display money. A recorded hand solves
+     * in its own chips and says so; everything else is the original 100
+     * chips per big blind. */
+    const chipScale = core.manifest.chip_scale ?? 100;
+    const moneyDenominated = core.manifest.chip_scale != null;
+
     /* Every stack shown postflop is net of the preflop money: stacks_map holds
      * the seats' starting stacks, which they no longer have once they paid to
      * see the flop. */
     const pfCommit = preflopCommitChips(
       core.manifest.stacks_map,
       [core.oopSeat, core.ipSeat],
-      core.manifest.effective_stack_chips
+      core.manifest.effective_stack_chips,
+      chipScale
     );
     /* Hand-history uploads carry exact flop-time stacks (already net of the
      * preflop money) in seat_meta; prefer those over the int-rounded
@@ -449,19 +463,20 @@ export function usePostflopSession() {
         };
       }
     }
-    const stackBehindBB = (
+    const stackBehindMoney = (
       seat: string,
       role: "oop" | "ip",
       nodeId: string
     ): number | null => {
       const flopChips = seatMetaByPos[seat]?.stackChips;
       if (flopChips != null) {
-        return stackBehindChips(nodeId, role, flopChips, 0) / 100;
+        return stackBehindChips(nodeId, role, flopChips, 0) / chipScale;
       }
-      const startBB = core.manifest.stacks_map?.[seat];
-      if (startBB == null) return null;
+      const start = core.manifest.stacks_map?.[seat];
+      if (start == null) return null;
       return (
-        stackBehindChips(nodeId, role, Math.round(startBB * 100), pfCommit) / 100
+        stackBehindChips(nodeId, role, Math.round(start * chipScale), pfCommit) /
+        chipScale
       );
     };
     const seatNames: Record<string, string> = {};
@@ -512,9 +527,11 @@ export function usePostflopSession() {
           seat,
           // Stack as it was when the seat faced this decision (their bet on
           // this street is not deducted yet), matching the preflop Line.
-          stackBB: stackBehindBB(seat, role, parent),
+          stackMoney: stackBehindMoney(seat, role, parent),
           options: parentDoc
-            ? displayActionMap(parentDoc, parent, eff).map((a) => a.display)
+            ? displayActionMap(parentDoc, parent, eff, core.manifest.chip_scale).map(
+                (a) => a.display
+              )
             : [item.label],
           taken: item.label,
         });
@@ -523,7 +540,12 @@ export function usePostflopSession() {
     }
 
     const actionMap = currentDoc
-      ? displayActionMap(currentDoc, core.currentNodeId, core.manifest.effective_stack_chips)
+      ? displayActionMap(
+          currentDoc,
+          core.currentNodeId,
+          core.manifest.effective_stack_chips,
+          core.manifest.chip_scale
+        )
       : [];
 
     // Picker context
@@ -558,14 +580,16 @@ export function usePostflopSession() {
       usedCards,
       actorSeat,
       actorDoc: currentDoc,
-      actorStackBB: stackBehindBB(actorSeat, actorRole, core.currentNodeId),
+      actorStackMoney: stackBehindMoney(actorSeat, actorRole, core.currentNodeId),
       seatNames,
       seatMeta: core.manifest.seat_meta ?? null,
-      liveStacksBB: {
-        [core.oopSeat]: stackBehindBB(core.oopSeat, "oop", core.currentNodeId),
-        [core.ipSeat]: stackBehindBB(core.ipSeat, "ip", core.currentNodeId),
+      liveStacksMoney: {
+        [core.oopSeat]: stackBehindMoney(core.oopSeat, "oop", core.currentNodeId),
+        [core.ipSeat]: stackBehindMoney(core.ipSeat, "ip", core.currentNodeId),
       },
       handBB: core.manifest.hand_bb ?? null,
+      chipScale,
+      moneyDenominated,
       opponentSeat,
       opponentDoc,
       preflopCommitChips: pfCommit,
@@ -590,7 +614,8 @@ export function usePostflopSession() {
       nodeStats: buildNodeStats(
         currentDoc,
         { oop: core.oopSeat, ip: core.ipSeat },
-        core.manifest.pot_chips
+        core.manifest.pot_chips,
+        chipScale
       ),
       loading,
     };

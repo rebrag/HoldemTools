@@ -27,6 +27,8 @@ interface HandBreakdownProps {
   board?: string[];
   /** Real per-combo mixes; falls back to the class average when absent. */
   comboDetail?: ComboDetail | null;
+  /** Units of the bet labels per big blind; see getColorForAction. */
+  sizeRef?: number;
   loading?: boolean;
   className?: string;
 }
@@ -188,6 +190,7 @@ ComboTile.displayName = "ComboTile";
 const TILE_MIN_W = 150; // px per grid column before adding another
 
 const HandBreakdown: React.FC<HandBreakdownProps> = ({
+  sizeRef = 1,
   data,
   hand,
   board,
@@ -230,7 +233,7 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
       action,
       pct: fmtPct(classMix[action] || 0),
     }));
-    const classSegments = buildSegmentSlots(classMix);
+    const classSegments = buildSegmentSlots(classMix, sizeRef);
 
     return expandHandCombos(hand).map(([c1, c2]) => {
       const blocked = boardSet.has(c1) || boardSet.has(c2);
@@ -266,7 +269,7 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
           action,
           pct: fmtPct(mix[action]),
         })),
-        segments: buildSegmentSlots(mix),
+        segments: buildSegmentSlots(mix, sizeRef),
         weight: detail.weight,
         equity: detail.equity,
       };

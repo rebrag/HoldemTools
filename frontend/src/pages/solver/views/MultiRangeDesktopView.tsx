@@ -23,6 +23,7 @@ const MultiRangeDesktopView = ({
   activePlayer,
   pot,
   actualPot,
+  money,
   isICMSim,
   randomFillEnabled,
   heightMode,
@@ -63,6 +64,7 @@ const MultiRangeDesktopView = ({
 
   return (
     <MultiRangeFrame
+      money={money}
       compact={false}
       containerRef={container.ref}
       zoom={zoom}
@@ -87,6 +89,7 @@ const MultiRangeDesktopView = ({
               >
                 {plates.map(([posKey, file]) => (
                   <Plate
+                    money={money}
                     key={posKey}
                     plateId={file}
                     file={file}

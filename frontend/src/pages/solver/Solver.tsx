@@ -640,19 +640,24 @@ const Solver = ({ user }: SolverProps) => {
     const view = pf.view;
     if (!view) return;
 
-    const bbFor = (seat: string) => view.manifest.stacks_map?.[seat] ?? 0;
+    /* Starting stack per seat, in the solve's display money (the folder
+     * tokens): big blinds for a sim, the hand's chips for a recorded hand. */
+    const startingFor = (seat: string) => view.manifest.stacks_map?.[seat] ?? 0;
     const roleOf = (seat: string): "oop" | "ip" => (seat === view.oopSeat ? "oop" : "ip");
+    const scale = view.chipScale;
+    const eff = view.manifest.effective_stack_chips;
+    const chipScaleArg = view.manifest.chip_scale;
 
     const updates: Record<string, JsonData> = {};
     const mapping: Record<string, string> = {};
     if (view.actorDoc) {
       const file = `${view.actorSeat}_postflop.json`;
-      updates[file] = docToJsonData(view.actorDoc, roleOf(view.actorSeat), view.actorSeat, bbFor(view.actorSeat), view.manifest.effective_stack_chips);
+      updates[file] = docToJsonData(view.actorDoc, roleOf(view.actorSeat), view.actorSeat, startingFor(view.actorSeat), eff, chipScaleArg);
       mapping[view.actorSeat] = file;
     }
     if (view.opponentDoc) {
       const file = `${view.opponentSeat}_postflop.json`;
-      updates[file] = docToJsonData(view.opponentDoc, roleOf(view.opponentSeat), view.opponentSeat, bbFor(view.opponentSeat), view.manifest.effective_stack_chips);
+      updates[file] = docToJsonData(view.opponentDoc, roleOf(view.opponentSeat), view.opponentSeat, startingFor(view.opponentSeat), eff, chipScaleArg);
       mapping[view.opponentSeat] = file;
     }
 
@@ -691,8 +696,8 @@ const Solver = ({ user }: SolverProps) => {
       streetComplete
     );
     setPlayerBets({
-      [view.oopSeat]: money.oopChips / 100,
-      [view.ipSeat]: money.ipChips / 100,
+      [view.oopSeat]: money.oopChips / scale,
+      [view.ipSeat]: money.ipChips / scale,
     });
     // What each seat has already paid into the pot - their preflop money plus
     // any street that has been matched - so the seat stacks lose those chips
@@ -700,22 +705,26 @@ const Solver = ({ user }: SolverProps) => {
     // manifest for the two seats still in the hand (exact and available
     // immediately); the line replay covers the seats that folded, and boards
     // solved before effective_stack_chips was recorded.
+    /* The line-replay fallback is in big blinds, which only matches a sim.
+     * A money-denominated solve must never mix it in - a wrong-unit number
+     * here looks perfectly plausible on the table. */
+    const replayCommitted = view.moneyDenominated ? {} : pfPreflop?.committed ?? {};
     const preflopFor = (seat: string) =>
       view.preflopCommitChips > 0
-        ? view.preflopCommitChips / 100
-        : pfPreflop?.committed?.[seat] ?? 0;
+        ? view.preflopCommitChips / scale
+        : replayCommitted[seat] ?? 0;
     setPotCommitted({
-      ...(pfPreflop?.committed ?? {}),
+      ...replayCommitted,
       [view.oopSeat]:
         preflopFor(view.oopSeat) +
-        pooledCommitChips(moneyNode, "oop", 0, streetComplete) / 100,
+        pooledCommitChips(moneyNode, "oop", 0, streetComplete) / scale,
       [view.ipSeat]:
         preflopFor(view.ipSeat) +
-        pooledCommitChips(moneyNode, "ip", 0, streetComplete) / 100,
+        pooledCommitChips(moneyNode, "ip", 0, streetComplete) / scale,
     });
     // potSize is the inclusive pot (live bets included), matching preflop;
     // actualPot subtracts what's still in front of the players.
-    setPotSize((money.potChips + money.oopChips + money.ipChips) / 100);
+    setPotSize((money.potChips + money.oopChips + money.ipChips) / scale);
     // NOTE: beyond the session view this depends only on the line replay.
     // positionOrder is derived from plateMapping, which this effect writes -
     // including it loops.
@@ -1072,25 +1081,27 @@ const Solver = ({ user }: SolverProps) => {
   const activeComboDetail =
     pf.view && activePlayer === pf.view.actorSeat ? pf.view.actorCombos : null;
 
-  /* Chips/bb display for hand-history solves. Defaults to the hand's own
-   * chips; sims have no chip scale, so the toggle only exists when the
-   * manifest carries the hand's big blind. */
-  const [pfMoneyMode, setPfMoneyMode] = useState<"chips" | "bb">("chips");
+  /* Chips/bb display for money-denominated solves, defaulting to the hand's
+   * own chips. A sim has no chip scale, so it gets no MoneyDisplay at all and
+   * every label falls back to its plain "bb". The bb option needs the hand's
+   * big blind, which only a recorded hand carries. */
+  const [pfMoneyMode, setPfMoneyMode] = useState<"money" | "bb">("money");
   const pfManifest = pf.view?.manifest;
   useEffect(() => {
-    setPfMoneyMode("chips");
+    setPfMoneyMode("money");
   }, [pfManifest]);
   const pfHandBB = pf.view?.handBB ?? null;
+  const pfMoneyDenominated = pf.view?.moneyDenominated ?? false;
   const pfMoney = useMemo<MoneyDisplay | undefined>(
     () =>
-      pfHandBB
+      pfMoneyDenominated
         ? {
-            mode: pfMoneyMode,
-            bbSize: pfHandBB,
-            onToggle: () => setPfMoneyMode((m) => (m === "chips" ? "bb" : "chips")),
+            mode: pfHandBB && pfHandBB > 0 ? pfMoneyMode : "money",
+            bbSize: pfHandBB ?? 0,
+            onToggle: () => setPfMoneyMode((m) => (m === "money" ? "bb" : "money")),
           }
         : undefined,
-    [pfHandBB, pfMoneyMode]
+    [pfMoneyDenominated, pfHandBB, pfMoneyMode]
   );
 
   /* Hand-history solves carry the full table (seat_meta): render every player
@@ -1099,24 +1110,18 @@ const Solver = ({ user }: SolverProps) => {
   const hhTableSeats = useMemo<PokerTableSeat[] | undefined>(() => {
     const view = pf.view;
     if (!view?.seatMeta?.length) return undefined;
-    const fmtOpts =
-      pfMoney && pfMoney.mode === "chips"
-        ? { mode: "chips" as const, bbSize: pfMoney.bbSize }
-        : null;
+    const scale = view.chipScale;
     return view.seatMeta.map((s) => {
       const live = s.pos === view.oopSeat || s.pos === view.ipSeat;
-      const behindBB = live
-        ? view.liveStacksBB[s.pos] ?? (s.stack_chips != null ? s.stack_chips / 100 : null)
-        : s.stack_chips != null
-          ? s.stack_chips / 100
-          : null;
-      const betBB = live ? playerBets[s.pos] ?? 0 : 0;
+      const seatMoney = s.stack_chips != null ? s.stack_chips / scale : null;
+      const behind = live ? view.liveStacksMoney[s.pos] ?? seatMoney : seatMoney;
+      const bet = live ? playerBets[s.pos] ?? 0 : 0;
       return {
         key: s.pos,
         label: s.name && s.name !== s.pos ? s.name : s.pos,
-        stackText: behindBB != null ? fmtMoney(behindBB, fmtOpts) : undefined,
-        committedAmount: betBB > 0 ? betBB : undefined,
-        committedText: betBB > 0 ? fmtMoney(betBB, fmtOpts) : undefined,
+        stackText: behind != null ? fmtMoney(behind, pfMoney) : undefined,
+        committedAmount: bet > 0 ? bet : undefined,
+        committedText: bet > 0 ? fmtMoney(bet, pfMoney) : undefined,
         holeCards: s.cards?.length ? s.cards : live ? [null, null] : undefined,
         isButton: s.pos === "BTN",
         isActive: live && s.pos === activePlayer,
@@ -1150,7 +1155,8 @@ const Solver = ({ user }: SolverProps) => {
       preflopLine={pf.view.manifest.preflop.line}
       preflopNodes={pfPreflop?.nodes ?? null}
       board={pf.view.board}
-      potBB={pf.view.manifest.pot_chips != null ? pf.view.manifest.pot_chips / 100 : null}
+      potMoney={pf.view.manifest.pot_chips != null ? pf.view.manifest.pot_chips / pf.view.chipScale : null}
+      money={pfMoney}
       lineNodes={pf.view.lineNodes}
       notice={pf.view.notice}
       onJump={pf.jumpTo}
@@ -1158,7 +1164,7 @@ const Solver = ({ user }: SolverProps) => {
       onPreflopJump={jumpToPreflopNode}
       onExit={exitPostflop}
       actorSeat={pf.view.actorSeat}
-      actorStackBB={pf.view.actorStackBB}
+      actorStackMoney={pf.view.actorStackMoney}
       actions={pf.view.actions}
       onActionClick={(display) => void pf.clickAction(display)}
       actionsDisabled={!!pf.view.pendingStreet}
@@ -1402,6 +1408,7 @@ const Solver = ({ user }: SolverProps) => {
                 windowWidth={windowWidth}
                 windowHeight={windowHeight}
                 onPlateContentRef={setPlateContentEl}
+                money={pfMoney}
               />
             ) : (
               <MultiRangeMobileView
@@ -1423,6 +1430,7 @@ const Solver = ({ user }: SolverProps) => {
                 windowWidth={windowWidth}
                 windowHeight={windowHeight}
                 onPlateContentRef={setPlateContentEl}
+                money={pfMoney}
               />
             )}
           </div>

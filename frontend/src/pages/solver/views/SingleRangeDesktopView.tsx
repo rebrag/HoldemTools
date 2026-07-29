@@ -45,6 +45,7 @@ const SingleRangeDesktopView = ({
     potCommitted,
     activePlayer,
     seatNames,
+    money,
   });
 
   const vh = windowHeight || 640;

@@ -10,6 +10,7 @@ import PlayingCard from "@/components/PlayingCard";
 import { getColorForAction, stringToColor } from "@/lib/solver/utils";
 import type { PostflopSessionLineNode } from "@/hooks/usePostflopSession";
 import type { PreflopLineNode } from "./usePreflopLineNodes";
+import { fmtMoneyValue, type MoneyOpts } from "./boardDisplay";
 
 export interface PostflopLineProps {
   /** Raw preflop line; fallback summary when preflopNodes are unavailable. */
@@ -18,8 +19,10 @@ export interface PostflopLineProps {
   preflopNodes?: PreflopLineNode[] | null;
   /** Full board at the current node; the FLOP card shows the first three. */
   board: string[];
-  /** Pot at flop start, in bb. */
-  potBB?: number | null;
+  /** Pot at flop start, in the solve's display money. */
+  potMoney?: number | null;
+  /** Chips/bb display; absent for sims, which always read as big blinds. */
+  money?: MoneyOpts | null;
   lineNodes: PostflopSessionLineNode[];
   notice: string | null;
   onJump: (nodeId: string) => void;
@@ -35,17 +38,15 @@ export interface PostflopLineProps {
   matchWidth?: number;
   /** Seat to act at the current node (the active card). */
   actorSeat?: string;
-  actorStackBB?: number | null;
+  actorStackMoney?: number | null;
   actions?: { display: string }[];
   onActionClick?: (display: string) => void;
   /** Disable all action buttons (e.g. while a street extraction is pending). */
   actionsDisabled?: boolean;
 }
 
-const chipColor = (label: string) => getColorForAction(label) || stringToColor(label);
-
-const fmt = (n: number, decimals = 1) =>
-  Math.abs(n % 1) > 1e-9 ? n.toFixed(decimals) : n.toFixed(0);
+const chipColor = (label: string, sizeRef = 1) =>
+  getColorForAction(label, sizeRef) || stringToColor(label);
 
 /* Shared card shell, mirroring the preflop Line's seat cards. `clickable`
  * cards take a click anywhere on their body, not just on an option row. */
@@ -56,11 +57,14 @@ const cardClass = (active: boolean, clickable = false) =>
       : "border-white/15 bg-white/5"
   } ${clickable ? "cursor-pointer hover:bg-white/[0.07]" : ""}`;
 
-const CardHeader: React.FC<{ label: string; active?: boolean; stackBB?: number | null }> = ({
-  label,
-  active,
-  stackBB,
-}) => (
+/* The cards are too narrow for a unit suffix, so `stack` shows a bare number:
+ * big blinds on a sim, the hand's own chips on a recorded hand. */
+const CardHeader: React.FC<{
+  label: string;
+  active?: boolean;
+  stack?: number | null;
+  money?: MoneyOpts | null;
+}> = ({ label, active, stack, money }) => (
   <div className="flex items-baseline justify-between gap-1 mb-0.5">
     <span
       className={`text-[0.7rem] font-bold leading-none ${
@@ -69,9 +73,9 @@ const CardHeader: React.FC<{ label: string; active?: boolean; stackBB?: number |
     >
       {label}
     </span>
-    {stackBB != null && (
+    {stack != null && (
       <span className="text-[0.6rem] text-gray-300 tabular-nums leading-none">
-        {fmt(stackBB)}
+        {fmtMoneyValue(stack, money)}
       </span>
     )}
   </div>
@@ -80,11 +84,13 @@ const CardHeader: React.FC<{ label: string; active?: boolean; stackBB?: number |
 /** One option row: color dot + label; the taken action gets a highlight pill. */
 const OptionRow: React.FC<{
   action: string;
+  /** Units of the bet labels per big blind; see getColorForAction. */
+  sizeRef?: number;
   taken?: boolean;
   disabled?: boolean;
   onClick?: () => void;
   title?: string;
-}> = ({ action, taken, disabled, onClick, title }) => (
+}> = ({ action, sizeRef = 1, taken, disabled, onClick, title }) => (
   <button
     type="button"
     /* The card body is clickable too, so a row click must not also count as
@@ -105,7 +111,7 @@ const OptionRow: React.FC<{
   >
     <span
       className="inline-block w-1.5 h-1.5 rounded-[2px] flex-shrink-0"
-      style={{ backgroundColor: chipColor(action) }}
+      style={{ backgroundColor: chipColor(action, sizeRef) }}
     />
     <span
       className={`text-[0.55rem] leading-tight whitespace-nowrap ${
@@ -121,7 +127,8 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
   preflopLine,
   preflopNodes,
   board,
-  potBB,
+  potMoney,
+  money,
   lineNodes,
   notice,
   onJump,
@@ -130,11 +137,14 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
   onExit,
   matchWidth,
   actorSeat,
-  actorStackBB,
+  actorStackMoney,
   actions,
   onActionClick,
   actionsDisabled,
 }) => {
+  /* Postflop labels are in the solve's money; the colour ramp is calibrated
+   * in big blinds, so tell it how much money makes one. */
+  const sizeRef = money?.bbSize && money.bbSize > 0 ? money.bbSize : 1;
   const preflopSummary =
     preflopLine && preflopLine.length > 1 ? preflopLine.slice(1).join(" · ") : null;
   const flop = board.slice(0, 3);
@@ -174,7 +184,9 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
                 }
                 className={cardClass(false, !!onPreflopJump)}
               >
-                <CardHeader label={node.seat} stackBB={node.stackBB} />
+                {/* Preflop nodes are replayed from the sim, so their stacks
+                    are big blinds whatever unit the postflop solve uses. */}
+                <CardHeader label={node.seat} stack={node.stackBB} />
                 <div className="flex flex-col gap-0.5">
                   {node.options.map((action) => (
                     <OptionRow
@@ -216,7 +228,7 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
             className={`${cardClass(false)} cursor-pointer hover:bg-white/10`}
             title="Back to the flop decision"
           >
-            <CardHeader label="FLOP" stackBB={potBB ?? undefined} />
+            <CardHeader label="FLOP" stack={potMoney ?? undefined} money={money} />
             <div className="flex items-center gap-0.5 mt-auto">
               {flop.map((code) => (
                 <PlayingCard key={code} code={code} width="clamp(20px, 3.6vw, 30px)" />
@@ -246,12 +258,13 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
                 title={`Back to ${node.seat}'s decision`}
                 className={cardClass(false, true)}
               >
-                <CardHeader label={node.seat} stackBB={node.stackBB} />
+                <CardHeader label={node.seat} stack={node.stackMoney} money={money} />
                 <div className="flex flex-col gap-0.5">
                   {node.options.map((action) => (
                     <OptionRow
                       key={action}
                       action={action}
+                      sizeRef={sizeRef}
                       taken={action === node.taken}
                       disabled={actionsDisabled}
                       onClick={
@@ -277,12 +290,13 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
           {/* Current node: the seat to act (active card) */}
           {actions && actions.length > 0 && (
             <div className={cardClass(true)}>
-              <CardHeader label={actorSeat ?? "To act"} active stackBB={actorStackBB} />
+              <CardHeader label={actorSeat ?? "To act"} active stack={actorStackMoney} money={money} />
               <div className="flex flex-col gap-0.5">
                 {actions.map((a) => (
                   <OptionRow
                     key={a.display}
                     action={a.display}
+                    sizeRef={sizeRef}
                     disabled={actionsDisabled}
                     onClick={onActionClick ? () => onActionClick(a.display) : undefined}
                     title={`${actorSeat ?? "To act"}: ${a.display}`}

@@ -51,8 +51,12 @@ const SingleRangeMobileView = ({
     potCommitted,
     activePlayer,
     seatNames,
+    money,
   });
 
+  /* Bet labels carry the solve's money; the colour ramp is calibrated in
+   * big blinds, so tell it how much money makes one. */
+  const sizeRef = money?.bbSize && money.bbSize > 0 ? money.bbSize : 1;
   const vh = windowHeight || 640;
   const baseW = container.width || windowWidth;
 
@@ -118,6 +122,7 @@ const SingleRangeMobileView = ({
         >
           <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
             <DecisionMatrix
+              money={money}
               gridData={activeGrid}
               randomFillEnabled={randomFillEnabled && !!activeData}
               isICMSim={isICMSim}
@@ -130,6 +135,7 @@ const SingleRangeMobileView = ({
 
           <div className="mt-1 w-full">
             <ColorKey
+              sizeRef={sizeRef}
               data={activeGrid}
               loading={!activeData}
               onActionClick={(action) =>
