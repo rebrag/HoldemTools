@@ -718,6 +718,30 @@ def solve_tree_to_cfr(
     # load script
     pio.send_cmd(f'load_script_silent "{tree_script_path}"')
 
+    # `load_script_silent` answers "ok!" for the script, which says nothing
+    # about whether the tree it ends with actually got built. Going straight to
+    # `go` on an absent tree wasted the whole job: `go` and then `dump_tree`
+    # both failed with "missing/incorrect tree", and the only clue was two
+    # error lines several steps after the real problem. Confirm the tree exists
+    # and say so plainly if it does not.
+    build_timeout = float(os.getenv("PIO_TREE_BUILD_WAIT_SECS", "180"))
+    build_started = time.time()
+    while True:
+        present = (pio.send_cmd("is_tree_present", log_cmd=False) or "").strip().lower()
+        if present.startswith("true"):
+            log(f"  [UPI] tree present after {time.time() - build_started:.1f}s")
+            break
+        if time.time() - build_started > build_timeout:
+            info = pio.send_cmd("show_tree_info", log_cmd=False)
+            raise RuntimeError(
+                f"PioSOLVER built no tree for board {board} "
+                f"(is_tree_present={present!r} after {build_timeout:.0f}s). The tree "
+                f"script is at {tree_script_path}; paste the same config into "
+                "PioViewer and build it by hand to see what it rejects. "
+                f"show_tree_info: {info.strip()[:400]!r}"
+            )
+        time.sleep(1.0)
+
     # solve. 'go' returns immediately; the real completion signal is
     # wait_for_solver's "wait_for_solver ok!" response, which arrives only
     # after "SOLVER: stopped". Periodic solver snapshots interleave before it.

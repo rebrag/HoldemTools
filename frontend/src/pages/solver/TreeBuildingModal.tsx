@@ -453,6 +453,13 @@ const TreeBuildingModal = ({
               round coarsely - a 33% bet could land a few percent off.
             </p>
           )}
+          {potChips > 0 && effChips / potChips > 20 && (
+            <p className="text-[11px] text-amber-300">
+              Effective stacks are {Math.round(effChips / potChips)}x the pot. Every
+              solve past about 18x has failed to build a tree so far, so consider
+              lowering the effective stack before sending this off.
+            </p>
+          )}
 
           {/* IP sizes */}
           <div>
