@@ -3,15 +3,21 @@
 // breakdown stacked in a right column. Mobile uses SingleRangeMobileView's
 // stacked layout instead; this component is desktop-only (rendered by
 // views/SingleRangeDesktopView).
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import PokerTable, { type PokerTableSeat } from "@/components/PokerTable";
 import { HandCellData } from "@/lib/solver/utils";
 import type { ComboDetail } from "@/lib/solver/comboDetail";
 import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
+import {
+  buildMatrixDisplayData,
+  type MatrixDisplayMode,
+} from "@/lib/solver/matrixDisplayMode";
 import type { NodeStats } from "@/lib/solver/nodeStats";
 import SeatStatsPanel from "./SeatStatsPanel";
 import DecisionMatrix from "./DecisionMatrix";
+import MatrixDisplayModeSelect from "./MatrixDisplayModeSelect";
+import { MatrixHeightModePill, SingleRangeTogglePill } from "./FolderSelector";
 import ActionSummary from "./ActionSummary";
 import HandBreakdown from "./HandBreakdown";
 import SolverTableCenter from "./SolverTableCenter";
@@ -37,6 +43,16 @@ interface SingleRangeStudyProps {
   randomFillEnabled: boolean;
   /** Matrix cell-height mode (GTO Wizard style). */
   heightMode?: MatrixHeightMode;
+  /** Cell-height setter: this view's control row owns the pill, rather than
+   *  the sim panel (the other layouts keep theirs in FolderSelector). */
+  onHeightModeChange?: (mode: MatrixHeightMode) => void;
+  /** Single-range toggle. Required: this pill carries the intro tour's
+   *  `color-key-btn` target and must always be mounted here. */
+  singleRangeView: boolean;
+  onToggleSingleRange: () => void;
+  /** Saved display mode; may fall back to Strategy when data is missing. */
+  displayMode?: MatrixDisplayMode;
+  onDisplayModeChange?: (mode: MatrixDisplayMode) => void;
   /** Hand class -> reach 0..1 for the displayed range; null preflop. */
   reachByHand?: Map<string, number> | null;
   onActionClick: (action: string, file: string) => void;
@@ -45,6 +61,8 @@ interface SingleRangeStudyProps {
   comboDetail?: ComboDetail | null;
   /** Range-wide per-seat numbers for the current postflop node. */
   nodeStats?: NodeStats | null;
+  /** Pio chips per unit of display money (manifest chip_scale; 100 for sims). */
+  chipScale?: number;
   /** Seat acting at that node. */
   actorSeat?: string;
   /** Position -> real player name (hand-history solves). */
@@ -56,9 +74,23 @@ interface SingleRangeStudyProps {
   baseW: number;
   viewH: number;
   topOffset: number;
+  /** Page chrome reserved below this view (ancestor padding), from
+   *  useTopOffset. Counted so the layout fits the viewport exactly instead of
+   *  overrunning it by those few pixels. */
+  bottomInset?: number;
 }
 
 const GAP = 16;
+/* Matrix control row above the matrix. HDR_H feeds both the matrix sizing
+ * (`availH - HDR_H`) and the right column's height (`matrixSize + HDR_H`), so
+ * it is derived rather than written twice - the two must never drift. */
+const HDR_CTRL_H = 36; // the pills' `compact` h-9
+const HDR_GAP = 8;
+const HDR_H = HDR_CTRL_H + HDR_GAP;
+const RIGHT_MIN = 300;
+const RIGHT_MAX = 620;
+/** This view's own root padding (py-2), which sits inside the measured top. */
+const ROOT_PY = 16;
 
 const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   tableSeats,
@@ -72,35 +104,65 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   isICMSim,
   randomFillEnabled,
   heightMode,
+  onHeightModeChange,
+  singleRangeView,
+  onToggleSingleRange,
+  displayMode,
+  onDisplayModeChange,
   reachByHand,
   onActionClick,
   comboDetail,
   nodeStats,
+  chipScale,
   actorSeat,
   seatNames,
   money,
   baseW,
   viewH,
   topOffset,
+  bottomInset = 0,
 }) => {
   /* Bet labels carry the solve's money; the colour ramp is calibrated in
    * big blinds, so tell it how much money makes one. */
   const sizeRef = money?.bbSize && money.bbSize > 0 ? money.bbSize : 1;
-  /* The hand class whose combos the breakdown shows: follows the pointer
-   * across matrix cells and sticks to the last one hovered. */
-  const [selectedHand, setSelectedHand] = useState<string | null>(null);
 
-  /* Concrete pixel sizes: the matrix wants to be as large as the viewport
-   * height allows, the right column takes what's left (clamped legible). */
+  /* Which hand the breakdown shows. A click pins a class (and clicking it
+   * again unpins); while nothing is pinned the pointer drives the panel, and
+   * the last hovered class sticks so the panel doesn't blank every time the
+   * pointer leaves the grid. The hover is tracked even while pinned, so
+   * unpinning lands on whatever the pointer is over rather than on nothing.
+   * A pin is kept across node changes, so stepping through a line follows the
+   * same hand. */
+  const [pinnedHand, setPinnedHand] = useState<string | null>(null);
+  const [hoveredHand, setHoveredHand] = useState<string | null>(null);
+  const shownHand = pinnedHand ?? hoveredHand;
+
+  /* Equity needs per-combo data (postflop, acting seat). The saved preference
+   * is never overwritten: the effective mode just falls back to Strategy, so
+   * navigating back to a postflop node restores Equity by itself. */
+  const equityAvailable = !!comboDetail;
+  const effectiveMode: MatrixDisplayMode =
+    displayMode === "equity" && !equityAvailable
+      ? "strategy"
+      : displayMode ?? "strategy";
+
+  const displayData = useMemo(
+    () => buildMatrixDisplayData(effectiveMode, activeGrid, comboDetail, board),
+    [effectiveMode, activeGrid, comboDetail, board]
+  );
+
+  /* Concrete pixel sizes: the matrix takes all the viewport height it can
+   * (minus its dropdown header row); width only binds when the right column
+   * would drop below its legibility floor. */
   const effTop = topOffset > 0 ? topOffset : viewH * 0.2;
-  const availH = Math.max(320, viewH - effTop - 16);
-  let matrixSize = Math.round(Math.max(360, Math.min(baseW * 0.56, availH, 860)));
-  let rightW = baseW - matrixSize - GAP;
-  if (rightW < 300) {
-    rightW = 300;
-    matrixSize = Math.max(360, baseW - 300 - GAP);
-  }
-  rightW = Math.min(rightW, 620);
+  const availH = Math.max(320, viewH - effTop - ROOT_PY - bottomInset);
+  const matrixSize = Math.round(
+    Math.max(360, Math.min(availH - HDR_H, baseW - RIGHT_MIN - GAP))
+  );
+  const rightW = Math.min(
+    Math.max(baseW - matrixSize - GAP, RIGHT_MIN),
+    RIGHT_MAX
+  );
 
   const tableW = Math.min(rightW, 440);
 
@@ -116,11 +178,37 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
       </div>
 
       <div className="flex items-stretch justify-center" style={{ gap: GAP }}>
-        {/* Active player's range matrix */}
+        {/* Active player's range matrix, under its control row */}
         <div
-          className="flex-shrink-0 self-start rounded-[9px] border border-emerald-400 bg-white/20 p-2 shadow-md"
+          className="flex flex-shrink-0 flex-col self-start"
           style={{ width: matrixSize }}
         >
+          {/* Everything that changes how the matrix draws, grouped directly
+              above it. z-[60] clears the loading overlay (z-50), which stays
+              interactive while a plate loads and would otherwise eat clicks. */}
+          <div
+            className="relative z-[60] flex items-center gap-1.5"
+            style={{ height: HDR_CTRL_H, marginBottom: HDR_GAP }}
+          >
+            <MatrixDisplayModeSelect
+              mode={effectiveMode}
+              onChange={(m) => onDisplayModeChange?.(m)}
+              equityAvailable={equityAvailable}
+            />
+            <SingleRangeTogglePill
+              singleRangeView={singleRangeView}
+              onToggle={onToggleSingleRange}
+              compact
+            />
+            {heightMode && onHeightModeChange && (
+              <MatrixHeightModePill
+                heightMode={heightMode}
+                onChange={onHeightModeChange}
+                compact
+                align="left"
+              />
+            )}
+          </div>
           <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
             <DecisionMatrix
               money={money}
@@ -129,7 +217,12 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
               isICMSim={isICMSim}
               heightMode={heightMode}
               reachByHand={reachByHand}
-              onHandHover={setSelectedHand}
+              displayData={displayData}
+              selectedHand={pinnedHand}
+              onHandSelect={(hand) =>
+                setPinnedHand((prev) => (prev === hand ? null : hand))
+              }
+              onHandHover={setHoveredHand}
             />
           </div>
         </div>
@@ -137,7 +230,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
         {/* Table + action summary + hand breakdown */}
         <div
           className="flex min-w-0 flex-shrink-0 flex-col gap-3"
-          style={{ width: rightW, height: matrixSize }}
+          style={{ width: rightW, height: matrixSize + HDR_H }}
         >
           <div className="relative mx-auto w-full flex-shrink-0" style={{ width: tableW }}>
             <MoneyToggle money={money} className="absolute -top-1 right-0 z-20" />
@@ -174,9 +267,14 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
           <HandBreakdown
             sizeRef={sizeRef}
             data={activeGrid}
-            hand={selectedHand}
+            hand={shownHand}
             board={board}
             comboDetail={comboDetail}
+            displayMode={effectiveMode}
+            evRange={displayData?.evRange ?? null}
+            chipEv={nodeStats?.chipEv}
+            chipScale={chipScale}
+            money={money}
             loading={!activeDataLoaded}
             className="min-h-0 flex-1"
           />

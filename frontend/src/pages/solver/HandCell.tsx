@@ -36,6 +36,14 @@ interface HandCellProps {
   matrixWidth?: number;
   /** Height of the colored bar, 0..100, bottom-anchored. 100 = old look. */
   heightPct?: number;
+  /** EV/Equity heat mode: one color per combo, equal-width vertical stripes. */
+  stripes?: string[] | null;
+  /** EV heat fallback without per-combo data: one solid color for the cell. */
+  solidColor?: string | null;
+  /** This is the pinned hand, so it gets the selection ring. */
+  selected?: boolean;
+  /** Click handler; when set the cell reads as clickable. */
+  onSelect?: () => void;
   onHover?: (evs: Record<string, number>) => void;
   onLeave?: () => void;
   /** Units of the bet labels per big blind; see getColorForAction. */
@@ -47,6 +55,10 @@ const HandCell: React.FC<HandCellProps> = ({
   randomFill: isRandomFill,
   matrixWidth,
   heightPct = 100,
+  stripes,
+  solidColor,
+  selected,
+  onSelect,
   sizeRef = 1,
   onHover,
   onLeave,
@@ -123,11 +135,16 @@ const HandCell: React.FC<HandCellProps> = ({
         backgroundColor: bySlot[slot]?.color ?? "transparent",
       },
     }));
-  }, [data.actions, isRandomFill, randomizedAction]);
+  }, [data.actions, isRandomFill, randomizedAction, sizeRef]);
 
   /* ───────── pocket-pair border style ───────── */
   const isPair = data.hand.length === 2 && data.hand[0] === data.hand[1];
-  const borderStyle = isPair
+  /* The selected cell replaces its hairline with a ring. Two stacked insets:
+   * white reads on the dark bars, the dark outer edge keeps it visible on the
+   * light green / amber ones. */
+  const borderStyle = selected
+    ? "inset 0 0 0 2px rgba(255,255,255,0.95), inset 0 0 0 3.5px rgba(0,0,0,0.6)"
+    : isPair
     ? "inset 0 0 0 0.7px rgba(203, 213, 224, 0.3)" // darker + thicker
     : "inset 0 0 0 0.3px rgba(203, 213, 224, 0.6)";
 
@@ -143,22 +160,49 @@ const HandCell: React.FC<HandCellProps> = ({
       data-testid="hand-cell"
       data-hand={data.hand}
       data-height={Math.round(heightPct)}
-      className="relative group w-full h-full bg-slate-50 aspect-square select-none overflow-hidden"
+      data-selected={selected ? "1" : "0"}
+      aria-selected={selected}
+      className={`relative group w-full h-full bg-slate-50 aspect-square select-none overflow-hidden ${
+        onSelect ? "cursor-pointer" : ""
+      }`}
+      onClick={() => onSelect?.()}
       onMouseEnter={() => onHover?.(data.evs)}
       onMouseLeave={() => onLeave?.()}
     >
       {/* coloured action segments, bottom-anchored and scaled to the hand's
           reach at this node (100% outside postflop) - the cell background
-          shows through above the bar, like GTO Wizard / PioSolver */}
+          shows through above the bar, like GTO Wizard / PioSolver.
+          In EV/Equity display mode the bar instead shows heat colors (per-combo
+          stripes, or one solid class color); random-fill only applies to the
+          strategy branch - EV/equity are facts, not mixes to sample. */}
       <div
         className="segment-bar absolute inset-x-0 bottom-0"
         style={{ height: `${heightPct}%` }}
       >
-        <div className="flex h-full w-full">
-          {segments.map(({ action, style }) => (
-            <div key={action} className="segment" style={style} />
-          ))}
-        </div>
+        {stripes ? (
+          <div className="flex h-full w-full">
+            {stripes.map((color, i) => (
+              <div
+                key={i}
+                data-testid="heat-stripe"
+                className="h-full"
+                style={{ width: `${100 / stripes.length}%`, backgroundColor: color }}
+              />
+            ))}
+          </div>
+        ) : solidColor ? (
+          <div
+            data-testid="heat-solid"
+            className="h-full w-full"
+            style={{ backgroundColor: solidColor }}
+          />
+        ) : (
+          <div className="flex h-full w-full">
+            {segments.map(({ action, style }) => (
+              <div key={action} className="segment" style={style} />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* inset border */}
@@ -193,6 +237,9 @@ function areEqual(prev: HandCellProps, next: HandCellProps) {
     prev.randomFill === next.randomFill &&
     prev.matrixWidth === next.matrixWidth &&
     prev.heightPct === next.heightPct &&
+    prev.selected === next.selected &&
+    prev.stripes === next.stripes &&
+    prev.solidColor === next.solidColor &&
     prev.sizeRef === next.sizeRef &&
     prev.data.actions === next.data.actions &&
     prev.data.evs === next.data.evs

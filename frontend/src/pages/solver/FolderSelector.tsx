@@ -169,9 +169,13 @@ export const MatrixHeightModePill: React.FC<{
   onChange: (mode: MatrixHeightMode) => void;
   /** Icon-only square button sized to SimSelect's compact row. */
   compact?: boolean;
+  /** Which edge the popover hangs from. Defaults to the right, which suits a
+   *  pill at the end of a row; a left-grouped pill needs "left" or the 240px
+   *  menu runs off the viewport. */
+  align?: "left" | "right";
   /** Extra classes on the wrapper (e.g. responsive visibility). */
   className?: string;
-}> = ({ heightMode, onChange, compact = false, className = "" }) => {
+}> = ({ heightMode, onChange, compact = false, align = "right", className = "" }) => {
   const reduceMotion = useReducedMotion();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -221,16 +225,17 @@ export const MatrixHeightModePill: React.FC<{
           role="menu"
           aria-label="Hand cell height"
           data-testid="height-mode-menu"
-          className="
-            absolute right-0 mt-2 w-60 z-50 p-1.5
-            rounded-xl border border-hairline
-            bg-surface/90 backdrop-blur-md
-            shadow-[0_18px_40px_rgba(2,6,23,0.45)]
-          "
+          className={[
+            "absolute mt-2 w-60 z-50 p-1.5",
+            "rounded-xl border border-hairline",
+            "bg-surface/90 backdrop-blur-md",
+            "shadow-[0_18px_40px_rgba(2,6,23,0.45)]",
+            align === "left" ? "left-0" : "right-0",
+          ].join(" ")}
           initial={reduceMotion ? false : { opacity: 0, y: -6, scale: 0.985 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-          style={{ transformOrigin: "top right" }}
+          style={{ transformOrigin: align === "left" ? "top left" : "top right" }}
         >
           <div className="px-2 pt-1 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
             Hand cell height

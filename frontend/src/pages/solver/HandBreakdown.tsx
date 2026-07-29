@@ -7,6 +7,13 @@
 // a different hand from Ac5c - so `comboDetail` supplies each combo's real mix.
 // Preflop (and on pre-schema-4 solves) there is no per-combo data and every
 // combo of a class shares the class strategy, which is exact preflop.
+//
+// The panel follows the matrix's display mode: Strategy shows action
+// frequencies over the mix-colored background, EV shows each action's EV over
+// a heat-colored background, Equity shows the combo's equity likewise.
+//
+// The grid never scrolls: tiles split the panel height evenly, and their
+// content steps down through density tiers as rows get short.
 import React, { useMemo } from "react";
 import { HandCellData, orderActionKeys } from "@/lib/solver/utils";
 import {
@@ -16,6 +23,13 @@ import {
   type SlotSegment,
 } from "@/lib/solver/aggregates";
 import { comboKey, type ComboDetail } from "@/lib/solver/comboDetail";
+import {
+  heatColor,
+  normalizeToRange,
+  type MatrixDisplayMode,
+  type ValueRange,
+} from "@/lib/solver/matrixDisplayMode";
+import { fmtMoneyValue, type MoneyDisplay } from "./boardDisplay";
 import useElementSize from "@/hooks/useElementSize";
 import "./App.css";
 
@@ -27,6 +41,16 @@ interface HandBreakdownProps {
   board?: string[];
   /** Real per-combo mixes; falls back to the class average when absent. */
   comboDetail?: ComboDetail | null;
+  /** Effective matrix display mode; the tiles mirror it. */
+  displayMode?: MatrixDisplayMode;
+  /** EV normalization the matrix used, so both share one heat scale. */
+  evRange?: ValueRange | null;
+  /** Whether combo EVs are chip-denominated (money-convertible); ICM is not. */
+  chipEv?: boolean;
+  /** Pio chips per unit of display money (manifest chip_scale; 100 for sims). */
+  chipScale?: number;
+  /** Chips/bb display toggle (hand-history solves only). */
+  money?: Pick<MoneyDisplay, "mode" | "bbSize">;
   /** Units of the bet labels per big blind; see getColorForAction. */
   sizeRef?: number;
   loading?: boolean;
@@ -42,15 +66,16 @@ const SUIT_GLYPHS: Record<string, { glyph: string; cls: string }> = {
 };
 
 /** Both cards of a combo in one light header chip, e.g. "K♠7♠". */
-const ComboChip: React.FC<{ c1: string; c2: string; dim?: boolean }> = ({
+const ComboChip: React.FC<{ c1: string; c2: string; dim?: boolean; small?: boolean }> = ({
   c1,
   c2,
   dim,
+  small,
 }) => (
   <span
-    className={`inline-flex items-center rounded-[3px] bg-slate-100 px-1.5 py-0.5 text-[13px] font-bold leading-none text-gray-900 shadow-sm ring-1 ring-black/20 ${
-      dim ? "opacity-60" : ""
-    }`}
+    className={`inline-flex items-center rounded-[3px] bg-slate-100 font-bold leading-none text-gray-900 shadow-sm ring-1 ring-black/20 ${
+      small ? "px-1 py-0.5 text-[11px]" : "px-1.5 py-0.5 text-[13px]"
+    } ${dim ? "opacity-60" : ""}`}
   >
     {[c1, c2].map((code) => {
       const suit = SUIT_GLYPHS[code[1]] ?? SUIT_GLYPHS.s;
@@ -96,8 +121,10 @@ const normalizeMix = (mix: Record<string, number>): Record<string, number> => {
 
 interface ActionRow {
   action: string;
-  pct: string;
+  value: string;
 }
+
+type Density = "normal" | "compact" | "minimal";
 
 interface ComboTileData {
   key: string;
@@ -105,86 +132,103 @@ interface ComboTileData {
   c2: string;
   blocked: boolean;
   rows: ActionRow[];
+  /** Strategy-mode stacked background; empty in EV/Equity mode. */
   segments: SlotSegment[];
+  /** EV/Equity-mode heat background; null in strategy mode. */
+  bg: string | null;
   /** Reach weight 0..1; below 1 the combo is only partly in the range. */
   weight: number | null;
-  /** Equity vs the opponent's range at this node, 0..1. */
-  equity: number | null;
 }
 
-const ComboTile: React.FC<Omit<ComboTileData, "key">> = React.memo(
-  ({ c1, c2, rows, segments, blocked, weight, equity }) => (
-    <div
-      data-testid="combo-tile"
-      data-combo={`${c1}${c2}`}
-      data-blocked={blocked ? "1" : "0"}
-      className="relative flex h-full min-h-[82px] flex-col justify-between overflow-hidden rounded-[4px] bg-slate-900/60 ring-1 ring-black/30"
-    >
-      {/* stacked action-mix background */}
-      {!blocked && (
-        <div className="absolute inset-0 flex" aria-hidden="true">
-          {segments.map(({ slot, width, color }) => (
-            <div
-              key={slot}
-              data-testid="combo-segment"
-              data-slot={slot}
-              data-width={width.toFixed(3)}
-              className="segment h-full"
-              style={{ width: `${width}%`, backgroundColor: color }}
-            />
-          ))}
-        </div>
-      )}
+const ComboTile: React.FC<
+  Omit<ComboTileData, "key"> & { colMark: string; density: Density }
+> = React.memo(({ c1, c2, rows, segments, bg, blocked, weight, colMark, density }) => (
+  <div
+    data-testid="combo-tile"
+    data-combo={`${c1}${c2}`}
+    data-blocked={blocked ? "1" : "0"}
+    title={
+      density === "minimal" && rows.length
+        ? rows.map((r) => `${r.action} ${r.value}`).join(", ")
+        : undefined
+    }
+    className="relative flex h-full min-h-0 flex-col justify-between overflow-hidden rounded-[4px] bg-slate-900/60 ring-1 ring-black/30"
+  >
+    {/* stacked action-mix background (strategy mode) */}
+    {!blocked && segments.length > 0 && (
+      <div className="absolute inset-0 flex" aria-hidden="true">
+        {segments.map(({ slot, width, color }) => (
+          <div
+            key={slot}
+            data-testid="combo-segment"
+            data-slot={slot}
+            data-width={width.toFixed(3)}
+            className="segment h-full"
+            style={{ width: `${width}%`, backgroundColor: color }}
+          />
+        ))}
+      </div>
+    )}
 
-      {/* header: combo chip (+ partial-weight badge) + % column mark */}
-      <div className="relative z-10 flex items-start justify-between gap-1 px-1 pt-1">
-        <div className="flex min-w-0 items-center gap-1">
-          <ComboChip c1={c1} c2={c2} dim={blocked} />
-          {!blocked && weight != null && weight < 0.995 && (
-            <span
-              className="rounded-[2px] bg-slate-900/45 px-1 text-[8px] font-semibold leading-[1.4] text-white/90"
-              title={`Only ${fmtPct(weight)}% of this combo reaches here`}
-            >
-              {fmtPct(weight)}%
-            </span>
-          )}
-        </div>
-        {!blocked && (
-          <span className="text-[9px] font-semibold text-white/75">%</span>
+    {/* heat background (EV / Equity mode); alpha keeps white text readable */}
+    {!blocked && bg && (
+      <div
+        className="absolute inset-0"
+        aria-hidden="true"
+        style={{ backgroundColor: bg }}
+      />
+    )}
+
+    {/* header: combo chip (+ partial-weight badge) + value column mark */}
+    <div className="relative z-10 flex items-start justify-between gap-1 px-1 pt-1">
+      <div className="flex min-w-0 items-center gap-1">
+        <ComboChip c1={c1} c2={c2} dim={blocked} small={density !== "normal"} />
+        {!blocked && density === "normal" && weight != null && weight < 0.995 && (
+          <span
+            className="rounded-[2px] bg-slate-900/45 px-1 text-[8px] font-semibold leading-[1.4] text-white/90"
+            title={`Only ${fmtPct(weight)}% of this combo reaches here`}
+          >
+            {fmtPct(weight)}%
+          </span>
         )}
       </div>
-
-      {/* per-action rows over the colored background */}
-      {!blocked && (
-        <div className="relative z-10 px-1 pb-1 pt-0.5">
-          {rows.map(({ action, pct }) => (
-            <div
-              key={action}
-              className="flex items-baseline justify-between gap-1 leading-tight"
-            >
-              <span className="truncate text-[10px] font-medium text-white">
-                {action}
-              </span>
-              <span className="text-[10px] font-semibold tabular-nums text-white">
-                {pct}
-              </span>
-            </div>
-          ))}
-          {equity != null && (
-            <div className="mt-0.5 flex items-baseline justify-between gap-1 border-t border-white/25 pt-0.5 leading-tight">
-              <span className="truncate text-[9px] font-medium uppercase tracking-wide text-white/70">
-                Equity
-              </span>
-              <span className="text-[9px] font-semibold tabular-nums text-white/90">
-                {fmtPct(equity)}
-              </span>
-            </div>
-          )}
-        </div>
+      {!blocked && density !== "minimal" && (
+        <span className="text-[9px] font-semibold text-white/75">{colMark}</span>
       )}
     </div>
-  )
-);
+
+    {/* per-action rows over the colored background */}
+    {!blocked && density !== "minimal" && (
+      <div
+        className={`relative z-10 px-1 ${
+          density === "compact" ? "pb-0.5 pt-px" : "pb-1 pt-0.5"
+        }`}
+      >
+        {rows.map(({ action, value }) => (
+          <div
+            key={action}
+            className="flex items-baseline justify-between gap-1 leading-tight"
+          >
+            <span
+              className={`truncate font-medium text-white ${
+                density === "compact" ? "text-[9px] leading-[1.15]" : "text-[10px]"
+              }`}
+            >
+              {action}
+            </span>
+            <span
+              className={`font-semibold tabular-nums text-white ${
+                density === "compact" ? "text-[9px] leading-[1.15]" : "text-[10px]"
+              }`}
+            >
+              {value}
+            </span>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+));
 ComboTile.displayName = "ComboTile";
 
 const TILE_MIN_W = 150; // px per grid column before adding another
@@ -195,10 +239,15 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
   hand,
   board,
   comboDetail,
+  displayMode = "strategy",
+  evRange,
+  chipEv,
+  chipScale,
+  money,
   loading,
   className,
 }) => {
-  const { ref, width } = useElementSize<HTMLDivElement>({ hysteresis: 6 });
+  const { ref, width, height } = useElementSize<HTMLDivElement>({ hysteresis: 6 });
 
   const cell = useMemo(
     () => (hand ? data.find((c) => c.hand === hand) : undefined),
@@ -223,17 +272,60 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
 
   const boardSet = useMemo(() => new Set(board ?? []), [board]);
 
+  /* Per-combo EVs arrive in Pio chips; `chipScale` of them make one unit of
+   * the solve's display money (100/bb for sims, the manifest's chip_scale for
+   * recorded hands). ICM EVs are tournament equity, shown raw - no scale. */
+  const fmtComboEv = (evChips: number): string => {
+    if (chipEv === false) return evChips.toFixed(2);
+    return fmtMoneyValue(evChips / (chipScale ?? 100), money);
+  };
+
   const combos = useMemo<ComboTileData[]>(() => {
     if (!hand || !hasData) return [];
+
+    const mode = displayMode;
 
     // Class-average fallback, used preflop and for pre-schema-4 solves where
     // no per-combo data exists. Built once and shared by every tile.
     const classMix = normalizeMix(cell!.actions);
-    const classRows = orderedActions.map((action) => ({
-      action,
-      pct: fmtPct(classMix[action] || 0),
-    }));
-    const classSegments = buildSegmentSlots(classMix, sizeRef);
+    const classRows =
+      mode === "ev"
+        ? orderedActions.map((action) => {
+            const ev = cell!.evs[action];
+            return {
+              action,
+              // Class EVs are already in the solve's display money.
+              value:
+                typeof ev === "number" && Number.isFinite(ev)
+                  ? fmtMoneyValue(ev, money)
+                  : "-",
+            };
+          })
+        : orderedActions.map((action) => ({
+            action,
+            value: fmtPct(classMix[action] || 0),
+          }));
+    const classSegments =
+      mode === "strategy" ? buildSegmentSlots(classMix, sizeRef) : [];
+    const classBg =
+      mode === "ev" && evRange
+        ? (() => {
+            // Same strategy-weighted class EV the matrix's solid cells use.
+            let wSum = 0;
+            let evSum = 0;
+            for (const action of orderedActions) {
+              const w = cell!.actions[action] || 0;
+              const ev = cell!.evs[action];
+              if (w <= 0 || typeof ev !== "number" || !Number.isFinite(ev))
+                continue;
+              wSum += w;
+              evSum += w * ev;
+            }
+            return wSum > 0
+              ? `${heatColor(normalizeToRange(evSum / wSum, evRange))}BF`
+              : null;
+          })()
+        : null;
 
     return expandHandCombos(hand).map(([c1, c2]) => {
       const blocked = boardSet.has(c1) || boardSet.has(c2);
@@ -247,14 +339,51 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
           c1,
           c2,
           blocked,
-          rows: classRows,
-          segments: classSegments,
+          rows: comboDetail && mode !== "strategy" ? [] : classRows,
+          segments: comboDetail && mode !== "strategy" ? [] : classSegments,
+          // Class heat only applies on the class-average fallback; with real
+          // per-combo data a missing combo is simply not in the range.
+          bg: comboDetail ? null : classBg,
           weight: null,
-          equity: null,
         };
       }
 
-      // This combo's own mix: the whole point of the panel.
+      if (mode === "equity") {
+        return {
+          key: `${c1}${c2}`,
+          c1,
+          c2,
+          blocked,
+          rows:
+            detail.equity != null
+              ? [{ action: "Equity", value: fmtPct(detail.equity) }]
+              : [],
+          segments: [],
+          bg: detail.equity != null ? `${heatColor(detail.equity)}BF` : null,
+          weight: detail.weight,
+        };
+      }
+
+      if (mode === "ev") {
+        return {
+          key: `${c1}${c2}`,
+          c1,
+          c2,
+          blocked,
+          rows: orderedActions.map((action) => {
+            const ev = detail.actions[action]?.ev;
+            return { action, value: ev != null ? fmtComboEv(ev) : "-" };
+          }),
+          segments: [],
+          bg:
+            detail.ev != null && evRange
+              ? `${heatColor(normalizeToRange(detail.ev, evRange))}BF`
+              : null,
+          weight: detail.weight,
+        };
+      }
+
+      // Strategy mode: this combo's own mix - the whole point of the panel.
       const raw: Record<string, number> = {};
       for (const action of orderedActions) {
         raw[action] = detail.actions[action]?.freq ?? 0;
@@ -267,14 +396,29 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
         blocked,
         rows: orderedActions.map((action) => ({
           action,
-          pct: fmtPct(mix[action]),
+          value: fmtPct(mix[action]),
         })),
         segments: buildSegmentSlots(mix, sizeRef),
+        bg: null,
         weight: detail.weight,
-        equity: detail.equity,
       };
     });
-  }, [hand, hasData, boardSet, cell, orderedActions, comboDetail]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    hand,
+    hasData,
+    boardSet,
+    cell,
+    orderedActions,
+    comboDetail,
+    displayMode,
+    evRange,
+    chipEv,
+    chipScale,
+    sizeRef,
+    money?.mode,
+    money?.bbSize,
+  ]);
 
   const isLoading = (loading ?? false) || data.length === 0;
 
@@ -284,6 +428,18 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
   const idealCols = hand ? (hand[2] === "s" ? 2 : 3) : 3;
   const maxCols = width ? Math.max(1, Math.floor(width / TILE_MIN_W)) : idealCols;
   const cols = Math.min(idealCols, maxCols);
+
+  /* The grid never scrolls: tiles split the height evenly, and content steps
+   * down (normal -> compact -> minimal) as rows get short. */
+  const rowCount = Math.max(1, Math.ceil(combos.length / cols));
+  const rowH = height
+    ? (height - 12 /* p-1.5 */ - (rowCount - 1) * 4 /* gap-1 */) / rowCount
+    : Infinity;
+  const density: Density =
+    rowH >= 72 ? "normal" : rowH >= 48 ? "compact" : "minimal";
+
+  const colMark =
+    displayMode === "ev" ? "EV" : displayMode === "equity" ? "EQ" : "%";
 
   return (
     <div
@@ -302,19 +458,19 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
         )}
       </div>
 
-      <div ref={ref} className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:thin] p-1.5">
+      <div ref={ref} className="min-h-0 flex-1 overflow-hidden p-1.5">
         {isLoading ? (
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="grid h-full grid-cols-2 gap-1.5">
             {Array.from({ length: 4 }).map((_, i) => (
               <div
                 key={i}
-                className="min-h-[82px] rounded-[4px] bg-slate-200/20 animate-pulse"
+                className="min-h-0 rounded-[4px] bg-slate-200/20 animate-pulse"
               />
             ))}
           </div>
         ) : !hand ? (
           <div className="flex h-full items-center justify-center py-6 text-center text-xs text-slate-400">
-            Hover a hand in the matrix to see its combos
+            Hover or click a hand in the matrix to see its combos
           </div>
         ) : !hasData ? (
           <div className="flex h-full items-center justify-center py-6 text-xs text-slate-400">
@@ -325,13 +481,11 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
             className="grid h-full gap-1"
             style={{
               gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-              // Fill the panel height (tiles stretch like the reference);
-              // overflow past the minimum row height scrolls instead.
-              gridAutoRows: "minmax(82px, 1fr)",
+              gridAutoRows: "minmax(0, 1fr)",
             }}
           >
             {combos.map(({ key, ...tile }) => (
-              <ComboTile key={key} {...tile} />
+              <ComboTile key={key} {...tile} colMark={colMark} density={density} />
             ))}
           </div>
         )}

@@ -52,6 +52,11 @@ import {
   saveMatrixHeightMode,
   type MatrixHeightMode,
 } from "@/lib/solver/matrixHeight";
+import {
+  loadMatrixDisplayMode,
+  saveMatrixDisplayMode,
+  type MatrixDisplayMode,
+} from "@/lib/solver/matrixDisplayMode";
 import { usePostflopSession } from "@/hooks/usePostflopSession";
 import usePostflopIndex from "@/hooks/usePostflopIndex";
 import PostflopLine from "./PostflopLine";
@@ -70,6 +75,50 @@ const tourSteps = [
   { element: '[data-intro-target="folder-selector"]', intro: "Choose a pre-flop sim here.", position: "bottom" },
   { element: '[data-intro-target="color-key-btn"]', intro: "Toggle single-range view here.", position: "bottom" },
 ];
+
+/**
+ * Solved-flops library button: light chrome beside the wide classic header,
+ * a compact dark square inside the study layout's sim panel row.
+ *
+ * The `aria-label` is load-bearing - several e2e specs reach this button by
+ * accessible name, since its only content is an icon.
+ */
+const SolvedFlopsButton = ({
+  count,
+  onClick,
+  compact = false,
+}: {
+  count: number;
+  onClick: () => void;
+  compact?: boolean;
+}) => (
+  <div className="relative flex-shrink-0">
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Solved flops"
+      title="Browse solved flops"
+      className={[
+        "relative inline-flex items-center justify-center transition-colors",
+        "focus:outline-none focus-visible:ring-2",
+        compact
+          ? "h-9 w-9 rounded-lg border border-hairline bg-white/5 shadow-sm text-slate-300 hover:border-white/25 hover:text-slate-100 focus-visible:ring-accent/60"
+          : "h-9 sm:h-10 px-2.5 gap-1.5 rounded-xl border border-gray-300 bg-white/95 shadow-md text-gray-800 hover:bg-gray-100 focus-visible:ring-emerald-500/60",
+      ].join(" ")}
+    >
+      <Library
+        size={16}
+        strokeWidth={2.2}
+        className={compact ? "text-emerald-400" : "text-emerald-600"}
+      />
+      {count > 0 && (
+        <span className="absolute -top-1 -right-1 min-w-[1rem] rounded-full bg-emerald-600 px-1 text-center text-[10px] font-bold leading-4 text-white shadow">
+          {count}
+        </span>
+      )}
+    </button>
+  </div>
+);
 
 /** Pending banner shown while the local solver works on a fresh flop request. */
 const PendingSolveCard = ({ board, startedAt }: { board: string[]; startedAt: number }) => {
@@ -182,6 +231,10 @@ const Solver = ({ user }: SolverProps) => {
   // Matrix cell-height mode (persisted): normalized / range / full
   const [matrixHeightMode, setMatrixHeightMode] =
     useState<MatrixHeightMode>(loadMatrixHeightMode);
+
+  // Matrix display mode (persisted): strategy / ev / equity
+  const [matrixDisplayMode, setMatrixDisplayMode] =
+    useState<MatrixDisplayMode>(loadMatrixDisplayMode);
 
   // Sim info popover open state (for click on mobile)
   const [simInfoOpen, setSimInfoOpen] = useState(false);
@@ -962,6 +1015,10 @@ const Solver = ({ user }: SolverProps) => {
     saveMatrixHeightMode(matrixHeightMode);
   }, [matrixHeightMode]);
 
+  useEffect(() => {
+    saveMatrixDisplayMode(matrixDisplayMode);
+  }, [matrixDisplayMode]);
+
   // Postflop modal side-effects
   useEffect(() => {
     if (!POSTFLOP_ENABLED) return;
@@ -1191,28 +1248,11 @@ const Solver = ({ user }: SolverProps) => {
   );
 
   const libraryButton = POSTFLOP_ENABLED ? (
-    <div className="flex-shrink-0">
-      <button
-        type="button"
-        onClick={() => setShowLibrary(true)}
-        className="
-          relative h-9 sm:h-10 px-2.5 gap-1.5
-          inline-flex items-center justify-center
-          rounded-xl border border-gray-300 bg-white/95 shadow-md
-          hover:bg-gray-100 text-gray-800
-          focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60
-        "
-        aria-label="Solved flops"
-        title="Browse solved flops"
-      >
-        <Library size={16} strokeWidth={2.2} className="text-emerald-600" />
-        {pfIndex.entries.length > 0 && (
-          <span className="absolute -top-1 -right-1 min-w-[1rem] rounded-full bg-emerald-600 px-1 text-center text-[10px] font-bold leading-4 text-white shadow">
-            {pfIndex.entries.length}
-          </span>
-        )}
-      </button>
-    </div>
+    <SolvedFlopsButton
+      count={pfIndex.entries.length}
+      onClick={() => setShowLibrary(true)}
+      compact={desktopStudy}
+    />
   ) : null;
 
   return (
@@ -1278,10 +1318,6 @@ const Solver = ({ user }: SolverProps) => {
               avgStack={avgStack}
               ante={metadata.ante}
               icm={metadata.icm}
-              singleRangeView={singleRangeView}
-              onToggleSingleRange={() => setSingleRangeView((v) => !v)}
-              heightMode={matrixHeightMode}
-              onHeightModeChange={setMatrixHeightMode}
               line={lineNode}
               libraryButton={libraryButton}
               lineWrapperRef={lineWrapperRef}
@@ -1351,6 +1387,11 @@ const Solver = ({ user }: SolverProps) => {
                 isICMSim={isICMSim}
                 randomFillEnabled={randomFillEnabled}
                 heightMode={matrixHeightMode}
+                onHeightModeChange={setMatrixHeightMode}
+                singleRangeView={singleRangeView}
+                onToggleSingleRange={() => setSingleRangeView((v) => !v)}
+                displayMode={matrixDisplayMode}
+                onDisplayModeChange={setMatrixDisplayMode}
                 reachByFile={reachByFile}
                 onActionClick={handleActionClick}
                 windowWidth={windowWidth}
@@ -1358,6 +1399,7 @@ const Solver = ({ user }: SolverProps) => {
                 board={pf.view ? pf.view.board : currentBoard}
                 comboDetail={activeComboDetail}
                 nodeStats={pf.view?.nodeStats ?? null}
+                chipScale={pf.view?.chipScale}
                 actorSeat={pf.view?.actorSeat}
                 seatNames={pf.view?.seatNames}
                 tableSeatsOverride={hhTableSeats}

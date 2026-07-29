@@ -41,7 +41,7 @@ const SingleRangeMobileView = ({
   money,
 }: SingleRangeViewProps) => {
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
-  const { ref: wrapRef, top } = useTopOffset();
+  const { ref: wrapRef, top, bottomInset } = useTopOffset();
   const { activeFile, activeData, activeGrid, tableSeats } = useActiveRange({
     positions,
     files,
@@ -70,10 +70,18 @@ const SingleRangeMobileView = ({
   const tableH = (tableW * 5) / 7; // aspect-[7/5]
   const effTop = top > 0 ? top : vh * 0.3;
   const GAP_BELOW_TABLE = 12; // flex gap-3
-  // Range box height ~ rangeW + 29 (p-2 16px y + mt-1 4px + ColorKey ~25px
-  // over the square matrix); a little extra so the last row never clips.
-  const BOX_EXTRA = 34;
-  const belowTableH = vh - effTop - tableH - GAP_BELOW_TABLE;
+  /* Everything in the range box other than the square matrix: the mt-1 above
+   * the ColorKey (4px) plus the ColorKey itself (a fixed 23px row plus
+   * mb-0.5 - it never wraps, its boxes shrink instead). The matrix is exactly
+   * rangeW tall now that the box carries no padding of its own. */
+  const BOX_EXTRA = 29;
+  /* Chrome the budget would otherwise ignore and then overrun: this view's own
+   * py-2 root padding, and whatever the page reserves beneath it. Both were
+   * missing here, which is why the grid pushed the page into a short scroll
+   * even though it is meant to fit exactly. */
+  const ROOT_PY = 16;
+  const belowTableH =
+    vh - effTop - ROOT_PY - bottomInset - tableH - GAP_BELOW_TABLE;
   const rangeW = Math.round(
     Math.max(200, Math.min(availW, belowTableH - BOX_EXTRA, 560))
   );
@@ -117,7 +125,7 @@ const SingleRangeMobileView = ({
         {/* Active player's range */}
         <div
           ref={onPlateContentRef}
-          className="relative flex-shrink-0 border border-emerald-400 rounded-[9px] shadow-md p-2 bg-white/20"
+          className="relative flex-shrink-0"
           style={{ width: rangeW }}
         >
           <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>

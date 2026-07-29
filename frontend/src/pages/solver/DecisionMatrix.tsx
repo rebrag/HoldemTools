@@ -11,6 +11,7 @@ import { HandCellData } from "@/lib/solver/utils";
 import { ALL_ACTIONS } from "@/lib/solver/constants";
 import { HAND_ORDER } from "@/lib/solver/handOrder";
 import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
+import type { MatrixDisplayData } from "@/lib/solver/matrixDisplayMode";
 import { fmtMoney, type MoneyOpts } from "./boardDisplay";
 
 /* ---------- props ---------- */
@@ -22,10 +23,18 @@ interface DecisionMatrixProps extends HTMLAttributes<HTMLDivElement> {
   heightMode?: MatrixHeightMode;
   /** Hand class -> reach 0..1 at this node (postflop schema-4 only). */
   reachByHand?: Map<string, number> | null;
+  /** EV/Equity heat coloring (study view); null keeps the strategy render. */
+  displayData?: MatrixDisplayData | null;
   /** Chips/bb display for the EV tooltip; absent for sims (big blinds). */
   money?: MoneyOpts | null;
   onMatrixClick?: () => void;
-  /** Fires as the pointer moves across cells (study view's hand breakdown). */
+  /** The pinned hand class, ringed in the grid (study view's breakdown). */
+  selectedHand?: string | null;
+  /** Fires when a cell is clicked. Supplying it makes cells clickable; without
+   *  it the grid is display-only and clicks fall through to onMatrixClick. */
+  onHandSelect?: (hand: string) => void;
+  /** Fires as the pointer moves across cells, so the study view can preview a
+   *  hand while nothing is pinned. */
   onHandHover?: (hand: string) => void;
 }
 
@@ -47,8 +56,11 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
   isICMSim = false,
   heightMode = "normalized",
   reachByHand,
+  displayData,
   money,
   onMatrixClick,
+  selectedHand,
+  onHandSelect,
   onHandHover,
   ...rest
 }) => {
@@ -134,6 +146,10 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
             randomFill={randomFill}
             matrixWidth={matrixWidth}
             heightPct={heightFor(cellData.hand)}
+            stripes={displayData?.stripesByHand?.get(cellData.hand) ?? null}
+            solidColor={displayData?.solidByHand?.get(cellData.hand) ?? null}
+            selected={selectedHand === cellData.hand}
+            onSelect={onHandSelect ? () => onHandSelect(cellData.hand) : undefined}
             onHover={(evs) => {
               setHoveredEVs(evs);
               setHoveredHand(cellData.hand);

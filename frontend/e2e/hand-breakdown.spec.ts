@@ -71,9 +71,9 @@ async function openBoard(page: Page) {
   // so tiles are not asserted here.
 }
 
-/** Hover a class in the matrix and read back its rendered combo tiles. */
+/** Select a class in the matrix and read back its rendered combo tiles. */
 async function tilesFor(page: Page, hand: string) {
-  await page.locator(`[data-testid="hand-cell"][data-hand="${hand}"]`).hover();
+  await page.locator(`[data-testid="hand-cell"][data-hand="${hand}"]`).click();
   const tiles = page.locator('[data-testid="combo-tile"][data-blocked="0"]');
   await expect(tiles.first()).toBeVisible();
   return tiles.evaluateAll((nodes) =>
@@ -132,7 +132,7 @@ test("every live tile's bar spans the full width", async ({ page }) => {
 
 test("a partially weighted combo is labelled with its weight", async ({ page }) => {
   await openBoard(page);
-  await page.locator('[data-testid="hand-cell"][data-hand="66"]').hover();
+  await page.locator('[data-testid="hand-cell"][data-hand="66"]').click();
 
   // Weight badges only appear for combos that are not fully in the range;
   // whether any show depends on the node, so just assert they are well formed.
@@ -176,7 +176,7 @@ test("both seats get EV / equity / combos", async ({ page }) => {
 
 test("breakdown panel never scrolls sideways", async ({ page }) => {
   await openBoard(page);
-  await page.locator('[data-testid="hand-cell"][data-hand="AKo"]').hover();
+  await page.locator('[data-testid="hand-cell"][data-hand="AKo"]').click();
   const tile = page.locator('[data-testid="combo-tile"]').first();
   await expect(tile).toBeVisible();
   const overflow = await page.evaluate(

@@ -6,6 +6,7 @@
 import type { JsonData } from "@/lib/solver/utils";
 import type { ComboDetail } from "@/lib/solver/comboDetail";
 import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
+import type { MatrixDisplayMode } from "@/lib/solver/matrixDisplayMode";
 import type { NodeStats } from "@/lib/solver/nodeStats";
 import type { PokerTableSeat } from "@/components/PokerTable";
 import type { MoneyDisplay } from "../boardDisplay";
@@ -60,8 +61,30 @@ export interface SingleRangeViewProps extends SolverRangeBaseProps {
   comboDetail?: ComboDetail | null;
   /** Range-wide per-seat numbers for the current postflop node. */
   nodeStats?: NodeStats | null;
+  /** Pio chips per unit of display money at the current postflop node
+   *  (manifest chip_scale; 100 for sims). Converts per-combo EVs for display. */
+  chipScale?: number;
   /** Seat acting at that node, badged in the stats panel. */
   actorSeat?: string;
+  /** Matrix display mode (Strategy / EV / Equity) - desktop study view only. */
+  displayMode?: MatrixDisplayMode;
+  onDisplayModeChange?: (mode: MatrixDisplayMode) => void;
+}
+
+/**
+ * The desktop study view owns the control row above the matrix (display mode,
+ * single-range toggle, cell height), so it needs the setters the other three
+ * layouts get from ClassicHeader's FolderSelector.
+ *
+ * Required rather than optional on purpose: SingleRangeTogglePill carries the
+ * intro tour's `color-key-btn` target and this layout is the only place it
+ * mounts, so a missing handler would silently stop the tour ever starting.
+ * Making it a type error is cheaper than a runtime guard that hides the bug.
+ */
+export interface SingleRangeDesktopViewProps extends SingleRangeViewProps {
+  onHeightModeChange: (mode: MatrixHeightMode) => void;
+  singleRangeView: boolean;
+  onToggleSingleRange: () => void;
 }
 
 export interface MultiRangeViewProps extends SolverRangeBaseProps {
