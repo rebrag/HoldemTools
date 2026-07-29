@@ -7,6 +7,8 @@
 //
 // Values arrive as fixed-point integers indexed against the street bundle's
 // shared hand_order; this module is the only place that knows the encoding.
+import { RANK_IDX } from "@/lib/cards";
+import { expandHandCombos } from "./aggregates";
 import type { PioSolutionDoc, ComboSeatBlock } from "./postflopClient";
 
 export interface ComboActionValue {
@@ -134,4 +136,58 @@ export function buildComboDetail(
   return byCombo.size
     ? { actor: combos.actor, actions: [...labels], byCombo }
     : null;
+}
+
+/** Hand class ("AKs" / "T9o" / "77") for two card codes, either order. */
+const handClassOf = (a: string, b: string): string => {
+  const [hi, lo] =
+    (RANK_IDX[a[0]] ?? 99) <= (RANK_IDX[b[0]] ?? 99) ? [a, b] : [b, a];
+  if (hi[0] === lo[0]) return hi[0] + lo[0];
+  return hi[0] + lo[0] + (hi[1] === lo[1] ? "s" : "o");
+};
+
+/**
+ * Per-hand-class reach at a node for one seat: how much of each class is still
+ * in the seat's range here, 0..1. This is what scales the matrix cells' bar
+ * heights (GTO Wizard's "Range height" / "Normalized" modes).
+ *
+ * Numerator: sum of the seat's per-combo reach weights over the class.
+ * Denominator: the class's combos NOT blocked by the board, matching the
+ * HandBreakdown convention - board blocking is dead-card arithmetic, not
+ * strategy, so a suited class with one card on the board can still read 100%.
+ *
+ * Both seats' weight arrays are always present in a schema-4 combo block (only
+ * strategy/action_ev are actor-only), so this works for the opponent's plate
+ * too. Returns null when the doc predates schema 4 or the seat block is
+ * missing, which downstream renders as full-height cells.
+ */
+export function buildClassReach(
+  doc: PioSolutionDoc | null | undefined,
+  handOrder: string[] | null | undefined,
+  seat: "oop" | "ip",
+  blockedCards: ReadonlySet<string>
+): Map<string, number> | null {
+  const combos = doc?.combos;
+  const block = combos?.[seat];
+  if (!combos || !block?.idx?.length || !handOrder?.length) return null;
+
+  const sums = new Map<string, number>();
+  block.idx.forEach((handIdx, slot) => {
+    const cards = splitCombo(handOrder[handIdx]);
+    if (!cards) return;
+    if (blockedCards.has(cards[0]) || blockedCards.has(cards[1])) return;
+    const weight = decode(block.w, slot, combos.scale.w);
+    if (weight == null || weight <= 0) return;
+    const cls = handClassOf(cards[0], cards[1]);
+    sums.set(cls, (sums.get(cls) ?? 0) + weight);
+  });
+
+  const reach = new Map<string, number>();
+  for (const [cls, sum] of sums) {
+    const unblocked = expandHandCombos(cls).filter(
+      ([a, b]) => !blockedCards.has(a) && !blockedCards.has(b)
+    ).length;
+    if (unblocked > 0) reach.set(cls, Math.min(1, sum / unblocked));
+  }
+  return reach;
 }

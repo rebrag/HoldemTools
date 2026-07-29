@@ -34,6 +34,8 @@ interface HandCellProps {
   data: HandCellData & { evs: Record<string, number> };
   randomFill?: boolean;
   matrixWidth?: number;
+  /** Height of the colored bar, 0..100, bottom-anchored. 100 = old look. */
+  heightPct?: number;
   onHover?: (evs: Record<string, number>) => void;
   onLeave?: () => void;
 }
@@ -42,6 +44,7 @@ const HandCell: React.FC<HandCellProps> = ({
   data,
   randomFill: isRandomFill,
   matrixWidth,
+  heightPct = 100,
   onHover,
   onLeave,
 }) => {
@@ -136,15 +139,23 @@ const HandCell: React.FC<HandCellProps> = ({
       tabIndex={-1}
       data-testid="hand-cell"
       data-hand={data.hand}
-      className="relative group w-full h-full bg-slate-50 aspect-square select-none"
+      data-height={Math.round(heightPct)}
+      className="relative group w-full h-full bg-slate-50 aspect-square select-none overflow-hidden"
       onMouseEnter={() => onHover?.(data.evs)}
       onMouseLeave={() => onLeave?.()}
     >
-      {/* coloured action segments */}
-      <div className="flex h-full w-full">
-        {segments.map(({ action, style }) => (
-          <div key={action} className="segment" style={style} />
-        ))}
+      {/* coloured action segments, bottom-anchored and scaled to the hand's
+          reach at this node (100% outside postflop) - the cell background
+          shows through above the bar, like GTO Wizard / PioSolver */}
+      <div
+        className="segment-bar absolute inset-x-0 bottom-0"
+        style={{ height: `${heightPct}%` }}
+      >
+        <div className="flex h-full w-full">
+          {segments.map(({ action, style }) => (
+            <div key={action} className="segment" style={style} />
+          ))}
+        </div>
       </div>
 
       {/* inset border */}
@@ -178,6 +189,7 @@ function areEqual(prev: HandCellProps, next: HandCellProps) {
     prev.data.hand === next.data.hand &&
     prev.randomFill === next.randomFill &&
     prev.matrixWidth === next.matrixWidth &&
+    prev.heightPct === next.heightPct &&
     prev.data.actions === next.data.actions &&
     prev.data.evs === next.data.evs
   );

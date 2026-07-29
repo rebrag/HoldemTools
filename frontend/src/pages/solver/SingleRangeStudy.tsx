@@ -8,6 +8,7 @@ import LoadingIndicator from "@/components/LoadingIndicator";
 import PokerTable, { type PokerTableSeat } from "@/components/PokerTable";
 import { HandCellData } from "@/lib/solver/utils";
 import type { ComboDetail } from "@/lib/solver/comboDetail";
+import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
 import type { NodeStats } from "@/lib/solver/nodeStats";
 import SeatStatsPanel from "./SeatStatsPanel";
 import DecisionMatrix from "./DecisionMatrix";
@@ -34,6 +35,10 @@ interface SingleRangeStudyProps {
   loading: boolean;
   isICMSim?: boolean;
   randomFillEnabled: boolean;
+  /** Matrix cell-height mode (GTO Wizard style). */
+  heightMode?: MatrixHeightMode;
+  /** Hand class -> reach 0..1 for the displayed range; null preflop. */
+  reachByHand?: Map<string, number> | null;
   onActionClick: (action: string, file: string) => void;
 
   /** Real per-combo mixes for the displayed range, when available. */
@@ -66,6 +71,8 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   loading,
   isICMSim,
   randomFillEnabled,
+  heightMode,
+  reachByHand,
   onActionClick,
   comboDetail,
   nodeStats,
@@ -116,6 +123,8 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
               gridData={activeGrid}
               randomFillEnabled={randomFillEnabled && activeDataLoaded}
               isICMSim={isICMSim}
+              heightMode={heightMode}
+              reachByHand={reachByHand}
               onHandHover={setSelectedHand}
             />
           </div>

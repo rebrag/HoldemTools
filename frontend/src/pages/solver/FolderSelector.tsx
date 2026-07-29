@@ -1,10 +1,14 @@
-import React, { useRef, useState } from "react";
-import { LayoutGrid, Square } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { AlignEndHorizontal, LayoutGrid, Square } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import type { FolderMetadata } from "@/hooks/useFolders";
 import FolderSelectorDropdown from "./FolderSelectorDropdown";
 import { useFolderSearch, parseFolderSafe, type FTFilter } from "./useFolderSearch";
 import type { Tier } from "@/lib/stripe/stripeTiers";
+import {
+  MATRIX_HEIGHT_MODE_OPTIONS,
+  type MatrixHeightMode,
+} from "@/lib/solver/matrixHeight";
 
 /* ────────────────────────────────────────────────────────────────── */
 /*  Types                                                             */
@@ -22,6 +26,10 @@ export interface FolderSelectorProps {
   /** Single-range view state + toggle (optional so other call sites don't break) */
   singleRangeView?: boolean;
   onToggleSingleRange?: () => void;
+
+  /** Matrix cell-height mode + setter (optional, same reason). */
+  heightMode?: MatrixHeightMode;
+  onHeightModeChange?: (mode: MatrixHeightMode) => void;
 }
 
 /* ────────────────────────────────────────────────────────────────── */
@@ -154,6 +162,117 @@ export const SingleRangeTogglePill: React.FC<{
   </button>
 );
 
+/** Cell-height mode menu: icon button opening a 3-way radio popover
+ *  (Normalized / Range height / Full height), GTO Wizard style. */
+export const MatrixHeightModePill: React.FC<{
+  heightMode: MatrixHeightMode;
+  onChange: (mode: MatrixHeightMode) => void;
+  /** Icon-only square button sized to SimSelect's compact row. */
+  compact?: boolean;
+  /** Extra classes on the wrapper (e.g. responsive visibility). */
+  className?: string;
+}> = ({ heightMode, onChange, compact = false, className = "" }) => {
+  const reduceMotion = useReducedMotion();
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  /* Close on any press outside the button + popover. */
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={wrapRef} className={`relative flex-shrink-0 ${className}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((p) => !p)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        data-testid="height-mode-btn"
+        className={[
+          compact
+            ? "h-9 w-9 rounded-lg shadow-sm"
+            : "h-9 sm:h-10 w-9 sm:w-10 rounded-xl shadow-md backdrop-blur-md",
+          "inline-flex items-center justify-center",
+          "border transition-colors",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
+          open
+            ? "border-accent/50 bg-accent/15 text-accent"
+            : compact
+            ? "border-hairline bg-white/5 text-slate-300 hover:border-white/25 hover:text-slate-100"
+            : "border-hairline bg-surface/85 text-slate-300 hover:border-white/20 hover:text-slate-100",
+        ].join(" ")}
+        title="Hand cell height"
+      >
+        <AlignEndHorizontal size={16} strokeWidth={2.2} />
+      </button>
+
+      {open && (
+        <motion.div
+          role="menu"
+          aria-label="Hand cell height"
+          data-testid="height-mode-menu"
+          className="
+            absolute right-0 mt-2 w-60 z-50 p-1.5
+            rounded-xl border border-hairline
+            bg-surface/90 backdrop-blur-md
+            shadow-[0_18px_40px_rgba(2,6,23,0.45)]
+          "
+          initial={reduceMotion ? false : { opacity: 0, y: -6, scale: 0.985 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+          style={{ transformOrigin: "top right" }}
+        >
+          <div className="px-2 pt-1 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+            Hand cell height
+          </div>
+          {MATRIX_HEIGHT_MODE_OPTIONS.map(({ mode, label, desc }) => {
+            const active = mode === heightMode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                role="menuitemradio"
+                aria-checked={active}
+                data-mode={mode}
+                onClick={() => {
+                  onChange(mode);
+                  setOpen(false);
+                }}
+                className={[
+                  "w-full rounded-lg px-2 py-1.5 text-left transition-colors",
+                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
+                  active
+                    ? "bg-accent/20 text-accent"
+                    : "text-slate-200 hover:bg-white/10",
+                ].join(" ")}
+              >
+                <span className="block text-xs font-semibold">{label}</span>
+                <span
+                  className={`block text-[10px] leading-snug ${
+                    active ? "text-accent/80" : "text-slate-400"
+                  }`}
+                >
+                  {desc}
+                </span>
+              </button>
+            );
+          })}
+        </motion.div>
+      )}
+    </div>
+  );
+};
+
 /* ────────────────────────────────────────────────────────────────── */
 /*  Component                                                         */
 /* ────────────────────────────────────────────────────────────────── */
@@ -166,6 +285,8 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
   fullWidth = false,
   singleRangeView,
   onToggleSingleRange,
+  heightMode,
+  onHeightModeChange,
 }) => {
   const reduceMotion = useReducedMotion();
 
@@ -306,6 +427,17 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
             <SingleRangeTogglePill
               singleRangeView={singleRangeView}
               onToggle={onToggleSingleRange}
+            />
+          )}
+
+          {/* Cell-height mode menu. Hidden on the smallest screens: the row
+              cannot fit a fourth control without squeezing the search input
+              into its own chevron, and phones keep the default mode. */}
+          {heightMode && onHeightModeChange && (
+            <MatrixHeightModePill
+              heightMode={heightMode}
+              onChange={onHeightModeChange}
+              className="hidden sm:block"
             />
           )}
         </div>

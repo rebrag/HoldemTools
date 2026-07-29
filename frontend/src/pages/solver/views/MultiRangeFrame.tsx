@@ -8,6 +8,7 @@ import type { CSSProperties, ReactNode, RefCallback } from "react";
 import { LayoutGroup } from "framer-motion";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import { PokerTableBackdrop } from "@/components/PokerTableSurface";
+import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
 import DecisionMatrix from "../DecisionMatrix";
 import type { PlateZoomPayload } from "../Plate";
 import { fmtBB } from "./useActiveRange";
@@ -25,6 +26,8 @@ interface MultiRangeFrameProps {
   loading: boolean;
   /** Chips actually in the pot (excludes bets still in front of players). */
   actualPot?: number;
+  /** Matrix cell-height mode, carried into the zoom overlay's matrix. */
+  heightMode?: MatrixHeightMode;
   children: ReactNode;
 }
 
@@ -37,6 +40,7 @@ const MultiRangeFrame = ({
   onClearZoom,
   loading,
   actualPot,
+  heightMode,
   children,
 }: MultiRangeFrameProps) => {
   const badgeClass =
@@ -89,6 +93,8 @@ const MultiRangeFrame = ({
                       gridData={zoom.grid}
                       randomFillEnabled={false}
                       isICMSim={zoom.isICMSim}
+                      heightMode={heightMode}
+                      reachByHand={zoom.reachByHand}
                     />
                   </div>
                 </div>

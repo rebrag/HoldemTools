@@ -36,6 +36,8 @@ const MultiRangeMobileView = ({
   actualPot,
   isICMSim,
   randomFillEnabled,
+  heightMode,
+  reachByFile,
   onActionClick,
   windowWidth,
   windowHeight,
@@ -125,6 +127,7 @@ const MultiRangeMobileView = ({
       onClearZoom={() => setZoom(null)}
       loading={loading}
       actualPot={actualPot}
+      heightMode={heightMode}
     >
       <div
         className="flex justify-center w-full overflow-visible"
@@ -154,6 +157,8 @@ const MultiRangeMobileView = ({
                     data={plateData[file]}
                     onActionClick={onActionClick}
                     randomFillEnabled={randomFillEnabled}
+                    heightMode={heightMode}
+                    reachByHand={reachByFile?.[file] ?? null}
                     alive={alivePlayers[posKey] ?? true}
                     playerBet={playerBets[posKey] ?? 0}
                     potCommitted={potCommitted?.[posKey] ?? 0}

@@ -5,6 +5,7 @@
 // the view via useSolverLayout.
 import type { JsonData } from "@/lib/solver/utils";
 import type { ComboDetail } from "@/lib/solver/comboDetail";
+import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
 import type { NodeStats } from "@/lib/solver/nodeStats";
 import type { PokerTableSeat } from "@/components/PokerTable";
 import type { MoneyDisplay } from "../boardDisplay";
@@ -37,6 +38,11 @@ export interface SolverRangeBaseProps {
   actualPot?: number;
   isICMSim?: boolean;
   randomFillEnabled: boolean;
+  /** How tall each matrix cell's strategy bar renders (GTO Wizard style). */
+  heightMode: MatrixHeightMode;
+  /** Plate file -> per-hand-class reach 0..1 at the displayed node. Absent
+   *  preflop and on pre-schema-4 solves, where cells render full height. */
+  reachByFile?: Record<string, Map<string, number> | null>;
   onActionClick: (action: string, file: string) => void;
   /** Inner content div, so Solver can width-match the Line component to it. */
   onPlateContentRef?: (el: HTMLDivElement | null) => void;

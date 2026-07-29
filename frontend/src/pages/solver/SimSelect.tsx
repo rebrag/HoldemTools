@@ -9,7 +9,13 @@ import type { FolderMetadata } from "@/hooks/useFolders";
 import type { Tier } from "@/lib/stripe/stripeTiers";
 import FolderSelectorDropdown from "./FolderSelectorDropdown";
 import { useFolderSearch, parseFolderSafe } from "./useFolderSearch";
-import { FolderFilterPanel, FilterIcon, SingleRangeTogglePill } from "./FolderSelector";
+import {
+  FolderFilterPanel,
+  FilterIcon,
+  MatrixHeightModePill,
+  SingleRangeTogglePill,
+} from "./FolderSelector";
+import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
 
 export interface SimSelectProps {
   folders: string[];
@@ -26,6 +32,9 @@ export interface SimSelectProps {
 
   singleRangeView: boolean;
   onToggleSingleRange: () => void;
+
+  heightMode?: MatrixHeightMode;
+  onHeightModeChange?: (mode: MatrixHeightMode) => void;
 }
 
 const SimSelect: React.FC<SimSelectProps> = ({
@@ -41,6 +50,8 @@ const SimSelect: React.FC<SimSelectProps> = ({
   icm,
   singleRangeView,
   onToggleSingleRange,
+  heightMode,
+  onHeightModeChange,
 }) => {
   const reduceMotion = useReducedMotion();
 
@@ -247,6 +258,14 @@ const SimSelect: React.FC<SimSelectProps> = ({
           onToggle={onToggleSingleRange}
           compact
         />
+
+        {heightMode && onHeightModeChange && (
+          <MatrixHeightModePill
+            heightMode={heightMode}
+            onChange={onHeightModeChange}
+            compact
+          />
+        )}
       </div>
 
       {/* Dropdown (portal, anchored to the input) */}
