@@ -8,10 +8,6 @@ import {
 import type { PokerTableSeat } from "@/components/PokerTable";
 import { fmtMoney, type MoneyOpts } from "../boardDisplay";
 
-/** "12.5" for fractional bb amounts, "12" for whole ones. */
-export const fmtBB = (n: number, decimals = 1) =>
-  Math.abs(n % 1) > 1e-9 ? n.toFixed(decimals) : n.toFixed(0);
-
 export interface ActiveRange {
   activeFile?: string;
   activeData?: JsonData;

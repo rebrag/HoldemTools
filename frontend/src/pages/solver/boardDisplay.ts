@@ -2,7 +2,14 @@
 // Board-derived presentation values shared by the solver's two single-range
 // tables: which street the board implies, the pot label that goes with it, and
 // how wide the community cards should render for a given table size.
-import { fmtBB } from "./views/useActiveRange";
+//
+// Deliberately component-free: the e2e specs typecheck against this module
+// (money-units.spec.ts), and reaching a .tsx file from here breaks their
+// JSX-less tsconfig.
+
+/** "12.5" for fractional bb amounts, "12" for whole ones. */
+export const fmtBB = (n: number, decimals = 1) =>
+  Math.abs(n % 1) > 1e-9 ? n.toFixed(decimals) : n.toFixed(0);
 
 /** Street implied by how many community cards are out. */
 export const streetNameForBoard = (board?: string[]): string => {
