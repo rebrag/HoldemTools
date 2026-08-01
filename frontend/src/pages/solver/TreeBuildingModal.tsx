@@ -14,6 +14,7 @@ import { useMemo, useState } from "react";
 import type { ChangeEvent } from "react";
 import CardPicker from "@/components/CardPicker";
 import PlayingCard from "@/components/PlayingCard";
+import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import RangeEditorGrid, { RangeMiniGrid, weightedComboCount } from "@/components/RangeEditorGrid";
 import { boardToCards } from "@/lib/solver/postflopNode";
 import type { PostflopIndexEntry } from "@/lib/solver/postflopLibrary";
@@ -66,6 +67,11 @@ export function parseFlopInputString(raw: string): { cards: string[]; error: str
 const SIZE_RE = /^(a|\d+(\.\d+)?)( (a|\d+(\.\d+)?))*$/;
 const sizeOk = (v: string | undefined) => !v || SIZE_RE.test(v.trim());
 
+/** A street needs at least one lead size — a plain bet, or (OOP turn/river)
+ *  a donk bet. Raise sizes stay optional. */
+const streetHasBet = (st: StreetSizes) =>
+  !!(st.betSize?.trim() || st.donkBetSize?.trim());
+
 export interface TreeBuildingInit {
   params: TreeParams;
   flopCards: string[];
@@ -103,15 +109,18 @@ const StreetFields = ({
   disabled: boolean;
   onChange: (next: StreetSizes) => void;
 }) => {
+  // Stacked label-over-input so three street cards fit side by side even on
+  // a ~360px phone (the old `w-14` label gutter + "%" suffix don't).
   const field = (
     label: string,
     key: "betSize" | "raiseSize" | "donkBetSize"
   ) => {
     const value = sizes[key] ?? "";
-    const invalid = !sizeOk(value);
+    const invalid =
+      !sizeOk(value) || (key === "betSize" && !streetHasBet(sizes));
     return (
-      <label className="flex items-center gap-1.5 text-[11px] text-gray-300">
-        <span className="w-14 shrink-0">{label}</span>
+      <label className="flex flex-col gap-0.5 text-[10px] text-gray-400">
+        <span className="font-medium">{label} %</span>
         <input
           type="text"
           inputMode="decimal"
@@ -120,10 +129,9 @@ const StreetFields = ({
           onChange={(e) =>
             onChange({ ...sizes, [key]: e.target.value || undefined })
           }
-          className={`w-full min-w-0 rounded-md bg-slate-800 border px-1.5 py-0.5 text-[11px] text-gray-100 focus:outline-none focus:ring-1 focus:ring-emerald-500/80
+          className={`w-full min-w-0 rounded-md bg-slate-800 border px-1.5 py-1 text-[11px] text-gray-100 focus:outline-none focus:ring-1 focus:ring-emerald-500/80
             ${invalid ? "border-red-500/70" : "border-slate-600"}`}
         />
-        <span className="text-gray-500">%</span>
       </label>
     );
   };
@@ -223,6 +231,9 @@ const TreeBuildingModal = ({
       (st) => sizeOk(st.betSize) && sizeOk(st.raiseSize) && sizeOk(st.donkBetSize)
     );
 
+  const sizesComplete = (s: TreeSizes) => [s.flop, s.turn, s.river].every(streetHasBet);
+  const allStreetsHaveBet = sizesComplete(oopSizes) && sizesComplete(ipSizes);
+
   const canConfirm =
     !busy &&
     !notice &&
@@ -234,7 +245,8 @@ const TreeBuildingModal = ({
     Number.isFinite(effChips) &&
     effChips > 0 &&
     sizesOk(oopSizes) &&
-    sizesOk(ipSizes);
+    sizesOk(ipSizes) &&
+    allStreetsHaveBet;
 
   const confirm = () => {
     if (!canConfirm) return;
@@ -294,24 +306,19 @@ const TreeBuildingModal = ({
   );
 
   return (
-    <div
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-3"
-      onMouseDown={onClose}
+    /* Both parents mount this modal conditionally (its draft state is
+     * initialized once per mount), so `open` is a constant true and the
+     * drawer's exit animation is skipped — an accepted trade-off here. */
+    <ResponsiveDrawer
+      open
+      onClose={onClose}
+      scrollMode="custom"
+      desktopMaxWidthClassName="sm:max-w-2xl"
+      zClassName="z-[80]"
+      ariaLabel="Tree building parameters"
     >
-      <div
-        className="relative flex max-h-[92vh] w-full max-w-2xl flex-col rounded-2xl bg-slate-900/95 border border-emerald-500/40 shadow-2xl text-gray-100"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-3 top-3 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 text-gray-300 hover:text-white border border-white/10 shadow-sm"
-          aria-label="Close"
-        >
-          ×
-        </button>
-
-        <div className="px-4 pt-4">
+      <>
+        <div className="px-4 pt-2 sm:pt-4">
           <h2 className="text-base font-semibold">Tree building parameters</h2>
           <p className="text-xs text-gray-400 mb-2">
             Review the game tree before it's sent off to be solved. Every field is editable.
@@ -487,7 +494,7 @@ const TreeBuildingModal = ({
                 Copy IP → OOP
               </button>
             </div>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="grid grid-cols-3 gap-2">
               <StreetFields title="Flop IP" sizes={ipSizes.flop} showDonk={false} disabled={busy}
                 onChange={(s) => setIpSizes((p) => ({ ...p, flop: s }))} />
               <StreetFields title="Turn IP" sizes={ipSizes.turn} showDonk={false} disabled={busy}
@@ -502,7 +509,7 @@ const TreeBuildingModal = ({
             <div className="mb-1 text-[11px] font-medium text-gray-400">
               Bet sizing - {init.oopLabel}
             </div>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="grid grid-cols-3 gap-2">
               <StreetFields title="Flop OOP" sizes={oopSizes.flop} showDonk={false} disabled={busy}
                 onChange={(s) => setOopSizes((p) => ({ ...p, flop: s }))} />
               <StreetFields title="Turn OOP" sizes={oopSizes.turn} showDonk disabled={busy}
@@ -519,8 +526,9 @@ const TreeBuildingModal = ({
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="border-t border-white/10 px-4 py-3">
+        {/* Footer — pinned to the sheet's bottom edge on mobile, so pad for
+            the iOS home indicator. */}
+        <div className="border-t border-white/10 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           {notice && (
             <div className="mb-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
               {notice}
@@ -530,6 +538,11 @@ const TreeBuildingModal = ({
             <div className="mb-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300">
               {error}
             </div>
+          )}
+          {!allStreetsHaveBet && (
+            <p className="mb-2 text-[11px] text-red-400">
+              Each street needs at least one bet size.
+            </p>
           )}
           <div className="flex items-center justify-end gap-2">
             <button
@@ -556,10 +569,12 @@ const TreeBuildingModal = ({
           </div>
         </div>
 
-        {/* Range editor sheet */}
+        {/* Range editor sheet — near-opaque so the grid stays readable over
+            the covered content; rounded-[inherit] clips to the drawer's
+            mobile rounded-top / desktop rounded corners. */}
         {editingRange && (
           <div
-            className="absolute inset-0 z-20 flex flex-col rounded-2xl bg-slate-900/98 p-4 animate-[treeSheetIn_160ms_ease-out]"
+            className="absolute inset-0 z-20 flex flex-col rounded-[inherit] bg-surface/95 p-4 animate-[treeSheetIn_160ms_ease-out]"
             style={{ backdropFilter: "blur(2px)" }}
           >
             <style>{`@keyframes treeSheetIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }`}</style>
@@ -584,8 +599,8 @@ const TreeBuildingModal = ({
             </div>
           </div>
         )}
-      </div>
-    </div>
+      </>
+    </ResponsiveDrawer>
   );
 };
 

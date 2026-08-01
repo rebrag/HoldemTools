@@ -281,19 +281,7 @@ export function handleActionClickImpl(
     const effStackChips = Math.round(effStack * 100);
     const potChips = Math.round(newPotSize * 100);
 
-
-    const callerLaterThanRaiser =
-      !!callingPos &&
-      !!lastRangePos &&
-      positionOrder.includes(callingPos) &&
-      positionOrder.includes(lastRangePos) &&
-      positionOrder.indexOf(callingPos) > positionOrder.indexOf(lastRangePos);
-
     const oopSizes = cloneTreeSizes(DEFAULT_TREE_SIZES.oop);
-    // When the caller closes the action from a later seat, the raiser is OOP
-    // and gets a flop bet size (was a conditional #FlopConfig.BetSize#25
-    // splice in the old text-based flow).
-    if (callerLaterThanRaiser) oopSizes.flop.betSize = "25";
 
     const params: TreeParams = {
       rangeOOP: parseRangeText(range0),

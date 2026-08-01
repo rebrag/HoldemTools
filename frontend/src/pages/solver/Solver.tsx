@@ -1480,13 +1480,12 @@ const Solver = ({ user }: SolverProps) => {
 
       </div>
 
-      {showLoginOverlay && (
-        <LoginSignupModal
-          onClose={() => {
-            setShowLoginOverlay(false);
-          }}
-        />
-      )}
+      <LoginSignupModal
+        open={showLoginOverlay}
+        onClose={() => {
+          setShowLoginOverlay(false);
+        }}
+      />
       {showProModal && (
         <ProUpsell
           open={showProModal && !tierLoading}

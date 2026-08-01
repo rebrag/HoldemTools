@@ -49,7 +49,9 @@ const simParams = (): TreeParams => ({
 
 /* Captured from the shipped implementation. If a change to treeConfig.ts makes
    this fail, the sim solve path has changed and that is almost certainly a bug
-   - the numbers here are meaningless, the exact lines are the point. */
+   - the numbers here are meaningless, the exact lines are the point.
+   (Deliberate default change captured here: every street now carries a
+   BetSize, with the flop defaulting to 33 for both seats.) */
 const SIM_GOLDEN = [
   "#Type#NoLimit",
   "#Range0#22:1,33:0.169,AA:1",
@@ -66,6 +68,7 @@ const SIM_GOLDEN = [
   "#MergeSimilarBetsThreshold#12",
   "#CapEnabled#True",
   "#CapMode#NoLimit",
+  "#FlopConfig.BetSize#33",
   "#FlopConfig.RaiseSize#33",
   "#FlopConfig.AddAllin#True",
   "#TurnConfig.BetSize#50",
@@ -75,7 +78,7 @@ const SIM_GOLDEN = [
   "#RiverConfig.RaiseSize#a",
   "#RiverConfig.AddAllin#True",
   "#RiverConfig.DonkBetSize#30",
-  "#FlopConfigIP.BetSize#25",
+  "#FlopConfigIP.BetSize#33",
   "#FlopConfigIP.RaiseSize#a",
   "#FlopConfigIP.AddAllin#True",
   "#TurnConfigIP.BetSize#50",

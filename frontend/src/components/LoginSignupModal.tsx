@@ -1,6 +1,5 @@
 // src/components/LoginSignupModal.tsx
 import { useEffect, useState } from "react";
-import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Mail, Lock, X, Check } from "lucide-react";
 import {
   auth,
@@ -10,17 +9,18 @@ import {
   FirebaseError,
 } from "@/lib/firebase";
 import { sendEmailVerification } from "firebase/auth";
-import useWindowDimensions from "@/hooks/useWindowDimensions";
+import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import { DEV_AUTH_BYPASS, devAuthSignIn } from "@/lib/devAuth";
 
 interface LoginSignupModalProps {
+  open: boolean;
   onClose: () => void;
   /** Called on a successful sign-in (not on plain dismiss). Falls back to
    *  onClose when omitted, so existing call sites keep working unchanged. */
   onSuccess?: () => void;
 }
 
-const LoginSignupModal: React.FC<LoginSignupModalProps> = ({ onClose, onSuccess }) => {
+const LoginSignupModal: React.FC<LoginSignupModalProps> = ({ open, onClose, onSuccess }) => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -32,27 +32,22 @@ const LoginSignupModal: React.FC<LoginSignupModalProps> = ({ onClose, onSuccess 
   // for callers that don't need the distinction.
   const finishSuccess = onSuccess ?? onClose;
 
-  const { windowWidth } = useWindowDimensions();
-  const reduceMotion = useReducedMotion();
-  const isMobile = windowWidth < 640; // Tailwind `sm` breakpoint
+  // The component now stays mounted while closed (so the drawer's exit
+  // animation can play); clear the form on each open to keep the old
+  // fresh-mount behavior.
+  useEffect(() => {
+    if (!open) return;
+    setEmail("");
+    setPassword("");
+    setConfirmPassword("");
+    setError(null);
+    setMessage(null);
+    setIsLogin(true);
+  }, [open]);
 
   /* ---------- helpers ---------- */
   const passwordsMatch =
     password === confirmPassword && confirmPassword.length > 0;
-
-  /* ---------- close on Escape + lock body scroll ---------- */
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [onClose]);
 
   /* ---------- form submit ---------- */
   async function handleSubmit(e: React.FormEvent) {
@@ -127,82 +122,10 @@ const LoginSignupModal: React.FC<LoginSignupModalProps> = ({ onClose, onSuccess 
     }
   }
 
-  /* ---------- entrance motion (slide-up on mobile, scale on desktop) ------- */
-  const panelVariants = reduceMotion
-    ? {
-        hidden: { opacity: 0 },
-        show: { opacity: 1, transition: { duration: 0.15 } },
-        exit: { opacity: 0, transition: { duration: 0.1 } },
-      }
-    : isMobile
-    ? {
-        hidden: { opacity: 0, y: 48 },
-        show: {
-          opacity: 1,
-          y: 0,
-          transition: { duration: 0.32, ease: [0.22, 1, 0.36, 1] as const },
-        },
-        exit: { opacity: 0, y: 48, transition: { duration: 0.2 } },
-      }
-    : {
-        hidden: { opacity: 0, scale: 0.96, y: 8 },
-        show: {
-          opacity: 1,
-          scale: 1,
-          y: 0,
-          transition: { duration: 0.28, ease: [0.22, 1, 0.36, 1] as const },
-        },
-        exit: { opacity: 0, scale: 0.96, transition: { duration: 0.15 } },
-      };
-
   /* ---------- UI ---------- */
   return (
-    <AnimatePresence>
-      {/* screen‑dimming, click‑to‑close backdrop */}
-      <motion.div
-        key="backdrop"
-        className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.2 }}
-        onClick={onClose}
-        aria-hidden="true"
-      />
-
-      {/* positioning wrapper — bottom sheet on mobile, centered on desktop */}
-      <div className="fixed inset-0 z-50 flex justify-center items-end sm:items-center pointer-events-none">
-        <motion.div
-          key="panel"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="login-modal-title"
-          variants={panelVariants}
-          initial="hidden"
-          animate="show"
-          exit="exit"
-          onClick={(e) => e.stopPropagation()}
-          className="
-            pointer-events-auto relative
-            w-full rounded-t-3xl px-5 pt-3 pb-8
-            sm:w-full sm:max-w-md sm:rounded-2xl sm:m-4 sm:px-8 sm:py-8
-            bg-surface/80 backdrop-blur-xl border border-hairline
-            shadow-2xl text-slate-100
-            max-h-[92vh] overflow-y-auto
-          "
-        >
-          {/* mobile grab handle */}
-          <div className="sm:hidden mx-auto mb-4 h-1.5 w-10 rounded-full bg-white/20" />
-
-          {/* close button */}
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="absolute right-3 top-3 sm:right-4 sm:top-4 inline-flex h-8 w-8 items-center justify-center rounded-full border border-hairline bg-white/5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-          >
-            <X size={16} strokeWidth={2.2} />
-          </button>
-
+    <ResponsiveDrawer open={open} onClose={onClose} ariaLabelledBy="login-modal-title">
+      <>
           {/* heading */}
           <div className="mb-5 text-center">
             <h2
@@ -331,9 +254,8 @@ const LoginSignupModal: React.FC<LoginSignupModalProps> = ({ onClose, onSuccess 
               {isLogin ? "Sign up" : "Login"}
             </button>
           </p>
-        </motion.div>
-      </div>
-    </AnimatePresence>
+      </>
+    </ResponsiveDrawer>
   );
 };
 

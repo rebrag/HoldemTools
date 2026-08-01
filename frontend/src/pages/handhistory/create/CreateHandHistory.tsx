@@ -16,6 +16,7 @@ import PokerTable from "@/components/PokerTable";
 import CopyButton from "@/components/CopyButton";
 import { authedFetch } from "@/lib/api";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
+import { useSavedTableLayout } from "@/hooks/useSavedTableLayout";
 import SeatEditorModal, { type SeatEditResult } from "./SeatEditorModal";
 import BoardEditorModal from "./BoardEditorModal";
 import ActionPanel from "./ActionPanel";
@@ -32,6 +33,7 @@ import { actionsFromEngine, buildReplayData, encodeReplay, rebuildFrames } from 
 import { serializeHand, type EquityInfo, type StreetEquity } from "./serialize";
 import { useShowdownEquity, type EquityRequest } from "./useShowdownEquity";
 import { evalWinners, exactEquity } from "@/lib/handEval";
+import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import TreeBuildingModal, { type TreeBuildingInit } from "@/pages/solver/TreeBuildingModal";
 import { POSTFLOP_ENABLED } from "@/lib/solver/constants";
 import { buildTreeConfigText } from "@/lib/solver/treeConfig";
@@ -200,6 +202,13 @@ const CreateHandHistory: React.FC<Props> = ({
     HandSolveExtract,
     { eligible: true }
   > | null>(null);
+  // Yes/no prompt shown before the tree-building modal: accepting moves the
+  // extract into solveOffer, declining finishes the flow (navigates once the
+  // background save lands).
+  const [solvePrompt, setSolvePrompt] = useState<Extract<
+    HandSolveExtract,
+    { eligible: true }
+  > | null>(null);
   const [solveBusy, setSolveBusy] = useState(false);
   const [solveNotice, setSolveNotice] = useState<string | null>(null);
   const [solveError, setSolveError] = useState<string | null>(null);
@@ -214,6 +223,17 @@ const CreateHandHistory: React.FC<Props> = ({
   const touchedRef = useRef(draftRef.current != null);
   const clearedRef = useRef(false);
   const rememberedRef = useRef<HandDefaults | null>(null);
+  // Quick-save table layout (single localStorage slot, standalone + embedded).
+  const { layout: savedLayout, saveLayout } = useSavedTableLayout();
+  const [layoutSavedFlash, setLayoutSavedFlash] = useState(false);
+  const layoutFlashTimerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (layoutFlashTimerRef.current != null)
+        window.clearTimeout(layoutFlashTimerRef.current);
+    },
+    []
+  );
 
   const labels = useMemo(
     () =>
@@ -465,6 +485,41 @@ const CreateHandHistory: React.FC<Props> = ({
     );
   };
 
+  // Quick-save the current table setup (blinds, game, table size, seats, hero)
+  // into the single layout slot. Button seat is deliberately not saved — it
+  // rotates every hand.
+  const handleSaveLayout = () => {
+    if (phase !== "setup") return;
+    saveLayout(state);
+    setLayoutSavedFlash(true);
+    if (layoutFlashTimerRef.current != null)
+      window.clearTimeout(layoutFlashTimerRef.current);
+    layoutFlashTimerRef.current = window.setTimeout(
+      () => setLayoutSavedFlash(false),
+      1500
+    );
+  };
+
+  const handleLoadLayout = () => {
+    if (!savedLayout || phase !== "setup") return;
+    // Suppress the async seed-from-last-hand pass (whichever order it resolves
+    // in) and make Reset keep the loaded layout instead of the remembered hand.
+    touchedRef.current = true;
+    clearedRef.current = true;
+    rememberedRef.current = savedLayout.defaults;
+    setState((prev) => {
+      let next = applyDefaults(prev, savedLayout.defaults);
+      const h = savedLayout.heroSeat;
+      if (h != null && h >= 0 && h < next.seats.length) {
+        next = {
+          ...next,
+          heroSeat: isActiveSeat(next.seats[h]) ? h : nextActiveSeat(next.seats, h),
+        };
+      }
+      return next;
+    });
+  };
+
   // Standalone mode: seed the setup from the most recent saved hand (blinds,
   // ante, game, table size, seat names + stacks) so the user doesn't re-enter a
   // similar table each time. Candidates come from the device-local store (works
@@ -648,7 +703,9 @@ const CreateHandHistory: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, serialized, equityReq, preEq]);
 
-  // Open the tree-building modal alongside the auto-save (once per hand).
+  // Offer the solve alongside the auto-save (once per hand): a small yes/no
+  // prompt first, so the full tree-building panel isn't thrown at the user
+  // uninvited.
   useEffect(() => {
     if (!solveExtract || solveOfferedRef.current) return;
     const isComplete =
@@ -658,7 +715,7 @@ const CreateHandHistory: React.FC<Props> = ({
       (engine.numBoards === 1 || !!engine.winners2);
     if (!isComplete) return;
     solveOfferedRef.current = true;
-    setSolveOffer(solveExtract);
+    setSolvePrompt(solveExtract);
   }, [solveExtract, engine]);
 
   /** Close the solve modal and perform (or queue) the deferred navigation. */
@@ -675,6 +732,18 @@ const CreateHandHistory: React.FC<Props> = ({
     }
     // savedRef "error": stay put so the existing save-error UI (with its
     // manual Save button) is visible.
+  };
+
+  const acceptSolve = () => {
+    const p = solvePrompt;
+    setSolvePrompt(null);
+    if (p) setSolveOffer(p);
+  };
+
+  // Dismissing the prompt (No / Escape / backdrop) declines the solve.
+  const declineSolve = () => {
+    setSolvePrompt(null);
+    finishSolveFlow();
   };
 
   const confirmSolveUpload = async ({
@@ -755,8 +824,42 @@ const CreateHandHistory: React.FC<Props> = ({
 
   return (
     <div className="mx-auto max-w-6xl px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
-      {/* Postflop solve offer: opens over the recorder the moment a hand that
-          saw a heads-up flop completes, while the auto-save runs behind it. */}
+      {/* Postflop solve offer, step 1: a small yes/no prompt the moment a hand
+          that saw a heads-up flop completes, while the auto-save runs behind
+          it. Stays mounted so the drawer's exit animation plays. */}
+      <ResponsiveDrawer
+        open={!!solvePrompt}
+        onClose={declineSolve}
+        desktopMaxWidthClassName="sm:max-w-sm"
+        ariaLabelledBy="solve-offer-title"
+      >
+        <div className="text-center">
+          <h2 id="solve-offer-title" className="text-xl font-bold tracking-tight text-white">
+            Solve this spot?
+          </h2>
+          <p className="mt-2 text-sm text-slate-400">
+            This hand was heads-up to the flop — want to build a game tree and
+            solve it?
+          </p>
+          <div className="mt-5 flex gap-2">
+            <button
+              type="button"
+              onClick={declineSolve}
+              className="flex-1 cursor-pointer rounded-xl border border-hairline bg-white/5 py-3 font-medium text-slate-100 transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+            >
+              No thanks
+            </button>
+            <button
+              type="button"
+              onClick={acceptSolve}
+              className="flex-1 cursor-pointer rounded-xl bg-accent py-3 font-semibold text-on-accent transition-all hover:shadow-glow focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+            >
+              Yes, solve it
+            </button>
+          </div>
+        </div>
+      </ResponsiveDrawer>
+      {/* Step 2: the full tree-building panel once the user accepts. */}
       {solveOffer && solveInit && (
         <TreeBuildingModal
           init={solveInit}
@@ -960,7 +1063,33 @@ const CreateHandHistory: React.FC<Props> = ({
       {/* ───────── Setup phase: config form ───────── */}
       {phase === "setup" && (
         <div className="rounded-2xl border border-emerald-300/40 bg-white/95 p-4 shadow-lg shadow-emerald-500/20 backdrop-blur-sm">
-          <div className="mb-2 flex items-center justify-end">
+          <div className="mb-2 flex items-center justify-end gap-3">
+            <button
+              type="button"
+              onClick={handleSaveLayout}
+              className={`text-[11px] underline underline-offset-2 transition ${
+                layoutSavedFlash
+                  ? "text-emerald-600 no-underline"
+                  : "text-gray-400 hover:text-gray-600"
+              }`}
+              title="Save the current table setup (blinds, seats, stacks) for quick reuse"
+            >
+              {layoutSavedFlash ? "Saved ✓" : "Save layout"}
+            </button>
+            {savedLayout && (
+              <button
+                type="button"
+                onClick={handleLoadLayout}
+                className="text-[11px] text-gray-400 underline underline-offset-2 transition hover:text-gray-600"
+                title={
+                  savedLayout.savedAt
+                    ? `Load the saved table layout (saved ${new Date(savedLayout.savedAt).toLocaleString()})`
+                    : "Load the saved table layout"
+                }
+              >
+                Load layout
+              </button>
+            )}
             <button
               type="button"
               onClick={clearAll}

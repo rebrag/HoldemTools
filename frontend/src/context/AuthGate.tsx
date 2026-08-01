@@ -67,9 +67,7 @@ export const AuthGateProvider: React.FC<{
   return (
     <AuthGateContext.Provider value={{ requireAuth, openLogin }}>
       {children}
-      {open && (
-        <LoginSignupModal onClose={handleClose} onSuccess={handleSuccess} />
-      )}
+      <LoginSignupModal open={open} onClose={handleClose} onSuccess={handleSuccess} />
     </AuthGateContext.Provider>
   );
 };
