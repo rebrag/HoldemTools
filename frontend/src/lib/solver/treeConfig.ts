@@ -5,9 +5,11 @@
 //
 // The watcher pastes the resulting `Text` VERBATIM into PioViewer's tree
 // builder (see watcher/README.md), so the emitted line order and formatting
-// are load-bearing: for identical inputs, buildTreeConfigText must reproduce
-// the exact string the pre-refactor handleActionClick.ts + Solver.tsx
-// produced. Golden example (solver page, non-ICM, caller later than raiser):
+// are load-bearing: for identical inputs, buildTreeConfigText must keep
+// emitting the same line order and formatting as the pre-refactor
+// handleActionClick.ts + Solver.tsx (default sizes have since been
+// deliberately changed to a 33% flop bet for both seats).
+// Golden example (solver page, non-ICM, default sizes):
 //
 //   #Type#NoLimit
 //   #Range0#22:1,AA:0.5
@@ -24,7 +26,7 @@
 //   #MergeSimilarBetsThreshold#12
 //   #CapEnabled#True
 //   #CapMode#NoLimit
-//   #FlopConfig.BetSize#25
+//   #FlopConfig.BetSize#33
 //   #FlopConfig.RaiseSize#33
 //   #FlopConfig.AddAllin#True
 //   #TurnConfig.BetSize#50
@@ -34,7 +36,7 @@
 //   #RiverConfig.RaiseSize#a
 //   #RiverConfig.AddAllin#True
 //   #RiverConfig.DonkBetSize#30
-//   #FlopConfigIP.BetSize#25
+//   #FlopConfigIP.BetSize#33
 //   #FlopConfigIP.RaiseSize#a
 //   #FlopConfigIP.AddAllin#True
 //   #TurnConfigIP.BetSize#50
@@ -45,7 +47,8 @@
 //   #RiverConfigIP.AddAllin#True
 //
 // (#ICM.Enabled#True is inserted after #ICM.ICMFormat# for ICM sims;
-// #FlopConfig.BetSize# appears only when oop.flop.betSize is set.)
+// a #...BetSize# line is omitted when the corresponding size is unset,
+// though the defaults now set one on every street.)
 
 /** Postflop acting order, worst position first. Mirrors POSTFLOP_ORDER in
  *  watcher/extraction.py — the watcher re-derives OOP/IP from this ordering,
@@ -162,16 +165,18 @@ export interface TreeParams {
   icm: { enabled: boolean; payoutsLiteral: string; stacksLiteral: string };
 }
 
-/** The bet-size defaults the solver page has always uploaded
- *  (formerly hardcoded in handleActionClick.ts). */
+/** The bet-size defaults uploaded when nothing overrides them (formerly
+ *  hardcoded in handleActionClick.ts). Every street carries a bet size so no
+ *  seat is ever left without a lead option; the flop default is 33% pot for
+ *  both seats. */
 export const DEFAULT_TREE_SIZES: { oop: TreeSizes; ip: TreeSizes } = {
   oop: {
-    flop: { raiseSize: "33", addAllin: true },
+    flop: { betSize: "33", raiseSize: "33", addAllin: true },
     turn: { betSize: "50", raiseSize: "a", addAllin: true },
     river: { betSize: "30 66", raiseSize: "a", donkBetSize: "30", addAllin: true },
   },
   ip: {
-    flop: { betSize: "25", raiseSize: "a", addAllin: true },
+    flop: { betSize: "33", raiseSize: "a", addAllin: true },
     turn: { betSize: "50", raiseSize: "a", addAllin: true },
     river: { betSize: "30 66", raiseSize: "a", addAllin: true },
   },

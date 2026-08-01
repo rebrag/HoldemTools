@@ -21,7 +21,7 @@ export interface HandDefaults extends InitialStateOverrides {
 // the next hand keeps the whole table layout: the table size doesn't collapse to
 // the dealt-in count, an empty seat stays empty in the same spot, and sitting-out
 // seats stay sitting out.
-function defaultsFromState(state: AdvancedHandState): HandDefaults {
+export function defaultsFromState(state: AdvancedHandState): HandDefaults {
   return {
     game: state.game,
     smallBlind: cleanNum(state.smallBlind),

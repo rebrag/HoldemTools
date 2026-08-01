@@ -932,8 +932,8 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
   /* ───────────────── Render ───────────────── */
 
   if (!user) {
-  // If the user dismissed the modal, show a simple message instead.
-  if (!showLoginModal) {
+    // Signed-out view: the explainer text renders behind the login drawer, and
+    // stays as the page once the drawer is dismissed.
     return (
       <div className="max-w-5xl mx-auto px-4 pb-10 pt-6">
         <h1 className="text-2xl font-semibold text-white mb-2">
@@ -943,18 +943,15 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
           You need to log in with your HoldemTools account to track your
           sessions and see your bankroll graph.
         </p>
+        <LoginSignupModal
+          open={showLoginModal}
+          onClose={() => {
+            setShowLoginModal(false);
+          }}
+        />
       </div>
     );
   }
-
-  return (
-    <LoginSignupModal
-      onClose={() => {
-        setShowLoginModal(false);
-      }}
-    />
-  );
-}
 
 
 
