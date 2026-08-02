@@ -195,33 +195,3 @@ export async function pollForStreet(
   console.warn(`⌛ Gave up waiting for street ${seedSuffix} on ${board}`);
   return null;
 }
-
-/**
- * Poll for a board manifest after a fresh solve request. A solve takes
- * minutes, so the window is generous; `shouldStop` lets the caller cancel.
- */
-export async function pollForBoardManifest(
-  stacks: string,
-  nodeName: string,
-  board: string,
-  options?: { intervalMs?: number; maxAttempts?: number; shouldStop?: () => boolean }
-): Promise<BoardManifest | null> {
-  const intervalMs = options?.intervalMs ?? 8000;
-  const maxAttempts = options?.maxAttempts ?? 90; // ~12 minutes
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (options?.shouldStop?.()) return null;
-    try {
-      const manifest = await fetchBoardManifest(stacks, nodeName, board);
-      if (manifest) {
-        console.log(`✅ Board manifest ready for ${board} (attempt ${attempt})`);
-        return manifest;
-      }
-      console.log(`⏳ Manifest not ready for ${board}, attempt ${attempt}/${maxAttempts}`);
-    } catch (err) {
-      console.warn(`⚠️ Error polling manifest (attempt ${attempt}/${maxAttempts})`, err);
-    }
-    await sleep(intervalMs);
-  }
-  console.warn(`⌛ Gave up waiting for manifest for board ${board}`);
-  return null;
-}

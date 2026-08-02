@@ -15,6 +15,8 @@ namespace PokerRangeAPI2.Data
 
         public DbSet<HandHistory> HandHistories { get; set; } = default!;
 
+        public DbSet<SolveJob> SolveJobs { get; set; } = default!;
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -56,6 +58,30 @@ namespace PokerRangeAPI2.Data
                     .WithMany()
                     .HasForeignKey(e => e.SessionId)
                     .OnDelete(DeleteBehavior.SetNull);
+            });
+
+            modelBuilder.Entity<SolveJob>(entity =>
+            {
+                // Every string bounded (SQL Server can't index nvarchar(max));
+                // only Error is wide, and it is never indexed.
+                entity.Property(e => e.UserId).HasMaxLength(128);
+                entity.Property(e => e.Type).HasMaxLength(16);
+                entity.Property(e => e.BlobPath).HasMaxLength(512);
+                entity.Property(e => e.Folder).HasMaxLength(200);
+                entity.Property(e => e.LineKey).HasMaxLength(200);
+                entity.Property(e => e.ActingPos).HasMaxLength(16);
+                entity.Property(e => e.Board).HasMaxLength(12);
+                entity.Property(e => e.Status).HasMaxLength(16);
+                entity.Property(e => e.Error).HasMaxLength(2000);
+                entity.Property(e => e.WatcherId).HasMaxLength(64);
+                entity.Property(e => e.ResultStacks).HasMaxLength(200);
+                entity.Property(e => e.ResultNodeName).HasMaxLength(200);
+
+                entity.HasIndex(e => e.UserId);
+
+                // Drives the claim ordering (Queued, priority desc, oldest
+                // first) and the queue-position counts.
+                entity.HasIndex(e => new { e.Status, e.Priority, e.CreatedAtUtc });
             });
         }
     }

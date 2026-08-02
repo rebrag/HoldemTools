@@ -199,7 +199,10 @@ namespace PokerRangeAPI2.Controllers
         // --------------------------------------------------------------------
         // GET api/files/piosolutionsIndex
         // Library index of all solved boards (piosolutions-index.json).
-        // Cached for 60s: it changes after every solve, unlike sim-index.
+        // Server-cached for 10s to absorb poll bursts, but no-cache to the
+        // browser: a just-solved board must show up on the next fetch, and a
+        // max-age here would compound with the server TTL into minutes of
+        // staleness.
         // --------------------------------------------------------------------
         [Authorize]
         [HttpGet("piosolutionsIndex")]
@@ -209,7 +212,7 @@ namespace PokerRangeAPI2.Controllers
 
             if (_cache.TryGetValue(cacheKey, out string? cachedJson) && cachedJson != null)
             {
-                Response.Headers.CacheControl = "public, max-age=60";
+                Response.Headers.CacheControl = "no-cache";
                 return Ok(cachedJson);
             }
 
@@ -225,10 +228,10 @@ namespace PokerRangeAPI2.Controllers
 
             _cache.Set(cacheKey, json, new MemoryCacheEntryOptions
             {
-                AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60)
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(10)
             });
 
-            Response.Headers.CacheControl = "public, max-age=60";
+            Response.Headers.CacheControl = "no-cache";
             return Ok(json);
         }
 

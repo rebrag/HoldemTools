@@ -38,9 +38,9 @@ import { POSTFLOP_ORDER, buildTreeConfigText, type TreeParams } from "@/lib/solv
 import { parseGametreePathForSolution } from "@/lib/solver/postflopClient";
 import {
   fetchBoardManifest,
-  pollForBoardManifest,
   type PostflopIndexEntry,
 } from "@/lib/solver/postflopLibrary";
+import { pollSolveJob, type SolveJobStatus } from "@/lib/solver/solveJobs";
 import {
   boardToCards,
   docToJsonData,
@@ -120,8 +120,41 @@ const SolvedFlopsButton = ({
   </div>
 );
 
-/** Pending banner shown while the local solver works on a fresh flop request. */
-const PendingSolveCard = ({ board, startedAt }: { board: string[]; startedAt: number }) => {
+/** What the pending banner says for each queue stage. */
+const pendingStageLabel = (status?: SolveJobStatus, queuePosition?: number | null): string => {
+  switch (status) {
+    case "Queued":
+      return queuePosition && queuePosition > 1
+        ? `Queued · #${queuePosition} in line`
+        : "Queued";
+    case "Extracting":
+      return "Preparing turns";
+    case "Uploading":
+      return "Publishing";
+    default:
+      // Claimed/Solving, or no job status yet.
+      return "Solving flop";
+  }
+};
+
+/** Pending banner shown while the local solver works on a fresh flop request.
+ *  Tracks the solve job's stage and queue position; a failed job turns the
+ *  card red with the watcher's error and a dismiss button. */
+const PendingSolveCard = ({
+  board,
+  startedAt,
+  status,
+  queuePosition,
+  error,
+  onDismiss,
+}: {
+  board: string[];
+  startedAt: number;
+  status?: SolveJobStatus;
+  queuePosition?: number | null;
+  error?: string | null;
+  onDismiss?: () => void;
+}) => {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -130,19 +163,52 @@ const PendingSolveCard = ({ board, startedAt }: { board: string[]; startedAt: nu
   const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000));
   const mm = Math.floor(elapsed / 60);
   const ss = String(elapsed % 60).padStart(2, "0");
+  const failed = status === "Failed";
   return (
     <div className="flex justify-center mb-2 px-2">
-      <div className="inline-flex items-center gap-2 rounded-md bg-slate-900/80 border border-amber-400/50 px-3 py-1.5 shadow-sm">
-        <span className="inline-block h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
-        <span className="text-[11px] font-semibold tracking-wide text-amber-200">
-          Solving flop
+      <div
+        className={[
+          "inline-flex items-center gap-2 rounded-md bg-slate-900/80 px-3 py-1.5 shadow-sm border",
+          failed ? "border-red-400/60" : "border-amber-400/50",
+        ].join(" ")}
+      >
+        <span
+          className={[
+            "inline-block h-2 w-2 rounded-full",
+            failed ? "bg-red-400" : "bg-amber-400 animate-pulse",
+          ].join(" ")}
+        />
+        <span
+          className={[
+            "text-[11px] font-semibold tracking-wide",
+            failed ? "text-red-300" : "text-amber-200",
+          ].join(" ")}
+        >
+          {failed ? "Solve failed" : pendingStageLabel(status, queuePosition)}
         </span>
         {board.map((code) => (
           <PlayingCard key={code} code={code} width="clamp(24px, 5vw, 36px)" />
         ))}
-        <span className="text-[11px] tabular-nums text-gray-300">
-          {mm}:{ss} elapsed · usually 2-10 min
-        </span>
+        {failed ? (
+          <>
+            {error && (
+              <span className="max-w-[16rem] truncate text-[11px] text-gray-300" title={error}>
+                {error}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={onDismiss}
+              className="rounded border border-white/20 px-1.5 py-0.5 text-[11px] text-gray-200 hover:bg-white/10"
+            >
+              Dismiss
+            </button>
+          </>
+        ) : (
+          <span className="text-[11px] tabular-nums text-gray-300">
+            {mm}:{ss} elapsed · usually 2-10 min
+          </span>
+        )}
       </div>
     </div>
   );
@@ -200,6 +266,9 @@ const Solver = ({ user }: SolverProps) => {
   const [postflopPending, setPostflopPending] = useState<{
     board: string[];
     startedAt: number;
+    status?: SolveJobStatus;
+    queuePosition?: number | null;
+    error?: string | null;
   } | null>(null);
   const pendingCancelRef = useRef(false);
   /* Preflop line being walked back into after leaving a board: the actions to
@@ -1088,7 +1157,7 @@ const Solver = ({ user }: SolverProps) => {
 
       console.log("✅ Game tree uploaded:", result);
 
-      const gametreePath = result?.path as string | undefined;
+      const gametreePath = result?.path;
       if (!gametreePath) {
         console.warn("uploadGameTree response did not include a 'path' field; cannot derive piosolutions path.");
         return;
@@ -1100,17 +1169,89 @@ const Solver = ({ user }: SolverProps) => {
         return;
       }
 
-      // Poll for the board manifest (solve takes minutes), then open the session.
+      const jobId = result.jobId;
+      if (!jobId) {
+        console.warn("uploadGameTree response did not include a jobId; cannot track the solve.");
+        return;
+      }
+
+      // Track the solve job (~2s cadence): stage + queue position on the
+      // pending card, and open the board on the earliest manifest - the
+      // watcher publishes the flop before the turn sweep, so that is usually
+      // well before the job reports Done.
       pendingCancelRef.current = false;
       setPostflopPending({ board: [...flopCards], startedAt: Date.now() });
       void (async () => {
-        const manifest = await pollForBoardManifest(stacks, nodeName, boardName, {
-          shouldStop: () => pendingCancelRef.current,
+        let opened = false;
+        let opening = false;
+
+        const tryOpen = async (): Promise<boolean> => {
+          const manifest = await fetchBoardManifest(stacks, nodeName, boardName);
+          if (!manifest || opened) return opened;
+          if (pendingCancelRef.current) return true; // user left; stop quietly
+          opened = true;
+          setPostflopPending(null);
+          await pf.open(manifest);
+          void pfIndex.refresh();
+          return true;
+        };
+
+        // A deduped submission may point at a solve that already published.
+        if (result.deduped && (await tryOpen())) return;
+
+        const job = await pollSolveJob(jobId, {
+          shouldStop: () => pendingCancelRef.current || opened,
+          onUpdate: (dto) => {
+            setPostflopPending((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    status: dto.status,
+                    queuePosition: dto.queuePosition,
+                    error: dto.error,
+                  }
+                : prev
+            );
+            // Flop-first publish: try the manifest as soon as extraction starts.
+            if (
+              !opened &&
+              !opening &&
+              (dto.status === "Extracting" || dto.status === "Uploading" || dto.status === "Done")
+            ) {
+              opening = true;
+              void tryOpen()
+                .catch((err) => console.warn("Failed to open board manifest:", err))
+                .finally(() => {
+                  opening = false;
+                });
+            }
+          },
         });
-        setPostflopPending(null);
-        if (!manifest) return;
-        await pf.open(manifest);
-        void pfIndex.refresh();
+        if (opened || pendingCancelRef.current) return;
+
+        if (job?.status === "Done") {
+          // Manifest should exist by now; retry briefly for blob consistency.
+          for (let i = 0; i < 3; i++) {
+            if (await tryOpen()) return;
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+          setPostflopPending((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: "Failed",
+                  error: "Solve finished but the solution has not appeared yet - check Solved Flops shortly.",
+                }
+              : prev
+          );
+        } else if (job?.status === "Failed") {
+          setPostflopPending((prev) =>
+            prev ? { ...prev, status: "Failed", error: job.error ?? "Solve failed" } : prev
+          );
+        } else {
+          // Poll window exhausted with no verdict.
+          setPostflopPending(null);
+        }
       })();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
@@ -1349,7 +1490,17 @@ const Solver = ({ user }: SolverProps) => {
 
           {/* Pending solve banner */}
           {postflopPending && (
-            <PendingSolveCard board={postflopPending.board} startedAt={postflopPending.startedAt} />
+            <PendingSolveCard
+              board={postflopPending.board}
+              startedAt={postflopPending.startedAt}
+              status={postflopPending.status}
+              queuePosition={postflopPending.queuePosition}
+              error={postflopPending.error}
+              onDismiss={() => {
+                pendingCancelRef.current = true;
+                setPostflopPending(null);
+              }}
+            />
           )}
 
           {/* Current flop display (outside a session, e.g. legacy state) */}

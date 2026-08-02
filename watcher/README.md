@@ -8,11 +8,22 @@ Snapshot-copied from the (now archived) `rebrag/GTOLite-Helper-Script` repo, whi
 
 ## What it does
 
-`watch_adls_and_run_pio_headless.py` polls the `onlinerangedata` container at `gametrees/<today UTC>/` for game-tree JSONs uploaded by `POST /api/gametrees`, solves each with PioSOLVER, then extracts and uploads:
+`watch_adls_and_run_pio_headless.py` discovers game-tree solve requests, solves each with PioSOLVER, then extracts and uploads:
 
 - gzipped **street bundles** to `piosolutions/{stacks}/{node_name}/{board}/streets/{seedSuffix}.json.gz` (flop + all turn streets precomputed at solve time; rivers extracted on demand via the `noderequests/` queue and `POST /api/noderequests`)
 - a per-board `manifest.json` (schema 4: streets map, seats, preflop context, effective stack, solve stats)
 - an upserted entry in `piosolutions-index.json` at the container root (the frontend's "Solved flops" library)
+
+The **flop bundle and manifest are published as soon as the flop walk finishes**, before the turn sweep, so a user can open the board minutes before the full extraction completes; bundle uploads run in parallel (`PIO_UPLOAD_WORKERS`).
+
+### Gametree discovery: queue mode vs blob mode
+
+With `HOLDEMTOOLS_API_BASE` + `WATCHER_API_KEY` set in `.env`, the watcher claims jobs from the backend's **SolveJobs queue** (`POST /api/solvejobs/claim`, authenticated by the `X-Watcher-Key` shared secret) and reports status transitions (`Solving -> Extracting -> Uploading -> Done/Failed`) plus a heartbeat while a job runs, which is what drives the frontend's live pending card and queue positions.
+`POST /api/gametrees` writes both the blob and a Queued job row, so jobs survive watcher restarts and UTC-midnight boundaries, and failures surface to the user instead of timing out silently.
+A watcher that stops heartbeating for 5 minutes has its job requeued once, then failed with "watcher timed out".
+
+Without those env vars the watcher falls back to the legacy **blob mode**: polling `gametrees/<today UTC>/` directly (`WATCHER_USE_QUEUE=0` forces this as the rollback switch).
+Node requests are blob-driven in both modes, and are checked between every solve so a browsing user's river click never waits behind a queued batch.
 
 ## Schema 4: per-combo data
 
@@ -67,6 +78,7 @@ Hand-history uploads also carry an optional `Seats` list (pos, name, flop-time s
 | File | Role |
 |---|---|
 | `watch_adls_and_run_pio_headless.py` | The watcher. The only entry point to run for solves. |
+| `api_client.py` | SolveJobs queue client (claim, status reports, heartbeat). No pywinauto/Azure imports, so it runs anywhere for testing. |
 | `extraction.py` | Tree walk, 1326-to-169 aggregation, doc/manifest/bundle builders. |
 | `adls_store.py` | ADLS uploads + library index upserts. |
 | `cfr_registry.py` | Local `.cfr` LRU disk budget (`registry.json`). |
@@ -87,8 +99,8 @@ Because it drives the GUI, the desktop must be unlocked and the clipboard is tak
 
 ## Behavior notes
 
-- Only **today's UTC** `gametrees/yyyy/MM/dd/` folder is watched, and files that already exist at startup are skipped.
-Start the watcher **before** requesting solves from the frontend.
+- In queue mode, jobs are durable: submitted while the watcher is down, they wait as Queued and solve on startup.
+In blob mode only **today's UTC** `gametrees/yyyy/MM/dd/` folder is watched and files that already exist at startup are skipped, so start the watcher **before** requesting solves from the frontend.
 - Only **one** watcher instance may run - two fight over the PioViewer GUI.
 - Solve accuracy is a **fraction of the pot** (`PIO_ACCURACY_POT_FRACTION`, default 0.002 - about 1 chip on a typical 550-chip sim pot). Hand-history solves are denominated in the hand's own money, so pot magnitude varies per board and an absolute chip target would be loose at one stake and unreachable at another. `PIO_ACCURACY` remains as an absolute chips fallback.
 - Solve accuracy and CFR wait time are tunable via `PIO_ACCURACY_POT_FRACTION` / `PIO_ACCURACY` and `PIO_CFR_WAIT_SECS` in `.env`. A solve that does not converge inside `PIO_SOLVE_WAIT_SECS` now raises instead of uploading a partially solved tree.

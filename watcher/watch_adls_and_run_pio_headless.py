@@ -9,6 +9,7 @@ import subprocess
 import math
 import threading
 import queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- Azure Data Lake (Gen2) ---
 from azure.storage.filedatalake import DataLakeServiceClient
@@ -34,6 +35,7 @@ from adls_store import (
     upsert_library_index,
 )
 from cfr_registry import CfrRegistry, prune_temp_json
+import api_client
 
 # --- Windows UI automation & clipboard ---
 from pywinauto import Application, keyboard, findwindows
@@ -88,6 +90,17 @@ WATCH_TODAY_ONLY = True
 # Precompute every turn street at solve time (adds a few minutes per solve).
 # Set PIO_TURN_PRECOMPUTE=0 to fall back to on-demand turns via noderequests.
 PIO_TURN_PRECOMPUTE = os.getenv("PIO_TURN_PRECOMPUTE", "1") != "0"
+
+# Concurrent street-bundle uploads per publish (each thread gets its own ADLS
+# file client, and gzip releases the GIL, so both overlap cleanly).
+UPLOAD_WORKERS = int(os.getenv("PIO_UPLOAD_WORKERS", "8"))
+
+# Gametree discovery mode. Unset = auto: use the SolveJobs queue API when
+# HOLDEMTOOLS_API_BASE + WATCHER_API_KEY are configured, else fall back to
+# ADLS blob-listing. "1" forces queue mode (startup error if unconfigured),
+# "0" forces blob mode (the cutover rollback switch). Noderequests are always
+# blob-driven either way.
+WATCHER_USE_QUEUE_ENV = os.getenv("WATCHER_USE_QUEUE")
 
 PIO_TITLE_RE = os.getenv("PIO_TITLE_RE", r"(?i).*PioViewer.*")
 
@@ -825,12 +838,29 @@ def process_gametree_json(
     lm: str,
     pio: PioClient,
     registry: CfrRegistry,
-) -> None:
+    on_stage: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Solve one gametree blob end to end and publish its bundles.
+
+    `on_stage` (queue mode) is called with "Extracting" once the solve has
+    dumped its .cfr and with "Uploading" before the final publish, so job
+    status can track the pipeline. Raises on any failure - the caller decides
+    whether that means a Failed job report or just a log line.
+
+    Returns {stacks, node_name, board} of the published solution.
+    """
     log(f"[NEW] {full_path}  (last_modified={lm})")
+
+    def stage(s: str) -> None:
+        if on_stage is not None:
+            try:
+                on_stage(s)
+            except Exception as e:
+                log(f"  -> on_stage({s}) failed: {e}")
 
     raw = download_text(fs, full_path)
     if raw is None:
-        return
+        raise RuntimeError(f"could not download gametree blob {full_path}")
 
     # Accept raw or JSON { "Text": "...", "AlivePositions": [...], ... }
     alive_positions: Optional[list[str]] = None
@@ -866,8 +896,7 @@ def process_gametree_json(
 
     app = attach_pioviewer(PIO_TITLE_RE)
     if not app:
-        log("  -> PioViewer window not found.")
-        return
+        raise RuntimeError("PioViewer window not found")
 
     win = app.top_window()
     log(f"  -> Pio top window title before paste: '{win.window_text()}'")
@@ -891,19 +920,14 @@ def process_gametree_json(
         f"'{TREE_SCRIPT_BASENAME}' (board='{board_name}')"
     )
     if not save_current_parameters_simple(win, TREE_SCRIPT_BASENAME):
-        log("  -> WARNING: SaveCurrentParameters failed; skipping headless solve")
-        return
+        raise RuntimeError("SaveCurrentParameters failed; cannot run headless solve")
 
     # TreeBuilding script path (fixed temp)
     tree_script_path = os.path.join(
         TREEBUILD_DIR, f"{TREE_SCRIPT_BASENAME}.txt"
     )
     if not os.path.isfile(tree_script_path):
-        log(
-            "  -> WARNING: Expected TreeBuilding script not found: "
-            f"{tree_script_path}"
-        )
-        return
+        raise RuntimeError(f"expected TreeBuilding script not found: {tree_script_path}")
 
     # Registry-unique CFR path: same board on different sims/lines must not collide
     stacks_pre, node_name_pre, _date = parse_gametree_path(full_path, BASE_PREFIX)
@@ -922,85 +946,137 @@ def process_gametree_json(
         f"  -> Stats: EV_OOP={stats.get('ev_oop')}, "
         f"EV_IP={stats.get('ev_ip')}, exploitable={stats.get('exploitable')}"
     )
+    stage("Extracting")
 
-    # Street-bundle extraction (flop + all turns) -> gzipped bundles -> ADLS
+    # Publish is called twice per solve: once by extract_board's on_flop_ready
+    # hook with just the flop (so the board becomes openable while the turn
+    # sweep is still walking), and once afterwards with the full result. The
+    # manifest merge makes the second call purely additive, and
+    # `published_suffixes` keeps already-uploaded bundles from re-uploading.
+    published_suffixes: set[str] = set()
+    publish_info: Dict[str, Any] = {}
+
+    def publish_streets(extract_like: Dict[str, Any]) -> None:
+        # calc_results (read off the loaded .cfr) is authoritative over the
+        # values scraped from the solve log, and is the only source for MES.
+        merged_stats = {
+            **stats,
+            **{k: v for k, v in (extract_like.get("results") or {}).items() if v is not None},
+        }
+
+        ctx = build_board_context(
+            board=board_name,
+            cfr_file=os.path.basename(cfr_path),
+            src_gametree_path=full_path,
+            base_prefix=BASE_PREFIX,
+            stats=merged_stats,
+            tree_info=extract_like["tree_info"],
+            alive_positions=alive_positions,
+            acting_pos=acting_pos,
+            preflop_line=preflop_line,
+            is_icm=is_icm,
+            seat_meta=seat_meta,
+            hand_bb=hand_bb,
+            chip_scale=chip_scale,
+        )
+        stacks = ctx["stacks"] or "nostacks"
+        node_name = ctx["node_name"] or "nonode"
+        base = board_base_path(stacks, node_name, board_name)
+        ctx["effective_stack_chips"] = extract_like.get("effective_stack")
+
+        root_view = (extract_like["streets"].get("r:0") or {}).get("views", {}).get("r:0")
+        if root_view and root_view.get("pot"):
+            ctx["pot_chips"] = root_view["pot"][-1]
+
+        to_upload: list[tuple[str, Dict[str, Any], Dict[str, Any]]] = []
+        for seed_id, walk in extract_like["streets"].items():
+            suffix = node_id_to_suffix(seed_id)
+            if suffix in published_suffixes:
+                continue
+            bundle = build_street_bundle(
+                seed_id, walk["views"], walk["nodes_meta"], ctx, extract_like["hand_order"]
+            )
+            to_upload.append((suffix, walk, bundle))
+
+        streets_map: dict[str, Any] = {}
+        if to_upload:
+            with ThreadPoolExecutor(max_workers=UPLOAD_WORKERS) as pool:
+                futures = {
+                    pool.submit(upload_street_bundle, fs, base, bundle, TEMP_JSON_DIR): (
+                        suffix,
+                        walk,
+                        bundle,
+                    )
+                    for suffix, walk, bundle in to_upload
+                }
+                for fut in as_completed(futures):
+                    suffix, walk, bundle = futures[fut]
+                    if fut.result():
+                        streets_map[suffix] = street_entry(
+                            suffix, bundle["street"], len(walk["views"])
+                        )
+                        published_suffixes.add(suffix)
+
+        cfr_size = os.path.getsize(cfr_path) if os.path.exists(cfr_path) else None
+        # Merge into any existing manifest so a re-solve keeps street entries
+        # (e.g. rivers) extracted before the local .cfr was evicted, and the
+        # full-sweep publish keeps the flop entry from the early publish.
+        existing_manifest = download_manifest(fs, stacks, node_name, board_name)
+        manifest = build_manifest(
+            ctx, streets_map, cfr_size_bytes=cfr_size, existing=existing_manifest
+        )
+        upload_manifest(fs, base, manifest)
+
+        # Count off the merged manifest, not this call's uploads, so the entry
+        # is correct no matter which publish pass this is.
+        turn_streets = sum(
+            1
+            for e in manifest["streets"].values()
+            if e.get("street") == "turn" and e.get("extracted")
+        )
+        flop_views = (extract_like["streets"].get("r:0") or {}).get("views") or {}
+        upsert_library_index(
+            fs,
+            {
+                "stacks": stacks,
+                "node_name": node_name,
+                "board": board_name,
+                "preflop_line": preflop_line,
+                "alive_positions": ctx["alive_positions"],
+                "icm": ctx["is_icm"],
+                "created_utc": ctx["created_utc"],
+                "flop_nodes": len(flop_views),
+                "turn_streets": turn_streets,
+                "cfr_available": True,
+            },
+        )
+        publish_info.update({"stacks": stacks, "node_name": node_name})
+
+    # Street-bundle extraction (flop + all turns) -> gzipped bundles -> ADLS.
+    # The flop is published mid-extraction via on_flop_ready.
     log(f"  -> Extracting streets (turn_precompute={PIO_TURN_PRECOMPUTE})...")
     extract = extract_board(
-        cfr_path, PIO_DIR_FOR_PYOSOLVER, turn_precompute=PIO_TURN_PRECOMPUTE
+        cfr_path,
+        PIO_DIR_FOR_PYOSOLVER,
+        turn_precompute=PIO_TURN_PRECOMPUTE,
+        on_flop_ready=publish_streets,
     )
     if extract is None or not extract["streets"].get("r:0", {}).get("views"):
-        log("  -> extraction unavailable; skipping upload")
-        return
+        raise RuntimeError("extraction produced no flop decision nodes; nothing uploaded")
 
-    # calc_results (read off the loaded .cfr) is authoritative over the values
-    # scraped from the solve log, and is the only source for MES.
-    stats = {**stats, **{k: v for k, v in (extract.get("results") or {}).items() if v is not None}}
+    stage("Uploading")
+    publish_streets(extract)
 
-    ctx = build_board_context(
-        board=board_name,
-        cfr_file=os.path.basename(cfr_path),
-        src_gametree_path=full_path,
-        base_prefix=BASE_PREFIX,
-        stats=stats,
-        tree_info=extract["tree_info"],
-        alive_positions=alive_positions,
-        acting_pos=acting_pos,
-        preflop_line=preflop_line,
-        is_icm=is_icm,
-        seat_meta=seat_meta,
-        hand_bb=hand_bb,
-        chip_scale=chip_scale,
-    )
-    stacks = ctx["stacks"] or "nostacks"
-    node_name = ctx["node_name"] or "nonode"
-    base = board_base_path(stacks, node_name, board_name)
-    ctx["effective_stack_chips"] = extract.get("effective_stack")
-
-    root_view = extract["streets"]["r:0"]["views"].get("r:0")
-    if root_view and root_view.get("pot"):
-        ctx["pot_chips"] = root_view["pot"][-1]
-
-    streets_map: dict[str, Any] = {}
-    for seed_id, walk in extract["streets"].items():
-        bundle = build_street_bundle(
-            seed_id, walk["views"], walk["nodes_meta"], ctx, extract["hand_order"]
-        )
-        if upload_street_bundle(fs, base, bundle, TEMP_JSON_DIR):
-            streets_map[bundle["seed_suffix"]] = street_entry(
-                bundle["seed_suffix"], bundle["street"], len(walk["views"])
-            )
-
-    cfr_size = os.path.getsize(cfr_path) if os.path.exists(cfr_path) else None
-    # Merge into any existing manifest so a re-solve keeps street entries
-    # (e.g. rivers) extracted before the local .cfr was evicted.
-    existing_manifest = download_manifest(fs, stacks, node_name, board_name)
-    manifest = build_manifest(
-        ctx, streets_map, cfr_size_bytes=cfr_size, existing=existing_manifest
-    )
-    upload_manifest(fs, base, manifest)
-
-    turn_streets = sum(1 for e in streets_map.values() if e["street"] == "turn")
-    upsert_library_index(
-        fs,
-        {
-            "stacks": stacks,
-            "node_name": node_name,
-            "board": board_name,
-            "preflop_line": preflop_line,
-            "alive_positions": ctx["alive_positions"],
-            "icm": ctx["is_icm"],
-            "created_utc": ctx["created_utc"],
-            "flop_nodes": len(extract["streets"]["r:0"]["views"]),
-            "turn_streets": turn_streets,
-            "cfr_available": True,
-        },
-    )
+    stacks = publish_info["stacks"]
+    node_name = publish_info["node_name"]
 
     # Local disk housekeeping
     registry.touch(stacks, node_name, board_name)
     for evicted in registry.enforce_budget():
         mark_cfr_unavailable(fs, evicted["stacks"], evicted["node_name"], evicted["board"])
     prune_temp_json(TEMP_JSON_DIR)
+
+    return {"stacks": stacks, "node_name": node_name, "board": board_name}
 
 
 # =========================
@@ -1130,6 +1206,42 @@ def process_node_requests(
             log(f"  [nodereq] ERROR for {board}: {e}")
 
 
+def process_claimed_job(fs, job: Dict[str, Any], registry: CfrRegistry) -> None:
+    """Run one claimed queue job through the solve pipeline, reporting status
+    transitions (Solving -> Extracting -> Uploading -> Done/Failed) and
+    heartbeating for the duration. Never raises: every failure becomes a
+    Failed report plus a log line."""
+    job_id = str(job["id"])
+    blob_path = job["blobPath"]
+    name = blob_path.rsplit("/", 1)[-1]
+    log(f"[JOB {job_id}] attempt {job.get('attemptCount')}: {blob_path}")
+
+    api_client.report(job_id, status="Solving")
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    with api_client.Heartbeat(job_id):
+        # Fresh Pio process per job – guarantees shutdown after CFR
+        with PioClient(PIO_EXE) as pio:
+            try:
+                result = process_gametree_json(
+                    fs,
+                    blob_path,
+                    name,
+                    "queued-job",
+                    pio,
+                    registry,
+                    on_stage=lambda s: api_client.report(job_id, status=s),
+                )
+            except Exception as e:
+                error = str(e)
+                log(f"  -> ERROR processing {blob_path}: {e}")
+
+    if result is not None:
+        api_client.report(job_id, status="Done", result=result)
+    else:
+        api_client.report(job_id, status="Failed", error=error or "no output produced")
+
+
 # =========================
 # Main loop
 # =========================
@@ -1139,6 +1251,21 @@ def main():
 
     fs = get_fs_client()
     log("Connected to ADLS filesystem OK.")
+
+    # Gametree discovery: SolveJobs queue API when configured (or forced),
+    # ADLS blob listing otherwise. See WATCHER_USE_QUEUE_ENV.
+    if WATCHER_USE_QUEUE_ENV is None:
+        queue_mode = api_client.enabled()
+    else:
+        queue_mode = WATCHER_USE_QUEUE_ENV != "0"
+    if queue_mode and not api_client.enabled():
+        raise RuntimeError(
+            "WATCHER_USE_QUEUE=1 but HOLDEMTOOLS_API_BASE / WATCHER_API_KEY are not set"
+        )
+    log(
+        f"Gametree discovery: {'queue API (' + api_client.watcher_id() + ')' if queue_mode else 'ADLS blob listing'}"
+    )
+
     sub_today = today_subpath_utc()
     watch_label = f"{BASE_PREFIX}/{sub_today}" if WATCH_TODAY_ONLY else f"{BASE_PREFIX}/"
     log(f"Watching: {watch_label}/ (UTC)")
@@ -1149,7 +1276,9 @@ def main():
     log(f"Tree script basename (Save current parameters): {TREE_SCRIPT_BASENAME}")
     log(f"Poll: {POLL_SECS:.1f}s\n")
 
-    seen = list_existing_json(fs, BASE_PREFIX, WATCH_TODAY_ONLY)
+    # In queue mode gametree discovery is DB-driven, so no blob-listing seed
+    # (and none of its restart/UTC-midnight fragility) is needed for it.
+    seen = set() if queue_mode else list_existing_json(fs, BASE_PREFIX, WATCH_TODAY_ONLY)
     seen_reqs = list_existing_json(fs, NODEREQ_PREFIX, WATCH_TODAY_ONLY)
     log(
         f"Seeded with {len(seen)} gametree(s) and {len(seen_reqs)} node request(s). "
@@ -1173,9 +1302,18 @@ def main():
                 except Exception as e:
                     log(f"  -> ERROR processing node requests: {e}")
 
-            new_items = list_new_json(fs, seen, BASE_PREFIX, WATCH_TODAY_ONLY)
-            if new_items:
-                for full_path, name, lm in new_items:
+            # One gametree per iteration in both modes, so node requests
+            # (seconds-scale, a browsing user is actively waiting) get
+            # re-checked between every multi-minute solve.
+            if queue_mode:
+                job = api_client.claim_next()
+                if job is not None:
+                    process_claimed_job(fs, job, registry)
+                    continue
+            else:
+                new_items = list_new_json(fs, seen, BASE_PREFIX, WATCH_TODAY_ONLY)
+                if new_items:
+                    full_path, name, lm = new_items[0]
                     seen.add(full_path)
 
                     # Fresh Pio process per file – guarantees shutdown after CFR
@@ -1184,6 +1322,7 @@ def main():
                             process_gametree_json(fs, full_path, name, lm, pio, registry)
                         except Exception as e:
                             log(f"  -> ERROR processing {full_path}: {e}")
+                    continue
 
             time.sleep(POLL_SECS)
     except KeyboardInterrupt:
