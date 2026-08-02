@@ -1,6 +1,7 @@
 # Minimal deps for watch_adls_and_run_pio_headless.py
 azure-storage-file-datalake>=12.14
 python-dotenv>=1.0
+requests>=2.31        # SolveJobs queue API client (api_client.py)
 pywinauto>=0.6.9      # drives PioViewer "Paste" + "Save current parameters"
 pyperclip>=1.9        # clipboard hand-off of the tree config
 # pyosolver is vendored as pyosolver.py (from https://github.com/weston/pyosolver - no PyPI package)

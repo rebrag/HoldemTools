@@ -48,7 +48,8 @@ namespace HoldemToolsAPI.Tests
             return controller;
         }
 
-        private static async Task<HandHistory> SeedHand(AppDbContext db, string ownerUid, string rawText)
+        private static async Task<HandHistory> SeedHand(
+            AppDbContext db, string ownerUid, string rawText, int? id = null)
         {
             var hand = new HandHistory
             {
@@ -56,6 +57,7 @@ namespace HoldemToolsAPI.Tests
                 RawText = rawText,
                 CreatedAt = DateTimeOffset.UtcNow,
             };
+            if (id.HasValue) hand.Id = id.Value;
             db.HandHistories.Add(hand);
             await db.SaveChangesAsync();
             return hand;
@@ -65,7 +67,10 @@ namespace HoldemToolsAPI.Tests
         public async Task Owner_CanCreate_ShareToken()
         {
             using var db = NewDb();
-            var hand = await SeedHand(db, "owner-1", "raw-hand-text");
+            // A distinctive multi-digit id: with the default sequential id (1),
+            // "token must not contain the id" fails for any random token that
+            // happens to include the digit 1 - about a third of them.
+            var hand = await SeedHand(db, "owner-1", "raw-hand-text", id: 987654321);
             var controller = AuthedController(db, "owner-1");
 
             var result = await controller.CreateShare(hand.Id);

@@ -38,6 +38,7 @@ import TreeBuildingModal, { type TreeBuildingInit } from "@/pages/solver/TreeBui
 import { POSTFLOP_ENABLED } from "@/lib/solver/constants";
 import { buildTreeConfigText } from "@/lib/solver/treeConfig";
 import { uploadGameTree } from "@/lib/solver/uploadGameTree";
+import { fetchSolveJob } from "@/lib/solver/solveJobs";
 import { extractHandSolve, type HandSolveExtract } from "./solveBridge";
 import { parseGameString } from "./parseGameString";
 import { parseHandDefaults, type HandDefaults } from "./parseHandDefaults";
@@ -758,7 +759,7 @@ const CreateHandHistory: React.FC<Props> = ({
     setSolveError(null);
     try {
       const text = buildTreeConfigText(params, flopCards);
-      await uploadGameTree({
+      const result = await uploadGameTree({
         folder: solveOffer.folder,
         line: solveOffer.preflopLine,
         actingPos: solveOffer.actingPos,
@@ -773,8 +774,21 @@ const CreateHandHistory: React.FC<Props> = ({
         chipScale: solveOffer.chipScale,
       });
       setSolveNotice(
-        "Solve requested - it will appear under Solved Flops on the Solutions page (usually 2-10 min)."
+        "Solve queued - it will appear under Solved Flops on the Solutions page (usually 2-10 min)."
       );
+      // One status fetch for an honest queue position; the job itself is
+      // durable, so navigating away loses nothing.
+      if (result.jobId) {
+        void fetchSolveJob(result.jobId)
+          .then((job) => {
+            if (job?.status === "Queued" && job.queuePosition && job.queuePosition > 1) {
+              setSolveNotice(
+                `Solve queued (#${job.queuePosition} in line) - it will appear under Solved Flops on the Solutions page.`
+              );
+            }
+          })
+          .catch(() => undefined);
+      }
       window.setTimeout(finishSolveFlow, 2400);
     } catch (e: unknown) {
       setSolveError(e instanceof Error ? e.message : "Upload failed.");

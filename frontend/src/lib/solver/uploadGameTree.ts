@@ -31,7 +31,18 @@ export type UploadGameTreeBody = {
   chipScale?: number;
 };
 
-export async function uploadGameTree(body: UploadGameTreeBody) {
+export type UploadGameTreeResult = {
+  ok?: boolean;
+  /** Full ADLS path of the uploaded gametree JSON. */
+  path?: string;
+  /** SolveJob id for status polling (see solveJobs.ts). */
+  jobId?: string;
+  /** True when an identical sim-path solve was already queued or running and
+   *  jobId points at that job instead of a new one. */
+  deduped?: boolean;
+};
+
+export async function uploadGameTree(body: UploadGameTreeBody): Promise<UploadGameTreeResult> {
   const start = performance.now();
 
   // Helpful client-side diagnostics
@@ -67,8 +78,7 @@ export async function uploadGameTree(body: UploadGameTreeBody) {
     throw new Error(`Upload failed with status ${res.status}`);
   }
 
-  const payload = isJson ? await res.json() : {};
+  const payload: UploadGameTreeResult = isJson ? await res.json() : {};
   console.info(`[uploadGameTree] Uploaded in ${dur}ms`, payload);
-  // payload.path is the full ADLS path (as your controller returns)
-  return payload; // { ok: true, path: "gametrees/....json" }
+  return payload; // { ok, path, jobId, deduped }
 }

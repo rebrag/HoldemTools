@@ -12,7 +12,7 @@ import re
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
 def log(msg: str) -> None:
@@ -589,12 +589,18 @@ def extract_board(
     max_nodes_per_street: int = 500,
     seeds: Optional[List[str]] = None,
     extra_seeds: Optional[List[str]] = None,
+    on_flop_ready: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Load a .cfr ONCE and walk one or more streets.
 
     Default: walk the flop street, then (if turn_precompute) every turn street
     reachable from each flop chance node. Pass `seeds` (colon node ids) to walk
     only specific streets instead (on-demand river extraction).
+
+    `on_flop_ready` (default walk only) is invoked right after the flop street
+    finishes, with a partial result dict of the same shape holding just the
+    flop, so the caller can publish it while the turn sweep is still running.
+    A failure in the callback is logged and never aborts the sweep.
 
     `extra_seeds` are walked in addition to the default set. Re-extraction uses
     it for river streets: those only exist because someone asked for them, so
@@ -631,6 +637,8 @@ def extract_board(
         except Exception:
             effective_stack = None
 
+        results = read_solve_results(solver)
+
         ev_cache: Dict[Tuple[str, str], Optional[List[float]]] = {}
         streets: Dict[str, Dict[str, Any]] = {}
 
@@ -652,6 +660,19 @@ def extract_board(
                 walk(seed_id)
         else:
             walk("r:0")
+            if on_flop_ready is not None and streets["r:0"]["views"]:
+                try:
+                    on_flop_ready(
+                        {
+                            "hand_order": hand_order,
+                            "tree_info": tree_info,
+                            "effective_stack": effective_stack,
+                            "results": results,
+                            "streets": {"r:0": streets["r:0"]},
+                        }
+                    )
+                except Exception as e:
+                    log(f"  [board] on_flop_ready failed (turn sweep continues): {e}")
             flop_meta = streets["r:0"]["nodes_meta"]
             chance_suffixes = [
                 s for s, m in flop_meta.items() if m.get("type") == CHANCE_TYPE
@@ -678,7 +699,7 @@ def extract_board(
             "hand_order": hand_order,
             "tree_info": tree_info,
             "effective_stack": effective_stack,
-            "results": read_solve_results(solver),
+            "results": results,
             "streets": streets,
         }
     finally:

@@ -3,7 +3,10 @@ using Azure.Storage.Files.DataLake;
 using Azure.Storage.Files.DataLake.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using PokerRangeAPI2.Data;
+using PokerRangeAPI2.Models;
 using System;
 using System.IO;
 using System.Linq;            // 👈 needed for .Select(...)
@@ -19,8 +22,9 @@ namespace PokerRangeAPI2.Controllers
     {
         private readonly DataLakeServiceClient _dataLakeServiceClient;
         private readonly string _containerName;
+        private readonly AppDbContext _db;
 
-        public GameTreesController(IConfiguration configuration)
+        public GameTreesController(IConfiguration configuration, AppDbContext db)
         {
             string? connectionString = configuration["AzureStorage:ConnectionString"];
             _containerName = configuration["AzureStorage:ContainerName"] ?? "onlinerangedata";
@@ -29,6 +33,7 @@ namespace PokerRangeAPI2.Controllers
                 throw new InvalidOperationException("AzureStorage:ConnectionString is missing from configuration.");
 
             _dataLakeServiceClient = new DataLakeServiceClient(connectionString);
+            _db = db;
         }
 
         // --------------------------------------------------------------------
@@ -96,7 +101,83 @@ namespace PokerRangeAPI2.Controllers
 
             await file.UploadAsync(ms, overwrite: true);
 
-            return Ok(new { ok = true, path = $"{dirPath}/{fileName}" });
+            var path = $"{dirPath}/{fileName}";
+            var (job, deduped) = await CreateOrDedupeJobAsync(
+                _db, uid, path, safeFolder, safeLine, safePos, req.IsICM,
+                ParseBoard(req.Text), hasSeatMeta: seats is { Length: > 0 });
+
+            return Ok(new { ok = true, path, jobId = job.Id, deduped });
+        }
+
+        /// <summary>
+        /// Insert a Queued SolveJob for this upload, unless an identical
+        /// sim-path job is already queued or being solved, in which case the
+        /// caller is handed that job. A duplicate would cost ~10 minutes of the
+        /// single Pio machine to produce a byte-identical manifest at the same
+        /// path. Hand-history uploads (seat meta) are personalized and never
+        /// dedupe. Static and DB-only so tests can drive it without ADLS.
+        /// </summary>
+        public static async Task<(SolveJob job, bool deduped)> CreateOrDedupeJobAsync(
+            AppDbContext db,
+            string uid,
+            string blobPath,
+            string folder,
+            string lineKey,
+            string actingPos,
+            bool isIcm,
+            string? board,
+            bool hasSeatMeta)
+        {
+            if (!hasSeatMeta && board != null)
+            {
+                var openStatuses = SolveJobStatus.Active
+                    .Concat(new[] { SolveJobStatus.Queued })
+                    .ToArray();
+                var existing = await db.SolveJobs.FirstOrDefaultAsync(j =>
+                    !j.HasSeatMeta &&
+                    j.Board == board &&
+                    j.Folder == folder &&
+                    j.LineKey == lineKey &&
+                    j.ActingPos == actingPos &&
+                    j.IsIcm == isIcm &&
+                    openStatuses.Contains(j.Status));
+                if (existing != null)
+                    return (existing, true);
+            }
+
+            var job = new SolveJob
+            {
+                Id = Guid.NewGuid(),
+                UserId = uid,
+                Type = SolveJobType.GameTree,
+                BlobPath = blobPath,
+                Folder = folder,
+                LineKey = lineKey,
+                ActingPos = actingPos,
+                IsIcm = isIcm,
+                Board = board,
+                HasSeatMeta = hasSeatMeta,
+                Status = SolveJobStatus.Queued,
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+            };
+            db.SolveJobs.Add(job);
+            await db.SaveChangesAsync();
+            return (job, false);
+        }
+
+        /// <summary>
+        /// '#Board#4h Jh 5s' -> '4hJh5s'. Same pattern the watcher uses
+        /// (get_board_name in watch_adls_and_run_pio_headless.py), so the job
+        /// row and the eventual manifest agree on the board key.
+        /// </summary>
+        public static string? ParseBoard(string text)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(
+                text,
+                @"#Board#([2-9TJQKA][shdc])\s+([2-9TJQKA][shdc])\s+([2-9TJQKA][shdc])");
+            return m.Success
+                ? string.Concat(m.Groups[1].Value, m.Groups[2].Value, m.Groups[3].Value)
+                : null;
         }
 
         // --------------------------------------------------------------------
