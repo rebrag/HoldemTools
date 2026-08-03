@@ -53,6 +53,20 @@ jobs:
     needs: build
 
     steps:
+      # First, and before the checkout: an unset secret expands to an empty
+      # string, which SqlClient reports four minutes later as "The
+      # ConnectionString property has not been initialized" from the bottom of
+      # a stack trace. Name the real problem in seconds instead.
+      - name: Check the connection string secret is set
+        shell: bash
+        env:
+          CONN: ${{ secrets.AZURE_SQL_CONNECTION_STRING }}
+        run: |
+          if [ -z "$CONN" ]; then
+            echo "::error::AZURE_SQL_CONNECTION_STRING is not set, so migrations cannot run and the deploy will be skipped. Add it under Settings > Secrets and variables > Actions (same value as the App Service ConnectionStrings:DefaultConnection)."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
 
       - name: Set up .NET Core
