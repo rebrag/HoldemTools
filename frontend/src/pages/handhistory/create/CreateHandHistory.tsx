@@ -218,6 +218,12 @@ const CreateHandHistory: React.FC<Props> = ({
   // pendingNavRef is set when the modal closed before the save finished.
   const savedRef = useRef<"idle" | "ok" | "error">("idle");
   const pendingNavRef = useRef(false);
+  // Resolves to the saved hand's id, so a solve queued from this hand can be
+  // linked back to it in the solved-flops library. The save runs concurrently
+  // with the solve prompt, so this is a promise rather than a value: by the
+  // time the user has walked the tree-building panel it has almost always
+  // settled, and awaiting it removes the race instead of assuming it away.
+  const savedHandIdRef = useRef<Promise<number | null>>(Promise.resolve(null));
   // Defaults seeding (standalone mode): copy the most recent saved hand's setup
   // once, unless the user has already touched the form or hit Clear all.
   const seededRef = useRef(false);
@@ -631,12 +637,25 @@ const CreateHandHistory: React.FC<Props> = ({
     }
     setSaving(true);
     setSaveError(null);
+    let resolveHandId: (id: number | null) => void = () => {};
+    savedHandIdRef.current = new Promise<number | null>((resolve) => {
+      resolveHandId = resolve;
+    });
     try {
       const res = await authedFetch("/api/handhistory", {
         method: "POST",
         body: JSON.stringify({ rawText: toSave, sessionId: null }),
       });
       if (!res.ok) throw new Error(`Save failed (${res.status})`);
+      // The API echoes the created row; its id is what links a solve queued
+      // from this hand back to it. A missing/unparseable body is not fatal -
+      // the solve simply goes unlinked.
+      try {
+        const saved: { id?: number } = await res.json();
+        resolveHandId(typeof saved?.id === "number" ? saved.id : null);
+      } catch {
+        resolveHandId(null);
+      }
       clearSetupDraft();
       // While the solve modal is up, the save completes silently in the
       // background; navigation happens when the modal is dismissed (or right
@@ -652,6 +671,9 @@ const CreateHandHistory: React.FC<Props> = ({
       setSaveError(e instanceof Error ? e.message : "Save failed.");
     } finally {
       setSaving(false);
+      // No-op once already resolved; guarantees an unsaved hand never leaves
+      // a solve upload waiting on a promise that will not settle.
+      resolveHandId(null);
     }
   };
 
@@ -759,7 +781,12 @@ const CreateHandHistory: React.FC<Props> = ({
     setSolveError(null);
     try {
       const text = buildTreeConfigText(params, flopCards);
+      // The concurrent save has had the whole tree-building panel to finish;
+      // wait for it anyway so the library can link the solved board back to
+      // this hand. Null (save failed, or signed-out flow) just means unlinked.
+      const handHistoryId = await savedHandIdRef.current.catch(() => null);
       const result = await uploadGameTree({
+        handHistoryId,
         folder: solveOffer.folder,
         line: solveOffer.preflopLine,
         actingPos: solveOffer.actingPos,

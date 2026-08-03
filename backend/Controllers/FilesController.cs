@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
+using PokerRangeAPI2.Data;
+using PokerRangeAPI2.Services;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -23,10 +25,12 @@ namespace PokerRangeAPI2.Controllers
         private readonly BlobServiceClient _blobServiceClient;
         private readonly string _containerName;
         private readonly IMemoryCache _cache;
+        private readonly AppDbContext _db;
 
-        public FilesController(IConfiguration configuration, IMemoryCache cache)
+        public FilesController(IConfiguration configuration, IMemoryCache cache, AppDbContext db)
         {
             _cache = cache;
+            _db = db;
 
             // 1) Read configuration (user-secrets / env vars / appsettings.*.json)
             string? connectionString = configuration["AzureStorage:ConnectionString"];
@@ -198,41 +202,48 @@ namespace PokerRangeAPI2.Controllers
 
         // --------------------------------------------------------------------
         // GET api/files/piosolutionsIndex
-        // Library index of all solved boards (piosolutions-index.json).
-        // Server-cached for 10s to absorb poll bursts, but no-cache to the
-        // browser: a just-solved board must show up on the next fetch, and a
-        // max-age here would compound with the server TTL into minutes of
-        // staleness.
+        // The caller's solved-flops library: the shared index blob
+        // (piosolutions-index.json) with a per-viewer overlay applied - see
+        // PostflopLibraryOverlay for what is labelled and what is dropped.
+        //
+        // Only the blob is server-cached (10s, to absorb poll bursts); the
+        // overlay is recomputed per request, since it is viewer-specific and
+        // must reflect a hide made a second ago. no-cache to the browser: a
+        // just-solved board must show up on the next fetch, and a max-age here
+        // would compound with the server TTL into minutes of staleness.
         // --------------------------------------------------------------------
         [Authorize]
         [HttpGet("piosolutionsIndex")]
         public async Task<IActionResult> GetPioSolutionsIndex()
         {
+            var uid = this.CurrentUid();
+            if (string.IsNullOrWhiteSpace(uid))
+                return Unauthorized();
+
             const string cacheKey = "piosolutions:index";
 
-            if (_cache.TryGetValue(cacheKey, out string? cachedJson) && cachedJson != null)
+            if (!_cache.TryGetValue(cacheKey, out string? json) || json == null)
             {
-                Response.Headers.CacheControl = "no-cache";
-                return Ok(cachedJson);
+                var indexBlob = _blobServiceClient
+                    .GetBlobContainerClient(_containerName)
+                    .GetBlobClient("piosolutions-index.json");
+
+                if (!await indexBlob.ExistsAsync())
+                    return NotFound("piosolutions-index.json not found. No postflop solutions indexed yet.");
+
+                BlobDownloadResult result = await indexBlob.DownloadContentAsync();
+                json = result.Content.ToString();
+
+                _cache.Set(cacheKey, json, new MemoryCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(10)
+                });
             }
 
-            var indexBlob = _blobServiceClient
-                .GetBlobContainerClient(_containerName)
-                .GetBlobClient("piosolutions-index.json");
-
-            if (!await indexBlob.ExistsAsync())
-                return NotFound("piosolutions-index.json not found. No postflop solutions indexed yet.");
-
-            BlobDownloadResult result = await indexBlob.DownloadContentAsync();
-            string json = result.Content.ToString();
-
-            _cache.Set(cacheKey, json, new MemoryCacheEntryOptions
-            {
-                AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(10)
-            });
+            var library = await PostflopLibraryOverlay.ApplyAsync(_db, uid, json);
 
             Response.Headers.CacheControl = "no-cache";
-            return Ok(json);
+            return Ok(library);
         }
 
 

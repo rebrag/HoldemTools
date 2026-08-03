@@ -29,6 +29,10 @@ export type UploadGameTreeBody = {
   /** Pio chips per unit of the hand's money, so the viewer can convert the
    *  solved numbers back. Omitted by sims, which use 100 chips per big blind. */
   chipScale?: number;
+  /** The saved hand this solve came from. The API verifies the caller owns it
+   *  before storing it, and the solved-flops library uses it to preview and
+   *  link back to the hand. */
+  handHistoryId?: number | null;
 };
 
 export type UploadGameTreeResult = {

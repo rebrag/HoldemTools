@@ -33,6 +33,14 @@ namespace PokerRangeAPI2.Models
         // their manifests are personalized (names, stacks, hole cards).
         public bool HasSeatMeta { get; set; }
 
+        // The recorded hand this solve came from, when it came from one. Set
+        // only after the uploader is confirmed to own that hand, so it is safe
+        // to hand back to the library as a replay link. Null for solver-page
+        // uploads and for hand-history solves queued before this column
+        // existed (those still carry HasSeatMeta).
+        public int? HandHistoryId { get; set; }
+        public HandHistory? HandHistory { get; set; }
+
         public string Status { get; set; } = SolveJobStatus.Queued;
 
         public int Priority { get; set; }      // higher claims first; 0 default

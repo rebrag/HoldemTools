@@ -17,6 +17,8 @@ namespace PokerRangeAPI2.Data
 
         public DbSet<SolveJob> SolveJobs { get; set; } = default!;
 
+        public DbSet<HiddenSolution> HiddenSolutions { get; set; } = default!;
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -82,6 +84,31 @@ namespace PokerRangeAPI2.Data
                 // Drives the claim ordering (Queued, priority desc, oldest
                 // first) and the queue-position counts.
                 entity.HasIndex(e => new { e.Status, e.Priority, e.CreatedAtUtc });
+
+                // Optional FK to the recorded hand this solve came from.
+                // Deleting the hand unlinks the job (the solved board stays in
+                // the library) rather than deleting solve history.
+                entity.HasOne(e => e.HandHistory)
+                    .WithMany()
+                    .HasForeignKey(e => e.HandHistoryId)
+                    .OnDelete(DeleteBehavior.SetNull);
+
+                // Resolves an index entry back to its job: the library overlay
+                // looks boards up by their manifest coordinates.
+                entity.HasIndex(e => new { e.ResultStacks, e.ResultNodeName, e.Board });
+            });
+
+            modelBuilder.Entity<HiddenSolution>(entity =>
+            {
+                entity.Property(e => e.UserId).HasMaxLength(128);
+                entity.Property(e => e.Stacks).HasMaxLength(200);
+                entity.Property(e => e.NodeName).HasMaxLength(200);
+                entity.Property(e => e.Board).HasMaxLength(12);
+
+                // One row per (viewer, board): hiding twice is a no-op, and the
+                // library overlay probes this set on every read.
+                entity.HasIndex(e => new { e.UserId, e.Stacks, e.NodeName, e.Board })
+                    .IsUnique();
             });
         }
     }

@@ -3,7 +3,7 @@
 // breakdown stacked in a right column. Mobile uses SingleRangeMobileView's
 // stacked layout instead; this component is desktop-only (rendered by
 // views/SingleRangeDesktopView).
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import PokerTable, { type PokerTableSeat } from "@/components/PokerTable";
 import { HandCellData } from "@/lib/solver/utils";
@@ -69,6 +69,11 @@ interface SingleRangeStudyProps {
   seatNames?: Record<string, string>;
   /** Chips/bb display toggle (hand-history solves only). */
   money?: MoneyDisplay;
+  /** Seat whose range is on screen; the pinned hand is tracked per seat. */
+  activePlayer?: string;
+  /** Seat -> the hand that seat held in the recorded hand (hand-history
+   *  solves). Seeds the pin when a board is opened. */
+  autoPinBySeat?: Record<string, { hand: string; combo: string }>;
 
   /** Measured content width (px) and viewport height / chrome offset. */
   baseW: number;
@@ -117,6 +122,8 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   actorSeat,
   seatNames,
   money,
+  activePlayer,
+  autoPinBySeat,
   baseW,
   viewH,
   topOffset,
@@ -132,10 +139,33 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
    * pointer leaves the grid. The hover is tracked even while pinned, so
    * unpinning lands on whatever the pointer is over rather than on nothing.
    * A pin is kept across node changes, so stepping through a line follows the
-   * same hand. */
-  const [pinnedHand, setPinnedHand] = useState<string | null>(null);
+   * same hand.
+   *
+   * Pins are per seat: a hand-history solve opens on what each player actually
+   * held, and OOP's KK has nothing to do with IP's AA, so one shared pin would
+   * jump to the wrong cell the moment the range toggle is used. */
+  const [pinBySeat, setPinBySeat] = useState<Record<string, string | null>>({});
   const [hoveredHand, setHoveredHand] = useState<string | null>(null);
+
+  /* Seed from the recorded hand whenever a different solve is opened. Keyed on
+   * the auto-pin map's identity (a new manifest builds a new one), so it does
+   * not fight the user's clicks within a board. */
+  useEffect(() => {
+    setPinBySeat(
+      autoPinBySeat
+        ? Object.fromEntries(Object.entries(autoPinBySeat).map(([seat, p]) => [seat, p.hand]))
+        : {}
+    );
+  }, [autoPinBySeat]);
+
+  const seatKey = activePlayer ?? "";
+  const pinnedHand = pinBySeat[seatKey] ?? null;
   const shownHand = pinnedHand ?? hoveredHand;
+  /* Only point at the exact combo while the pinned class is still the one the
+   * player held - once the user picks another cell, there is no combo to
+   * single out. */
+  const auto = autoPinBySeat?.[seatKey];
+  const highlightCombo = auto && auto.hand === shownHand ? auto.combo : null;
 
   /* Equity needs per-combo data (postflop, acting seat). The saved preference
    * is never overwritten: the effective mode just falls back to Strategy, so
@@ -220,7 +250,10 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
               displayData={displayData}
               selectedHand={pinnedHand}
               onHandSelect={(hand) =>
-                setPinnedHand((prev) => (prev === hand ? null : hand))
+                setPinBySeat((prev) => ({
+                  ...prev,
+                  [seatKey]: prev[seatKey] === hand ? null : hand,
+                }))
               }
               onHandHover={setHoveredHand}
             />
@@ -269,6 +302,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
             data={activeGrid}
             hand={shownHand}
             board={board}
+            highlightCombo={highlightCombo}
             comboDetail={comboDetail}
             displayMode={effectiveMode}
             evRange={displayData?.evRange ?? null}

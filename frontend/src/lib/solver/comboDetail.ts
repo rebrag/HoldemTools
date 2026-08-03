@@ -139,7 +139,7 @@ export function buildComboDetail(
 }
 
 /** Hand class ("AKs" / "T9o" / "77") for two card codes, either order. */
-const handClassOf = (a: string, b: string): string => {
+export const handClassOf = (a: string, b: string): string => {
   const [hi, lo] =
     (RANK_IDX[a[0]] ?? 99) <= (RANK_IDX[b[0]] ?? 99) ? [a, b] : [b, a];
   if (hi[0] === lo[0]) return hi[0] + lo[0];
