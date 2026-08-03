@@ -1,6 +1,16 @@
 # Deploys the backend (backend/) to Azure App Service "holdemtoolsapieast".
 # Uses a publish profile (basic auth) stored in the AZURE_WEBAPP_PUBLISH_PROFILE
 # repo secret. Builds from the backend/ subfolder and only runs on backend changes.
+#
+# build -> migrate -> deploy, in that order and each gated on the last. The
+# schema has to be in place BEFORE the code that expects it starts serving:
+# deploying first leaves every request that touches the new column failing
+# until someone remembers to run the migration by hand. Additive migrations
+# are safe against the running old code, so the reverse order is the one that
+# costs nothing.
+#
+# Requires the AZURE_SQL_CONNECTION_STRING repo secret, and a database
+# firewall that admits GitHub-hosted runners (their IPs are dynamic).
 name: Build and deploy ASP.Net Core app to Azure Web App - holdemtoolsapieast
 
 on:
@@ -38,9 +48,33 @@ jobs:
           name: .net-app
           path: ${{env.DOTNET_ROOT}}/myapp
 
-  deploy:
+  migrate:
     runs-on: windows-latest
     needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET Core
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      # Pinned to the project's EF Core major (8.0.22): the tool has to be at
+      # least the runtime version, and a newer major would quietly generate a
+      # snapshot the project can't read.
+      - name: Install EF Core tools
+        run: dotnet tool install --global dotnet-ef --version 8.*
+
+      # Idempotent by construction - EF skips every migration already in
+      # __EFMigrationsHistory - so a redeploy with no new migrations is a
+      # no-op rather than a risk. A failure here stops the deploy.
+      - name: Apply database migrations
+        run: dotnet ef database update --project backend/GTOLiteAPI.csproj --configuration Release --connection "${{ secrets.AZURE_SQL_CONNECTION_STRING }}"
+
+  deploy:
+    runs-on: windows-latest
+    needs: [build, migrate]
 
     steps:
       - name: Download artifact from build job
