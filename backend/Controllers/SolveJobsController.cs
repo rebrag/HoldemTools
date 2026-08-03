@@ -97,6 +97,7 @@ namespace PokerRangeAPI2.Controllers
             ActiveAhead = activeAhead,
             Error = job.Error,
             AttemptCount = job.AttemptCount,
+            HandHistoryId = job.HandHistoryId,
             ResultStacks = job.ResultStacks,
             ResultNodeName = job.ResultNodeName,
             CreatedAtUtc = job.CreatedAtUtc,
@@ -120,6 +121,7 @@ namespace PokerRangeAPI2.Controllers
             public int? ActiveAhead { get; set; }
             public string? Error { get; set; }
             public int AttemptCount { get; set; }
+            public int? HandHistoryId { get; set; }
             public string? ResultStacks { get; set; }
             public string? ResultNodeName { get; set; }
             public DateTimeOffset CreatedAtUtc { get; set; }

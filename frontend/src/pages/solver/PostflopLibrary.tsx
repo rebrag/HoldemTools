@@ -1,10 +1,14 @@
-// Library of previously solved postflop boards: grouped by sim folder and
-// preflop line, each board shown as three mini cards. Click to reopen.
-import React, { useMemo } from "react";
-import { X } from "lucide-react";
+// Library of previously solved postflop boards, split by where the solve came
+// from: hands the viewer recorded (previewed and linked back to the hand) and
+// boards solved off a preflop sim line. Click a board to reopen it; remove one
+// to take it out of this viewer's library (reversible - see SolutionsController).
+import React, { useMemo, useRef, useState } from "react";
+import { Trash2, X } from "lucide-react";
+import { Link } from "react-router-dom";
 import PlayingCard from "@/components/PlayingCard";
+import HandPreview from "@/pages/handhistory/HandPreview";
 import { boardToCards } from "@/lib/solver/postflopNode";
-import type { PostflopIndexEntry } from "@/lib/solver/postflopLibrary";
+import { solutionKey, type PostflopIndexEntry } from "@/lib/solver/postflopLibrary";
 
 export interface PostflopLibraryProps {
   entries: PostflopIndexEntry[];
@@ -13,6 +17,12 @@ export interface PostflopLibraryProps {
   onSignIn?: () => void;
   onOpen: (entry: PostflopIndexEntry) => void;
   onClose: () => void;
+  /** Remove boards from this viewer's library. */
+  onRemove?: (entries: PostflopIndexEntry[]) => Promise<void>;
+  /** Put them back (Undo). */
+  onRestore?: (entries: PostflopIndexEntry[]) => Promise<void>;
+  /** Saved hand id -> rawText, for the preview above each hand's boards. */
+  handTextById?: Record<number, string>;
 }
 
 type LineGroup = {
@@ -23,6 +33,55 @@ type LineGroup = {
   boards: PostflopIndexEntry[];
 };
 
+type HandGroup = {
+  key: string;
+  handHistoryId: number | null;
+  newest: string;
+  boards: PostflopIndexEntry[];
+};
+
+const newestFirst = (a: PostflopIndexEntry, b: PostflopIndexEntry) =>
+  (b.created_utc || "").localeCompare(a.created_utc || "");
+
+/** One board: a card trio that opens it, with a remove affordance on top.
+ *  The remove button is a sibling rather than a child - a button inside a
+ *  button is invalid markup, and the click would have to be swallowed. */
+const BoardTile: React.FC<{
+  entry: PostflopIndexEntry;
+  onOpen: () => void;
+  onRemove?: () => void;
+  busy?: boolean;
+}> = ({ entry, onOpen, onRemove, busy }) => (
+  <div className="relative">
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 hover:bg-emerald-500/10 hover:border-emerald-400/50 px-2 py-1.5 shadow-sm transition-all hover:-translate-y-0.5 disabled:opacity-50"
+      title={`Open ${entry.board}`}
+      disabled={busy}
+      data-testid="library-board"
+      data-board={entry.board}
+    >
+      {boardToCards(entry.board).map((code) => (
+        <PlayingCard key={code} code={code} width="clamp(26px, 5vw, 38px)" />
+      ))}
+    </button>
+    {onRemove && (
+      <button
+        type="button"
+        onClick={onRemove}
+        disabled={busy}
+        aria-label={`Remove ${entry.board} from library`}
+        title="Remove from library"
+        data-testid="library-remove"
+        className="absolute -right-1.5 -top-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/15 bg-slate-800 text-gray-400 opacity-70 shadow transition-all hover:scale-110 hover:bg-rose-600 hover:text-white hover:opacity-100 disabled:opacity-40"
+      >
+        <Trash2 size={10} />
+      </button>
+    )}
+  </div>
+);
+
 const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
   entries,
   loading,
@@ -30,10 +89,74 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
   onSignIn,
   onOpen,
   onClose,
+  onRemove,
+  onRestore,
+  handTextById,
 }) => {
-  const groups: LineGroup[] = useMemo(() => {
+  /* What the last remove took out, so it can be put back. Cleared on a timer
+     so the pill doesn't linger over the list forever. */
+  const [undo, setUndo] = useState<{ entries: PostflopIndexEntry[]; label: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const undoTimer = useRef<number | null>(null);
+
+  const offerUndo = (removed: PostflopIndexEntry[], label: string) => {
+    if (undoTimer.current) window.clearTimeout(undoTimer.current);
+    setUndo({ entries: removed, label });
+    undoTimer.current = window.setTimeout(() => setUndo(null), 8000);
+  };
+
+  const remove = async (targets: PostflopIndexEntry[], label: string) => {
+    if (!onRemove || targets.length === 0) return;
+    setBusy(true);
+    try {
+      await onRemove(targets);
+      offerUndo(targets, label);
+    } catch {
+      /* the hook restores the list; nothing to offer undoing */
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const restore = async () => {
+    if (!undo || !onRestore) return;
+    const targets = undo.entries;
+    setUndo(null);
+    setBusy(true);
+    try {
+      await onRestore(targets);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /* Hand-history solves: one group per recorded hand. Entries queued before
+     provenance was tracked have no id and share a single unlabelled group. */
+  const handGroups: HandGroup[] = useMemo(() => {
+    const byKey = new Map<string, HandGroup>();
+    for (const e of entries) {
+      if (e.source !== "handHistory") continue;
+      const id = typeof e.hand_history_id === "number" ? e.hand_history_id : null;
+      const key = id == null ? "unlinked" : `hh-${id}`;
+      let group = byKey.get(key);
+      if (!group) {
+        group = { key, handHistoryId: id, newest: "", boards: [] };
+        byKey.set(key, group);
+      }
+      group.boards.push(e);
+    }
+    for (const g of byKey.values()) {
+      g.boards.sort(newestFirst);
+      g.newest = g.boards[0]?.created_utc ?? "";
+    }
+    return [...byKey.values()].sort((a, b) => b.newest.localeCompare(a.newest));
+  }, [entries]);
+
+  /* Sim solves keep the original grouping: sim folder + preflop line. */
+  const lineGroups: LineGroup[] = useMemo(() => {
     const byKey = new Map<string, LineGroup>();
     for (const e of entries) {
+      if (e.source === "handHistory") continue;
       const lineLabel =
         Array.isArray(e.preflop_line) && e.preflop_line.length > 1
           ? e.preflop_line.slice(1).join(" · ")
@@ -46,11 +169,11 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
       }
       group.boards.push(e);
     }
-    for (const g of byKey.values()) {
-      g.boards.sort((a, b) => (b.created_utc || "").localeCompare(a.created_utc || ""));
-    }
+    for (const g of byKey.values()) g.boards.sort(newestFirst);
     return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
   }, [entries]);
+
+  const isEmpty = handGroups.length === 0 && lineGroups.length === 0;
 
   return (
     <div
@@ -93,48 +216,132 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
             <div className="py-8 text-center text-sm text-gray-400 animate-pulse">
               Loading solved boards…
             </div>
-          ) : groups.length === 0 ? (
+          ) : isEmpty ? (
             <div className="py-8 text-center text-sm text-gray-400">
               No solved flops yet. Walk a heads-up preflop line to a Call and pick a flop
               to request the first one.
             </div>
           ) : (
-            <div className="space-y-4">
-              {groups.map((group) => (
-                <div key={group.key}>
-                  <div className="mb-1.5 flex flex-wrap items-baseline gap-2">
-                    <span className="text-xs font-semibold text-gray-100">
-                      {group.lineLabel}
-                    </span>
-                    <span className="truncate text-[0.65rem] text-gray-400" title={group.stacks}>
-                      {group.stacks}
-                    </span>
-                    {group.icm && (
-                      <span className="rounded-full bg-amber-500/15 border border-amber-400/40 px-1.5 text-[0.6rem] text-amber-200">
-                        ICM
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {group.boards.map((entry) => (
-                      <button
-                        key={`${entry.node_name}-${entry.board}`}
-                        type="button"
-                        onClick={() => onOpen(entry)}
-                        className="group flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 hover:bg-emerald-500/10 hover:border-emerald-400/50 px-2 py-1.5 shadow-sm transition-all hover:-translate-y-0.5"
-                        title={`Open ${entry.board}`}
+            <div className="space-y-6">
+              {handGroups.length > 0 && (
+                <section data-testid="library-hand-section">
+                  <h3 className="mb-2 text-[0.7rem] font-semibold uppercase tracking-wider text-emerald-300">
+                    From your hands
+                  </h3>
+                  <div className="space-y-3">
+                    {handGroups.map((group) => (
+                      <div
+                        key={group.key}
+                        className="rounded-xl border border-white/10 bg-white/[0.03] p-2"
                       >
-                        {boardToCards(entry.board).map((code) => (
-                          <PlayingCard key={code} code={code} width="clamp(26px, 5vw, 38px)" />
-                        ))}
-                      </button>
+                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            {group.handHistoryId != null &&
+                            handTextById?.[group.handHistoryId] ? (
+                              <HandPreview rawText={handTextById[group.handHistoryId]} />
+                            ) : (
+                              <span className="text-[0.7rem] text-gray-400">
+                                {group.handHistoryId == null
+                                  ? "Recorded hand"
+                                  : "Hand no longer saved"}
+                              </span>
+                            )}
+                          </div>
+                          {group.handHistoryId != null && (
+                            <Link
+                              to={`/hand-history/replay/${group.handHistoryId}`}
+                              onClick={onClose}
+                              className="shrink-0 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[0.65rem] font-semibold text-emerald-300 hover:bg-emerald-500/15 hover:text-emerald-200"
+                            >
+                              Replay hand
+                            </Link>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {group.boards.map((entry) => (
+                            <BoardTile
+                              key={solutionKey(entry)}
+                              entry={entry}
+                              busy={busy}
+                              onOpen={() => onOpen(entry)}
+                              onRemove={
+                                onRemove
+                                  ? () => void remove([entry], `${entry.board} removed`)
+                                  : undefined
+                              }
+                            />
+                          ))}
+                        </div>
+                      </div>
                     ))}
                   </div>
-                </div>
-              ))}
+                </section>
+              )}
+
+              {lineGroups.length > 0 && (
+                <section data-testid="library-sim-section">
+                  {handGroups.length > 0 && (
+                    <h3 className="mb-2 text-[0.7rem] font-semibold uppercase tracking-wider text-gray-400">
+                      From preflop sims
+                    </h3>
+                  )}
+                  <div className="space-y-4">
+                    {lineGroups.map((group) => (
+                      <div key={group.key}>
+                        <div className="mb-1.5 flex flex-wrap items-baseline gap-2">
+                          <span className="text-xs font-semibold text-gray-100">
+                            {group.lineLabel}
+                          </span>
+                          <span
+                            className="truncate text-[0.65rem] text-gray-400"
+                            title={group.stacks}
+                          >
+                            {group.stacks}
+                          </span>
+                          {group.icm && (
+                            <span className="rounded-full bg-amber-500/15 border border-amber-400/40 px-1.5 text-[0.6rem] text-amber-200">
+                              ICM
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {group.boards.map((entry) => (
+                            <BoardTile
+                              key={solutionKey(entry)}
+                              entry={entry}
+                              busy={busy}
+                              onOpen={() => onOpen(entry)}
+                              onRemove={
+                                onRemove
+                                  ? () => void remove([entry], `${entry.board} removed`)
+                                  : undefined
+                              }
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
             </div>
           )}
         </div>
+
+        {undo && onRestore && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+            <div className="pointer-events-auto inline-flex items-center gap-3 rounded-full border border-white/15 bg-slate-800/95 px-3 py-1.5 text-[0.7rem] text-gray-200 shadow-lg backdrop-blur-sm animate-in fade-in slide-in-from-bottom-2 duration-200">
+              <span>{undo.label}</span>
+              <button
+                type="button"
+                onClick={() => void restore()}
+                className="font-semibold text-emerald-300 hover:text-emerald-200"
+              >
+                Undo
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -85,6 +85,10 @@ export interface SingleRangeDesktopViewProps extends SingleRangeViewProps {
   onHeightModeChange: (mode: MatrixHeightMode) => void;
   singleRangeView: boolean;
   onToggleSingleRange: () => void;
+  /** Seat -> the hand that seat actually held, for hand-history solves. The
+   *  study view opens on it (per seat, so OOP and IP each get their own) and
+   *  the breakdown highlights the exact combo. Empty for sim solves. */
+  autoPinBySeat?: Record<string, { hand: string; combo: string }>;
 }
 
 export interface MultiRangeViewProps extends SolverRangeBaseProps {

@@ -57,8 +57,10 @@ import {
   saveMatrixDisplayMode,
   type MatrixDisplayMode,
 } from "@/lib/solver/matrixDisplayMode";
+import { comboKey, handClassOf } from "@/lib/solver/comboDetail";
 import { usePostflopSession } from "@/hooks/usePostflopSession";
 import usePostflopIndex from "@/hooks/usePostflopIndex";
+import useHandHistoryTexts from "@/hooks/useHandHistoryTexts";
 import PostflopLine from "./PostflopLine";
 import { preflopNodeFiles, usePreflopLineNodes } from "./usePreflopLineNodes";
 import PostflopLibrary from "./PostflopLibrary";
@@ -139,7 +141,13 @@ const pendingStageLabel = (status?: SolveJobStatus, queuePosition?: number | nul
 
 /** Pending banner shown while the local solver works on a fresh flop request.
  *  Tracks the solve job's stage and queue position; a failed job turns the
- *  card red with the watcher's error and a dismiss button. */
+ *  card red with the watcher's error and a dismiss button.
+ *
+ *  It floats: the outer row is `h-0`, so the card overlays whatever is below
+ *  it instead of pushing the study layout down. That matters beyond looks -
+ *  the views budget their height from `useTopOffset`, so an in-flow banner
+ *  shrank the matrix the moment a solve started and grew it back when the
+ *  solve landed. */
 const PendingSolveCard = ({
   board,
   startedAt,
@@ -164,11 +172,15 @@ const PendingSolveCard = ({
   const mm = Math.floor(elapsed / 60);
   const ss = String(elapsed % 60).padStart(2, "0");
   const failed = status === "Failed";
+  // items-start on the row is load-bearing: a flex child of a zero-height row
+  // stretches to it by default and collapses to nothing but its own padding.
   return (
-    <div className="flex justify-center mb-2 px-2">
+    <div className="pointer-events-none relative z-[70] flex h-0 items-start justify-center px-2">
       <div
         className={[
-          "inline-flex items-center gap-2 rounded-md bg-slate-900/80 px-3 py-1.5 shadow-sm border",
+          "pointer-events-auto inline-flex items-center gap-2 rounded-md border px-3 py-1.5",
+          "bg-slate-900/95 shadow-lg backdrop-blur-sm",
+          "animate-in fade-in slide-in-from-top-2 duration-200",
           failed ? "border-red-400/60" : "border-amber-400/50",
         ].join(" ")}
       >
@@ -262,7 +274,11 @@ const Solver = ({ user }: SolverProps) => {
   // Postflop session (navigation) + solutions library
   const pf = usePostflopSession();
   const pfIndex = usePostflopIndex(Boolean(uid));
+  const { hide: hideSolutions } = pfIndex;
   const [showLibrary, setShowLibrary] = useState(false);
+  // Only fetched while the library is open: it is the previews above each
+  // hand's solved boards, and nothing else on this page needs saved hands.
+  const handTexts = useHandHistoryTexts(showLibrary && Boolean(uid));
   const [postflopPending, setPostflopPending] = useState<{
     board: string[];
     startedAt: number;
@@ -1063,6 +1079,26 @@ const Solver = ({ user }: SolverProps) => {
     [uid, folderMetaMap, folders, tier, tierLoading, actuallyOpenFolder, pf]
   );
 
+  // Remove boards from this viewer's library. A board that is open right now
+  // would otherwise stay on screen after vanishing from the list, so the
+  // session is closed first.
+  const removeSolvedBoards = useCallback(
+    async (targets: PostflopIndexEntry[]) => {
+      const open = pf.view?.manifest;
+      const stillOpen =
+        open &&
+        targets.some(
+          (t) =>
+            t.stacks === open.stacks &&
+            t.node_name === open.node_name &&
+            t.board === open.board
+        );
+      if (stillOpen) exitPostflop();
+      await hideSolutions(targets);
+    },
+    [pf.view?.manifest, exitPostflop, hideSolutions]
+  );
+
   useKeyboardShortcuts({
     onToggleRandom: () => setRandomFillEnabled((prev) => !prev),
     folders,
@@ -1279,6 +1315,29 @@ const Solver = ({ user }: SolverProps) => {
   const activeComboDetail =
     pf.view && activePlayer === pf.view.actorSeat ? pf.view.actorCombos : null;
 
+  /* Hand-history solves know what each player actually held, so the study view
+   * opens on that hand instead of an empty breakdown: the class for the matrix
+   * cell, and the exact combo so the breakdown can point at KsKd rather than
+   * all six of KK. Keyed by seat, because OOP and IP held different hands and
+   * a single pin would follow the user across the range toggle.
+   *
+   * Only seats with two known cards get an entry - a villain who never showed
+   * has none, and the fixture case of an empty `cards` array is real. */
+  const autoPinBySeat = useMemo<Record<string, { hand: string; combo: string }>>(() => {
+    const meta = pf.view?.seatMeta;
+    if (!meta?.length) return {};
+    const out: Record<string, { hand: string; combo: string }> = {};
+    for (const seat of meta) {
+      const cards = (seat.cards ?? []).filter(Boolean);
+      if (cards.length !== 2) continue;
+      out[seat.pos] = {
+        hand: handClassOf(cards[0], cards[1]),
+        combo: comboKey(cards[0], cards[1]),
+      };
+    }
+    return out;
+  }, [pf.view?.seatMeta]);
+
   /* Chips/bb display for money-denominated solves, defaulting to the hand's
    * own chips. A sim has no chip scale, so it gets no MoneyDisplay at all and
    * every label falls back to its plain "bb". The bb option needs the hand's
@@ -1427,6 +1486,9 @@ const Solver = ({ user }: SolverProps) => {
           }}
           onOpen={(entry) => void openSolvedBoard(entry)}
           onClose={() => setShowLibrary(false)}
+          onRemove={removeSolvedBoards}
+          onRestore={pfIndex.unhide}
+          handTextById={handTexts.byId}
         />
       )}
 
@@ -1555,6 +1617,7 @@ const Solver = ({ user }: SolverProps) => {
                 seatNames={pf.view?.seatNames}
                 tableSeatsOverride={hhTableSeats}
                 money={pfMoney}
+                autoPinBySeat={autoPinBySeat}
               />
             ) : mode === "single-mobile" ? (
               <SingleRangeMobileView

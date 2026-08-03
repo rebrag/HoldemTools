@@ -109,6 +109,37 @@ test("the hand's full table renders: names, folded seat, hole cards", async ({ p
   await expect(page.getByPlaceholder("Select Sim")).not.toHaveValue(HH_STACKS);
 });
 
+/* The hand's own cards are the reason to open a hand-history solve, so the
+   study view starts on them rather than on an empty breakdown. OOP (SB) is
+   VillainSam with QdQh; IP (BB) is HeroJosh, who never showed, so that side
+   has nothing to pin - the empty `cards` array is the real shape of an
+   unknown hand and must not select some arbitrary cell. */
+test("opens on the hand the seat actually held", async ({ page }) => {
+  await openBoard(page);
+
+  const qq = page.locator('[data-testid="hand-cell"][data-hand="QQ"]');
+  await expect(qq).toHaveAttribute("data-selected", "1");
+  await expect(page.locator('[data-testid="hand-cell"][data-selected="1"]')).toHaveCount(1);
+
+  // And the breakdown points at the one combo they held, not all six of QQ.
+  const held = page.locator('[data-testid="combo-tile"][data-held="1"]');
+  await expect(held).toHaveCount(1);
+  await expect(held).toHaveAttribute("data-combo", /^(QdQh|QhQd)$/);
+});
+
+test("a seat whose cards are unknown starts with nothing pinned", async ({ page }) => {
+  await openBoard(page);
+
+  // Step into the next decision, which belongs to the other seat (BB/HeroJosh,
+  // whose hole cards the hand never recorded).
+  // The action buttons carry their percentages as text, so the title is the
+  // stable handle here.
+  await page.locator('button[title^="Click to see reactions to"]').first().click();
+
+  await expect(page.locator('[data-testid="hand-cell"][data-selected="1"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid="combo-tile"][data-held="1"]')).toHaveCount(0);
+});
+
 test("money defaults to the hand's chips and toggles to bb (pot + EV)", async ({ page }) => {
   await openBoard(page);
 

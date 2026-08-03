@@ -21,5 +21,9 @@ export default {
   },
   plugins: [
     require("tailwind-scrollbar-hide"),       // ← plugin now included
+    // Enter/exit utilities (animate-in, fade-in, slide-in-from-*). The
+    // package was already a dependency but never registered, so every
+    // `animate-in` in the app was a no-op class.
+    require("tailwindcss-animate"),
   ],
 };

@@ -96,7 +96,27 @@ export type PostflopIndexEntry = {
   flop_nodes: number;
   turn_streets?: number;
   cfr_available: boolean;
+  /** Where the solve came from. Added server-side per viewer, not by the
+   *  watcher: "handHistory" means this board came from a hand the viewer
+   *  recorded (other people's are filtered out before they get here). */
+  source?: "sim" | "handHistory";
+  /** The recorded hand behind a "handHistory" entry, when it was queued after
+   *  provenance was tracked. Null for earlier ones. */
+  hand_history_id?: number | null;
+  solve_job_id?: string | null;
 };
+
+/** The three coordinates that identify a solved board everywhere. */
+export type SolutionRef = { stacks: string; nodeName: string; board: string };
+
+export const solutionRef = (e: PostflopIndexEntry): SolutionRef => ({
+  stacks: e.stacks,
+  nodeName: e.node_name,
+  board: e.board,
+});
+
+export const solutionKey = (e: PostflopIndexEntry): string =>
+  `${e.stacks}|${e.node_name}|${e.board}`;
 
 export type PostflopIndex = {
   schema: number;
@@ -124,6 +144,19 @@ async function authedJson<T>(path: string): Promise<T | null> {
 
 export async function fetchPostflopIndex(): Promise<PostflopIndex | null> {
   return authedJson<PostflopIndex>(`/api/Files/piosolutionsIndex`);
+}
+
+/**
+ * Remove a board from (or put it back into) the caller's library. Hiding is
+ * per-viewer: the solution blobs and the shared index are owned by the solve
+ * pipeline, so nothing is destroyed and Undo is exact.
+ */
+export async function setSolutionHidden(ref: SolutionRef, hidden: boolean): Promise<void> {
+  const res = await authedFetch(`/api/solutions/hidden`, {
+    method: hidden ? "POST" : "DELETE",
+    body: JSON.stringify(ref),
+  });
+  if (!res.ok) throw new ApiError(res.status, `${res.status} hiding ${ref.board}`);
 }
 
 export async function fetchBoardManifest(

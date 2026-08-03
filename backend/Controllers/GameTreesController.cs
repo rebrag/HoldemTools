@@ -101,10 +101,22 @@ namespace PokerRangeAPI2.Controllers
 
             await file.UploadAsync(ms, overwrite: true);
 
+            // Provenance for the library: only recorded by this user's own
+            // hand can be linked, so the id is verified against the caller
+            // rather than trusted from the body. Anything else is dropped.
+            int? handHistoryId = null;
+            if (req.HandHistoryId is int hhId && hhId > 0)
+            {
+                bool owned = await _db.HandHistories
+                    .AnyAsync(h => h.Id == hhId && h.UserId == uid);
+                if (owned) handHistoryId = hhId;
+            }
+
             var path = $"{dirPath}/{fileName}";
             var (job, deduped) = await CreateOrDedupeJobAsync(
                 _db, uid, path, safeFolder, safeLine, safePos, req.IsICM,
-                ParseBoard(req.Text), hasSeatMeta: seats is { Length: > 0 });
+                ParseBoard(req.Text), hasSeatMeta: seats is { Length: > 0 },
+                handHistoryId: handHistoryId);
 
             return Ok(new { ok = true, path, jobId = job.Id, deduped });
         }
@@ -126,7 +138,8 @@ namespace PokerRangeAPI2.Controllers
             string actingPos,
             bool isIcm,
             string? board,
-            bool hasSeatMeta)
+            bool hasSeatMeta,
+            int? handHistoryId = null)
         {
             if (!hasSeatMeta && board != null)
             {
@@ -157,6 +170,7 @@ namespace PokerRangeAPI2.Controllers
                 IsIcm = isIcm,
                 Board = board,
                 HasSeatMeta = hasSeatMeta,
+                HandHistoryId = handHistoryId,
                 Status = SolveJobStatus.Queued,
                 CreatedAtUtc = DateTimeOffset.UtcNow,
             };
@@ -251,6 +265,10 @@ namespace PokerRangeAPI2.Controllers
         // the solved numbers back. Absent means the original bb convention.
         // May be below 1 for hands played for more chips than Pio can hold.
         public double? ChipScale { get; set; }
+
+        // The recorded hand this solve came from. Verified against the caller
+        // before it is stored, so the library can offer a replay link.
+        public int? HandHistoryId { get; set; }
     }
 
     public class SeatMetaDto

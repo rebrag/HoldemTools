@@ -61,6 +61,17 @@ const stackFor = (folder: string, seat: string): number => {
 export type ApiStub = {
   /** Paths that reached the catch-all - i.e. calls no fixture answers. */
   unhandled: string[];
+  /** Boards the page asked to hide, minus any it later un-hid (Undo). */
+  hidden: SolutionRefFixture[];
+};
+
+/** A saved hand as /api/handhistory returns it (rawText carries the replay). */
+export type HandHistoryFixture = { id: number; rawText: string };
+
+export type SolutionRefFixture = {
+  stacks: string;
+  nodeName: string;
+  board: string;
 };
 
 /**
@@ -81,9 +92,10 @@ export type PostflopFixture = {
 
 export async function stubSolverApi(
   page: Page,
-  opts: { postflop?: PostflopFixture } = {}
+  opts: { postflop?: PostflopFixture; handHistories?: HandHistoryFixture[] } = {}
 ): Promise<ApiStub> {
   const unhandled: string[] = [];
+  const hidden: SolutionRefFixture[] = [];
 
   await page.route("**/api/**", async (route) => {
     const { pathname } = new URL(route.request().url());
@@ -91,6 +103,32 @@ export async function stubSolverApi(
 
     if (pathname.endsWith("/api/Files/foldersWithMetadata")) {
       return json(foldersFixture);
+    }
+
+    /* Saved hands, for the previews above each hand's solved boards in the
+       library. Empty by default - a spec that has not opted in should see the
+       list request answered rather than escaping to the deployed API. */
+    if (pathname.endsWith("/api/handhistory")) {
+      return json(opts.handHistories ?? []);
+    }
+
+    /* Hiding a solved board. The stub records the calls so a spec can assert
+       what was sent; the library removes the row optimistically, so nothing
+       has to be served back. */
+    if (pathname.endsWith("/api/solutions/hidden")) {
+      const method = route.request().method();
+      const body = route.request().postDataJSON() as SolutionRefFixture;
+      if (method === "POST") hidden.push(body);
+      if (method === "DELETE") {
+        const i = hidden.findIndex(
+          (h) =>
+            h.stacks === body.stacks &&
+            h.nodeName === body.nodeName &&
+            h.board === body.board
+        );
+        if (i >= 0) hidden.splice(i, 1);
+      }
+      return route.fulfill({ status: 204, body: "" });
     }
 
     // Postflop. An empty library is the honest default: a spec that has not
@@ -142,5 +180,5 @@ export async function stubSolverApi(
     return route.fulfill({ status: 404, json: { error: "unstubbed" } });
   });
 
-  return { unhandled };
+  return { unhandled, hidden };
 }

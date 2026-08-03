@@ -39,6 +39,9 @@ interface HandBreakdownProps {
   hand?: string | null;
   /** Board card codes (postflop); combos containing one are dead. */
   board?: string[];
+  /** comboKey of the hand the player actually held (hand-history solves), so
+   *  the panel can point at KsKd rather than all six combos of KK. */
+  highlightCombo?: string | null;
   /** Real per-combo mixes; falls back to the class average when absent. */
   comboDetail?: ComboDetail | null;
   /** Effective matrix display mode; the tiles mirror it. */
@@ -141,18 +144,23 @@ interface ComboTileData {
 }
 
 const ComboTile: React.FC<
-  Omit<ComboTileData, "key"> & { colMark: string; density: Density }
-> = React.memo(({ c1, c2, rows, segments, bg, blocked, weight, colMark, density }) => (
+  Omit<ComboTileData, "key"> & { colMark: string; density: Density; held?: boolean }
+> = React.memo(({ c1, c2, rows, segments, bg, blocked, weight, colMark, density, held }) => (
   <div
     data-testid="combo-tile"
     data-combo={`${c1}${c2}`}
     data-blocked={blocked ? "1" : "0"}
+    data-held={held ? "1" : undefined}
     title={
-      density === "minimal" && rows.length
-        ? rows.map((r) => `${r.action} ${r.value}`).join(", ")
-        : undefined
+      held
+        ? "The hand actually held here"
+        : density === "minimal" && rows.length
+          ? rows.map((r) => `${r.action} ${r.value}`).join(", ")
+          : undefined
     }
-    className="relative flex h-full min-h-0 flex-col justify-between overflow-hidden rounded-[4px] bg-slate-900/60 ring-1 ring-black/30"
+    className={`relative flex h-full min-h-0 flex-col justify-between overflow-hidden rounded-[4px] bg-slate-900/60 ${
+      held ? "ring-2 ring-emerald-400" : "ring-1 ring-black/30"
+    }`}
   >
     {/* stacked action-mix background (strategy mode) */}
     {!blocked && segments.length > 0 && (
@@ -238,6 +246,7 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
   data,
   hand,
   board,
+  highlightCombo,
   comboDetail,
   displayMode = "strategy",
   evRange,
@@ -485,7 +494,15 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
             }}
           >
             {combos.map(({ key, ...tile }) => (
-              <ComboTile key={key} {...tile} colMark={colMark} density={density} />
+              <ComboTile
+                key={key}
+                {...tile}
+                held={
+                  !!highlightCombo && comboKey(tile.c1, tile.c2) === highlightCombo
+                }
+                colMark={colMark}
+                density={density}
+              />
             ))}
           </div>
         )}
