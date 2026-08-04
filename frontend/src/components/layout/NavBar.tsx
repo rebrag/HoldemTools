@@ -28,7 +28,7 @@ export interface NavBarProps {
   isSpiralView?: boolean;
 }
 
-/* ──────────────────────── Tier pill ──────────────────────── */
+/* ───────────────────────── Tier pill ───────────────────────── */
 const TierPill: React.FC<{ tier: "free" | "plus" | "pro"; loading?: boolean }> = ({
   tier,
   loading = false,
