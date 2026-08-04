@@ -5,6 +5,7 @@ import { startSubscriptionCheckout } from "@/lib/stripe/checkout";
 import { getPriceIdForTier, TIER_LABEL, Tier } from "@/lib/stripe/stripeTiers";
 import { useCurrentTier } from "@/context/TierContext";
 import { openBillingPortal } from "@/lib/stripe/openBillingPortal";
+import LoadingIndicator from "@/components/LoadingIndicator";
 
 type ProUpsellProps = {
   open: boolean;
@@ -270,23 +271,7 @@ const ProUpsell: React.FC<ProUpsellProps> = ({
                     : loading === "plus"
                     ? (
                       <span className="inline-flex items-center gap-2">
-                        <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24">
-                          <circle
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            fill="none"
-                            opacity=".25"
-                          />
-                          <path
-                            d="M4 12a8 8 0 018-8"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            fill="none"
-                          />
-                        </svg>
+                        <LoadingIndicator variant="ring" size={16} label="" />
                         Redirecting…
                       </span>
                     )
@@ -356,23 +341,7 @@ const ProUpsell: React.FC<ProUpsellProps> = ({
                     : loading === "pro"
                     ? (
                       <span className="inline-flex items-center gap-2">
-                        <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24">
-                          <circle
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            fill="none"
-                            opacity=".25"
-                          />
-                          <path
-                            d="M4 12a8 8 0 018-8"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            fill="none"
-                          />
-                        </svg>
+                        <LoadingIndicator variant="ring" size={16} label="" />
                         Redirecting…
                       </span>
                     )
