@@ -1,10 +1,12 @@
 import React, { useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams } from "react-router-dom";
+import { useAppNavigate } from "@/components/layout/RouteProgress";
 import type { User } from "firebase/auth";
 import { useCurrentTier } from "@/context/TierContext";
 import { useCourseProgress } from "@/hooks/useCourseProgress";
 import { QuizTracker } from "./components/QuizTrackerContext";
 import ProUpsell from "@/components/ProUpsell";
+import LoadingIndicator from "@/components/LoadingIndicator";
 import CourseOutlineSidebar from "./components/CourseOutlineSidebar";
 import { useState } from "react";
 import Section1 from "./sections/Section1";
@@ -49,7 +51,7 @@ interface CourseSectionProps {
 
 const CourseSection: React.FC<CourseSectionProps> = ({ user }) => {
   const { sectionId } = useParams<{ sectionId: string }>();
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const { isFree, loading: tierLoading } = useCurrentTier();
   const { completedSections, markComplete } = useCourseProgress(user?.uid ?? null);
   const [upsellOpen, setUpsellOpen] = useState(false);
@@ -111,10 +113,7 @@ const CourseSection: React.FC<CourseSectionProps> = ({ user }) => {
       <div className="rounded-2xl border border-emerald-300/40 bg-white/95 shadow-lg shadow-emerald-500/20 overflow-hidden backdrop-blur-sm">
         {tierLoading ? (
           <div className="px-5 py-10 flex justify-center">
-            <svg className="w-5 h-5 animate-spin text-gray-300" viewBox="0 0 24 24">
-              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" opacity=".25" />
-              <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="4" fill="none" />
-            </svg>
+            <LoadingIndicator variant="ring" size={20} className="text-gray-300" />
           </div>
         ) : isFree ? (
           <div className="px-5 py-10 flex flex-col items-center text-center gap-4">

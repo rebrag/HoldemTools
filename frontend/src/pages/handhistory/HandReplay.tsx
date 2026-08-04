@@ -6,7 +6,8 @@
 // the replayed table is identical to what was recorded. Transport controls step
 // through frames or auto-advance one action every 2 seconds.
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
+import { useAppNavigate } from "@/components/layout/RouteProgress";
 import type { User } from "firebase/auth";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
@@ -45,7 +46,7 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
   shared = false,
 }) => {
   const { key, token } = useParams<{ key: string; token: string }>();
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const { localHands } = useLocalHandHistories();
   const reduce = useReducedMotion();
 

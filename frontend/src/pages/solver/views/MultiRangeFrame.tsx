@@ -6,7 +6,7 @@
 // as children; zoom state lives in each view (their width math differs).
 import type { CSSProperties, ReactNode, RefCallback } from "react";
 import { LayoutGroup } from "framer-motion";
-import LoadingIndicator from "@/components/LoadingIndicator";
+import LoadingOverlay from "@/components/LoadingOverlay";
 import { PokerTableBackdrop } from "@/components/PokerTableSurface";
 import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
 import DecisionMatrix from "../DecisionMatrix";
@@ -106,13 +106,7 @@ const MultiRangeFrame = ({
           )}
 
           {/* Loading */}
-          <div
-            className={`absolute inset-0 flex items-center justify-center z-50 transition-opacity duration-100 ${
-              loading ? "opacity-100" : "opacity-0 pointer-events-none"
-            }`}
-          >
-            <LoadingIndicator />
-          </div>
+          <LoadingOverlay active={loading} />
 
           {/* Pot badge (center of table): only once chips are actually pooled */}
           {actualPot != null && actualPot > 0 && (

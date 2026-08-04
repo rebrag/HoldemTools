@@ -8,7 +8,7 @@ import {
   FirebaseError,
 } from "@/lib/firebase";
 import { sendEmailVerification } from "firebase/auth";
-import { useNavigate } from "react-router-dom";
+import { useAppNavigate } from "@/components/layout/RouteProgress";
 
 const LoginSignup = () => {
   const [email, setEmail] = useState("");
@@ -17,7 +17,7 @@ const LoginSignup = () => {
   const [error, setError] = useState<string | null>(null);
   const [isLogin, setIsLogin] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

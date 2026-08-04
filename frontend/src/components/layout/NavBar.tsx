@@ -1,7 +1,9 @@
 // src/components/NavBar.tsx
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useLocation } from "react-router-dom";
+import { useAppNavigate } from "@/components/layout/RouteProgress";
+import { preloadAllRoutes, preloadRoute } from "@/lib/routePreload";
 import AccountMenu from "@/components/layout/AccountMenu";
 import { useCurrentTier } from "@/context/TierContext";
 import { openBillingPortal } from "@/lib/stripe/openBillingPortal";
@@ -60,7 +62,7 @@ const TierPill: React.FC<{ tier: "free" | "plus" | "pro"; loading?: boolean }> =
 };
 
 const NavBar: React.FC<NavBarProps> = () => {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const { pathname } = useLocation();
   const section = pathname.startsWith("/equity")
     ? "equity"
@@ -216,6 +218,13 @@ const NavBar: React.FC<NavBarProps> = () => {
 
   const { requireAuth } = useAuthGate();
 
+  // Touch has no hover to preload from, and the dropdown navigates on
+  // pointerdown, so opening the menu is the only signal available. It precedes
+  // the selection tap by a few hundred ms — enough to warm the chunks.
+  useEffect(() => {
+    if (toolsOpen) preloadAllRoutes();
+  }, [toolsOpen]);
+
   const go = (path: string) => {
     setToolsOpen(false);
     // Protected routes go through the auth gate: it navigates when signed in, or
@@ -326,6 +335,11 @@ const NavBar: React.FC<NavBarProps> = () => {
             {tools.map((t) => (
               <button
                 key={t.path}
+                // Warm the route's chunk on intent, so the click usually has
+                // nothing left to download. Navigation itself is on pointerdown,
+                // so hover/focus is the only window we get.
+                onPointerEnter={() => preloadRoute(t.path)}
+                onFocus={() => preloadRoute(t.path)}
                 onPointerDown={(e) => {
                   e.preventDefault();
                   go(t.path);

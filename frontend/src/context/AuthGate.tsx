@@ -13,7 +13,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useNavigate } from "react-router-dom";
+import { useAppNavigate } from "@/components/layout/RouteProgress";
 import type { User } from "firebase/auth";
 import LoginSignupModal from "@/components/LoginSignupModal";
 
@@ -31,7 +31,7 @@ export const AuthGateProvider: React.FC<{
   user: User | null;
   children: ReactNode;
 }> = ({ user, children }) => {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const [open, setOpen] = useState(false);
   const pendingDest = useRef<string | null>(null);
 

@@ -1,5 +1,5 @@
 import { JSX, ReactNode, useRef, type MouseEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useAppNavigate } from "@/components/layout/RouteProgress";
 import {
   motion,
   useMotionValue,
@@ -24,7 +24,7 @@ import { useAuthGate } from "@/context/AuthGate";
  * kinetic index numerals. Louder and more playful than Aurora Bento.
  */
 export default function KineticArcade(): JSX.Element {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const { requireAuth } = useAuthGate();
   const reduce = useReducedMotion();
   const go = (route: string) => () => navigate(route);

@@ -1,5 +1,5 @@
 import React from "react";
-import { useNavigate } from "react-router-dom";
+import { useAppNavigate } from "@/components/layout/RouteProgress";
 import type { User } from "firebase/auth";
 import { useCurrentTier } from "@/context/TierContext";
 import { useCourseProgress } from "@/hooks/useCourseProgress";
@@ -31,7 +31,7 @@ interface CourseProps {
 }
 
 const Course: React.FC<CourseProps> = ({ user }) => {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const { isFree } = useCurrentTier();
   const { completedSections, resetComplete } = useCourseProgress(user?.uid ?? null);
 
