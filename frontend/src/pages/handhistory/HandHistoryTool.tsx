@@ -1,8 +1,9 @@
 // src/pages/handhistory/HandHistoryTool.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useAppNavigate } from "@/components/layout/RouteProgress";
 import { AnimatePresence, motion, type Variants } from "framer-motion";
 import LoadingIndicator from "@/components/LoadingIndicator";
+import { useDelayedLoading } from "@/hooks/useDelayedLoading";
 import { authedFetch } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { createShareToken, shareUrl } from "@/lib/shareApi";
@@ -56,9 +57,14 @@ function formatDay(iso: string): string {
 }
 
 const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const [items, setItems] = useState<HandHistory[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Seeded from whether a fetch is guaranteed on mount — see BankrollTracker;
+  // starting at `false` flashes the "no hand histories yet" empty state first.
+  const [loading, setLoading] = useState(!!user);
+  // Gates only the spinner's visibility, never the loading/empty branch below —
+  // see useDelayedLoading. A fast response renders a blank box, not "no hands".
+  const showSpinner = useDelayedLoading(loading);
   const [error, setError] = useState<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
 
@@ -399,7 +405,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
 
       {loading ? (
         <div className="flex items-center justify-center py-16">
-          <LoadingIndicator />
+          {showSpinner && <LoadingIndicator />}
         </div>
       ) : rows.length === 0 ? (
         <motion.div
