@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
 import LoadingIndicator from "@/components/LoadingIndicator";
+import { useDelayedLoading } from "@/hooks/useDelayedLoading";
 import BankrollChartShadcn from "./BankrollChartShadcn";
 import BankrollFormModal from "./BankrollFormModal";
 import BankrollStatsGrid from "./BankrollStatsGrid";
@@ -93,7 +94,14 @@ function parseFiltersOrDefault(raw: string): FilterState {
 
 const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
   const [sessions, setSessions] = useState<BankrollSession[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Seeded from whether a fetch is guaranteed on mount. Starting at `false`
+  // renders the "no sessions match" empty state on the first paint, before the
+  // effect below can flip it — i.e. it briefly tells a user with sessions that
+  // they have none.
+  const [loading, setLoading] = useState(!!user);
+  // Gates only the spinner's visibility, never the loading/empty branch below —
+  // see useDelayedLoading.
+  const showSpinner = useDelayedLoading(loading);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -1122,7 +1130,7 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
 
     {loading ? (
         <div className="flex items-center justify-center py-6">
-        <LoadingIndicator />
+        {showSpinner && <LoadingIndicator />}
         </div>
     ) : cumulativePoints.length === 0 ? (
         <div className="flex items-center justify-center py-6 rounded-2xl border border-emerald-300/30 bg-emerald-900/40 text-xs text-emerald-100/80">
