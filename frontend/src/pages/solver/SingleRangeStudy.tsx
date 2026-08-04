@@ -4,7 +4,7 @@
 // stacked layout instead; this component is desktop-only (rendered by
 // views/SingleRangeDesktopView).
 import React, { useEffect, useMemo, useState } from "react";
-import LoadingIndicator from "@/components/LoadingIndicator";
+import LoadingOverlay from "@/components/LoadingOverlay";
 import PokerTable, { type PokerTableSeat } from "@/components/PokerTable";
 import { HandCellData } from "@/lib/solver/utils";
 import type { ComboDetail } from "@/lib/solver/comboDetail";
@@ -199,13 +199,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   return (
     <div className="relative flex w-full justify-center py-2">
       {/* Loading overlay across both columns */}
-      <div
-        className={`absolute inset-0 z-50 flex items-center justify-center transition-opacity duration-100 ${
-          loading ? "opacity-100" : "opacity-0 pointer-events-none"
-        }`}
-      >
-        <LoadingIndicator />
-      </div>
+      <LoadingOverlay active={loading} />
 
       <div className="flex items-stretch justify-center" style={{ gap: GAP }}>
         {/* Active player's range matrix, under its control row */}
