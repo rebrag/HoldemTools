@@ -6,7 +6,7 @@
 // range widths need concrete pixel values - the PokerTable's aspect-ratio box
 // collapses without a definite ancestor width.
 import useElementSize from "@/hooks/useElementSize";
-import LoadingIndicator from "@/components/LoadingIndicator";
+import LoadingOverlay from "@/components/LoadingOverlay";
 import PokerTable from "@/components/PokerTable";
 import DecisionMatrix from "../DecisionMatrix";
 import ColorKey from "../ColorKey";
@@ -93,13 +93,7 @@ const SingleRangeMobileView = ({
         className="relative z-10 w-full flex flex-col items-center gap-3 sm:gap-5"
       >
         {/* Loading */}
-        <div
-          className={`absolute inset-0 flex items-center justify-center z-50 transition-opacity duration-100 ${
-            loading ? "opacity-100" : "opacity-0 pointer-events-none"
-          }`}
-        >
-          <LoadingIndicator />
-        </div>
+        <LoadingOverlay active={loading} />
 
         {/* Poker table (definite width so it doesn't collapse) */}
         <div className="relative flex-shrink-0" style={{ width: tableW }}>
