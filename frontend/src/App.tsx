@@ -8,15 +8,20 @@ import AppShell from "@/components/layout/AppShell";
 // Route components are code-split (React.lazy) so each page ships its own chunk
 // instead of loading the whole app up front. AppShell/NavBar stay eager so the
 // shell paints immediately; a <Suspense> inside AppShell covers the page area.
-const Homepage = lazy(() => import("@/pages/home/Homepage"));
-const Solver = lazy(() => import("@/pages/solver/Solver"));
-const EquityCalc = lazy(() => import("@/pages/equity/EquityCalc"));
-const BankrollTracker = lazy(() => import("@/pages/bankroll/BankrollTracker"));
-const HandHistoryTool = lazy(() => import("@/pages/handhistory/HandHistoryTool"));
-const CreateHandHistory = lazy(() => import("@/pages/handhistory/create/CreateHandHistory"));
-const HandReplay = lazy(() => import("@/pages/handhistory/HandReplay"));
-const Course = lazy(() => import("@/pages/course/Course"));
-const CourseSection = lazy(() => import("@/pages/course/CourseSection"));
+//
+// The importers come from routeImports so NavBar can warm the same chunk on
+// hover — a preload and the lazy render then share one module-registry entry.
+import { routeImports } from "@/lib/routePreload";
+
+const Homepage = lazy(routeImports["/"]);
+const Solver = lazy(routeImports["/solutions"]);
+const EquityCalc = lazy(routeImports["/equity"]);
+const BankrollTracker = lazy(routeImports["/bankroll"]);
+const HandHistoryTool = lazy(routeImports["/hand-history"]);
+const CreateHandHistory = lazy(routeImports["/hand-history/create"]);
+const HandReplay = lazy(routeImports["/hand-history/replay"]);
+const Course = lazy(routeImports["/course"]);
+const CourseSection = lazy(routeImports["/course/section"]);
 import { DEV_AUTH_BYPASS, useDevAuthUser } from "@/lib/devAuth";
 import "./index.css";
 
