@@ -14,10 +14,42 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/logo-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- The chip at the centre of <LoadingIndicator>. Warmed here so the first
+         loader that renders has it, instead of spinning an empty ring while the
+         image is fetched. -->
+    <link rel="preload" as="image" href="/logo-loader.png" />
     <title>HoldemTools</title>
+    <style>
+      /* Pre-boot loader. Visible from first paint until React mounts and
+         replaces #root, which covers the window where the entry bundle (React,
+         Firebase, the shell) is still downloading and the page would otherwise
+         be blank. Inline and asset-free on purpose: anything it had to fetch
+         would compete with the bundle it exists to cover for. */
+      @keyframes ht-preboot-spin { to { transform: rotate(360deg); } }
+      #ht-preboot {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: #020617; /* matches AuroraBackground's bg-slate-950 */
+      }
+      #ht-preboot > i {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 2px solid rgba(52, 211, 153, 0.3);
+        border-top-color: #34d399;
+        animation: ht-preboot-spin 1s linear infinite;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #ht-preboot > i { animation: none; opacity: 0.6; }
+      }
+    </style>
   </head>
   <body class="">
-    <div id="root"></div>
+    <div id="root">
+      <div id="ht-preboot" role="status" aria-label="Loading"><i></i></div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

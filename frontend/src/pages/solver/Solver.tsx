@@ -238,7 +238,10 @@ const Solver = ({ user }: SolverProps) => {
   const [plateMapping, setPlateMapping] = useState<Record<string, string>>({});
   const [lastRange, setLastRange] = useState<string>("");
   const [lastRangePos, setLastRangePos] = useState<string>("");
-  const [loading, setLoading] = useState<boolean>(false);
+  // Starts true: the fetch effect below resolves it on mount (immediately, via
+  // its early return, when there is nothing to fetch). Starting at `false`
+  // painted an empty range grid before the spinner appeared.
+  const [loading, setLoading] = useState<boolean>(true);
   const [preflopLine, setPreflopLine] = useState<string[]>(["Root"]);
   const playerCount = useMemo(() => (folder ? folder.split("_").length : 1), [folder]);
   const [alivePlayers, setAlivePlayers] = useState<Record<string, boolean>>({});
@@ -535,11 +538,11 @@ const Solver = ({ user }: SolverProps) => {
       setLoading(false);
       return;
     }
-    let didTimeout = false;
-    const timer = setTimeout(() => {
-      didTimeout = true;
-      setLoading(true);
-    }, 0);
+    // Flip synchronously. The old code deferred this behind setTimeout(…, 0) to
+    // avoid a flash, but a 0ms threshold fires long before any response, so it
+    // never suppressed one. The real anti-flash delay is useDelayedLoading,
+    // applied where the spinner is rendered.
+    setLoading(true);
     const source = axios.CancelToken.source();
 
     Promise.all(
@@ -564,8 +567,7 @@ const Solver = ({ user }: SolverProps) => {
         }
       })
       .finally(() => {
-        clearTimeout(timer);
-        if (didTimeout) setLoading(false);
+        setLoading(false);
       });
 
     return () => source.cancel();

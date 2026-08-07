@@ -1,12 +1,12 @@
 // src/components/VerifyEmailPrompt.tsx
 import { useState } from "react";
 import { auth } from "@/lib/firebase";
-import { useNavigate } from "react-router-dom";
+import { useAppNavigate } from "@/components/layout/RouteProgress";
 import { signOut } from "firebase/auth";
 
 const VerifyEmailPrompt = () => {
   const [message, setMessage] = useState("");
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
 
   const checkVerification = async () => {
     await auth.currentUser?.reload();

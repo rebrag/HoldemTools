@@ -1,5 +1,5 @@
 import React from "react";
-import { useNavigate } from "react-router-dom";
+import { useAppNavigate } from "@/components/layout/RouteProgress";
 
 export interface CourseOutlineSection {
   number: number;
@@ -22,7 +22,7 @@ const CourseOutlineSidebar: React.FC<CourseOutlineSidebarProps> = ({
   isFree,
   stickyTopClassName = "top-16",
 }) => {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
 
   return (
     <aside className={`hidden lg:block w-64 shrink-0 sticky ${stickyTopClassName} self-start`}>

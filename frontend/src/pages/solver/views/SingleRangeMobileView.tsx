@@ -10,7 +10,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import useElementSize from "@/hooks/useElementSize";
-import LoadingIndicator from "@/components/LoadingIndicator";
+import LoadingOverlay from "@/components/LoadingOverlay";
 import PokerTable from "@/components/PokerTable";
 import SegmentedControl from "@/components/SegmentedControl";
 import DecisionMatrix from "../DecisionMatrix";
@@ -155,13 +155,7 @@ const SingleRangeMobileView = ({
         style={{ gap: GAP, height: availH }}
       >
         {/* Loading */}
-        <div
-          className={`absolute inset-0 flex items-center justify-center z-50 transition-opacity duration-100 ${
-            loading ? "opacity-100" : "opacity-0 pointer-events-none"
-          }`}
-        >
-          <LoadingIndicator />
-        </div>
+        <LoadingOverlay active={loading} />
 
         {/* Dock: Table / Stats / Hands, above the matrix */}
         <SegmentedControl
