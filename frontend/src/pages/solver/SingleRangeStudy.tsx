@@ -3,7 +3,7 @@
 // breakdown stacked in a right column. Mobile uses SingleRangeMobileView's
 // stacked layout instead; this component is desktop-only (rendered by
 // views/SingleRangeDesktopView).
-import React, { useEffect, useMemo, useState } from "react";
+import React from "react";
 import LoadingOverlay from "@/components/LoadingOverlay";
 import PokerTable, { type PokerTableSeat } from "@/components/PokerTable";
 import { HandCellData } from "@/lib/solver/utils";
