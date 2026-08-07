@@ -18,7 +18,7 @@ import "intro.js/introjs.css";
 import { User } from "firebase/auth";
 import LoginSignupModal from "@/components/LoginSignupModal";
 import StudyTopStrip from "./header/StudyTopStrip";
-import ClassicHeader from "./header/ClassicHeader";
+import { MatrixHeightModePill, SingleRangeTogglePill } from "./FolderSelector";
 import ProUpsell from "@/components/ProUpsell";
 import {
   requiredTierForFolder,
@@ -324,13 +324,7 @@ const Solver = ({ user }: SolverProps) => {
   const [matrixDisplayMode, setMatrixDisplayMode] =
     useState<MatrixDisplayMode>(loadMatrixDisplayMode);
 
-  // Sim info popover open state (for click on mobile)
-  const [simInfoOpen, setSimInfoOpen] = useState(false);
-
-  // Line ↔ PlateGrid alignment
-  const [plateContentEl, setPlateContentEl] = useState<HTMLDivElement | null>(null);
   const lineWrapperRef = useRef<HTMLDivElement | null>(null);
-  const [plateContentWidth, setPlateContentWidth] = useState(0);
 
   const tourBooted = useRef(localStorage.getItem("tourSeen") === "1");
   const lastClickRef = useRef<{ plate: string; action: string } | null>(null);
@@ -493,7 +487,6 @@ const Solver = ({ user }: SolverProps) => {
       const bbIdx = Object.keys(freshMapping).indexOf("BB");
       const nextIdx = (bbIdx + 1) % Object.keys(freshMapping).length;
       setActivePlayer(Object.keys(freshMapping)[nextIdx]);
-      setSimInfoOpen(false);
     },
     [defaultPlateNames]
   );
@@ -527,19 +520,6 @@ const Solver = ({ user }: SolverProps) => {
   useLayoutEffect(() => {
     setLoadedPlates(defaultPlateNames);
   }, [folder, playerCount, defaultPlateNames]);
-
-  useLayoutEffect(() => {
-    const compute = () => {
-      const plateEl = plateContentEl;
-      if (!plateEl) { setPlateContentWidth(0); return; }
-      setPlateContentWidth(plateEl.getBoundingClientRect().width);
-    };
-    compute();
-    const ro = new ResizeObserver(compute);
-    if (plateContentEl) ro.observe(plateContentEl);
-    window.addEventListener("resize", compute);
-    return () => { ro.disconnect(); window.removeEventListener("resize", compute); };
-  }, [plateContentEl]);
 
   useEffect(() => {
     setPlateMapping((prev) => {
@@ -679,14 +659,12 @@ const Solver = ({ user }: SolverProps) => {
         const blindPot = Object.values(initialBets).reduce((sum, b) => sum + b);
         const totalPot = blindPot + ante;
         setPotSize(totalPot);
-        setSimInfoOpen(false);
-      })
+        })
       .catch(() => {
         setMetadata({ name: "", ante: 0, icm: [] });
         setPlayerBets({ SB: 0.5, BB: 1 });
         setPotSize(1.5);
-        setSimInfoOpen(false);
-      });
+        });
   }, [folder, API_BASE_URL, playerCount]);
 
   const handleActionClick = useCallback(
@@ -1407,8 +1385,9 @@ const Solver = ({ user }: SolverProps) => {
     [pf.view]
   );
 
-  /* Shared between the classic header layout and the desktop study strip. In
-   * the study strip the Line fills its flex cell, so no measured matchWidth. */
+  /* The line strip beside the sim panel in StudyTopStrip - the one header
+   * every layout shares. It fills its flex cell and stretches to the panel's
+   * height. */
   const lineNode = pf.view ? (
     <PostflopLine
       preflopLine={pf.view.manifest.preflop.line}
@@ -1427,9 +1406,7 @@ const Solver = ({ user }: SolverProps) => {
       actions={pf.view.actions}
       onActionClick={(display) => void pf.clickAction(display)}
       actionsDisabled={!!pf.view.pendingStreet}
-      matchWidth={
-        desktopStudy ? undefined : windowWidth >= 1024 ? plateContentWidth : undefined
-      }
+      fillHeight
     />
   ) : (
     <Line
@@ -1443,9 +1420,7 @@ const Solver = ({ user }: SolverProps) => {
       onActionClick={handleActionClick}
       onSkipToSeat={skipToSeat}
       onRewindTo={rewindPreflopTo}
-      matchWidth={
-        desktopStudy ? undefined : windowWidth >= 1024 ? plateContentWidth : undefined
-      }
+      fillHeight
     />
   );
 
@@ -1511,45 +1486,43 @@ const Solver = ({ user }: SolverProps) => {
         <div className="pt-1 p-1 flex-grow">
           {(folderError || filesError) && <div className="text-red-500">{folderError || filesError}</div>}
 
-          {desktopStudy ? (
-            <StudyTopStrip
-              folders={folders}
-              currentFolder={folder}
-              onFolderSelect={handleFolderSelect}
-              metaByFolder={folderMetaMap}
-              userTier={tier ?? "free"}
-              simName={metadata.name}
-              playerCount={playerCount}
-              avgStack={avgStack}
-              ante={metadata.ante}
-              icm={metadata.icm}
-              line={lineNode}
-              libraryButton={libraryButton}
-              lineWrapperRef={lineWrapperRef}
-            />
-          ) : (
-            <ClassicHeader
-              folders={folders}
-              currentFolder={folder}
-              onFolderSelect={handleFolderSelect}
-              metaByFolder={folderMetaMap}
-              userTier={tier ?? "free"}
-              fullWidth
-              singleRangeView={singleRangeView}
-              onToggleSingleRange={() => setSingleRangeView((v) => !v)}
-              heightMode={matrixHeightMode}
-              onHeightModeChange={setMatrixHeightMode}
-              simName={metadata.name}
-              playerCount={playerCount}
-              avgStack={avgStack}
-              ante={metadata.ante}
-              icm={metadata.icm}
-              simInfoOpen={simInfoOpen}
-              onToggleSimInfo={() => setSimInfoOpen((o) => !o)}
-              line={lineNode}
-              libraryButton={libraryButton}
-              lineWrapperRef={lineWrapperRef}
-            />
+          {/* One top strip for every layout, desktop and mobile alike: the
+              compact sim panel with the line strip stretched beside it. */}
+          <StudyTopStrip
+            folders={folders}
+            currentFolder={folder}
+            onFolderSelect={handleFolderSelect}
+            metaByFolder={folderMetaMap}
+            userTier={tier ?? "free"}
+            simName={metadata.name}
+            playerCount={playerCount}
+            avgStack={avgStack}
+            ante={metadata.ante}
+            icm={metadata.icm}
+            line={lineNode}
+            libraryButton={libraryButton}
+            lineWrapperRef={lineWrapperRef}
+          />
+
+          {/* The single-range layouts render the matrix pills in their own
+              control rows; the multi-range layouts have no such row, so the
+              toggle (which carries the tour's color-key-btn target and must
+              mount exactly once) and the height pill live here instead. */}
+          {!singleRangeView && (
+            <div className="px-2 sm:px-4 mt-2">
+              <div className="mx-auto flex w-full max-w-[1800px] items-center justify-end gap-1.5">
+                <SingleRangeTogglePill
+                  singleRangeView={singleRangeView}
+                  onToggle={() => setSingleRangeView((v) => !v)}
+                  compact
+                />
+                <MatrixHeightModePill
+                  heightMode={matrixHeightMode}
+                  onChange={setMatrixHeightMode}
+                  compact
+                />
+              </div>
+            </div>
           )}
 
           {/* Pending solve banner */}
@@ -1636,15 +1609,24 @@ const Solver = ({ user }: SolverProps) => {
                 isICMSim={isICMSim}
                 randomFillEnabled={randomFillEnabled}
                 heightMode={matrixHeightMode}
+                onHeightModeChange={setMatrixHeightMode}
+                singleRangeView={singleRangeView}
+                onToggleSingleRange={() => setSingleRangeView((v) => !v)}
+                displayMode={matrixDisplayMode}
+                onDisplayModeChange={setMatrixDisplayMode}
                 reachByFile={reachByFile}
                 onActionClick={handleActionClick}
                 windowWidth={windowWidth}
                 windowHeight={windowHeight}
                 board={pf.view ? pf.view.board : currentBoard}
-                onPlateContentRef={setPlateContentEl}
+                comboDetail={activeComboDetail}
+                nodeStats={pf.view?.nodeStats ?? null}
+                chipScale={pf.view?.chipScale}
+                actorSeat={pf.view?.actorSeat}
                 seatNames={pf.view?.seatNames}
                 tableSeatsOverride={hhTableSeats}
                 money={pfMoney}
+                autoPinBySeat={autoPinBySeat}
               />
             ) : mode === "multi-desktop" ? (
               <MultiRangeDesktopView
@@ -1665,7 +1647,6 @@ const Solver = ({ user }: SolverProps) => {
                 onActionClick={handleActionClick}
                 windowWidth={windowWidth}
                 windowHeight={windowHeight}
-                onPlateContentRef={setPlateContentEl}
                 money={pfMoney}
               />
             ) : (
@@ -1687,7 +1668,6 @@ const Solver = ({ user }: SolverProps) => {
                 onActionClick={handleActionClick}
                 windowWidth={windowWidth}
                 windowHeight={windowHeight}
-                onPlateContentRef={setPlateContentEl}
                 money={pfMoney}
               />
             )}

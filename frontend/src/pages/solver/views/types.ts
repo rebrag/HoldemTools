@@ -45,8 +45,6 @@ export interface SolverRangeBaseProps {
    *  preflop and on pre-schema-4 solves, where cells render full height. */
   reachByFile?: Record<string, Map<string, number> | null>;
   onActionClick: (action: string, file: string) => void;
-  /** Inner content div, so Solver can width-match the Line component to it. */
-  onPlateContentRef?: (el: HTMLDivElement | null) => void;
 }
 
 export interface SingleRangeViewProps extends SolverRangeBaseProps {
@@ -69,6 +67,21 @@ export interface SingleRangeViewProps extends SolverRangeBaseProps {
   /** Matrix display mode (Strategy / EV / Equity) - desktop study view only. */
   displayMode?: MatrixDisplayMode;
   onDisplayModeChange?: (mode: MatrixDisplayMode) => void;
+}
+
+/**
+ * The mobile study view (tabbed dock) shows the same information as desktop,
+ * so it needs the cell-height setter (its own controls row owns the pill) and
+ * the auto-pin seed. The single-range toggle is required for the same reason
+ * as on desktop: this view is the only place it mounts on phones, and it
+ * carries the intro tour's `color-key-btn` target.
+ */
+export interface SingleRangeMobileViewProps extends SingleRangeViewProps {
+  onHeightModeChange?: (mode: MatrixHeightMode) => void;
+  singleRangeView: boolean;
+  onToggleSingleRange: () => void;
+  /** Seat -> the hand that seat actually held, for hand-history solves. */
+  autoPinBySeat?: Record<string, { hand: string; combo: string }>;
 }
 
 /**

@@ -35,8 +35,9 @@ export interface LineProps {
    * acted, so its own decision comes back up - folded seats included.
    */
   onRewindTo?: (actionCount: number) => void;
-  /** Constrain the bar's total width to match the plate grid below (px). */
-  matchWidth?: number;
+  /** Stretch the seat cards to fill the parent's height - used by the study
+   *  header so the strip matches the SimSelect panel beside it. */
+  fillHeight?: boolean;
 }
 
 const fmt = (n: number, decimals = 1) =>
@@ -71,7 +72,7 @@ const Line: React.FC<LineProps> = ({
   onActionClick,
   onSkipToSeat,
   onRewindTo,
-  matchWidth,
+  fillHeight,
 }) => {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [canLeft, setCanLeft] = useState(false);
@@ -165,8 +166,7 @@ const Line: React.FC<LineProps> = ({
   /* ───── render ───── */
   return (
     <div
-      className="relative w-full select-none mx-auto"
-      style={{ maxWidth: matchWidth || undefined }}
+      className={`relative w-full select-none mx-auto${fillHeight ? " h-full" : ""}`}
     >
       {/* ← chevron */}
       {canLeft && (
@@ -191,9 +191,15 @@ const Line: React.FC<LineProps> = ({
       {/* seat strip */}
       <div
         ref={scrollerRef}
-        className="overflow-x-auto scroll-smooth no-scrollbar w-full"
+        className={`overflow-x-auto scroll-smooth no-scrollbar w-full${
+          fillHeight ? " h-full" : ""
+        }`}
       >
-        <div className="flex flex-nowrap items-stretch gap-1 w-full">
+        <div
+          className={`flex flex-nowrap items-stretch gap-1 w-full${
+            fillHeight ? " h-full" : ""
+          }`}
+        >
         {/* Seat cards. No separate reset control: the first seat's card is the
             root of the tree, so clicking it unwinds the whole line. */}
         {positions.map((pos, idx) => {

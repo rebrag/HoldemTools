@@ -1,7 +1,7 @@
 // StudyTopStrip.tsx
 //
-// Header for the desktop single-range "study" layout: compact SimSelect box
-// with the Line strip beside it. The line is passed in as a slot because
+// The solver's one top strip, every layout and viewport: compact SimSelect
+// box with the Line strip beside it. The line is passed in as a slot because
 // Solver builds it (it needs the postflop session); the solved-flops library
 // button rides inside SimSelect's own control row, forwarded through
 // SimSelectProps.
@@ -23,13 +23,13 @@ const StudyTopStrip = ({
       <div className="relative z-50 flex items-stretch gap-3">
         <div
           data-intro-target="folder-selector"
-          className="w-[300px] flex-shrink-0"
+          className="w-[210px] flex-shrink-0 sm:w-[300px]"
         >
           <SimSelect {...simSelectProps} />
         </div>
         <div
           ref={lineWrapperRef}
-          className="relative flex min-w-0 flex-1 items-center"
+          className="relative flex min-w-0 flex-1 items-stretch"
         >
           {line}
         </div>

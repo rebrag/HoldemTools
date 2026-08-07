@@ -3,17 +3,15 @@
 // breakdown stacked in a right column. Mobile uses SingleRangeMobileView's
 // stacked layout instead; this component is desktop-only (rendered by
 // views/SingleRangeDesktopView).
-import React, { useEffect, useMemo, useState } from "react";
+import React from "react";
 import LoadingOverlay from "@/components/LoadingOverlay";
 import PokerTable, { type PokerTableSeat } from "@/components/PokerTable";
 import { HandCellData } from "@/lib/solver/utils";
 import type { ComboDetail } from "@/lib/solver/comboDetail";
 import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
-import {
-  buildMatrixDisplayData,
-  type MatrixDisplayMode,
-} from "@/lib/solver/matrixDisplayMode";
+import type { MatrixDisplayMode } from "@/lib/solver/matrixDisplayMode";
 import type { NodeStats } from "@/lib/solver/nodeStats";
+import useStudyState from "./useStudyState";
 import SeatStatsPanel from "./SeatStatsPanel";
 import DecisionMatrix from "./DecisionMatrix";
 import MatrixDisplayModeSelect from "./MatrixDisplayModeSelect";
@@ -21,7 +19,6 @@ import { MatrixHeightModePill, SingleRangeTogglePill } from "./FolderSelector";
 import ActionSummary from "./ActionSummary";
 import HandBreakdown from "./HandBreakdown";
 import SolverTableCenter from "./SolverTableCenter";
-import MoneyToggle from "./MoneyToggle";
 import { boardCardWidth, solverPotLabel, type MoneyDisplay } from "./boardDisplay";
 
 interface SingleRangeStudyProps {
@@ -133,53 +130,25 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
    * big blinds, so tell it how much money makes one. */
   const sizeRef = money?.bbSize && money.bbSize > 0 ? money.bbSize : 1;
 
-  /* Which hand the breakdown shows. A click pins a class (and clicking it
-   * again unpins); while nothing is pinned the pointer drives the panel, and
-   * the last hovered class sticks so the panel doesn't blank every time the
-   * pointer leaves the grid. The hover is tracked even while pinned, so
-   * unpinning lands on whatever the pointer is over rather than on nothing.
-   * A pin is kept across node changes, so stepping through a line follows the
-   * same hand.
-   *
-   * Pins are per seat: a hand-history solve opens on what each player actually
-   * held, and OOP's KK has nothing to do with IP's AA, so one shared pin would
-   * jump to the wrong cell the moment the range toggle is used. */
-  const [pinBySeat, setPinBySeat] = useState<Record<string, string | null>>({});
-  const [hoveredHand, setHoveredHand] = useState<string | null>(null);
-
-  /* Seed from the recorded hand whenever a different solve is opened. Keyed on
-   * the auto-pin map's identity (a new manifest builds a new one), so it does
-   * not fight the user's clicks within a board. */
-  useEffect(() => {
-    setPinBySeat(
-      autoPinBySeat
-        ? Object.fromEntries(Object.entries(autoPinBySeat).map(([seat, p]) => [seat, p.hand]))
-        : {}
-    );
-  }, [autoPinBySeat]);
-
-  const seatKey = activePlayer ?? "";
-  const pinnedHand = pinBySeat[seatKey] ?? null;
-  const shownHand = pinnedHand ?? hoveredHand;
-  /* Only point at the exact combo while the pinned class is still the one the
-   * player held - once the user picks another cell, there is no combo to
-   * single out. */
-  const auto = autoPinBySeat?.[seatKey];
-  const highlightCombo = auto && auto.hand === shownHand ? auto.combo : null;
-
-  /* Equity needs per-combo data (postflop, acting seat). The saved preference
-   * is never overwritten: the effective mode just falls back to Strategy, so
-   * navigating back to a postflop node restores Equity by itself. */
-  const equityAvailable = !!comboDetail;
-  const effectiveMode: MatrixDisplayMode =
-    displayMode === "equity" && !equityAvailable
-      ? "strategy"
-      : displayMode ?? "strategy";
-
-  const displayData = useMemo(
-    () => buildMatrixDisplayData(effectiveMode, activeGrid, comboDetail, board),
-    [effectiveMode, activeGrid, comboDetail, board]
-  );
+  /* Pin/hover, auto-pin seeding, display-mode fallback, and matrix display
+   * data - shared with the mobile dock via useStudyState. */
+  const {
+    pinnedHand,
+    shownHand,
+    highlightCombo,
+    onHandSelect,
+    onHandHover,
+    equityAvailable,
+    effectiveMode,
+    displayData,
+  } = useStudyState({
+    activePlayer,
+    autoPinBySeat,
+    displayMode,
+    comboDetail,
+    activeGrid,
+    board,
+  });
 
   /* Concrete pixel sizes: the matrix takes all the viewport height it can
    * (minus its dropdown header row); width only binds when the right column
@@ -243,13 +212,8 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
               reachByHand={reachByHand}
               displayData={displayData}
               selectedHand={pinnedHand}
-              onHandSelect={(hand) =>
-                setPinBySeat((prev) => ({
-                  ...prev,
-                  [seatKey]: prev[seatKey] === hand ? null : hand,
-                }))
-              }
-              onHandHover={setHoveredHand}
+              onHandSelect={onHandSelect}
+              onHandHover={onHandHover}
             />
           </div>
         </div>
@@ -260,8 +224,8 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
           style={{ width: rightW, height: matrixSize + HDR_H }}
         >
           <div className="relative mx-auto w-full flex-shrink-0" style={{ width: tableW }}>
-            <MoneyToggle money={money} className="absolute -top-1 right-0 z-20" />
             <PokerTable
+              moneyToggle={money}
               size={seatCount}
               seats={tableSeats}
               className="w-full"

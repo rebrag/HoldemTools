@@ -19,6 +19,7 @@ import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import { useSavedTableLayout } from "@/hooks/useSavedTableLayout";
 import SeatEditorModal, { type SeatEditResult } from "./SeatEditorModal";
 import BoardEditorModal from "./BoardEditorModal";
+import QuickSetupDrawer, { type QuickSetupRow } from "./QuickSetupDrawer";
 import ActionPanel from "./ActionPanel";
 import { positionLabelsForSeats } from "./positions";
 import {
@@ -187,6 +188,7 @@ const CreateHandHistory: React.FC<Props> = ({
   const [editingBoard2, setEditingBoard2] = useState(false);
   const [phase, setPhase] = useState<"setup" | "action">("setup");
   const [placement, setPlacement] = useState<Placement>(null);
+  const [quickSetupOpen, setQuickSetupOpen] = useState(false);
 
   const [engine, setEngine] = useState<Engine | null>(null);
   const [history, setHistory] = useState<Engine[]>([]);
@@ -401,6 +403,39 @@ const CreateHandHistory: React.FC<Props> = ({
       setHistory(frames.slice(0, -1));
     }
     setEditingSeat(null);
+  };
+
+  // Apply the Quick setup drawer's rows: every seat's occupancy, name, and
+  // stack in one state update. Newly-emptied seats lose their hole cards, and
+  // the button/hero/straddle markers walk off seats that left the hand
+  // (mirroring saveSeat / emptySeatAt's invariants).
+  const applyQuickSetup = (rows: QuickSetupRow[]) => {
+    touchedRef.current = true;
+    setState((prev) => {
+      const seats = prev.seats.map((s, i) => {
+        const row = rows[i];
+        if (!row) return s;
+        return {
+          ...s,
+          occupied: row.occupied,
+          name: row.name,
+          stack: row.stack,
+          holeCards: row.occupied ? s.holeCards : s.holeCards.map(() => null),
+        };
+      });
+      const snap = (idx: number) =>
+        isActiveSeat(seats[idx]) || !seats.some((s) => isActiveSeat(s))
+          ? idx
+          : nextActiveSeat(seats, idx);
+      return {
+        ...prev,
+        seats,
+        buttonSeat: snap(prev.buttonSeat),
+        heroSeat: snap(prev.heroSeat),
+        straddles: straddlesOf(prev).filter((st) => isActiveSeat(seats[st.seat])),
+      };
+    });
+    setQuickSetupOpen(false);
   };
 
   // Relocate a player to another seat, swapping the two seats' full state (the
@@ -864,7 +899,16 @@ const CreateHandHistory: React.FC<Props> = ({
   const pot = potView(engine, unitMode);
 
   return (
-    <div className="mx-auto max-w-6xl px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+    <div className="mx-auto max-w-6xl overflow-x-clip px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+      {/* One-list entry of every seat's name and stack. Mounted permanently so
+          the drawer's exit animation plays (see ResponsiveDrawer). */}
+      <QuickSetupDrawer
+        open={quickSetupOpen}
+        onClose={() => setQuickSetupOpen(false)}
+        seats={state.seats}
+        buttonSeat={state.buttonSeat}
+        onApply={applyQuickSetup}
+      />
       {/* Postflop solve offer, step 1: a small yes/no prompt the moment a hand
           that saw a heads-up flop completes, while the auto-save runs behind
           it. Stays mounted so the drawer's exit animation plays. */}
@@ -1104,7 +1148,16 @@ const CreateHandHistory: React.FC<Props> = ({
       {/* ───────── Setup phase: config form ───────── */}
       {phase === "setup" && (
         <div className="rounded-2xl border border-emerald-300/40 bg-white/95 p-4 shadow-lg shadow-emerald-500/20 backdrop-blur-sm">
-          <div className="mb-2 flex items-center justify-end gap-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => setQuickSetupOpen(true)}
+              className="inline-flex items-center gap-1 rounded-full border border-emerald-500/60 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100"
+              title="Enter every player's name and stack in one list"
+            >
+              ⚡ Quick setup
+            </button>
+            <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={handleSaveLayout}
@@ -1138,6 +1191,7 @@ const CreateHandHistory: React.FC<Props> = ({
             >
               Clear all
             </button>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Table size">

@@ -30,7 +30,6 @@ const MultiRangeDesktopView = ({
   reachByFile,
   onActionClick,
   windowWidth,
-  onPlateContentRef,
 }: MultiRangeViewProps) => {
   const [zoom, setZoom] = useState<PlateZoomPayload | null>(null);
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
@@ -83,10 +82,7 @@ const MultiRangeDesktopView = ({
           if (!plates.length) return null;
           return (
             <div key={`row-${rowIdx}`} className="flex justify-center">
-              <div
-                ref={rowIdx === 0 ? onPlateContentRef : undefined}
-                className="flex gap-2 flex-nowrap"
-              >
+              <div className="flex gap-2 flex-nowrap">
                 {plates.map(([posKey, file]) => (
                   <Plate
                     money={money}

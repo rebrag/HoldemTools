@@ -6,6 +6,7 @@ import React from "react";
 import PlayingCard from "@/components/PlayingCard";
 import PokerTableSurface from "@/components/PokerTableSurface";
 import ChipStack from "@/components/ChipStack";
+import MoneyToggle, { type MoneyToggleMoney } from "@/components/MoneyToggle";
 import { seatCoords, type SeatCoord } from "@/lib/pokerGeometry";
 
 /** Back of a playing card (unknown / face-down). */
@@ -73,6 +74,10 @@ export interface PokerTableProps {
   onDealerBadgeClick?: () => void;
   /** Pulsing cue on the D badge while the move-button flow is armed. */
   dealerBadgeArmed?: boolean;
+  /** Chips/bb display toggle ("Show in BB") rendered in the table's top-right
+   *  corner. Pass the money display to show it; omit (or null) to hide - the
+   *  toggle belongs to the table, so each caller decides per use. */
+  moneyToggle?: MoneyToggleMoney | null;
 }
 
 /** Pulsing ring + "NEXT" chip marking the slot the card picker will fill. */
@@ -103,6 +108,7 @@ const PokerTable: React.FC<PokerTableProps> = ({
   coordsOverride,
   onDealerBadgeClick,
   dealerBadgeArmed,
+  moneyToggle,
 }) => {
   const coords = coordsOverride ?? seatCoords(size);
 
@@ -130,6 +136,14 @@ const PokerTable: React.FC<PokerTableProps> = ({
       feltStyle={feltStyle}
       innerClassName={`relative mx-auto w-full ${aspectClassName} ${maxWidthClassName}`}
     >
+      {/* chips/bb toggle, riding the table's top-right corner */}
+          {moneyToggle && (
+            <MoneyToggle
+              money={moneyToggle}
+              className="absolute right-0 top-0 z-40"
+            />
+          )}
+
       {/* center slot */}
           {center != null && (
             <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1.5">

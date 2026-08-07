@@ -1,9 +1,24 @@
-// Chips/bb display toggle for the postflop viewer. Only rendered for
-// hand-history solves (sims have no chip scale), styled after the hand
-// recorder's "Show in BB" pill.
-import type { MoneyDisplay } from "./boardDisplay";
+// src/components/MoneyToggle.tsx
+// Chips/bb display toggle, styled after the hand recorder's "Show in BB" pill.
+// Lives in components because PokerTable can render it in its own corner (see
+// PokerTable's `moneyToggle` prop) wherever a money-denominated table appears.
+// Only rendered for money-denominated data (sims have no chip scale).
 
-const MoneyToggle = ({ money, className }: { money?: MoneyDisplay; className?: string }) => {
+/** The slice of a money display the toggle needs. Structurally compatible
+ *  with the solver's MoneyDisplay (boardDisplay.ts). */
+export interface MoneyToggleMoney {
+  mode: "money" | "bb";
+  bbSize: number;
+  onToggle: () => void;
+}
+
+const MoneyToggle = ({
+  money,
+  className,
+}: {
+  money?: MoneyToggleMoney | null;
+  className?: string;
+}) => {
   // No toggle on a sim, and none when the solve carries no big blind to
   // convert to - there would be nothing to switch between.
   if (!money || !(money.bbSize > 0)) return null;

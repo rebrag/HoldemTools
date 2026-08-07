@@ -55,6 +55,9 @@ export type StreetPicker = {
   /** The chance node whose card is being picked. */
   chanceNodeId: string;
   street: "turn" | "river";
+  /** Display label of the action that closed the street (e.g. "Call"),
+   *  appended to the line as its own tile once a card is picked. */
+  actionLabel?: string;
 };
 
 export type PendingStreet = {
@@ -253,7 +256,11 @@ export function usePostflopSession() {
         ...c,
         ...atParent,
         notice: null,
-        picker: { chanceNodeId: childId, street: nextStreet },
+        picker: {
+          chanceNodeId: childId,
+          street: nextStreet,
+          actionLabel: match.display,
+        },
       });
       return;
     }
@@ -293,11 +300,23 @@ export function usePostflopSession() {
 
   const advanceToStreet = useCallback(
     (c: SessionCore, seedId: string, card: string, manifest: BoardManifest) => {
+      // The action that closed the street (e.g. the call of a bet) gets its
+      // own line tile ahead of the dealt card, so the line reads
+      // Bet -> Call -> [card] instead of jumping straight to the card.
+      const closer: PostflopLineItem[] = c.picker?.actionLabel
+        ? [
+            {
+              label: c.picker.actionLabel,
+              nodeId: c.picker.chanceNodeId,
+              kind: "action",
+            },
+          ]
+        : [];
       setCore({
         ...c,
         manifest,
         currentNodeId: seedId,
-        line: [...c.line, { label: card, nodeId: seedId, kind: "card" }],
+        line: [...c.line, ...closer, { label: card, nodeId: seedId, kind: "card" }],
         notice: null,
         picker: null,
         pendingStreet: null,
@@ -402,6 +421,24 @@ export function usePostflopSession() {
     }
     const idx = c.line.findIndex((item) => item.nodeId === nodeId);
     if (idx < 0) return;
+    const meta = metaRef.current[toSuffix(nodeId)];
+    if (meta?.type === "SPLIT_NODE") {
+      // A street-closing tile (its node is the chance node, which has no
+      // doc). Land back on the closer's decision node and reopen the card
+      // picker - the same state taking that action produces.
+      setCore({
+        ...c,
+        currentNodeId: parentOf(nodeId) ?? "r:0",
+        line: c.line.slice(0, idx),
+        notice: null,
+        picker: {
+          chanceNodeId: nodeId,
+          street: dealtCards(nodeId).length === 0 ? "turn" : "river",
+          actionLabel: c.line[idx].label,
+        },
+      });
+      return;
+    }
     setCore({
       ...c,
       currentNodeId: nodeId,

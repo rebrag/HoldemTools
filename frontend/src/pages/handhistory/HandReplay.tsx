@@ -327,7 +327,7 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
   const pot = potView(frame, unitMode);
 
   return (
-    <div className="mx-auto flex min-h-[calc(100dvh-3rem)] max-w-3xl flex-col px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+    <div className="mx-auto flex min-h-[calc(100dvh-3rem)] max-w-3xl flex-col overflow-x-clip px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
       {/* Header */}
       <div className="mb-2 flex items-start justify-between gap-3">
         <div className="min-w-0">
