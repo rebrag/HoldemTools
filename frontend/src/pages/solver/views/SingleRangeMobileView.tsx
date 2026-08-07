@@ -1,21 +1,47 @@
 // views/SingleRangeMobileView.tsx
 //
-// Mobile single-range layout: a full-width landscape (aspect-[7/5]) table
-// stacked above a range sized to fill whatever viewport height is left, so
-// the whole 13x13 grid + ColorKey stay on-screen without scrolling. Table and
-// range widths need concrete pixel values - the PokerTable's aspect-ratio box
-// collapses without a definite ancestor width.
+// Mobile single-range "tabbed dock" layout: everything the desktop study view
+// shows, folded into a portrait phone without scrolling the page. Top to
+// bottom: the Table / Stats / Hands dock (table by default), the matrix
+// controls, then the decision matrix with the clickable action buttons
+// stacked vertically beside it - matrix + actions together span the full
+// width. Widths need concrete pixel values - the PokerTable's aspect-ratio
+// box collapses without a definite ancestor width.
+import { useState } from "react";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import useElementSize from "@/hooks/useElementSize";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import PokerTable from "@/components/PokerTable";
+import SegmentedControl from "@/components/SegmentedControl";
 import DecisionMatrix from "../DecisionMatrix";
-import ColorKey from "../ColorKey";
 import SolverTableCenter from "../SolverTableCenter";
-import MoneyToggle from "../MoneyToggle";
+import MatrixDisplayModeSelect from "../MatrixDisplayModeSelect";
+import { MatrixHeightModePill, SingleRangeTogglePill } from "../FolderSelector";
+import SeatStatsPanel from "../SeatStatsPanel";
+import ActionSummary from "../ActionSummary";
+import HandBreakdown from "../HandBreakdown";
+import useStudyState from "../useStudyState";
 import { boardCardWidth, solverPotLabel } from "../boardDisplay";
 import useActiveRange from "./useActiveRange";
 import useTopOffset from "./useTopOffset";
-import type { SingleRangeViewProps } from "./types";
+import type { SingleRangeMobileViewProps } from "./types";
+
+type DockTab = "table" | "stats" | "hands";
+
+const DOCK_TABS: { key: DockTab; label: string }[] = [
+  { key: "table", label: "Table" },
+  { key: "stats", label: "Stats" },
+  { key: "hands", label: "Hands" },
+];
+
+/* ── layout budget (px) ───────────────────────────────────────────────── */
+const SIDE_PAD = 20;
+const CTRL_H = 36; // the pills' `compact` h-9
+const SEG_H = 30; // segmented control
+const GAP = 8; // vertical gap between the stacked rows
+const MIN_DOCK = 150; // the dock never shrinks below a usable panel
+const ACTION_MIN_W = 84; // the action column's legibility floor
+const ROOT_PY = 16; // this view's own py-2
 
 const SingleRangeMobileView = ({
   files,
@@ -30,18 +56,30 @@ const SingleRangeMobileView = ({
   isICMSim,
   randomFillEnabled,
   heightMode,
+  onHeightModeChange,
+  singleRangeView,
+  onToggleSingleRange,
+  displayMode,
+  onDisplayModeChange,
   reachByFile,
   onActionClick,
   windowWidth,
   windowHeight,
   board,
-  onPlateContentRef,
+  comboDetail,
+  nodeStats,
+  chipScale,
+  actorSeat,
   seatNames,
   tableSeatsOverride,
   money,
-}: SingleRangeViewProps) => {
+  autoPinBySeat,
+}: SingleRangeMobileViewProps) => {
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
   const { ref: wrapRef, top, bottomInset } = useTopOffset();
+  const reduceMotion = useReducedMotion();
+  const [tab, setTab] = useState<DockTab>("table");
+
   const { activeFile, activeData, activeGrid, tableSeats } = useActiveRange({
     positions,
     files,
@@ -54,43 +92,67 @@ const SingleRangeMobileView = ({
     money,
   });
 
+  /* Pin/hover, auto-pin seeding, display-mode fallback, and matrix display
+   * data - identical behavior to the desktop study view. */
+  const {
+    pinnedHand,
+    shownHand,
+    highlightCombo,
+    onHandSelect,
+    onHandHover,
+    equityAvailable,
+    effectiveMode,
+    displayData,
+  } = useStudyState({
+    activePlayer,
+    autoPinBySeat,
+    displayMode,
+    comboDetail,
+    activeGrid,
+    board,
+  });
+
   /* Bet labels carry the solve's money; the colour ramp is calibrated in
    * big blinds, so tell it how much money makes one. */
   const sizeRef = money?.bbSize && money.bbSize > 0 ? money.bbSize : 1;
   const vh = windowHeight || 640;
   const baseW = container.width || windowWidth;
-
-  // Breathing room on the left/right so table and range don't run
-  // edge-to-edge; also makes the table a touch smaller (freeing vertical room
-  // for the range).
-  const SIDE_PAD = 20;
   const availW = Math.max(200, baseW - SIDE_PAD * 2);
-  const tableW = Math.round(availW);
 
-  const tableH = (tableW * 5) / 7; // aspect-[7/5]
+  /* Height budget: the matrix row (matrix + action column, full width) is
+   * sized so the dock keeps at least MIN_DOCK; the dock is the column's flex
+   * remainder, so a row rendering a few pixels off its budgeted constant
+   * shrinks the dock instead of scrolling the page. */
   const effTop = top > 0 ? top : vh * 0.3;
-  const GAP_BELOW_TABLE = 12; // flex gap-3
-  /* Everything in the range box other than the square matrix: the mt-1 above
-   * the ColorKey (4px) plus the ColorKey itself (a fixed 23px row plus
-   * mb-0.5 - it never wraps, its boxes shrink instead). The matrix is exactly
-   * rangeW tall now that the box carries no padding of its own. */
-  const BOX_EXTRA = 29;
-  /* Chrome the budget would otherwise ignore and then overrun: this view's own
-   * py-2 root padding, and whatever the page reserves beneath it. Both were
-   * missing here, which is why the grid pushed the page into a short scroll
-   * even though it is meant to fit exactly. */
-  const ROOT_PY = 16;
-  const belowTableH =
-    vh - effTop - ROOT_PY - bottomInset - tableH - GAP_BELOW_TABLE;
-  const rangeW = Math.round(
-    Math.max(200, Math.min(availW, belowTableH - BOX_EXTRA, 560))
+  const FIXED_CHROME = SEG_H + CTRL_H + GAP * 3;
+  const availH = Math.max(320, vh - effTop - ROOT_PY - bottomInset);
+  const matrixSize = Math.round(
+    Math.max(
+      200,
+      Math.min(
+        availW - ACTION_MIN_W - GAP,
+        availH - FIXED_CHROME - MIN_DOCK,
+        560
+      )
+    )
   );
+  /* The action column takes whatever width the (usually height-bound) square
+   * matrix leaves, so the pair always spans the full row. */
+  const actionW = Math.max(ACTION_MIN_W, availW - matrixSize - GAP);
+  const dockH = Math.round(
+    Math.max(MIN_DOCK, availH - FIXED_CHROME - matrixSize)
+  );
+  const tableW = Math.min(availW, Math.floor((dockH * 7) / 5));
+
+  const potLabel =
+    actualPot != null ? solverPotLabel(actualPot, board, money) : undefined;
 
   return (
     <div ref={wrapRef} className="relative flex justify-center py-2 w-full">
       <div
         ref={container.ref}
-        className="relative z-10 w-full flex flex-col items-center gap-3 sm:gap-5"
+        className="relative z-10 flex w-full flex-col items-center"
+        style={{ gap: GAP, height: availH }}
       >
         {/* Loading */}
         <div
@@ -101,51 +163,147 @@ const SingleRangeMobileView = ({
           <LoadingIndicator />
         </div>
 
-        {/* Poker table (definite width so it doesn't collapse) */}
-        <div className="relative flex-shrink-0" style={{ width: tableW }}>
-          <MoneyToggle money={money} className="absolute -top-1 right-0 z-20" />
-          <PokerTable
-            size={tableSeatsOverride?.length ?? positions.length}
-            seats={tableSeatsOverride ?? tableSeats}
-            className="w-full"
-            maxWidthClassName="max-w-none"
-            aspectClassName="aspect-[7/5]"
-            potAmount={actualPot != null ? Math.max(0, actualPot) : undefined}
-            potLabel={
-              actualPot != null ? solverPotLabel(actualPot, board, money) : undefined
-            }
-            center={
-              board && board.length > 0 ? (
-                <SolverTableCenter board={board} cardWidth={boardCardWidth(tableW)} />
-              ) : undefined
-            }
-          />
+        {/* Dock: Table / Stats / Hands, above the matrix */}
+        <SegmentedControl
+          options={DOCK_TABS}
+          value={tab}
+          onChange={setTab}
+          className="flex-shrink-0"
+        />
+        {/* The dock is the column's flex remainder (nominally dockH): if any
+            fixed row renders taller than budgeted, the dock absorbs it. */}
+        <div
+          data-testid="mobile-dock"
+          className="relative min-h-0 flex-1 overflow-y-auto"
+          style={{ width: availW }}
+        >
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={tab}
+              className="flex h-full min-h-0 flex-col"
+              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 10 }}
+              animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+              transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+            >
+              {tab === "table" ? (
+                <div
+                  className="relative mx-auto flex-shrink-0"
+                  style={{ width: tableW }}
+                >
+                  <PokerTable
+                    size={tableSeatsOverride?.length ?? positions.length}
+                    seats={tableSeatsOverride ?? tableSeats}
+                    className="w-full"
+                    maxWidthClassName="max-w-none"
+                    aspectClassName="aspect-[7/5]"
+                    moneyToggle={money}
+                    potAmount={
+                      actualPot != null ? Math.max(0, actualPot) : undefined
+                    }
+                    potLabel={potLabel}
+                    center={
+                      board && board.length > 0 ? (
+                        <SolverTableCenter
+                          board={board}
+                          cardWidth={boardCardWidth(tableW)}
+                        />
+                      ) : undefined
+                    }
+                  />
+                </div>
+              ) : tab === "stats" ? (
+                nodeStats ? (
+                  <SeatStatsPanel
+                    stats={nodeStats}
+                    actorSeat={actorSeat}
+                    names={seatNames}
+                    money={money}
+                  />
+                ) : (
+                  <p className="px-2 py-4 text-center text-[11px] text-slate-400">
+                    Range-wide EV, equity, and combo counts appear here inside
+                    a postflop solve.
+                  </p>
+                )
+              ) : (
+                <HandBreakdown
+                  sizeRef={sizeRef}
+                  data={activeGrid}
+                  hand={shownHand}
+                  board={board}
+                  highlightCombo={highlightCombo}
+                  comboDetail={comboDetail}
+                  displayMode={effectiveMode}
+                  evRange={displayData?.evRange ?? null}
+                  chipEv={nodeStats?.chipEv}
+                  chipScale={chipScale}
+                  money={money}
+                  loading={!activeData}
+                  className="min-h-0 flex-1"
+                />
+              )}
+            </motion.div>
+          </AnimatePresence>
         </div>
 
-        {/* Active player's range */}
+        {/* Matrix controls. z-[60] clears the loading overlay (z-50), which
+            stays interactive while a plate loads and would eat taps. */}
         <div
-          ref={onPlateContentRef}
-          className="relative flex-shrink-0"
-          style={{ width: rangeW }}
+          className="relative z-[60] flex flex-shrink-0 items-center gap-1.5"
+          style={{ width: availW, height: CTRL_H }}
         >
-          <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
-            <DecisionMatrix
-              money={money}
-              gridData={activeGrid}
-              randomFillEnabled={randomFillEnabled && !!activeData}
-              isICMSim={isICMSim}
+          <MatrixDisplayModeSelect
+            mode={effectiveMode}
+            onChange={(m) => onDisplayModeChange?.(m)}
+            equityAvailable={equityAvailable}
+          />
+          <SingleRangeTogglePill
+            singleRangeView={singleRangeView}
+            onToggle={onToggleSingleRange}
+            compact
+          />
+          {heightMode && onHeightModeChange && (
+            <MatrixHeightModePill
               heightMode={heightMode}
-              reachByHand={
-                activeFile ? reachByFile?.[activeFile] ?? null : null
-              }
+              onChange={onHeightModeChange}
+              compact
+              align="left"
             />
-          </div>
+          )}
+        </div>
 
-          <div className="mt-1 w-full">
-            <ColorKey
+        {/* Decision matrix + vertical action buttons, spanning the full width */}
+        <div
+          className="flex flex-shrink-0 items-stretch"
+          style={{ width: availW, gap: GAP }}
+        >
+          <div className="relative flex-shrink-0" style={{ width: matrixSize }}>
+            <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
+              <DecisionMatrix
+                money={money}
+                gridData={activeGrid}
+                randomFillEnabled={randomFillEnabled && !!activeData}
+                isICMSim={isICMSim}
+                heightMode={heightMode}
+                reachByHand={activeFile ? reachByFile?.[activeFile] ?? null : null}
+                displayData={displayData}
+                selectedHand={pinnedHand}
+                onHandSelect={onHandSelect}
+                onHandHover={onHandHover}
+              />
+            </div>
+          </div>
+          <div
+            className="min-w-0 flex-1"
+            style={{ width: actionW, height: matrixSize }}
+          >
+            <ActionSummary
               sizeRef={sizeRef}
               data={activeGrid}
               loading={!activeData}
+              compact
+              vertical
               onActionClick={(action) =>
                 activeFile && onActionClick(action, activeFile)
               }

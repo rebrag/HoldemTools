@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { onAuthStateChanged, signOut, User } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import LoadingIndicator from "@/components/LoadingIndicator";
+import OrientationGate from "@/components/OrientationGate";
 import { AppProvider } from "@/components/AppContext";
 import AppShell from "@/components/layout/AppShell";
 // Route components are code-split (React.lazy) so each page ships its own chunk
@@ -122,6 +123,8 @@ function App() {
           </Route>
         </Routes>
       </div>
+      {/* Portrait "lock": blocks the UI while a phone is held landscape. */}
+      <OrientationGate />
     </div>
   );
 }

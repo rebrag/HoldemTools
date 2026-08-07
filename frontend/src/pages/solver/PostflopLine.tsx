@@ -35,7 +35,9 @@ export interface PostflopLineProps {
    */
   onPreflopJump?: (index: number, action: string) => void;
   onExit: () => void;
-  matchWidth?: number;
+  /** Stretch the cards to fill the parent's height - used by the study
+   *  header so the strip matches the SimSelect panel beside it. */
+  fillHeight?: boolean;
   /** Seat to act at the current node (the active card). */
   actorSeat?: string;
   actorStackMoney?: number | null;
@@ -135,7 +137,7 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
   onPickAction,
   onPreflopJump,
   onExit,
-  matchWidth,
+  fillHeight,
   actorSeat,
   actorStackMoney,
   actions,
@@ -154,9 +156,17 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
   const preflopCards = !!preflopNodes && preflopNodes.length > 0 && !!onPreflopJump;
 
   return (
-    <div className="w-full mx-auto select-none" style={{ maxWidth: matchWidth || undefined }}>
-      <div className="overflow-x-auto no-scrollbar w-full animate-[fadeSlideIn_0.25s_ease-out]">
-        <div className="flex flex-nowrap items-stretch gap-1 w-full">
+    <div className={`w-full mx-auto select-none${fillHeight ? " h-full" : ""}`}>
+      <div
+        className={`overflow-x-auto no-scrollbar w-full animate-[fadeSlideIn_0.25s_ease-out]${
+          fillHeight ? " h-full" : ""
+        }`}
+      >
+        <div
+          className={`flex flex-nowrap items-stretch gap-1 w-full${
+            fillHeight ? " h-full" : ""
+          }`}
+        >
           {!preflopCards && (
             <button
               type="button"

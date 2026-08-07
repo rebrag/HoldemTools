@@ -42,7 +42,6 @@ const MultiRangeMobileView = ({
   onActionClick,
   windowWidth,
   windowHeight,
-  onPlateContentRef,
 }: MultiRangeViewProps) => {
   const [zoom, setZoom] = useState<PlateZoomPayload | null>(null);
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
@@ -139,11 +138,7 @@ const MultiRangeMobileView = ({
           paddingRight: SIDE_PAD_X_PX,
         }}
       >
-        <div
-          ref={onPlateContentRef}
-          className="flex justify-center gap-3 w-full"
-          style={{ height: "100%" }}
-        >
+        <div className="flex justify-center gap-3 w-full" style={{ height: "100%" }}>
           {[col0, col1].map((col, idx) =>
             col.length ? (
               <div

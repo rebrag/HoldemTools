@@ -95,38 +95,9 @@ export const ErrorBanner: React.FC<{ message: string }> = ({ message }) => (
   </div>
 );
 
-/** Small segmented pill control, dark-theme styled. */
-export function SegmentedControl<T extends string>({
-  options,
-  value,
-  onChange,
-}: {
-  options: { key: T; label: string }[];
-  value: T;
-  onChange: (v: T) => void;
-}): React.ReactElement {
-  return (
-    <div className="inline-flex items-center rounded-full bg-white/10 p-[2px] text-[11px]">
-      {options.map((opt) => {
-        const active = value === opt.key;
-        return (
-          <button
-            key={opt.key}
-            type="button"
-            onClick={() => onChange(opt.key)}
-            className={`px-2.5 py-1 rounded-full transition text-[11px] ${
-              active
-                ? "bg-emerald-400 text-emerald-950 font-semibold shadow-sm"
-                : "text-emerald-100/80 hover:text-emerald-50"
-            }`}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
+/** Small segmented pill control, dark-theme styled. Now shared app-wide from
+ * src/components; re-exported here so existing bankroll imports keep working. */
+export { default as SegmentedControl } from "@/components/SegmentedControl";
 
 export const FilterToggleButton: React.FC<{
   active: boolean;

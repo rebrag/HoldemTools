@@ -26,6 +26,6 @@ body {
  * left the screenshot chasing a panel that was busy unmounting. */
 [data-testid="folder-dropdown"],
 [data-testid="folder-dropdown"] *,
-input[placeholder*="Preflop Solutions"] {
+input[placeholder="Select Sim"] {
   visibility: visible;
 }

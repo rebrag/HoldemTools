@@ -197,12 +197,12 @@ test("the tour anchors stay unique after leaving the study layout", async ({
     timeout: BOOT_TIMEOUT,
   });
 
-  // Study layout -> multi-range: the pill must hand off to FolderSelector,
-  // which is the other component that renders it. The wide search placeholder
-  // is what tells us ClassicHeader/FolderSelector has taken over from
-  // StudyTopStrip/SimSelect's compact "Select Sim" trigger.
+  // Study layout -> multi-range: the pill must hand off to Solver's own
+  // controls row, the only other place it renders. The study control row
+  // unmounting (its display-mode dropdown goes with it) is what tells us the
+  // multi layout has taken over; the header itself no longer changes.
   await page.getByRole("button", { name: /single range/i }).click();
-  await expect(page.getByPlaceholder(/Preflop Solutions/i)).toBeVisible();
+  await expect(page.getByTestId("display-mode-btn")).toHaveCount(0);
   expect(await tourTargets(page)).toEqual({ folder: 1, colorKey: 1 });
 });
 

@@ -16,6 +16,13 @@ interface ActionSummaryProps {
   sizeRef?: number;
   loading?: boolean;
   onActionClick?: (action: string) => void;
+  /** Shorter panels (mobile dock): the % drops a size and the combo line
+   *  shares a row with it, so the strip fits a tight height budget. */
+  compact?: boolean;
+  /** Stack the panels top-to-bottom in a narrow column (the mobile matrix's
+   *  sidebar) instead of side by side. The panels split the parent's height
+   *  equally, so give the wrapper a definite height. */
+  vertical?: boolean;
 }
 
 const shadeColor = (hex: string, percent: number) => {
@@ -28,13 +35,23 @@ const shadeColor = (hex: string, percent: number) => {
 };
 
 const PANEL_MIN_H = 72; // px, matches the skeleton so loading never shifts layout
+const PANEL_MIN_H_COMPACT = 48;
 
 const ActionSummary: React.FC<ActionSummaryProps> = ({
   data,
   sizeRef = 1,
   loading,
   onActionClick = () => {},
+  compact,
+  vertical,
 }) => {
+  const panelMinH = compact ? PANEL_MIN_H_COMPACT : PANEL_MIN_H;
+  /* Vertical panels split the parent's height instead of carrying a floor. */
+  const rootCls = vertical ? "flex h-full w-full flex-col" : "w-full";
+  const rowCls = vertical
+    ? "flex min-h-0 w-full flex-1 flex-col gap-1"
+    : "flex gap-1 w-full";
+  const panelSizing = vertical ? "min-h-0 flex-1" : "flex-1 min-w-0";
   const aggregates = useMemo(
     () => computeActionAggregates(data, sizeRef),
     [data, sizeRef]
@@ -55,24 +72,24 @@ const ActionSummary: React.FC<ActionSummaryProps> = ({
   if (isLoading) {
     /* same structure / heights as the loaded state, so no layout shift */
     return (
-      <div className="w-full">
-        <div className="flex gap-1 w-full">
+      <div className={rootCls}>
+        <div className={rowCls}>
           {Array.from({ length: 3 }).map((_, i) => (
             <div
               key={i}
-              className="flex-1 min-w-0 rounded-md bg-slate-200/70 shadow-sm animate-pulse"
-              style={{ minHeight: PANEL_MIN_H }}
+              className={`${panelSizing} rounded-md bg-slate-200/70 shadow-sm animate-pulse`}
+              style={vertical ? undefined : { minHeight: panelMinH }}
             />
           ))}
         </div>
-        <div className="mt-1 h-1.5 w-full rounded-full bg-slate-200/50 animate-pulse" />
+        <div className="mt-1 h-1.5 w-full flex-shrink-0 rounded-full bg-slate-200/50 animate-pulse" />
       </div>
     );
   }
 
   return (
-    <div className="w-full">
-      <div className="flex gap-1 w-full">
+    <div className={rootCls}>
+      <div className={rowCls}>
         {aggregates.map((agg) => {
           const hover = shadeColor(agg.color, -18);
           return (
@@ -81,8 +98,11 @@ const ActionSummary: React.FC<ActionSummaryProps> = ({
               type="button"
               onClick={() => onActionClick(agg.action)}
               title={`Click to see reactions to ${agg.action}`}
-              className="flex-1 min-w-0 rounded-md shadow-md px-1.5 py-1.5 text-left flex flex-col justify-between cursor-pointer"
-              style={{ backgroundColor: agg.color, minHeight: PANEL_MIN_H }}
+              className={`${panelSizing} rounded-md shadow-md px-1.5 py-1.5 text-left flex flex-col justify-between cursor-pointer`}
+              style={{
+                backgroundColor: agg.color,
+                ...(vertical ? {} : { minHeight: panelMinH }),
+              }}
               whileTap={{ scale: 0.95 }}
               whileHover={{ backgroundColor: hover }}
               transition={{ type: "spring", stiffness: 900, damping: 50 }}
@@ -90,19 +110,32 @@ const ActionSummary: React.FC<ActionSummaryProps> = ({
               <span className="block truncate text-[11px] font-semibold text-white/90 leading-tight">
                 {agg.action}
               </span>
-              <span className="block text-lg font-bold tabular-nums text-white leading-tight">
-                {agg.pctOfRange.toFixed(1)}%
-              </span>
-              <span className="block truncate text-[10px] tabular-nums text-white/75 leading-tight">
-                {agg.combos.toFixed(2)} combos
-              </span>
+              {compact ? (
+                <span className="flex items-baseline justify-between gap-1">
+                  <span className="block text-sm font-bold tabular-nums text-white leading-tight">
+                    {agg.pctOfRange.toFixed(1)}%
+                  </span>
+                  <span className="block truncate text-[9px] tabular-nums text-white/75 leading-tight">
+                    {agg.combos.toFixed(1)}c
+                  </span>
+                </span>
+              ) : (
+                <>
+                  <span className="block text-lg font-bold tabular-nums text-white leading-tight">
+                    {agg.pctOfRange.toFixed(1)}%
+                  </span>
+                  <span className="block truncate text-[10px] tabular-nums text-white/75 leading-tight">
+                    {agg.combos.toFixed(2)} combos
+                  </span>
+                </>
+              )}
             </motion.button>
           );
         })}
       </div>
 
       {/* Thin animated distribution bar (stable always-mounted slots). */}
-      <div className="mt-1 flex h-1.5 w-full overflow-hidden rounded-full bg-slate-900/30">
+      <div className="mt-1 flex h-1.5 w-full flex-shrink-0 overflow-hidden rounded-full bg-slate-900/30">
         {barSegments.map(({ slot, width, color }) => (
           <div
             key={slot}

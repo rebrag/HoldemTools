@@ -30,14 +30,11 @@ test.beforeEach(async ({ page }) => {
      returning-user state; the tour deserves its own spec. */
   await page.addInitScript(() => window.localStorage.setItem("tourSeen", "1"));
 
-  /* This spec targets FolderSelector.tsx directly (its own desktop-glass-
-     window vs mobile-sheet split, driven purely by a 639px matchMedia query
-     inside FolderSelectorDropdown - see the file docstring above). At a
-     desktop viewport, singleRangeView defaulting on routes through the
-     unrelated desktop-study layout instead (SimSelect's compact "Select Sim"
-     trigger, same dropdown, different chrome), which is out of scope here.
-     Pin the toggle off so this suite always reaches FolderSelector's wide
-     trigger regardless of the app's current default. */
+  /* The dropdown's trigger is SimSelect's "Select Sim" input in every layout
+     now (the wide FolderSelector is gone), so the single-range toggle no
+     longer changes any chrome this spec touches. Pin it anyway so the page
+     behind the glass panel stays the same layout across app-default changes -
+     the baselines' backdrop is blanked, but geometry is measured live. */
   await page.addInitScript(() => window.localStorage.setItem("singleRangeView", "0"));
 
   api = await stubSolverApi(page);
@@ -54,12 +51,12 @@ test.afterEach(() => {
 /** Opens the dropdown. The pointer stays on the search input (above the panel
  *  on desktop), so no row is hovered and the highlight stays on row 0. */
 async function openDropdown(page: Page) {
-  const search = page.getByPlaceholder(/Preflop Solutions/i);
+  const search = page.getByPlaceholder("Select Sim");
   await expect(search).toBeVisible({ timeout: BOOT_TIMEOUT });
 
-  /* The sim info chip only renders once metadata.json resolves, and it shares
-     the search bar's flex row. Waiting for it means the header has reached its
-     final size before anything measures the anchor beneath it. */
+  /* The sim panel's info row only settles once metadata.json resolves.
+     Waiting for it means the header has reached its final size before
+     anything measures the anchor beneath it. */
   await expect(page.getByRole("button", { name: "Solution info" })).toBeVisible();
 
   await search.click();
@@ -191,7 +188,7 @@ test.describe("desktop window", () => {
     await openDropdown(page);
     const { panelWidth, searchWidth } = await page.evaluate(() => {
       const panel = document.querySelector<HTMLElement>("[data-testid=folder-dropdown-panel]")!;
-      const search = document.querySelector<HTMLElement>("input[placeholder*='Preflop Solutions']")!;
+      const search = document.querySelector<HTMLElement>("input[placeholder='Select Sim']")!;
       return {
         panelWidth: panel.getBoundingClientRect().width,
         searchWidth: search.getBoundingClientRect().width,
