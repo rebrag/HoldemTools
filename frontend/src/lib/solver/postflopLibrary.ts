@@ -118,6 +118,10 @@ export const solutionRef = (e: PostflopIndexEntry): SolutionRef => ({
 export const solutionKey = (e: PostflopIndexEntry): string =>
   `${e.stacks}|${e.node_name}|${e.board}`;
 
+/** Deep link that opens this solved board on the Solutions page. */
+export const solutionOpenUrl = (e: PostflopIndexEntry): string =>
+  `/solutions?open=${encodeURIComponent(solutionKey(e))}`;
+
 export type PostflopIndex = {
   schema: number;
   updated_utc?: string;

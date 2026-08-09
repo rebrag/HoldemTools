@@ -7,13 +7,19 @@
 //     (see BankrollTracker.handleSave).
 // Hands are associated with the session, so they inherit its date/time rather
 // than carrying their own.
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import type { User } from "firebase/auth";
 import { AnimatePresence, motion } from "framer-motion";
+import { Play, Library } from "lucide-react";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import CopyButton from "@/components/CopyButton";
+import RowActionButton from "@/components/RowActionButton";
 import { authedFetch } from "@/lib/api";
-import HandPreview from "@/pages/handhistory/HandPreview";
+import HandPreview from "@/components/HandPreview";
+import useHandSolutions from "@/hooks/useHandSolutions";
+import { solutionOpenUrl } from "@/lib/solver/postflopLibrary";
+import { parseReplay } from "@/pages/handhistory/create/replay";
 import type { HandHistory } from "@/pages/handhistory/types";
 
 // A hand typed against an unsaved (draft) session — no server id yet.
@@ -26,6 +32,11 @@ interface Row {
   key: string;
   label: string;
   rawText: string;
+  /** Has an embedded replay payload, so /hand-history/replay/{key} works.
+   *  Always false for draft hands: they have no server id to route to. */
+  replayable: boolean;
+  /** Deep link to this hand's solved board on /solutions, or null. */
+  solutionHref: string | null;
 }
 
 interface Props {
@@ -51,11 +62,15 @@ const SessionHandHistories: React.FC<Props> = ({
   draftHands,
   onDraftChange,
 }) => {
+  const navigate = useNavigate();
   const [items, setItems] = useState<HandHistory[]>([]); // session mode only
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
+  // Which of this session's hands have a solved board on /solutions.
+  const solutionByHandId = useHandSolutions(mode === "session" && Boolean(user));
 
   const itemsRef = useRef<HandHistory[]>([]);
   itemsRef.current = items;
@@ -92,18 +107,30 @@ const SessionHandHistories: React.FC<Props> = ({
     };
   }, [mode, user, sessionId]);
 
-  const rows: Row[] =
-    mode === "session"
-      ? items.map((h) => ({
-          key: String(h.id),
-          label: `Hand #${h.id}`,
-          rawText: h.rawText,
-        }))
-      : (draftHands ?? []).map((h, i) => ({
-          key: h.localId,
-          label: `Hand ${i + 1}`,
-          rawText: h.rawText,
-        }));
+  // Memoized: parseReplay decodes a base64 JSON payload per hand, which is
+  // too much work to redo on every expand/collapse render.
+  const rows: Row[] = useMemo(
+    () =>
+      mode === "session"
+        ? items.map((h) => {
+            const solution = solutionByHandId[h.id];
+            return {
+              key: String(h.id),
+              label: `Hand #${h.id}`,
+              rawText: h.rawText,
+              replayable: parseReplay(h.rawText) != null,
+              solutionHref: solution ? solutionOpenUrl(solution) : null,
+            };
+          })
+        : (draftHands ?? []).map((h, i) => ({
+            key: h.localId,
+            label: `Hand ${i + 1}`,
+            rawText: h.rawText,
+            replayable: false,
+            solutionHref: null,
+          })),
+    [mode, items, draftHands, solutionByHandId]
+  );
 
   const handleDelete = async (key: string) => {
     if (!window.confirm("Delete this hand? This can't be undone.")) return;
@@ -158,6 +185,7 @@ const SessionHandHistories: React.FC<Props> = ({
           <AnimatePresence initial={false}>
             {rows.map((row) => {
               const expanded = expandedKey === row.key;
+              const { solutionHref } = row;
               return (
                 <motion.li
                   key={row.key}
@@ -179,7 +207,25 @@ const SessionHandHistories: React.FC<Props> = ({
                       </div>
                       {!expanded && <HandPreview rawText={row.rawText} />}
                     </button>
-                    <div className="flex shrink-0 items-center gap-1.5">
+                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                      {row.replayable && (
+                        <RowActionButton
+                          tone="replay"
+                          label="Replay hand"
+                          icon={<Play className="h-4 w-4" fill="currentColor" />}
+                          onClick={() =>
+                            navigate(`/hand-history/replay/${row.key}`)
+                          }
+                        />
+                      )}
+                      {solutionHref && (
+                        <RowActionButton
+                          tone="solution"
+                          label="View solution"
+                          icon={<Library className="h-4 w-4" />}
+                          onClick={() => navigate(solutionHref)}
+                        />
+                      )}
                       <CopyButton
                         text={row.rawText}
                         className="rounded-md border border-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-700 hover:bg-gray-100"

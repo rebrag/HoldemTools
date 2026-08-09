@@ -1,8 +1,10 @@
-// src/pages/handhistory/HandPreview.tsx
-// Visual preview for a saved hand, shown in the hand-history lists in place of
-// the first serialized text line. Renders the hero's hole cards, the board, and
-// the hole cards + name of the villain who committed the most chips. Hands with
-// no embedded replay payload (legacy/imported) fall back to the text line.
+// src/components/HandPreview.tsx
+// Visual summary of a saved hand: the hero's hole cards, the board, and the
+// hole cards + name of the villain who committed the most chips, all parsed
+// from the hand's rawText (its embedded replay payload is the single source
+// of truth). Shared by the hand-history list, the bankroll session modal, and
+// the solved-flops library. Hands with no embedded replay payload
+// (legacy/imported) fall back to the first text line.
 import React, { useMemo } from "react";
 import PlayingCard from "@/components/PlayingCard";
 import { CardBack } from "@/components/PokerTable";
@@ -11,7 +13,7 @@ import {
   parseReplay,
   stripReplay,
   type HandPreview as HandPreviewData,
-} from "./create/replay";
+} from "@/pages/handhistory/create/replay";
 
 const CARD_W = 22;
 

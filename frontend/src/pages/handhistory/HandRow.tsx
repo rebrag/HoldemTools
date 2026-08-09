@@ -5,10 +5,10 @@
 // whose props actually changed re-render.
 import React from "react";
 import { AnimatePresence, motion, type Variants } from "framer-motion";
-import { Play, Share2, Copy, Check, Trash2, MoreHorizontal } from "lucide-react";
+import { Play, Library, Share2, Copy, Check, Trash2, MoreHorizontal } from "lucide-react";
 import { SHARE_ENABLED } from "@/lib/shareApi";
-import RowActionButton from "./RowActionButton";
-import HandPreview from "./HandPreview";
+import RowActionButton from "@/components/RowActionButton";
+import HandPreview from "@/components/HandPreview";
 import type { ToolRow } from "./types";
 
 const itemVariants: Variants = {
@@ -26,6 +26,9 @@ type HandRowProps = {
   row: ToolRow;
   /** Linked bankroll-session label ("location · blinds"), or "". */
   meta: string;
+  /** Deep link to this hand's solved board on /solutions, or null when the
+   *  hand has no solution. A plain string so React.memo stays effective. */
+  solutionHref: string | null;
   expanded: boolean;
   menuOpen: boolean;
   flashKind: "copied" | "shared" | null;
@@ -36,11 +39,13 @@ type HandRowProps = {
   onShare: (row: ToolRow) => void;
   onDelete: (row: ToolRow) => void;
   onReplay: (key: string) => void;
+  onOpenSolution: (href: string) => void;
 };
 
 const HandRow: React.FC<HandRowProps> = ({
   row,
   meta,
+  solutionHref,
   expanded,
   menuOpen,
   flashKind,
@@ -51,6 +56,7 @@ const HandRow: React.FC<HandRowProps> = ({
   onShare,
   onDelete,
   onReplay,
+  onOpenSolution,
 }) => {
   // Secondary actions, shared between the desktop inline row and the
   // mobile "⋯" drawer.
@@ -123,6 +129,16 @@ const HandRow: React.FC<HandRowProps> = ({
               label="Replay hand"
               icon={<Play className="h-4 w-4" fill="currentColor" />}
               onClick={() => onReplay(row.key)}
+            />
+          )}
+          {/* Inline at every breakpoint, like Replay: it only exists on
+              solved hands and is the row's headline affordance. */}
+          {solutionHref && (
+            <RowActionButton
+              tone="solution"
+              label="View solution"
+              icon={<Library className="h-4 w-4" />}
+              onClick={() => onOpenSolution(solutionHref)}
             />
           )}
           {/* Desktop: secondary actions inline */}

@@ -7,6 +7,8 @@ import { authedFetch } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { createShareToken, shareUrl } from "@/lib/shareApi";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
+import useHandSolutions from "@/hooks/useHandSolutions";
+import { solutionOpenUrl } from "@/lib/solver/postflopLibrary";
 import HandHistorySecondaryNav from "./HandHistorySecondaryNav";
 import HandRow from "./HandRow";
 import FlyingCards from "./FlyingCards";
@@ -74,6 +76,9 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     null
   );
   const [sharingKey, setSharingKey] = useState<string | null>(null);
+
+  // Which saved hands have a solved board, for the "view solution" button.
+  const solutionByHandId = useHandSolutions(Boolean(user));
 
   // Local (signed-out) store. When signed in these are migrated to the server
   // and cleared (see the migration effect below).
@@ -359,6 +364,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     (key: string) => navigate(`/hand-history/replay/${key}`),
     [navigate]
   );
+  const openSolution = useCallback((href: string) => navigate(href), [navigate]);
 
   return (
     <>
@@ -443,11 +449,13 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
             </li>,
             ...group.rows.map((row) => {
               const session = row.sessionId ? sessionsById.get(row.sessionId) : null;
+              const solution = row.server ? solutionByHandId[row.server.id] : undefined;
               return (
                 <HandRow
                   key={row.key}
                   row={row}
                   meta={session ? sessionMeta(session) : ""}
+                  solutionHref={solution ? solutionOpenUrl(solution) : null}
                   expanded={expandedKey === row.key}
                   menuOpen={menuKey === row.key}
                   flashKind={flash?.key === row.key ? flash.kind : null}
@@ -458,6 +466,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                   onShare={handleShare}
                   onDelete={handleDelete}
                   onReplay={openReplay}
+                  onOpenSolution={openSolution}
                 />
               );
             }),

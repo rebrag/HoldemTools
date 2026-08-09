@@ -92,7 +92,12 @@ export type PostflopFixture = {
 
 export async function stubSolverApi(
   page: Page,
-  opts: { postflop?: PostflopFixture; handHistories?: HandHistoryFixture[] } = {}
+  opts: {
+    postflop?: PostflopFixture;
+    handHistories?: HandHistoryFixture[];
+    /** Sessions as /api/bankroll returns them (camelCase BankrollSession). */
+    bankrollSessions?: unknown[];
+  } = {}
 ): Promise<ApiStub> {
   const unhandled: string[] = [];
   const hidden: SolutionRefFixture[] = [];
@@ -110,6 +115,13 @@ export async function stubSolverApi(
        list request answered rather than escaping to the deployed API. */
     if (pathname.endsWith("/api/handhistory")) {
       return json(opts.handHistories ?? []);
+    }
+
+    /* Bankroll sessions, which /hand-history fetches for its per-row
+       "location · blinds" chips and /bankroll lists. Empty by default -
+       the calls just must not escape to the real API. */
+    if (pathname.endsWith("/api/bankroll")) {
+      return json(opts.bankrollSessions ?? []);
     }
 
     /* Hiding a solved board. The stub records the calls so a spec can assert

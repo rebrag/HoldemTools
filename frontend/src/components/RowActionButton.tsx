@@ -1,16 +1,17 @@
-// src/pages/handhistory/RowActionButton.tsx
-// Compact, color-coded icon button for the saved-hand row action panel
-// (Replay / Share / Copy / Delete). Matches the app's TransportButton idiom:
-// a motion.button with tap/hover feedback gated by useReducedMotion, an
-// aria-label + title for the icon-only affordance, and a uniform square shape
-// so the four buttons read as one consistent set and fit cleanly on the row.
+// src/components/RowActionButton.tsx
+// Compact, color-coded icon button for hand-row action panels
+// (Replay / Solution / Share / Copy / Delete). Matches the app's
+// TransportButton idiom: a motion.button with tap/hover feedback gated by
+// useReducedMotion, an aria-label + title for the icon-only affordance, and a
+// uniform square shape so the buttons read as one consistent set on the row.
 import React from "react";
 import { motion, useReducedMotion } from "framer-motion";
 
-export type RowActionTone = "replay" | "share" | "copy" | "delete";
+export type RowActionTone = "replay" | "solution" | "share" | "copy" | "delete";
 
 const TONES: Record<RowActionTone, string> = {
   replay: "border-emerald-300 bg-emerald-50 text-emerald-600 hover:bg-emerald-100",
+  solution: "border-violet-300 bg-violet-50 text-violet-600 hover:bg-violet-100",
   share: "border-sky-300 bg-sky-50 text-sky-600 hover:bg-sky-100",
   copy: "border-slate-300 bg-slate-50 text-slate-600 hover:bg-slate-100",
   delete: "border-rose-300 bg-rose-50 text-rose-600 hover:bg-rose-100",
