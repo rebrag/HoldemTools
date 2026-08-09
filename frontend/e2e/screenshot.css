@@ -26,6 +26,6 @@ body {
  * left the screenshot chasing a panel that was busy unmounting. */
 [data-testid="folder-dropdown"],
 [data-testid="folder-dropdown"] *,
-input[placeholder="Select Sim"] {
+[data-testid="sim-select"] {
   visibility: visible;
 }

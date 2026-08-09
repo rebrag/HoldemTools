@@ -30,11 +30,11 @@ test.beforeEach(async ({ page }) => {
      returning-user state; the tour deserves its own spec. */
   await page.addInitScript(() => window.localStorage.setItem("tourSeen", "1"));
 
-  /* The dropdown's trigger is SimSelect's "Select Sim" input in every layout
-     now (the wide FolderSelector is gone), so the single-range toggle no
-     longer changes any chrome this spec touches. Pin it anyway so the page
-     behind the glass panel stays the same layout across app-default changes -
-     the baselines' backdrop is blanked, but geometry is measured live. */
+  /* The dropdown's trigger is SimSelect's sim-select input in every layout now
+     (the wide FolderSelector is gone), so the single-range toggle no longer
+     changes any chrome this spec touches. Pin it anyway so the page behind the
+     glass panel stays the same layout across app-default changes - the
+     baselines' backdrop is blanked, but geometry is measured live. */
   await page.addInitScript(() => window.localStorage.setItem("singleRangeView", "0"));
 
   api = await stubSolverApi(page);
@@ -51,7 +51,7 @@ test.afterEach(() => {
 /** Opens the dropdown. The pointer stays on the search input (above the panel
  *  on desktop), so no row is hovered and the highlight stays on row 0. */
 async function openDropdown(page: Page) {
-  const search = page.getByPlaceholder("Select Sim");
+  const search = page.getByTestId("sim-select");
   await expect(search).toBeVisible({ timeout: BOOT_TIMEOUT });
 
   /* The sim panel's info row only settles once metadata.json resolves.
@@ -188,7 +188,7 @@ test.describe("desktop window", () => {
     await openDropdown(page);
     const { panelWidth, searchWidth } = await page.evaluate(() => {
       const panel = document.querySelector<HTMLElement>("[data-testid=folder-dropdown-panel]")!;
-      const search = document.querySelector<HTMLElement>("input[placeholder='Select Sim']")!;
+      const search = document.querySelector<HTMLElement>("[data-testid=sim-select]")!;
       return {
         panelWidth: panel.getBoundingClientRect().width,
         searchWidth: search.getBoundingClientRect().width,

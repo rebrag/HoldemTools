@@ -20,10 +20,13 @@ const StudyTopStrip = ({
 }: StudyTopStripProps) => (
   <div className="px-2 sm:px-4 mt-1">
     <div className="mx-auto w-full max-w-[1800px]">
-      <div className="relative z-50 flex items-stretch gap-3">
+      <div className="relative z-50 flex items-stretch gap-2 sm:gap-3">
+        {/* The phone width is the sim panel's control row measured exactly -
+            four 36px buttons, three 4px gaps, 6px padding each side - so every
+            pixel the strip does not need goes to the line cards beside it. */}
         <div
           data-intro-target="folder-selector"
-          className="w-[210px] flex-shrink-0 sm:w-[300px]"
+          className="w-[170px] flex-shrink-0 sm:w-[300px]"
         >
           <SimSelect {...simSelectProps} />
         </div>

@@ -50,9 +50,12 @@ test("the dock opens on the table and the tabs switch its panel", async ({
   await expect(page.getByTestId("segment-table")).toHaveAttribute("data-active", "true");
 });
 
-test("the matrix controls are present on mobile", async ({ page }) => {
+test("the matrix and solution controls are both reachable on mobile", async ({
+  page,
+}) => {
   await expect(page.getByTestId("display-mode-btn")).toBeVisible();
   await expect(page.getByTestId("height-mode-btn")).toBeVisible();
+  // Not part of the matrix row - it rides in the sim panel up top.
   await expect(page.getByRole("button", { name: /single range/i })).toBeVisible();
 });
 

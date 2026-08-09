@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type { FolderMetadata } from "@/hooks/useFolders";
+import useIsMobile from "@/hooks/useIsMobile";
 
 type Props = {
   open: boolean;
@@ -130,30 +131,6 @@ const RailChip: React.FC<{ tag?: string; locked: boolean }> = ({ tag, locked }) 
 /* ────────────────────────────────────────────────────────────────── */
 /*  Hooks                                                             */
 /* ────────────────────────────────────────────────────────────────── */
-
-/** Tracks the Tailwind `sm` breakpoint so the dropdown can switch between an
- *  anchored desktop window and a viewport-centered mobile sheet. Exported so
- *  SimSelect can share the exact same "mobile" definition when it disables
- *  typing in its trigger input. */
-export function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = useState(false);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const mq = window.matchMedia("(max-width: 639px)");
-    const sync = () => setIsMobile(mq.matches);
-    sync();
-    // Emulated viewports (DevTools, e2e drivers) resize without firing the
-    // media query's `change`, so listen to `resize` too - same workaround as
-    // bankroll's useIsDesktop.
-    mq.addEventListener("change", sync);
-    window.addEventListener("resize", sync);
-    return () => {
-      mq.removeEventListener("change", sync);
-      window.removeEventListener("resize", sync);
-    };
-  }, []);
-  return isMobile;
-}
 
 type Anchor = { top: number; left: number; bottom: number; width: number };
 type Placement = { anchor: Anchor; viewport: { w: number; h: number } };

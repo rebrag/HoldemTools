@@ -72,32 +72,22 @@ export interface SingleRangeViewProps extends SolverRangeBaseProps {
 /**
  * The mobile study view (tabbed dock) shows the same information as desktop,
  * so it needs the cell-height setter (its own controls row owns the pill) and
- * the auto-pin seed. The single-range toggle is required for the same reason
- * as on desktop: this view is the only place it mounts on phones, and it
- * carries the intro tour's `color-key-btn` target.
+ * the auto-pin seed. The single-range toggle is not here: it rides in the sim
+ * panel, which every layout shares - see SimSelect.
  */
 export interface SingleRangeMobileViewProps extends SingleRangeViewProps {
   onHeightModeChange?: (mode: MatrixHeightMode) => void;
-  singleRangeView: boolean;
-  onToggleSingleRange: () => void;
   /** Seat -> the hand that seat actually held, for hand-history solves. */
   autoPinBySeat?: Record<string, { hand: string; combo: string }>;
 }
 
 /**
  * The desktop study view owns the control row above the matrix (display mode,
- * single-range toggle, cell height), so it needs the setters the other three
- * layouts get from ClassicHeader's FolderSelector.
- *
- * Required rather than optional on purpose: SingleRangeTogglePill carries the
- * intro tour's `color-key-btn` target and this layout is the only place it
- * mounts, so a missing handler would silently stop the tour ever starting.
- * Making it a type error is cheaper than a runtime guard that hides the bug.
+ * cell height), so it needs the setters the multi-range layouts get from the
+ * row Solver renders under the top strip.
  */
 export interface SingleRangeDesktopViewProps extends SingleRangeViewProps {
   onHeightModeChange: (mode: MatrixHeightMode) => void;
-  singleRangeView: boolean;
-  onToggleSingleRange: () => void;
   /** Seat -> the hand that seat actually held, for hand-history solves. The
    *  study view opens on it (per seat, so OOP and IP each get their own) and
    *  the breakdown highlights the exact combo. Empty for sim solves. */

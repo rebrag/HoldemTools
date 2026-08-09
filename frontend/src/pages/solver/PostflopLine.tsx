@@ -35,6 +35,14 @@ export interface PostflopLineProps {
    */
   onPreflopJump?: (index: number, action: string) => void;
   onExit: () => void;
+  /**
+   * True for a solve of a recorded hand (manifest carries seat_meta). Its
+   * preflop line belongs to the hand, not to a navigable sim tree - the
+   * synthetic {stacks} id has no plate files - so the strip renders neither
+   * the preflop summary text nor the exit control, and starts at the FLOP
+   * card. Leaving the session happens by opening another board or sim.
+   */
+  handSolve?: boolean;
   /** Stretch the cards to fill the parent's height - used by the study
    *  header so the strip matches the SimSelect panel beside it. */
   fillHeight?: boolean;
@@ -137,6 +145,7 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
   onPickAction,
   onPreflopJump,
   onExit,
+  handSolve,
   fillHeight,
   actorSeat,
   actorStackMoney,
@@ -148,12 +157,15 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
    * in big blinds, so tell it how much money makes one. */
   const sizeRef = money?.bbSize && money.bbSize > 0 ? money.bbSize : 1;
   const preflopSummary =
-    preflopLine && preflopLine.length > 1 ? preflopLine.slice(1).join(" · ") : null;
+    !handSolve && preflopLine && preflopLine.length > 1
+      ? preflopLine.slice(1).join(" · ")
+      : null;
   const flop = board.slice(0, 3);
   /* Every preflop card leaves the board, so no separate exit control is
-   * needed. The button only comes back when the preflop line could not be
-   * rebuilt into cards, since nothing else on the strip leaves the session. */
+   * needed. The button only comes back when a sim line could not be rebuilt
+   * into cards; hand solves never show it (see handSolve above). */
   const preflopCards = !!preflopNodes && preflopNodes.length > 0 && !!onPreflopJump;
+  const exitButton = !preflopCards && !handSolve;
 
   return (
     <div className={`w-full mx-auto select-none${fillHeight ? " h-full" : ""}`}>
@@ -167,7 +179,7 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
             fillHeight ? " h-full" : ""
           }`}
         >
-          {!preflopCards && (
+          {exitButton && (
             <button
               type="button"
               onClick={onExit}
