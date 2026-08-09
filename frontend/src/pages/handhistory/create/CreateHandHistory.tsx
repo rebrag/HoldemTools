@@ -981,7 +981,11 @@ const CreateHandHistory: React.FC<Props> = ({
           lives on the D badge itself. */}
       {placement && (
         <div className="pointer-events-none absolute left-1/2 top-1 z-40 -translate-x-1/2">
-          <div className="pointer-events-auto inline-flex items-center gap-2 whitespace-nowrap rounded-full bg-emerald-600 px-3 py-1 text-xs font-medium text-white shadow">
+          {/* Only Cancel takes pointer events: on small tables the pill can
+              overlap the top-center seat, and the whole point of this armed
+              state is that every seat stays tappable - so taps pass through
+              the pill body to whatever sits beneath it. */}
+          <div className="inline-flex items-center gap-2 whitespace-nowrap rounded-full bg-emerald-600 px-3 py-1 text-xs font-medium text-white shadow">
             <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
             {placement.kind === "button"
               ? "Tap a seat to move the button"
@@ -989,7 +993,7 @@ const CreateHandHistory: React.FC<Props> = ({
             <button
               type="button"
               onClick={() => setPlacement(null)}
-              className="ml-1 underline underline-offset-2"
+              className="pointer-events-auto ml-1 underline underline-offset-2"
             >
               Cancel
             </button>
