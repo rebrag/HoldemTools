@@ -3,7 +3,7 @@ import sys
 import json
 import time
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Tuple, Set, Optional, IO, Any, Dict
 import subprocess
 import math
@@ -75,6 +75,18 @@ _set_timing("after_sendkeys_key_wait", 0.05)
 _set_timing("wait_between_actions", 0.05)
 
 POLL_SECS = float(os.getenv("POLL_SECS", "0.6"))
+# Idle backoff: poll at POLL_SECS while work was found within the last
+# POLL_IDLE1_AFTER_SECS, then slow to POLL_IDLE1_SECS, then to POLL_IDLE2_SECS
+# once idle for POLL_IDLE2_AFTER_SECS. Any hit resets to POLL_SECS. Set both
+# *_SECS values equal to POLL_SECS to restore a fixed cadence.
+POLL_IDLE1_AFTER_SECS = float(os.getenv("POLL_IDLE1_AFTER_SECS", "120"))
+POLL_IDLE1_SECS = float(os.getenv("POLL_IDLE1_SECS", "5"))
+POLL_IDLE2_AFTER_SECS = float(os.getenv("POLL_IDLE2_AFTER_SECS", "600"))
+POLL_IDLE2_SECS = float(os.getenv("POLL_IDLE2_SECS", "15"))
+# After UTC midnight, keep listing yesterday's dated directory for this long,
+# so a blob written just before the boundary but first listed after it is not
+# missed (see scan_bases).
+MIDNIGHT_GRACE_SECS = float(os.getenv("POLL_MIDNIGHT_GRACE_SECS", "300"))
 TINY = 0.02
 END_MARK = "END"  # Pio UPI end marker
 
@@ -160,22 +172,47 @@ def get_fs_client():
     return dls.get_file_system_client(CONTAINER)
 
 
-def list_existing_json(fs, prefix_base: str, only_today: bool) -> Set[str]:
-    seen: Set[str] = set()
+def scan_bases(prefix_base: str, only_today: bool) -> List[str]:
+    """Directories to hand to fs.get_paths(). Listing today's dated directory
+    server-side keeps Azure from enumerating every historical date on every
+    poll. Producers stamp these paths with UTC dates (DateTimeOffset.UtcNow in
+    GameTreesController / NodeRequestsController), matching the UTC date used
+    here; yesterday is still scanned for a grace window after UTC midnight so
+    a blob written just before the boundary but first listed after it is not
+    missed."""
     base = prefix_base.rstrip("/")
-    want_prefix = f"{base}/{today_subpath_utc()}/" if only_today else f"{base}/"
+    if not only_today:
+        return [base]
+    now = datetime.now(timezone.utc)
+    bases = [f"{base}/{now.strftime('%Y/%m/%d')}"]
+    since_midnight = (
+        now - now.replace(hour=0, minute=0, second=0, microsecond=0)
+    ).total_seconds()
+    if since_midnight < MIDNIGHT_GRACE_SECS:
+        yesterday = now - timedelta(days=1)
+        bases.append(f"{base}/{yesterday.strftime('%Y/%m/%d')}")
+    return bases
+
+
+def _iter_json_files(fs, scan_base: str, tag: str):
+    """Yield non-directory .json paths under scan_base. A dated directory that
+    does not exist yet (nothing uploaded that day) is an empty result, not an
+    error worth logging."""
     try:
-        for p in fs.get_paths(path=base, recursive=True):
-            if p.is_directory:
+        for p in fs.get_paths(path=scan_base, recursive=True):
+            if p.is_directory or not p.name.endswith(".json"):
                 continue
-            if not p.name.endswith(".json"):
-                continue
-            if not p.name.startswith(want_prefix):
-                continue
-            seen.add(p.name)
+            yield p
     except Exception as e:
         if "PathNotFound" not in str(e):
-            log(f"[seed] error: {e}")
+            log(f"[{tag}] error: {e}")
+
+
+def list_existing_json(fs, prefix_base: str, only_today: bool) -> Set[str]:
+    seen: Set[str] = set()
+    for scan_base in scan_bases(prefix_base, only_today):
+        for p in _iter_json_files(fs, scan_base, "seed"):
+            seen.add(p.name)
     return seen
 
 
@@ -183,27 +220,13 @@ def list_new_json(
     fs, seen: Set[str], prefix_base: str, only_today: bool
 ) -> List[Tuple[str, str, str]]:
     results: List[Tuple[str, str, str]] = []
-    base = prefix_base.rstrip("/")
-    want_prefix = f"{base}/{today_subpath_utc()}/" if only_today else f"{base}/"
-    try:
-        for p in fs.get_paths(path=base, recursive=True):
-            if p.is_directory:
-                continue
-            if not p.name.endswith(".json"):
-                continue
-            if not p.name.startswith(want_prefix):
-                continue
+    for scan_base in scan_bases(prefix_base, only_today):
+        for p in _iter_json_files(fs, scan_base, "list"):
             if p.name in seen:
                 continue
             lm = (p.last_modified or datetime.now(timezone.utc)).isoformat()
             fname = p.name.rsplit("/", 1)[-1]
             results.append((p.name, fname, lm))
-    except Exception as e:
-        # A prefix that has never been written to (e.g. noderequests/ before
-        # the first request) is simply empty, not an error worth logging.
-        if "PathNotFound" not in str(e):
-            log(f"[list] error: {e}")
-        return []
     results.sort(key=lambda t: t[2])
     return results
 
@@ -681,6 +704,15 @@ def parse_wait_stats(wait_output: str) -> Dict[str, Optional[float]]:
         "ev_ip": ev_ip,
         "exploitable": exploitable,
     }
+
+
+def poll_interval(idle_secs: float) -> float:
+    """Sleep for the main loop, stepped up as idle time accumulates."""
+    if idle_secs >= POLL_IDLE2_AFTER_SECS:
+        return POLL_IDLE2_SECS
+    if idle_secs >= POLL_IDLE1_AFTER_SECS:
+        return POLL_IDLE1_SECS
+    return POLL_SECS
 
 
 # =========================
@@ -1274,7 +1306,11 @@ def main():
     log(f"TreeBuilding dir: {TREEBUILD_DIR}")
     log(f"CFR subdir: {CFR_SUBDIR}")
     log(f"Tree script basename (Save current parameters): {TREE_SCRIPT_BASENAME}")
-    log(f"Poll: {POLL_SECS:.1f}s\n")
+    log(
+        f"Poll: {POLL_SECS:.1f}s active; {POLL_IDLE1_SECS:.0f}s after "
+        f"{POLL_IDLE1_AFTER_SECS:.0f}s idle; {POLL_IDLE2_SECS:.0f}s after "
+        f"{POLL_IDLE2_AFTER_SECS:.0f}s idle\n"
+    )
 
     # In queue mode gametree discovery is DB-driven, so no blob-listing seed
     # (and none of its restart/UTC-midnight fragility) is needed for it.
@@ -1289,12 +1325,14 @@ def main():
     registry = CfrRegistry(solved_dir, max_gb=float(os.getenv("PIO_CFR_MAX_GB", "150")))
     log(f"CFR registry: {solved_dir} (budget {registry.max_bytes / 1024**3:.0f} GB)")
 
+    last_hit = time.monotonic()
     try:
         while True:
             # On-demand street requests first: they are seconds-scale and a
             # browsing user is actively waiting on them.
             new_reqs = list_new_json(fs, seen_reqs, NODEREQ_PREFIX, WATCH_TODAY_ONLY)
             if new_reqs:
+                last_hit = time.monotonic()
                 for full_path, _name, _lm in new_reqs:
                     seen_reqs.add(full_path)
                 try:
@@ -1308,11 +1346,13 @@ def main():
             if queue_mode:
                 job = api_client.claim_next()
                 if job is not None:
+                    last_hit = time.monotonic()
                     process_claimed_job(fs, job, registry)
                     continue
             else:
                 new_items = list_new_json(fs, seen, BASE_PREFIX, WATCH_TODAY_ONLY)
                 if new_items:
+                    last_hit = time.monotonic()
                     full_path, name, lm = new_items[0]
                     seen.add(full_path)
 
@@ -1324,7 +1364,7 @@ def main():
                             log(f"  -> ERROR processing {full_path}: {e}")
                     continue
 
-            time.sleep(POLL_SECS)
+            time.sleep(poll_interval(time.monotonic() - last_hit))
     except KeyboardInterrupt:
         log("Exiting on Ctrl+C")
     finally:
