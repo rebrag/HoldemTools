@@ -2,24 +2,26 @@ import { test, expect, type Page } from "@playwright/test";
 import { stubSolverApi, type ApiStub } from "./fixtures/api";
 
 /**
- * The desktop study layout groups every control that changes how the matrix
- * draws - display mode, single-range toggle, cell height - into one row
- * directly above the matrix, and keeps the solved-flops library button in the
- * sim panel beside the search input.
+ * Controls are split by what they act on. The ones that change how the matrix
+ * *draws* - display mode and cell height - sit in a row directly above the
+ * matrix. The ones that choose *which solution is open* - the sim search, the
+ * filter, the solved-flops library, and the single-range toggle - live in the
+ * sim panel, which is the one piece of chrome every layout shares.
  *
  * Two invariants here are the kind that read fine in review and break in use:
  *
- * 1. Both menus in that row hang off a hand-positioned edge. The cell-height
- *    menu is anchored to its button's RIGHT edge by default, which is correct
- *    when the pill sits at the end of a wide row but puts a 240px menu at a
- *    negative x once the pill is left-grouped near the viewport edge - hence
- *    its `align` prop. Nothing else measures popover geometry.
+ * 1. Both menus in the matrix row hang off a hand-positioned edge. The
+ *    cell-height menu is anchored to its button's RIGHT edge by default, which
+ *    is correct when the pill sits at the end of a wide row but puts a 240px
+ *    menu at a negative x once the pill is left-grouped near the viewport edge
+ *    - hence its `align` prop. Nothing else measures popover geometry.
  *
  * 2. The single-range pill carries the intro tour's `color-key-btn` target and
- *    must be mounted exactly once. It moved out of the sim panel into this row,
- *    so in the study layout it comes from the view while the other three
- *    layouts still get it from FolderSelector. Two copies (or none) breaks the
- *    tour silently: the readiness gate just never fires, with no error.
+ *    must be mounted exactly once. Living in the sim panel is what makes that
+ *    hold by construction, since the panel itself mounts once per layout;
+ *    before, it was three separate mount sites kept in sync by hand. Two
+ *    copies (or none) breaks the tour silently: the readiness gate just never
+ *    fires, with no error.
  */
 
 let api: ApiStub;
@@ -54,9 +56,7 @@ test.describe("desktop study control row", () => {
     });
   });
 
-  test("all three matrix controls share one row above the matrix", async ({
-    page,
-  }) => {
+  test("both matrix controls share one row above the matrix", async ({ page }) => {
     const box = async (locator: ReturnType<Page["locator"]>) => {
       const b = await locator.boundingBox();
       if (!b) throw new Error("control not rendered");
@@ -64,18 +64,14 @@ test.describe("desktop study control row", () => {
     };
 
     const display = await box(page.getByTestId("display-mode-btn"));
-    const single = await box(page.getByRole("button", { name: /single range/i }));
     const height = await box(page.getByTestId("height-mode-btn"));
     const matrix = await box(page.getByTestId("hand-cell").first());
 
     // Same baseline: equal heights, tops within a pixel of each other.
-    for (const c of [single, height]) {
-      expect(c.height).toBeCloseTo(display.height, 0);
-      expect(Math.abs(c.y - display.y)).toBeLessThanOrEqual(1);
-    }
-    // Left-to-right in that order, and all of them above the grid.
-    expect(display.x).toBeLessThan(single.x);
-    expect(single.x).toBeLessThan(height.x);
+    expect(height.height).toBeCloseTo(display.height, 0);
+    expect(Math.abs(height.y - display.y)).toBeLessThanOrEqual(1);
+    // Left-to-right in that order, and both of them above the grid.
+    expect(display.x).toBeLessThan(height.x);
     expect(display.y + display.height).toBeLessThanOrEqual(matrix.y);
   });
 
@@ -99,15 +95,16 @@ test.describe("desktop study control row", () => {
     }
   });
 
-  test("the sim panel holds the library button, not the matrix pills", async ({
+  test("the sim panel holds the solution controls, not the matrix pills", async ({
     page,
   }) => {
     const panel = page.locator('[data-intro-target="folder-selector"]');
-    await expect(panel.getByPlaceholder("Select Sim")).toBeVisible();
+    await expect(panel.getByTestId("sim-select")).toBeVisible();
+    await expect(panel.getByRole("button", { name: /open filters/i })).toBeVisible();
     await expect(panel.getByRole("button", { name: /solved flops/i })).toBeVisible();
-    // The two pills moved out of this panel and up to the matrix.
+    await expect(panel.getByRole("button", { name: /single range/i })).toBeVisible();
+    // Cell height acts on the matrix, so it belongs to the row up there.
     await expect(panel.getByTestId("height-mode-btn")).toHaveCount(0);
-    await expect(panel.getByRole("button", { name: /single range/i })).toHaveCount(0);
   });
 
   test("the tour anchors stay unique in the study layout", async ({ page }) => {
@@ -197,10 +194,10 @@ test("the tour anchors stay unique after leaving the study layout", async ({
     timeout: BOOT_TIMEOUT,
   });
 
-  // Study layout -> multi-range: the pill must hand off to Solver's own
-  // controls row, the only other place it renders. The study control row
-  // unmounting (its display-mode dropdown goes with it) is what tells us the
-  // multi layout has taken over; the header itself no longer changes.
+  // Study layout -> multi-range: the pill stays put in the sim panel, which
+  // outlives the layout switch, so it must not double up or vanish. The study
+  // control row unmounting (its display-mode dropdown goes with it) is what
+  // tells us the multi layout has taken over; the header itself never changes.
   await page.getByRole("button", { name: /single range/i }).click();
   await expect(page.getByTestId("display-mode-btn")).toHaveCount(0);
   expect(await tourTargets(page)).toEqual({ folder: 1, colorKey: 1 });

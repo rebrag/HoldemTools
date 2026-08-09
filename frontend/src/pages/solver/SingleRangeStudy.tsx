@@ -15,7 +15,7 @@ import useStudyState from "./useStudyState";
 import SeatStatsPanel from "./SeatStatsPanel";
 import DecisionMatrix from "./DecisionMatrix";
 import MatrixDisplayModeSelect from "./MatrixDisplayModeSelect";
-import { MatrixHeightModePill, SingleRangeTogglePill } from "./FolderSelector";
+import { MatrixHeightModePill } from "./FolderSelector";
 import ActionSummary from "./ActionSummary";
 import HandBreakdown from "./HandBreakdown";
 import SolverTableCenter from "./SolverTableCenter";
@@ -43,10 +43,6 @@ interface SingleRangeStudyProps {
   /** Cell-height setter: this view's control row owns the pill, rather than
    *  the sim panel (the other layouts keep theirs in FolderSelector). */
   onHeightModeChange?: (mode: MatrixHeightMode) => void;
-  /** Single-range toggle. Required: this pill carries the intro tour's
-   *  `color-key-btn` target and must always be mounted here. */
-  singleRangeView: boolean;
-  onToggleSingleRange: () => void;
   /** Saved display mode; may fall back to Strategy when data is missing. */
   displayMode?: MatrixDisplayMode;
   onDisplayModeChange?: (mode: MatrixDisplayMode) => void;
@@ -107,8 +103,6 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   randomFillEnabled,
   heightMode,
   onHeightModeChange,
-  singleRangeView,
-  onToggleSingleRange,
   displayMode,
   onDisplayModeChange,
   reachByHand,
@@ -187,11 +181,6 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
               mode={effectiveMode}
               onChange={(m) => onDisplayModeChange?.(m)}
               equityAvailable={equityAvailable}
-            />
-            <SingleRangeTogglePill
-              singleRangeView={singleRangeView}
-              onToggle={onToggleSingleRange}
-              compact
             />
             {heightMode && onHeightModeChange && (
               <MatrixHeightModePill

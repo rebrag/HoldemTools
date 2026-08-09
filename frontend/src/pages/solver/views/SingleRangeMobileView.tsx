@@ -16,7 +16,7 @@ import SegmentedControl from "@/components/SegmentedControl";
 import DecisionMatrix from "../DecisionMatrix";
 import SolverTableCenter from "../SolverTableCenter";
 import MatrixDisplayModeSelect from "../MatrixDisplayModeSelect";
-import { MatrixHeightModePill, SingleRangeTogglePill } from "../FolderSelector";
+import { MatrixHeightModePill } from "../FolderSelector";
 import SeatStatsPanel from "../SeatStatsPanel";
 import ActionSummary from "../ActionSummary";
 import HandBreakdown from "../HandBreakdown";
@@ -57,8 +57,6 @@ const SingleRangeMobileView = ({
   randomFillEnabled,
   heightMode,
   onHeightModeChange,
-  singleRangeView,
-  onToggleSingleRange,
   displayMode,
   onDisplayModeChange,
   reachByFile,
@@ -251,11 +249,6 @@ const SingleRangeMobileView = ({
             mode={effectiveMode}
             onChange={(m) => onDisplayModeChange?.(m)}
             equityAvailable={equityAvailable}
-          />
-          <SingleRangeTogglePill
-            singleRangeView={singleRangeView}
-            onToggle={onToggleSingleRange}
-            compact
           />
           {heightMode && onHeightModeChange && (
             <MatrixHeightModePill

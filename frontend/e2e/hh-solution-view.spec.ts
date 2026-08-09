@@ -106,7 +106,7 @@ test("the hand's full table renders: names, folded seat, hole cards", async ({ p
   // The synthetic stacks id is not a sim folder: the open sim must not have
   // switched to it, and no fetch-error banner may appear.
   await expect(page.getByText("Error fetching files")).toHaveCount(0);
-  await expect(page.getByPlaceholder("Select Sim")).not.toHaveValue(HH_STACKS);
+  await expect(page.getByTestId("sim-select")).not.toHaveValue(HH_STACKS);
 });
 
 /* The hand's own cards are the reason to open a hand-history solve, so the

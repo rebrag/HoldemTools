@@ -23,8 +23,6 @@ const SingleRangeDesktopView = ({
   randomFillEnabled,
   heightMode,
   onHeightModeChange,
-  singleRangeView,
-  onToggleSingleRange,
   displayMode,
   onDisplayModeChange,
   reachByFile,
@@ -81,8 +79,6 @@ const SingleRangeDesktopView = ({
           randomFillEnabled={randomFillEnabled}
           heightMode={heightMode}
           onHeightModeChange={onHeightModeChange}
-          singleRangeView={singleRangeView}
-          onToggleSingleRange={onToggleSingleRange}
           displayMode={displayMode}
           onDisplayModeChange={onDisplayModeChange}
           reachByHand={activeFile ? reachByFile?.[activeFile] ?? null : null}

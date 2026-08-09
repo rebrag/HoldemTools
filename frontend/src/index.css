@@ -38,6 +38,16 @@ body {
   }
 }
 
+/* The solver sizes its layouts to fit the viewport exactly, so document-level
+   overscroll (the touch rubber-band) only ever reveals backdrop and makes the
+   page feel loose. Solver toggles this class on <html> while mounted; other
+   pages scroll normally. Inner scrollers (the dropdown, the mobile dock) keep
+   their own physics - this only stops the bounce from chaining to the page. */
+html.no-overscroll,
+html.no-overscroll body {
+  overscroll-behavior: none;
+}
+
 /* Utilities */
 @layer utilities {
   .text-gradient {

@@ -103,8 +103,9 @@ export const FilterIcon: React.FC<{ className?: string }> = ({
   </svg>
 );
 
-/** Single Range toggle pill. Carries the intro-tour target, so exactly one
- *  instance must be mounted at a time (FolderSelector or SimSelect). */
+/** Single Range toggle pill. Carries the intro-tour target; it mounts only in
+ *  SimSelect's control row, which every layout shares, so the "exactly one
+ *  instance" rule holds by construction rather than by convention. */
 export const SingleRangeTogglePill: React.FC<{
   singleRangeView?: boolean;
   onToggle: () => void;

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type { FolderMetadata } from "@/hooks/useFolders";
+import useIsMobile from "@/hooks/useIsMobile";
 
 type Props = {
   open: boolean;
@@ -130,21 +131,6 @@ const RailChip: React.FC<{ tag?: string; locked: boolean }> = ({ tag, locked }) 
 /* ────────────────────────────────────────────────────────────────── */
 /*  Hooks                                                             */
 /* ────────────────────────────────────────────────────────────────── */
-
-/** Tracks the Tailwind `sm` breakpoint so the dropdown can switch between an
- *  anchored desktop window and a viewport-centered mobile sheet. */
-function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = useState(false);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const mq = window.matchMedia("(max-width: 639px)");
-    const sync = () => setIsMobile(mq.matches);
-    sync();
-    mq.addEventListener("change", sync);
-    return () => mq.removeEventListener("change", sync);
-  }, []);
-  return isMobile;
-}
 
 type Anchor = { top: number; left: number; bottom: number; width: number };
 type Placement = { anchor: Anchor; viewport: { w: number; h: number } };

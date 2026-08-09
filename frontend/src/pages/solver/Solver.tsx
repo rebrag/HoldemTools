@@ -18,7 +18,7 @@ import "intro.js/introjs.css";
 import { User } from "firebase/auth";
 import LoginSignupModal from "@/components/LoginSignupModal";
 import StudyTopStrip from "./header/StudyTopStrip";
-import { MatrixHeightModePill, SingleRangeTogglePill } from "./FolderSelector";
+import { MatrixHeightModePill } from "./FolderSelector";
 import ProUpsell from "@/components/ProUpsell";
 import {
   requiredTierForFolder,
@@ -79,8 +79,9 @@ const tourSteps = [
 ];
 
 /**
- * Solved-flops library button: light chrome beside the wide classic header,
- * a compact dark square inside the study layout's sim panel row.
+ * Solved-flops library button: a compact dark square in the sim panel's
+ * control row, matching the filter and single-range buttons beside it. (It
+ * used to have a light wide variant for the classic header, which is gone.)
  *
  * The `aria-label` is load-bearing - several e2e specs reach this button by
  * accessible name, since its only content is an icon.
@@ -88,11 +89,9 @@ const tourSteps = [
 const SolvedFlopsButton = ({
   count,
   onClick,
-  compact = false,
 }: {
   count: number;
   onClick: () => void;
-  compact?: boolean;
 }) => (
   <div className="relative flex-shrink-0">
     <button
@@ -100,19 +99,15 @@ const SolvedFlopsButton = ({
       onClick={onClick}
       aria-label="Solved flops"
       title="Browse solved flops"
-      className={[
-        "relative inline-flex items-center justify-center transition-colors",
-        "focus:outline-none focus-visible:ring-2",
-        compact
-          ? "h-9 w-9 rounded-lg border border-hairline bg-white/5 shadow-sm text-slate-300 hover:border-white/25 hover:text-slate-100 focus-visible:ring-accent/60"
-          : "h-9 sm:h-10 px-2.5 gap-1.5 rounded-xl border border-gray-300 bg-white/95 shadow-md text-gray-800 hover:bg-gray-100 focus-visible:ring-emerald-500/60",
-      ].join(" ")}
+      className="
+        relative inline-flex h-9 w-9 items-center justify-center
+        rounded-lg border border-hairline bg-white/5 shadow-sm
+        text-slate-300 transition-colors
+        hover:border-white/25 hover:text-slate-100
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60
+      "
     >
-      <Library
-        size={16}
-        strokeWidth={2.2}
-        className={compact ? "text-emerald-400" : "text-emerald-600"}
-      />
+      <Library size={16} strokeWidth={2.2} className="text-emerald-400" />
       {count > 0 && (
         <span className="absolute -top-1 -right-1 min-w-[1rem] rounded-full bg-emerald-600 px-1 text-center text-[10px] font-bold leading-4 text-white shadow">
           {count}
@@ -276,6 +271,9 @@ const Solver = ({ user }: SolverProps) => {
 
   // Postflop session (navigation) + solutions library
   const pf = usePostflopSession();
+  /* `pf` is a fresh object every render but `close` is a stable useCallback -
+   * callbacks that only close the session depend on this, not on `pf`. */
+  const { close: closePostflop } = pf;
   const pfIndex = usePostflopIndex(Boolean(uid));
   const { hide: hideSolutions } = pfIndex;
   const [showLibrary, setShowLibrary] = useState(false);
@@ -388,9 +386,6 @@ const Solver = ({ user }: SolverProps) => {
     singleRangeView,
     positionOrder.length
   );
-  // Desktop single-range "study" layout: compact SimSelect box + Line strip
-  // on top, matrix beside a table/summary/breakdown column below.
-  const desktopStudy = mode === "single-desktop";
   // Only the single-range layouts render a real PokerTable, and those deal the
   // board onto the felt themselves; the multi-range layouts show plates over a
   // bare felt backdrop and still need the standalone board strip.
@@ -469,6 +464,17 @@ const Solver = ({ user }: SolverProps) => {
 
   const actuallyOpenFolder = useCallback(
     (selectedFolder: string) => {
+      /* A folder pick means preflop study: an open postflop session (board,
+       * line, pending solve banner) would otherwise stay on screen over the
+       * new sim. This was previously only reachable through the line strip's
+       * exit control, which hand-history sessions no longer render.
+       * (openSolvedBoard also routes through here, then opens the next
+       * session - the close is just the start of its swap.) */
+      pendingCancelRef.current = true;
+      setPostflopPending(null);
+      closePostflop();
+      setCurrentBoard([]);
+
       const newPlayerCount = selectedFolder.split("_").length;
       const freshPlates = defaultPlateNames;
       const freshMapping = getInitialMapping(newPlayerCount);
@@ -488,7 +494,7 @@ const Solver = ({ user }: SolverProps) => {
       const nextIdx = (bbIdx + 1) % Object.keys(freshMapping).length;
       setActivePlayer(Object.keys(freshMapping)[nextIdx]);
     },
-    [defaultPlateNames]
+    [defaultPlateNames, closePostflop]
   );
 
   useEffect(() => {
@@ -1104,6 +1110,15 @@ const Solver = ({ user }: SolverProps) => {
     saveMatrixDisplayMode(matrixDisplayMode);
   }, [matrixDisplayMode]);
 
+  /* This page budgets its layouts to fit the viewport, so the touch
+   * rubber-band only reveals backdrop. The class (see index.css) kills
+   * document-level overscroll while the solver is mounted; it has to go on
+   * <html> because the document, not an inner container, is the scroller. */
+  useEffect(() => {
+    document.documentElement.classList.add("no-overscroll");
+    return () => document.documentElement.classList.remove("no-overscroll");
+  }, []);
+
   // Postflop modal side-effects
   useEffect(() => {
     if (!POSTFLOP_ENABLED) return;
@@ -1401,6 +1416,7 @@ const Solver = ({ user }: SolverProps) => {
       onPickAction={(parentId, display) => void pf.pickActionAt(parentId, display)}
       onPreflopJump={jumpToPreflopNode}
       onExit={exitPostflop}
+      handSolve={!!pf.view.seatMeta?.length}
       actorSeat={pf.view.actorSeat}
       actorStackMoney={pf.view.actorStackMoney}
       actions={pf.view.actions}
@@ -1428,7 +1444,6 @@ const Solver = ({ user }: SolverProps) => {
     <SolvedFlopsButton
       count={pfIndex.entries.length}
       onClick={() => setShowLibrary(true)}
-      compact={desktopStudy}
     />
   ) : null;
 
@@ -1502,20 +1517,17 @@ const Solver = ({ user }: SolverProps) => {
             line={lineNode}
             libraryButton={libraryButton}
             lineWrapperRef={lineWrapperRef}
+            singleRangeView={singleRangeView}
+            onToggleSingleRange={() => setSingleRangeView((v) => !v)}
           />
 
-          {/* The single-range layouts render the matrix pills in their own
-              control rows; the multi-range layouts have no such row, so the
-              toggle (which carries the tour's color-key-btn target and must
-              mount exactly once) and the height pill live here instead. */}
+          {/* The single-range layouts render the cell-height pill in their own
+              control rows above the matrix; the multi-range layouts have no
+              such row, so it lives here instead. (The single-range toggle is
+              not layout-dependent - it rides in the sim panel above.) */}
           {!singleRangeView && (
             <div className="px-2 sm:px-4 mt-2">
               <div className="mx-auto flex w-full max-w-[1800px] items-center justify-end gap-1.5">
-                <SingleRangeTogglePill
-                  singleRangeView={singleRangeView}
-                  onToggle={() => setSingleRangeView((v) => !v)}
-                  compact
-                />
                 <MatrixHeightModePill
                   heightMode={matrixHeightMode}
                   onChange={setMatrixHeightMode}
@@ -1576,8 +1588,6 @@ const Solver = ({ user }: SolverProps) => {
                 randomFillEnabled={randomFillEnabled}
                 heightMode={matrixHeightMode}
                 onHeightModeChange={setMatrixHeightMode}
-                singleRangeView={singleRangeView}
-                onToggleSingleRange={() => setSingleRangeView((v) => !v)}
                 displayMode={matrixDisplayMode}
                 onDisplayModeChange={setMatrixDisplayMode}
                 reachByFile={reachByFile}
@@ -1610,8 +1620,6 @@ const Solver = ({ user }: SolverProps) => {
                 randomFillEnabled={randomFillEnabled}
                 heightMode={matrixHeightMode}
                 onHeightModeChange={setMatrixHeightMode}
-                singleRangeView={singleRangeView}
-                onToggleSingleRange={() => setSingleRangeView((v) => !v)}
                 displayMode={matrixDisplayMode}
                 onDisplayModeChange={setMatrixDisplayMode}
                 reachByFile={reachByFile}

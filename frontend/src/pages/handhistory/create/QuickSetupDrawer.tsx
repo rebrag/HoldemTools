@@ -31,8 +31,10 @@ interface QuickSetupDrawerProps {
 const rowsFromSeats = (seats: Seat[]): QuickSetupRow[] =>
   seats.map((s) => ({ occupied: s.occupied, name: s.name, stack: s.stack }));
 
+// Width-agnostic on purpose: each consumer sets its own width so the name and
+// stack inputs never carry two competing width utilities.
 const inputCls =
-  "w-full rounded-lg border border-hairline bg-white/5 px-2.5 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-40";
+  "rounded-lg border border-hairline bg-white/5 px-2.5 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-40";
 
 const QuickSetupDrawer: React.FC<QuickSetupDrawerProps> = ({
   open,
@@ -141,7 +143,7 @@ const QuickSetupDrawer: React.FC<QuickSetupDrawerProps> = ({
                   onKeyDown={(e) => {
                     if (e.key === "Enter") focusNext(i * 2);
                   }}
-                  className={`${inputCls} flex-1 min-w-0`}
+                  className={`${inputCls} w-full flex-1 min-w-0`}
                   aria-label={`Seat ${i + 1} name`}
                 />
                 <input
@@ -158,7 +160,7 @@ const QuickSetupDrawer: React.FC<QuickSetupDrawerProps> = ({
                   onKeyDown={(e) => {
                     if (e.key === "Enter") focusNext(i * 2 + 1);
                   }}
-                  className={`${inputCls} w-20 shrink-0`}
+                  className={`${inputCls} w-16 shrink-0`}
                   aria-label={`Seat ${i + 1} stack`}
                 />
               </div>
