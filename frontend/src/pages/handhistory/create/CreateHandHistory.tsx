@@ -840,7 +840,7 @@ const CreateHandHistory: React.FC<Props> = ({
         chipScale: solveOffer.chipScale,
       });
       setSolveNotice(
-        "Solve queued - it will appear under Solved Flops on the Solutions page (usually 2-10 min)."
+        "Solve queued - it will appear in the Solution Library on the Solutions page (usually 2-10 min)."
       );
       // One status fetch for an honest queue position; the job itself is
       // durable, so navigating away loses nothing.
@@ -849,7 +849,7 @@ const CreateHandHistory: React.FC<Props> = ({
           .then((job) => {
             if (job?.status === "Queued" && job.queuePosition && job.queuePosition > 1) {
               setSolveNotice(
-                `Solve queued (#${job.queuePosition} in line) - it will appear under Solved Flops on the Solutions page.`
+                `Solve queued (#${job.queuePosition} in line) - it will appear in the Solution Library on the Solutions page.`
               );
             }
           })

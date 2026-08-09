@@ -68,7 +68,7 @@ test("an unknown ?open= key lands in the solved-flops library", async ({ page })
   await page.goto(`/solutions?open=${encodeURIComponent("no|such|board")}`);
 
   // The library modal opens instead of a silent no-op...
-  await expect(page.getByRole("heading", { name: "Solved flops" })).toBeVisible({
+  await expect(page.getByRole("heading", { name: "Solution Library" })).toBeVisible({
     timeout: 45_000,
   });
   // ...showing what does exist.

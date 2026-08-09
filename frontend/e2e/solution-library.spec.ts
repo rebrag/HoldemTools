@@ -56,8 +56,8 @@ test.afterEach(() => {
 });
 
 const openLibrary = async (page: Page) => {
-  await page.getByRole("button", { name: /solved flops/i }).click();
-  await expect(page.getByRole("heading", { name: "Solved flops" })).toBeVisible();
+  await page.getByRole("button", { name: /solution library/i }).click();
+  await expect(page.getByRole("heading", { name: "Solution Library" })).toBeVisible();
 };
 
 test("groups hand-history solves apart from sim solves", async ({ page }) => {

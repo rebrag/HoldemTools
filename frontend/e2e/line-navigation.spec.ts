@@ -131,7 +131,7 @@ test.describe("postflop line", () => {
     });
     await page.goto("/solutions");
 
-    await page.getByRole("button", { name: /solved flops/i }).click();
+    await page.getByRole("button", { name: /solution library/i }).click();
     // Boards render as PlayingCards, so the button's title is the only text.
     await page.locator(`button[title="Open ${board}"]`).click();
     await expect(page.getByTitle("Back to the flop decision")).toBeVisible();

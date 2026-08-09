@@ -52,7 +52,7 @@ test.afterEach(() => {
 
 /** Open the solved-flops library and load the fixture board. */
 async function openBoard(page: Page) {
-  await page.getByRole("button", { name: /solved flops/i }).click();
+  await page.getByRole("button", { name: /solution library/i }).click();
   // Boards render as PlayingCards, so the button's title is the only text.
   await page.locator(`button[title="Open ${board}"]`).click();
   // The matrix is populated once the flop bundle has been applied to the plate.

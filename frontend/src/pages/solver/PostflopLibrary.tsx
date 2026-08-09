@@ -193,7 +193,7 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
           <X size={14} />
         </button>
 
-        <h2 className="text-base font-semibold mb-1">Solved flops</h2>
+        <h2 className="text-base font-semibold mb-1">Solution Library</h2>
         <p className="text-xs text-gray-300 mb-3">
           Every board that has been solved. Open one to browse its postflop strategy.
         </p>
@@ -202,7 +202,7 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
           {signInRequired ? (
             <div className="py-8 flex flex-col items-center gap-3 text-center">
               <p className="text-sm text-gray-300">
-                Sign in to browse the solved-flops library.
+                Sign in to browse your solution library.
               </p>
               <button
                 type="button"
@@ -218,7 +218,7 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
             </div>
           ) : isEmpty ? (
             <div className="py-8 text-center text-sm text-gray-400">
-              No solved flops yet. Walk a heads-up preflop line to a Call and pick a flop
+              No solutions yet. Walk a heads-up preflop line to a Call and pick a flop
               to request the first one.
             </div>
           ) : (

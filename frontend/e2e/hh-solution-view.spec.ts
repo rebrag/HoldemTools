@@ -84,7 +84,7 @@ test.afterEach(() => {
 });
 
 async function openBoard(page: Page) {
-  await page.getByRole("button", { name: /solved flops/i }).click();
+  await page.getByRole("button", { name: /solution library/i }).click();
   await page.locator(`button[title="Open ${board}"]`).click();
   await expect(page.getByTestId("hand-cell").first()).toBeVisible();
 }

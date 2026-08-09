@@ -101,7 +101,7 @@ test.describe("desktop study control row", () => {
     const panel = page.locator('[data-intro-target="folder-selector"]');
     await expect(panel.getByTestId("sim-select")).toBeVisible();
     await expect(panel.getByRole("button", { name: /open filters/i })).toBeVisible();
-    await expect(panel.getByRole("button", { name: /solved flops/i })).toBeVisible();
+    await expect(panel.getByRole("button", { name: /solution library/i })).toBeVisible();
     await expect(panel.getByRole("button", { name: /single range/i })).toBeVisible();
     // Cell height acts on the matrix, so it belongs to the row up there.
     await expect(panel.getByTestId("height-mode-btn")).toHaveCount(0);
