@@ -6,7 +6,7 @@ import React, { useMemo, useRef, useState } from "react";
 import { Trash2, X } from "lucide-react";
 import { Link } from "react-router-dom";
 import PlayingCard from "@/components/PlayingCard";
-import HandPreview from "@/pages/handhistory/HandPreview";
+import HandPreview from "@/components/HandPreview";
 import { boardToCards } from "@/lib/solver/postflopNode";
 import { solutionKey, type PostflopIndexEntry } from "@/lib/solver/postflopLibrary";
 

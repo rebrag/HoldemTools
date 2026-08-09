@@ -77,6 +77,31 @@ namespace PokerRangeAPI2.Controllers
             return Ok(session);
         }
 
+        // Links the user's unlinked hands whose server-stamped CreatedAt falls
+        // inside this session's [Start, End] window. Fill-only: hands already
+        // linked to a session are never re-linked or unlinked, so explicit
+        // attachments survive later edits to the session's times. Callers commit
+        // via their own SaveChangesAsync.
+        private async Task LinkHandsBySessionWindowAsync(BankrollSession session)
+        {
+            if (session.Start is not DateTimeOffset start || session.End is not DateTimeOffset end)
+            {
+                return;
+            }
+
+            var hands = await _db.HandHistories
+                .Where(h => h.UserId == session.UserId
+                            && h.SessionId == null
+                            && h.CreatedAt >= start
+                            && h.CreatedAt <= end)
+                .ToListAsync();
+
+            foreach (var hand in hands)
+            {
+                hand.SessionId = session.Id;
+            }
+        }
+
         // DTO used for both create & update
         public class CreateBankrollSessionDto
         {
@@ -140,6 +165,10 @@ namespace PokerRangeAPI2.Controllers
             };
 
             _db.BankrollSessions.Add(entity);
+            // Hands recorded while this session was in progress (e.g. on
+            // /hand-history/create during a live draft) exist with no SessionId;
+            // adopt them now that the session has a real id and an end time.
+            await LinkHandsBySessionWindowAsync(entity);
             await _db.SaveChangesAsync();
 
             return Ok(entity);
@@ -192,6 +221,9 @@ namespace PokerRangeAPI2.Controllers
                 entity.Profit = profit.Value;
             }
 
+            // Edited times may widen the window over hands recorded outside the
+            // old one; adopt any still-unlinked matches (never unlink).
+            await LinkHandsBySessionWindowAsync(entity);
             await _db.SaveChangesAsync();
             return Ok(entity);
         }

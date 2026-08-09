@@ -1,5 +1,6 @@
 // src/components/Solver.tsx
 import { useState, useCallback, useLayoutEffect, useEffect, useMemo, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import SingleRangeDesktopView from "./views/SingleRangeDesktopView";
 import SingleRangeMobileView from "./views/SingleRangeMobileView";
 import MultiRangeDesktopView from "./views/MultiRangeDesktopView";
@@ -38,6 +39,7 @@ import { POSTFLOP_ORDER, buildTreeConfigText, type TreeParams } from "@/lib/solv
 import { parseGametreePathForSolution } from "@/lib/solver/postflopClient";
 import {
   fetchBoardManifest,
+  solutionKey,
   type PostflopIndexEntry,
 } from "@/lib/solver/postflopLibrary";
 import { pollSolveJob, type SolveJobStatus } from "@/lib/solver/solveJobs";
@@ -1064,6 +1066,54 @@ const Solver = ({ user }: SolverProps) => {
     },
     [uid, folderMetaMap, folders, tier, tierLoading, actuallyOpenFolder, pf]
   );
+
+  /* Deep link: /solutions?open=<stacks|node|board> (minted by solutionOpenUrl,
+   * used by the hand-history and bankroll "view solution" buttons) opens that
+   * solved board once the index and tier have both settled - waiting on
+   * tierLoading keeps openSolvedBoard's tier gate deterministic. The ref
+   * guards StrictMode's double effect run; it needs no reset because Solver
+   * unmounts on route change. */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openParam = searchParams.get("open");
+  const handledOpenRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!POSTFLOP_ENABLED || !openParam) return;
+    if (handledOpenRef.current === openParam) return;
+    if (pfIndex.loading || tierLoading) return;
+    if (pfIndex.signInRequired) {
+      // Keep ?open= : sign-in refetches the index and this effect re-runs,
+      // so the link resumes instead of being lost at the login prompt.
+      setShowLoginOverlay(true);
+      return;
+    }
+    handledOpenRef.current = openParam;
+    // replace, not push: Back should return to the referring page, and the
+    // consumed param must not re-trigger on history navigation.
+    setSearchParams(
+      (params) => {
+        params.delete("open");
+        return params;
+      },
+      { replace: true }
+    );
+    const entry = pfIndex.entries.find((e) => solutionKey(e) === openParam);
+    if (!entry) {
+      // Deleted, hidden, or unknown board: land in the library so the user
+      // sees what does exist instead of a silently dead link.
+      setShowLibrary(true);
+      return;
+    }
+    void openSolvedBoard(entry);
+  }, [
+    openParam,
+    pfIndex.loading,
+    pfIndex.signInRequired,
+    pfIndex.entries,
+    tierLoading,
+    openSolvedBoard,
+    setSearchParams,
+  ]);
 
   // Remove boards from this viewer's library. A board that is open right now
   // would otherwise stay on screen after vanishing from the list, so the
