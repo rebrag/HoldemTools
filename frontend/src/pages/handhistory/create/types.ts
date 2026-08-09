@@ -154,8 +154,12 @@ export type InitialStateOverrides = Partial<
   Pick<AdvancedHandState, "game" | "smallBlind" | "bigBlind" | "ante">
 >;
 
+// Table size a fresh form starts with, and what "clear all" resets to. The
+// size dropdown still offers up to 9.
+export const DEFAULT_TABLE_SIZE = 8;
+
 export function createInitialState(
-  tableSize = 9,
+  tableSize = DEFAULT_TABLE_SIZE,
   overrides?: InitialStateOverrides
 ): AdvancedHandState {
   const game = overrides?.game ?? "Holdem";

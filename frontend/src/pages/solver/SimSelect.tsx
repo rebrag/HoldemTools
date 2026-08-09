@@ -9,7 +9,7 @@ import { Info } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import type { FolderMetadata } from "@/hooks/useFolders";
 import type { Tier } from "@/lib/stripe/stripeTiers";
-import FolderSelectorDropdown from "./FolderSelectorDropdown";
+import FolderSelectorDropdown, { useIsMobile } from "./FolderSelectorDropdown";
 import { useFolderSearch, parseFolderSafe } from "./useFolderSearch";
 import { FolderFilterPanel, FilterIcon } from "./FolderSelector";
 
@@ -45,6 +45,11 @@ const SimSelect: React.FC<SimSelectProps> = ({
   libraryButton,
 }) => {
   const reduceMotion = useReducedMotion();
+  /* On mobile the trigger stays an <input> (so the focus/blur open-close
+   * wiring and the dropdown's mousedown row-commit keep working) but is made
+   * non-typeable: tap opens the sheet, filtering happens via the filter
+   * button instead of the soft keyboard. */
+  const isMobile = useIsMobile();
 
   const {
     input,
@@ -170,17 +175,23 @@ const SimSelect: React.FC<SimSelectProps> = ({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onFocus={() => setOpen(true)}
+            /* Re-open on tap when already focused (e.g. after the sheet's ✕),
+               since onFocus won't fire again. */
+            onClick={() => setOpen(true)}
             onBlur={() => setTimeout(() => setOpen(false), 150)}
             onKeyDown={nav}
             placeholder="Select Sim"
-            className="
+            readOnly={isMobile}
+            inputMode={isMobile ? "none" : undefined}
+            className={`
               h-9 w-full rounded-lg border border-hairline
               bg-white/5 px-2.5 text-sm text-slate-100
               placeholder:font-semibold placeholder:text-slate-300
               shadow-sm transition-colors
               hover:border-white/25 hover:bg-white/10
               focus:outline-none focus:border-accent/60 focus:ring-1 focus:ring-accent/40
-            "
+              ${isMobile ? "caret-transparent cursor-pointer" : ""}
+            `}
           />
           <svg
             className={`pointer-events-none absolute inset-y-0 right-2 my-auto h-4 w-4 text-slate-400 transition-transform duration-200 ${

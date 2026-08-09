@@ -47,6 +47,7 @@ import type { HandHistory } from "../types";
 import {
   blankSeat,
   createInitialState,
+  DEFAULT_TABLE_SIZE,
   defaultStraddleAmount,
   evalGameId,
   handSize,
@@ -181,7 +182,7 @@ const CreateHandHistory: React.FC<Props> = ({
     draftRef.current = embedded ? null : loadSetupDraft();
   }
   const [state, setState] = useState<AdvancedHandState>(
-    () => draftRef.current ?? createInitialState(9, setupDefaults)
+    () => draftRef.current ?? createInitialState(DEFAULT_TABLE_SIZE, setupDefaults)
   );
   const [editingSeat, setEditingSeat] = useState<number | null>(null);
   const [editingBoard, setEditingBoard] = useState(false);
@@ -521,8 +522,8 @@ const CreateHandHistory: React.FC<Props> = ({
         bigBlind: "1",
         ante: "0",
         game: "Holdem",
-        tableSize: 9,
-        seats: Array.from({ length: 9 }, () => ({ name: "", stack: "" })),
+        tableSize: DEFAULT_TABLE_SIZE,
+        seats: Array.from({ length: DEFAULT_TABLE_SIZE }, () => ({ name: "", stack: "" })),
       })
     );
   };
@@ -603,7 +604,10 @@ const CreateHandHistory: React.FC<Props> = ({
   // only, setup phase only). Skip the pristine default so an untouched form
   // doesn't pre-empt the seed-from-last-hand pass above. saveHand clears it once
   // the hand is saved.
-  const pristineSetup = useMemo(() => createInitialState(9, setupDefaults), [setupDefaults]);
+  const pristineSetup = useMemo(
+    () => createInitialState(DEFAULT_TABLE_SIZE, setupDefaults),
+    [setupDefaults]
+  );
   useEffect(() => {
     if (embedded || phase !== "setup") return;
     try {

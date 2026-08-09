@@ -132,16 +132,25 @@ const RailChip: React.FC<{ tag?: string; locked: boolean }> = ({ tag, locked }) 
 /* ────────────────────────────────────────────────────────────────── */
 
 /** Tracks the Tailwind `sm` breakpoint so the dropdown can switch between an
- *  anchored desktop window and a viewport-centered mobile sheet. */
-function useIsMobile(): boolean {
+ *  anchored desktop window and a viewport-centered mobile sheet. Exported so
+ *  SimSelect can share the exact same "mobile" definition when it disables
+ *  typing in its trigger input. */
+export function useIsMobile(): boolean {
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const mq = window.matchMedia("(max-width: 639px)");
     const sync = () => setIsMobile(mq.matches);
     sync();
+    // Emulated viewports (DevTools, e2e drivers) resize without firing the
+    // media query's `change`, so listen to `resize` too - same workaround as
+    // bankroll's useIsDesktop.
     mq.addEventListener("change", sync);
-    return () => mq.removeEventListener("change", sync);
+    window.addEventListener("resize", sync);
+    return () => {
+      mq.removeEventListener("change", sync);
+      window.removeEventListener("resize", sync);
+    };
   }, []);
   return isMobile;
 }
