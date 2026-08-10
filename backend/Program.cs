@@ -1,8 +1,10 @@
+using Azure.Storage.Queues;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using PokerRangeAPI2.Data;
@@ -88,6 +90,19 @@ builder.Services
         }
     });
 
+// === Storage queue: noderequest push notifications for the solver watcher ===
+// One singleton client; the queue itself is created once at startup below, so
+// the user-facing POST handler never pays a create round trip.
+builder.Services.AddSingleton(sp =>
+{
+    var config = sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
+    var conn = config["AzureStorage:ConnectionString"];
+    var queueName = config["AzureStorage:NodeRequestQueueName"] ?? "noderequests";
+    if (string.IsNullOrWhiteSpace(conn))
+        throw new InvalidOperationException("AzureStorage:ConnectionString is missing from configuration.");
+    return new QueueClient(conn, queueName);
+});
+
 // === EF Core: AppDbContext ===
 builder.Services.AddDbContext<AppDbContext>(options =>
 {
@@ -145,6 +160,18 @@ builder.Services.AddCors(opts =>
 });
 
 var app = builder.Build();
+
+// Ensure the noderequest queue exists. Not fatal on failure: enqueues then
+// fail per request (logged) and the watcher's reconcile listing still
+// discovers the blobs, so push degrades to slow rather than broken.
+try
+{
+    app.Services.GetRequiredService<QueueClient>().CreateIfNotExists();
+}
+catch (Exception ex)
+{
+    app.Logger.LogWarning(ex, "Noderequest queue create failed; push notifications degraded.");
+}
 
 // CORS
 app.UseCors(CorsPolicy);

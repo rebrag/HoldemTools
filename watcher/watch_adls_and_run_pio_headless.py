@@ -12,7 +12,10 @@ import queue
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- Azure Data Lake (Gen2) ---
+from azure.core.exceptions import ResourceExistsError
+from azure.storage.blob import BlobServiceClient
 from azure.storage.filedatalake import DataLakeServiceClient
+from azure.storage.queue import QueueClient
 
 # --- Local pipeline modules ---
 from extraction import (
@@ -75,14 +78,15 @@ _set_timing("after_sendkeys_key_wait", 0.05)
 _set_timing("wait_between_actions", 0.05)
 
 POLL_SECS = float(os.getenv("POLL_SECS", "0.6"))
-# Idle backoff: poll at POLL_SECS while work was found within the last
-# POLL_IDLE1_AFTER_SECS, then slow to POLL_IDLE1_SECS, then to POLL_IDLE2_SECS
-# once idle for POLL_IDLE2_AFTER_SECS. Any hit resets to POLL_SECS. Set both
-# *_SECS values equal to POLL_SECS to restore a fixed cadence.
-POLL_IDLE1_AFTER_SECS = float(os.getenv("POLL_IDLE1_AFTER_SECS", "120"))
-POLL_IDLE1_SECS = float(os.getenv("POLL_IDLE1_SECS", "5"))
-POLL_IDLE2_AFTER_SECS = float(os.getenv("POLL_IDLE2_AFTER_SECS", "600"))
-POLL_IDLE2_SECS = float(os.getenv("POLL_IDLE2_SECS", "15"))
+# Gametree claim polls hit the App Service (Free F1: 60 CPU-min/day is the
+# scarce resource there). One gametree per 1-2 hours feeding a ~10-minute
+# solve does not need sub-second pickup, so those polls run on their own slow
+# timer. Also paces gametree blob listing in blob mode.
+CLAIM_POLL_SECS = float(os.getenv("WATCHER_CLAIM_POLL_SECS", "10"))
+# Reconcile listing interval for noderequests: the safety net behind the
+# storage-queue push path. When the queue is off this collapses to every
+# iteration (the old pure-polling behavior).
+NODEREQ_RECONCILE_SECS = float(os.getenv("NODEREQ_RECONCILE_SECS", "45"))
 # After UTC midnight, keep listing yesterday's dated directory for this long,
 # so a blob written just before the boundary but first listed after it is not
 # missed (see scan_bases).
@@ -97,7 +101,27 @@ CONN_STR = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
 CONTAINER = os.getenv("AZURE_STORAGE_CONTAINER", "onlinerangedata")
 BASE_PREFIX = "gametrees"
 NODEREQ_PREFIX = "noderequests"
+# Handled request blobs are moved here (a SIBLING of noderequests/, not nested
+# under it, so nothing that lists the noderequests/ root ever pages through
+# processed history). Anything still under noderequests/ is by definition
+# unhandled, which is what lets a restarted watcher pick up requests that
+# arrived while it was down.
+NODEREQ_PROCESSED_PREFIX = "noderequests-processed"
 WATCH_TODAY_ONLY = True
+
+# Storage-queue push path for noderequests: the API enqueues each request's
+# path+payload as it writes the blob; polling the queue replaces listing ADLS
+# as the primary discovery mechanism. "0" disables it (pure listing fallback).
+NODEREQ_QUEUE_ENV = os.getenv("WATCHER_NODEREQ_QUEUE")
+NODEREQ_QUEUE_NAME = os.getenv("WATCHER_NODEREQ_QUEUE_NAME", "noderequests")
+NODEREQ_POISON_QUEUE_NAME = f"{NODEREQ_QUEUE_NAME}-poison"
+# Message invisibility while a request is being handled. Sized for the worst
+# case - a cfr-evicted request re-solves the whole board (~10 min) - not the
+# seconds-scale normal case.
+QUEUE_VISIBILITY_SECS = int(os.getenv("WATCHER_QUEUE_VISIBILITY_SECS", "900"))
+# A message dequeued this many times without being deleted is parked on the
+# poison queue instead of being retried forever.
+QUEUE_MAX_DEQUEUE = int(os.getenv("WATCHER_QUEUE_MAX_DEQUEUE", "5"))
 
 # Precompute every turn street at solve time (adds a few minutes per solve).
 # Set PIO_TURN_PRECOMPUTE=0 to fall back to on-demand turns via noderequests.
@@ -706,13 +730,56 @@ def parse_wait_stats(wait_output: str) -> Dict[str, Optional[float]]:
     }
 
 
-def poll_interval(idle_secs: float) -> float:
-    """Sleep for the main loop, stepped up as idle time accumulates."""
-    if idle_secs >= POLL_IDLE2_AFTER_SECS:
-        return POLL_IDLE2_SECS
-    if idle_secs >= POLL_IDLE1_AFTER_SECS:
-        return POLL_IDLE1_SECS
-    return POLL_SECS
+def get_noderequest_queues() -> Tuple[QueueClient, QueueClient]:
+    """Main + poison noderequest queues, created once at startup so
+    per-message handling never pays a create round trip."""
+    main = QueueClient.from_connection_string(CONN_STR, NODEREQ_QUEUE_NAME)
+    poison = QueueClient.from_connection_string(CONN_STR, NODEREQ_POISON_QUEUE_NAME)
+    for client in (main, poison):
+        try:
+            client.create_queue()
+        except ResourceExistsError:
+            pass
+    return main, poison
+
+
+def archive_request_blob(blob_service, full_path: str) -> None:
+    """Move a handled request blob to the processed sibling prefix so the
+    reconcile listing stays one page. The account is flat-namespace (no rename
+    primitive), and sync copy-from-URL rejects same-account sources without a
+    SAS (CannotVerifyCopySource), so for these few-hundred-byte JSONs the move
+    is download + upload + delete. Not atomic: if the delete fails the blob
+    survives in both places, and the next reconcile pass re-handles the source
+    as an already-extracted no-op and retries the move."""
+    dest_path = NODEREQ_PROCESSED_PREFIX + full_path[len(NODEREQ_PREFIX):]
+    src = blob_service.get_blob_client(CONTAINER, full_path)
+    try:
+        content = src.download_blob().readall()
+        dst = blob_service.get_blob_client(CONTAINER, dest_path)
+        dst.upload_blob(content, overwrite=True)
+        src.delete_blob()
+    except Exception as e:
+        log(f"  [nodereq] archive failed for {full_path}: {e}")
+
+
+def parse_queue_message(content: str) -> Optional[Dict[str, str]]:
+    """Validate a push message: blob path under noderequests/ plus the same
+    payload _parse_node_request accepts from the blob itself."""
+    try:
+        obj = json.loads(content)
+    except ValueError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    req = {k: obj.get(k) for k in ("path", "stacks", "node_name", "board", "node_id")}
+    if not all(isinstance(v, str) and v for v in req.values()):
+        return None
+    if not req["path"].startswith(f"{NODEREQ_PREFIX}/"):
+        return None
+    segs = req["node_id"].split(":")
+    if len(segs) < 3 or segs[0] != "r" or not CARD_SEG_RE.match(segs[-1]):
+        return None
+    return req
 
 
 # =========================
@@ -1215,19 +1282,24 @@ def _process_node_group(
 
 
 def process_node_requests(
-    fs, items: List[Tuple[str, str, str]], registry: CfrRegistry
+    fs, blob_service, items: List[Tuple[str, str, str]], registry: CfrRegistry
 ) -> None:
-    """Drain a batch of noderequests, grouped per board so one cfr load serves
-    every street requested for that board."""
+    """Drain a batch of reconcile-discovered noderequests, grouped per board so
+    one cfr load serves every street requested for that board. Handled (and
+    permanently invalid) blobs are archived out of the watched prefix; blobs in
+    a failed group stay put so a later pass retries them."""
     groups: Dict[Tuple[str, str, str], List[str]] = {}
+    paths_by_key: Dict[Tuple[str, str, str], List[str]] = {}
     for full_path, _name, _lm in items:
         raw = download_text(fs, full_path)
         req = _parse_node_request(raw) if raw else None
         if req is None:
-            log(f"  [nodereq] Invalid request blob: {full_path}")
+            log(f"  [nodereq] Invalid request blob (archiving): {full_path}")
+            archive_request_blob(blob_service, full_path)
             continue
         key = (req["stacks"], req["node_name"], req["board"])
         groups.setdefault(key, [])
+        paths_by_key.setdefault(key, []).append(full_path)
         if req["node_id"] not in groups[key]:
             groups[key].append(req["node_id"])
 
@@ -1236,6 +1308,89 @@ def process_node_requests(
             _process_node_group(fs, stacks, node_name, board, seeds, registry)
         except Exception as e:
             log(f"  [nodereq] ERROR for {board}: {e}")
+            continue
+        for full_path in paths_by_key[(stacks, node_name, board)]:
+            archive_request_blob(blob_service, full_path)
+
+
+def _park_poison_message(queue: QueueClient, poison: QueueClient, msg) -> None:
+    """Copy a message to the poison queue, then delete the original. If the
+    copy fails the original is kept for redelivery - better retried than
+    silently lost."""
+    try:
+        poison.send_message(msg.content)
+    except Exception as e:
+        log(f"  [nodereq] failed to park poison message: {e}")
+        return
+    try:
+        queue.delete_message(msg)
+    except Exception as e:
+        log(f"  [nodereq] failed to delete parked message: {e}")
+
+
+def drain_noderequest_queue(
+    fs,
+    blob_service,
+    queue: QueueClient,
+    poison: QueueClient,
+    seen_reqs: Set[str],
+    registry: CfrRegistry,
+) -> None:
+    """Receive push messages one at a time and handle each fully before
+    deleting it. One at a time on purpose: a batch receive under the long
+    visibility timeout would let later messages expire toward the poison
+    threshold while an earlier ~10-minute re-solve runs, dead-lettering good
+    work. At dozens of messages a day batching buys nothing."""
+    while True:
+        try:
+            msg = queue.receive_message(visibility_timeout=QUEUE_VISIBILITY_SECS)
+        except Exception as e:
+            log(f"  [nodereq] queue receive failed: {e}")
+            return
+        if msg is None:
+            return
+
+        if (msg.dequeue_count or 0) >= QUEUE_MAX_DEQUEUE:
+            log(
+                f"  [nodereq] poison message after {msg.dequeue_count} dequeues; "
+                f"parking: {(msg.content or '')[:200]}"
+            )
+            _park_poison_message(queue, poison, msg)
+            continue
+
+        req = parse_queue_message(msg.content or "")
+        if req is None:
+            log(f"  [nodereq] unparseable queue message; parking: {(msg.content or '')[:200]}")
+            _park_poison_message(queue, poison, msg)
+            continue
+
+        path = req["path"]
+        if path in seen_reqs:
+            log(f"  [nodereq] push: already handled this session, deleting message: {path}")
+            queue.delete_message(msg)
+            continue
+        # A missing source blob means an earlier session handled and archived
+        # this request; the message is a leftover duplicate.
+        if not fs.get_file_client(path).exists():
+            log(f"  [nodereq] push: blob already archived, deleting message: {path}")
+            seen_reqs.add(path)
+            queue.delete_message(msg)
+            continue
+
+        log(f"  [nodereq] push: {path} ({req['board']} {req['node_id']})")
+        try:
+            _process_node_group(
+                fs, req["stacks"], req["node_name"], req["board"], [req["node_id"]], registry
+            )
+        except Exception as e:
+            # Leave the message: it redelivers after the visibility timeout
+            # and counts toward the poison threshold; the blob also stays in
+            # place for the reconcile net.
+            log(f"  [nodereq] push: ERROR for {req['board']}: {e} (message will redeliver)")
+            continue
+        seen_reqs.add(path)
+        archive_request_blob(blob_service, path)
+        queue.delete_message(msg)
 
 
 def process_claimed_job(fs, job: Dict[str, Any], registry: CfrRegistry) -> None:
@@ -1306,18 +1461,39 @@ def main():
     log(f"TreeBuilding dir: {TREEBUILD_DIR}")
     log(f"CFR subdir: {CFR_SUBDIR}")
     log(f"Tree script basename (Save current parameters): {TREE_SCRIPT_BASENAME}")
+
+    # Noderequest push path: poll the storage queue instead of listing ADLS.
+    # Init failure (or WATCHER_NODEREQ_QUEUE=0) falls back to pure listing.
+    nodereq_queue = nodereq_poison = None
+    if NODEREQ_QUEUE_ENV != "0":
+        try:
+            nodereq_queue, nodereq_poison = get_noderequest_queues()
+        except Exception as e:
+            log(f"[nodereq] queue init failed ({e}); falling back to listing every iteration")
+    push_on = nodereq_queue is not None
+    blob_service = BlobServiceClient.from_connection_string(CONN_STR)
+
+    if push_on:
+        log(
+            f"Noderequest discovery: storage queue '{NODEREQ_QUEUE_NAME}' every "
+            f"{POLL_SECS:.1f}s + reconcile listing every {NODEREQ_RECONCILE_SECS:.0f}s"
+        )
+    else:
+        log("Noderequest discovery: ADLS listing every iteration (queue push off)")
     log(
-        f"Poll: {POLL_SECS:.1f}s active; {POLL_IDLE1_SECS:.0f}s after "
-        f"{POLL_IDLE1_AFTER_SECS:.0f}s idle; {POLL_IDLE2_SECS:.0f}s after "
-        f"{POLL_IDLE2_AFTER_SECS:.0f}s idle\n"
+        f"Gametree {'claim poll' if queue_mode else 'listing'}: every "
+        f"{CLAIM_POLL_SECS:.0f}s; loop poll {POLL_SECS:.1f}s\n"
     )
 
     # In queue mode gametree discovery is DB-driven, so no blob-listing seed
     # (and none of its restart/UTC-midnight fragility) is needed for it.
+    # Noderequests are never seeded as seen: handled blobs are archived out of
+    # the prefix, so anything still listed is unhandled work - including
+    # requests that arrived while the watcher was down.
     seen = set() if queue_mode else list_existing_json(fs, BASE_PREFIX, WATCH_TODAY_ONLY)
-    seen_reqs = list_existing_json(fs, NODEREQ_PREFIX, WATCH_TODAY_ONLY)
+    seen_reqs: Set[str] = set()
     log(
-        f"Seeded with {len(seen)} gametree(s) and {len(seen_reqs)} node request(s). "
+        f"Seeded with {len(seen)} gametree(s). "
         f"Turn precompute: {'on' if PIO_TURN_PRECOMPUTE else 'off'}"
     )
 
@@ -1325,46 +1501,60 @@ def main():
     registry = CfrRegistry(solved_dir, max_gb=float(os.getenv("PIO_CFR_MAX_GB", "150")))
     log(f"CFR registry: {solved_dir} (budget {registry.max_bytes / 1024**3:.0f} GB)")
 
-    last_hit = time.monotonic()
+    last_reconcile = 0.0  # monotonic; 0 forces an immediate first pass
+    last_claim = 0.0
     try:
         while True:
             # On-demand street requests first: they are seconds-scale and a
             # browsing user is actively waiting on them.
-            new_reqs = list_new_json(fs, seen_reqs, NODEREQ_PREFIX, WATCH_TODAY_ONLY)
-            if new_reqs:
-                last_hit = time.monotonic()
-                for full_path, _name, _lm in new_reqs:
-                    seen_reqs.add(full_path)
-                try:
-                    process_node_requests(fs, new_reqs, registry)
-                except Exception as e:
-                    log(f"  -> ERROR processing node requests: {e}")
+            if push_on:
+                drain_noderequest_queue(
+                    fs, blob_service, nodereq_queue, nodereq_poison, seen_reqs, registry
+                )
 
-            # One gametree per iteration in both modes, so node requests
-            # (seconds-scale, a browsing user is actively waiting) get
-            # re-checked between every multi-minute solve.
-            if queue_mode:
-                job = api_client.claim_next()
-                if job is not None:
-                    last_hit = time.monotonic()
-                    process_claimed_job(fs, job, registry)
-                    continue
-            else:
-                new_items = list_new_json(fs, seen, BASE_PREFIX, WATCH_TODAY_ONLY)
-                if new_items:
-                    last_hit = time.monotonic()
-                    full_path, name, lm = new_items[0]
-                    seen.add(full_path)
+            # Reconcile listing: the safety net behind the push path (its only
+            # job when push is on is catching requests whose enqueue failed or
+            # whose message was lost). With push off it IS the discovery path
+            # and runs every iteration.
+            if not push_on or time.monotonic() - last_reconcile >= NODEREQ_RECONCILE_SECS:
+                last_reconcile = time.monotonic()
+                new_reqs = list_new_json(fs, seen_reqs, NODEREQ_PREFIX, WATCH_TODAY_ONLY)
+                if new_reqs:
+                    log(f"  [nodereq] reconcile: {len(new_reqs)} request(s) discovered via listing")
+                    for full_path, _name, _lm in new_reqs:
+                        seen_reqs.add(full_path)
+                    try:
+                        process_node_requests(fs, blob_service, new_reqs, registry)
+                    except Exception as e:
+                        log(f"  -> ERROR processing node requests: {e}")
 
-                    # Fresh Pio process per file – guarantees shutdown after CFR
-                    with PioClient(PIO_EXE) as pio:
-                        try:
-                            process_gametree_json(fs, full_path, name, lm, pio, registry)
-                        except Exception as e:
-                            log(f"  -> ERROR processing {full_path}: {e}")
-                    continue
+            # One gametree per pass, on its own slow timer (App Service CPU /
+            # list ops are the scarce resource, and solves take ~10 min
+            # anyway). After a processed job, loop straight back around -
+            # node requests get re-checked between solves, and the unmoved
+            # timer drains any queued burst without waiting.
+            if time.monotonic() - last_claim >= CLAIM_POLL_SECS:
+                if queue_mode:
+                    job = api_client.claim_next()
+                    if job is not None:
+                        process_claimed_job(fs, job, registry)
+                        continue
+                else:
+                    new_items = list_new_json(fs, seen, BASE_PREFIX, WATCH_TODAY_ONLY)
+                    if new_items:
+                        full_path, name, lm = new_items[0]
+                        seen.add(full_path)
 
-            time.sleep(poll_interval(time.monotonic() - last_hit))
+                        # Fresh Pio process per file – guarantees shutdown after CFR
+                        with PioClient(PIO_EXE) as pio:
+                            try:
+                                process_gametree_json(fs, full_path, name, lm, pio, registry)
+                            except Exception as e:
+                                log(f"  -> ERROR processing {full_path}: {e}")
+                        continue
+                last_claim = time.monotonic()
+
+            time.sleep(POLL_SECS)
     except KeyboardInterrupt:
         log("Exiting on Ctrl+C")
     finally:
