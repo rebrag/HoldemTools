@@ -308,7 +308,7 @@ const SimSelect: React.FC<SimSelectProps> = ({
         )}
       </div>
 
-      {/* Controls row (mobile only): info, filter, solved flops, single range. */}
+      {/* Controls row (mobile only): info, filter, solution library, single range. */}
       {isMobile && (
         <div className="flex items-stretch gap-1">
           <div className="relative flex-shrink-0">

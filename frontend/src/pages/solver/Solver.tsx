@@ -81,14 +81,14 @@ const tourSteps = [
 ];
 
 /**
- * Solved-flops library button: a compact dark square in the sim panel's
+ * Solution Library button: a compact dark square in the sim panel's
  * control row, matching the filter and single-range buttons beside it. (It
  * used to have a light wide variant for the classic header, which is gone.)
  *
  * The `aria-label` is load-bearing - several e2e specs reach this button by
  * accessible name, since its only content is an icon.
  */
-const SolvedFlopsButton = ({
+const SolutionLibraryButton = ({
   count,
   onClick,
 }: {
@@ -99,8 +99,8 @@ const SolvedFlopsButton = ({
     <button
       type="button"
       onClick={onClick}
-      aria-label="Solved flops"
-      title="Browse solved flops"
+      aria-label="Solution library"
+      title="Browse your solution library"
       className="
         relative inline-flex h-9 w-9 items-center justify-center
         rounded-lg border border-hairline bg-white/5 shadow-sm
@@ -1321,7 +1321,7 @@ const Solver = ({ user }: SolverProps) => {
               ? {
                   ...prev,
                   status: "Failed",
-                  error: "Solve finished but the solution has not appeared yet - check Solved Flops shortly.",
+                  error: "Solve finished but the solution has not appeared yet - check the Solution Library shortly.",
                 }
               : prev
           );
@@ -1491,7 +1491,7 @@ const Solver = ({ user }: SolverProps) => {
   );
 
   const libraryButton = POSTFLOP_ENABLED ? (
-    <SolvedFlopsButton
+    <SolutionLibraryButton
       count={pfIndex.entries.length}
       onClick={() => setShowLibrary(true)}
     />
@@ -1516,7 +1516,7 @@ const Solver = ({ user }: SolverProps) => {
         />
       )}
 
-      {/* SOLVED FLOPS LIBRARY MODAL */}
+      {/* SOLUTION LIBRARY MODAL */}
       {POSTFLOP_ENABLED && showLibrary && (
         <PostflopLibrary
           entries={pfIndex.entries}

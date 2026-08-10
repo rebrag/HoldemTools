@@ -1,7 +1,9 @@
 using Azure.Storage.Files.DataLake;
+using Azure.Storage.Queues;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -26,8 +28,13 @@ namespace PokerRangeAPI2.Controllers
 
         private readonly DataLakeServiceClient _dataLakeServiceClient;
         private readonly string _containerName;
+        private readonly QueueClient _queue;
+        private readonly ILogger<NodeRequestsController> _logger;
 
-        public NodeRequestsController(IConfiguration configuration)
+        public NodeRequestsController(
+            IConfiguration configuration,
+            QueueClient queue,
+            ILogger<NodeRequestsController> logger)
         {
             string? connectionString = configuration["AzureStorage:ConnectionString"];
             _containerName = configuration["AzureStorage:ContainerName"] ?? "onlinerangedata";
@@ -36,6 +43,8 @@ namespace PokerRangeAPI2.Controllers
                 throw new InvalidOperationException("AzureStorage:ConnectionString is missing from configuration.");
 
             _dataLakeServiceClient = new DataLakeServiceClient(connectionString);
+            _queue = queue;
+            _logger = logger;
         }
 
         [HttpPost]
@@ -70,9 +79,34 @@ namespace PokerRangeAPI2.Controllers
                 RequestedUtc = now.UtcDateTime.ToString("o"),
             };
 
-            var file = dir.GetFileClient($"{now:HHmmss}_{rand}.json");
+            string fileName = $"{now:HHmmss}_{rand}.json";
+            var file = dir.GetFileClient(fileName);
             string json = JsonSerializer.Serialize(payload);
             await file.UploadAsync(BinaryData.FromString(json).ToStream(), overwrite: true);
+
+            // Push notification for the watcher, enqueued strictly AFTER the
+            // blob write so the only reachable failure shape is
+            // blob-without-message, which the watcher's reconcile listing
+            // picks up within its interval. The message carries the payload
+            // so the watcher can process it without downloading the blob.
+            try
+            {
+                var message = new NodeRequestMessage
+                {
+                    Path = $"{dirPath}/{fileName}",
+                    Stacks = payload.Stacks,
+                    NodeName = payload.NodeName,
+                    Board = payload.Board,
+                    NodeId = payload.NodeId,
+                };
+                await _queue.SendMessageAsync(JsonSerializer.Serialize(message));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Noderequest enqueue failed for {Path}; watcher will discover it via reconcile listing.",
+                    $"{dirPath}/{fileName}");
+            }
 
             return Ok(new { ok = true });
         }
@@ -93,6 +127,18 @@ namespace PokerRangeAPI2.Controllers
             public string? Node { get; set; }
             public string? Board { get; set; }
             public string? NodeId { get; set; }
+        }
+
+        // Queue message: blob payload plus its path. Sent as raw UTF-8 JSON -
+        // both this client and the Python watcher use the SDK default of no
+        // Base64 encoding, and the two must stay in agreement.
+        public class NodeRequestMessage
+        {
+            [JsonPropertyName("path")] public string? Path { get; set; }
+            [JsonPropertyName("stacks")] public string? Stacks { get; set; }
+            [JsonPropertyName("node_name")] public string? NodeName { get; set; }
+            [JsonPropertyName("board")] public string? Board { get; set; }
+            [JsonPropertyName("node_id")] public string? NodeId { get; set; }
         }
 
         // Property names match what the Python watcher parses.
