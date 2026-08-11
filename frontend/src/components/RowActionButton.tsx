@@ -35,14 +35,16 @@ const DARK_SUCCESS_TONE = "border-emerald-400/60 bg-emerald-500/25 text-emerald-
 export function rowActionClasses(
   tone: RowActionTone,
   variant: "light" | "dark" = "light",
-  success = false
+  success = false,
+  size: "md" | "sm" = "md"
 ): string {
   const toneClasses = success
     ? variant === "dark"
       ? DARK_SUCCESS_TONE
       : SUCCESS_TONE
     : (variant === "dark" ? DARK_TONES : TONES)[tone];
-  return `inline-flex h-8 w-8 items-center justify-center rounded-lg border shadow-sm transition-colors disabled:opacity-40 ${toneClasses}`;
+  const sizeClasses = size === "sm" ? "h-7 w-7 rounded-md" : "h-8 w-8 rounded-lg";
+  return `inline-flex ${sizeClasses} items-center justify-center border shadow-sm transition-colors disabled:opacity-40 ${toneClasses}`;
 }
 
 const RowActionButton: React.FC<{
@@ -53,7 +55,8 @@ const RowActionButton: React.FC<{
   disabled?: boolean;
   success?: boolean; // show the emerald "done" state (e.g. after copy)
   variant?: "light" | "dark";
-}> = ({ icon, label, tone, onClick, disabled, success, variant = "light" }) => {
+  size?: "md" | "sm";
+}> = ({ icon, label, tone, onClick, disabled, success, variant = "light", size = "md" }) => {
   const reduce = useReducedMotion();
   return (
     <motion.button
@@ -67,7 +70,7 @@ const RowActionButton: React.FC<{
       title={label}
       whileTap={disabled || reduce ? undefined : { scale: 0.88 }}
       whileHover={disabled || reduce ? undefined : { y: -1 }}
-      className={rowActionClasses(tone, variant, success)}
+      className={rowActionClasses(tone, variant, success, size)}
     >
       {icon}
     </motion.button>

@@ -17,24 +17,15 @@ const CARD_W = 22;
 const Slot: React.FC<{ code: string | null }> = ({ code }) =>
   code ? <PlayingCard code={code} size="sm" width={CARD_W} /> : <CardBack w={CARD_W} />;
 
-// A row of cards. `overlap` fans them so a long board takes less width; each
-// card keeps a white ring + rising z-index so its (left) corner index stays
-// legible over the previous card.
-const CardGroup: React.FC<{ cards: (string | null)[]; overlap?: boolean }> = ({
-  cards,
-  overlap,
-}) => (
+// A row of cards, fanned: each card overlaps the previous with a white ring +
+// rising z-index so its (left) corner index stays legible over the previous
+// card, keeping long boards narrow.
+const CardGroup: React.FC<{ cards: (string | null)[] }> = ({ cards }) => (
   <div className="flex">
     {cards.map((c, i) => (
       <div
         key={i}
-        className={
-          i === 0
-            ? ""
-            : overlap
-            ? "-ml-[7px] rounded-md ring-1 ring-white"
-            : "ml-0.5"
-        }
+        className={i === 0 ? "" : "-ml-[7px] rounded-md ring-1 ring-white"}
         style={{ zIndex: i }}
       >
         <Slot code={c} />
@@ -82,7 +73,7 @@ const HandPreview: React.FC<{
     hero: isHero,
   }) => (
     <div className="flex flex-col items-center gap-0.5">
-      <CardGroup cards={cards.length ? cards : [null, null]} overlap />
+      <CardGroup cards={cards.length ? cards : [null, null]} />
       <span
         className={
           isHero
@@ -108,10 +99,10 @@ const HandPreview: React.FC<{
             title="Open this board's solution"
             className="rounded-lg transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70"
           >
-            <CardGroup cards={board} overlap />
+            <CardGroup cards={board} />
           </button>
         ) : (
-          <CardGroup cards={board} overlap />
+          <CardGroup cards={board} />
         ))}
 
       {opponents.map((p, i) => (

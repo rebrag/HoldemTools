@@ -26,7 +26,6 @@ export interface LocalHand {
 
 interface Row {
   key: string;
-  label: string;
   rawText: string;
   /** Has an embedded replay payload, so /hand-history/replay/{key} works.
    *  Always false for draft hands: they have no server id to route to. */
@@ -113,16 +112,14 @@ const SessionHandHistories: React.FC<Props> = ({
             const solution = solutionByHandId[h.id];
             return {
               key: String(h.id),
-              label: `Hand #${h.id}`,
               rawText: h.rawText,
               replayable: summaryFromRawText(h.rawText) != null,
               solutionHref: solution ? solutionOpenUrl(solution) : null,
               serverId: h.id,
             };
           })
-        : (draftHands ?? []).map((h, i) => ({
+        : (draftHands ?? []).map((h) => ({
             key: h.localId,
-            label: `Hand ${i + 1}`,
             rawText: h.rawText,
             replayable: false,
             solutionHref: null,
@@ -180,7 +177,7 @@ const SessionHandHistories: React.FC<Props> = ({
           No hands logged for this session yet.
         </p>
       ) : (
-        <ul className="space-y-2">
+        <ul className="overflow-hidden rounded-lg border border-white/10 divide-y divide-white/10">
           <AnimatePresence initial={false}>
             {rows.map((row) => {
               const expanded = expandedKey === row.key;
@@ -192,11 +189,8 @@ const SessionHandHistories: React.FC<Props> = ({
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, x: -16 }}
-                  className="rounded-lg border border-white/10 bg-white/5 p-2.5"
+                  className="bg-white/5 p-2.5"
                 >
-                  <div className="text-[11px] font-semibold text-slate-300">
-                    {row.label}
-                  </div>
                   <HandSummaryRow
                     rawText={row.rawText}
                     tone="dark"

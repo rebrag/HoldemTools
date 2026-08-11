@@ -243,7 +243,7 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
                   <h3 className="mb-2 text-[0.7rem] font-semibold uppercase tracking-wider text-emerald-300">
                     From your hands
                   </h3>
-                  <div className="space-y-3">
+                  <div className="overflow-hidden rounded-xl border border-white/10 divide-y divide-white/10">
                     {handGroups.map((group) => {
                       const rawText =
                         group.handHistoryId != null
@@ -257,10 +257,7 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
                         ? (summaryFromRawText(rawText)?.board.length ?? 0) > 0
                         : false;
                       return (
-                        <div
-                          key={group.key}
-                          className="rounded-xl border border-white/10 bg-white/[0.03] p-2"
-                        >
+                        <div key={group.key} className="bg-white/[0.03] p-2">
                           <div className={boardInPreview ? "" : "mb-2"}>
                             {rawText ? (
                               <HandSummaryRow

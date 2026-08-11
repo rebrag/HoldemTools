@@ -259,6 +259,8 @@ export interface HandSummary {
   potAtFlop: number | null;
   /** Effective flop stack ÷ flop pot. 0 for preflop all-ins; null when no flop. */
   flopSpr: number | null;
+  /** Players still in the hand when the flop was dealt; null when no flop. */
+  playersAtFlop: number | null;
 }
 
 // Fold the recorded actions into a single final engine (no per-action frames —
@@ -299,6 +301,7 @@ export function buildHandSummary(data: ReplayData): HandSummary {
   // Gate on `reached`, not potStart: streetMeta pre-fills potStart 0 for
   // undealt streets.
   const sawFlop = e.reached >= 1;
+  const playersAtFlop = sawFlop && flopStacks ? flopStacks.length : null;
   let potAtFlop: number | null = null;
   let flopSpr: number | null = null;
   if (sawFlop && flopStacks && flopStacks.length >= 2) {
@@ -319,6 +322,7 @@ export function buildHandSummary(data: ReplayData): HandSummary {
     sawFlop,
     potAtFlop,
     flopSpr,
+    playersAtFlop,
   };
 }
 

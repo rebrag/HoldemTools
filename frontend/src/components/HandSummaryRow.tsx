@@ -145,27 +145,34 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
             {stat("Flop", summary.potAtFlop != null ? `$${fmtChips(summary.potAtFlop)}` : null)}
             {stat("Pot", `$${fmtChips(summary.finalPot)}`)}
             {stat("SPR", summary.flopSpr != null ? fmtSpr(summary.flopSpr) : null)}
+            {stat(
+              "Players",
+              summary.playersAtFlop != null ? String(summary.playersAtFlop) : null
+            )}
           </div>
         )}
 
-        <div className="flex items-center gap-1.5">
+        <ActionGrid>
           {replayHref && (
             <Link
+              key="replay"
               to={replayHref}
               onClick={onNavigate}
               aria-label="Replay hand"
               title="Replay hand"
-              className={rowActionClasses("replay", tone)}
+              className={rowActionClasses("replay", tone, false, "sm")}
             >
-              <Play className="h-4 w-4" fill="currentColor" />
+              <Play className="h-3.5 w-3.5" fill="currentColor" />
             </Link>
           )}
           {solutionHref && (
             <RowActionButton
+              key="solution"
               tone="solution"
               variant={tone}
+              size="sm"
               label="View solution"
-              icon={<Library className="h-4 w-4" />}
+              icon={<Library className="h-3.5 w-3.5" />}
               onClick={() => {
                 if (onOpenSolution) onOpenSolution();
                 else navigate(solutionHref);
@@ -175,36 +182,74 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
           )}
           {SHARE_ENABLED && shareId != null && (
             <RowActionButton
+              key="share"
               tone="share"
               variant={tone}
+              size="sm"
               label="Share replay link"
               disabled={sharing}
               success={flash === "shared"}
               icon={
-                flash === "shared" ? <Check className="h-4 w-4" /> : <Share2 className="h-4 w-4" />
+                flash === "shared" ? (
+                  <Check className="h-3.5 w-3.5" />
+                ) : (
+                  <Share2 className="h-3.5 w-3.5" />
+                )
               }
               onClick={() => void handleShare()}
             />
           )}
           <RowActionButton
+            key="copy"
             tone="copy"
             variant={tone}
+            size="sm"
             label="Copy hand text"
             success={flash === "copied"}
-            icon={flash === "copied" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            icon={
+              flash === "copied" ? (
+                <Check className="h-3.5 w-3.5" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" />
+              )
+            }
             onClick={() => void handleCopy()}
           />
           {onDelete && (
             <RowActionButton
+              key="delete"
               tone="delete"
               variant={tone}
+              size="sm"
               label="Delete hand"
-              icon={<Trash2 className="h-4 w-4" />}
+              icon={<Trash2 className="h-3.5 w-3.5" />}
               onClick={onDelete}
             />
           )}
-        </div>
+        </ActionGrid>
       </div>
+    </div>
+  );
+};
+
+/** Stacks the action buttons two rows tall instead of one long row, so the
+ *  card fans keep the horizontal space: 5 actions -> 3+2, 4 -> 2+2, 3 -> 2+1;
+ *  1-2 stay a single row. The wrap width is computed from the column count
+ *  (h-7 buttons + gap-1) and justify-end keeps a short last row right-aligned.
+ *  Children are the conditional buttons; React.Children.toArray drops the
+ *  falsy ones before counting. */
+const BUTTON_PX = 28; // h-7 / w-7
+const GAP_PX = 4; // gap-1
+
+const ActionGrid: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const items = React.Children.toArray(children);
+  const cols = items.length <= 2 ? Math.max(items.length, 1) : Math.ceil(items.length / 2);
+  return (
+    <div
+      className="flex shrink-0 flex-wrap justify-end gap-1"
+      style={{ width: cols * BUTTON_PX + (cols - 1) * GAP_PX }}
+    >
+      {items}
     </div>
   );
 };
