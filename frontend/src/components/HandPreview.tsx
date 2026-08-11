@@ -55,7 +55,12 @@ const HandPreview: React.FC<{
   /** Palette for muted text: "light" (default — hand-history page) or
    *  "dark" (Solution Library, bankroll session drawer). */
   tone?: "light" | "dark";
-}> = ({ rawText, tone = "light" }) => {
+  /** Makes the board fan a button (the Solution Library opens the hand's
+   *  solved board with it). Only rendered when the preview shows a board.
+   *  Don't combine with a wrapping preview-click button — nested buttons
+   *  are invalid markup. */
+  onBoardClick?: () => void;
+}> = ({ rawText, tone = "light", onBoardClick }) => {
   const summary = useMemo(() => summaryFromRawText(rawText), [rawText]);
 
   const dark = tone === "dark";
@@ -94,7 +99,20 @@ const HandPreview: React.FC<{
     <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
       {hero && <PlayerBlock cards={hero.cards} label="Hero" hero />}
 
-      {board.length > 0 && <CardGroup cards={board} overlap />}
+      {board.length > 0 &&
+        (onBoardClick ? (
+          <button
+            type="button"
+            onClick={onBoardClick}
+            aria-label="Open solution"
+            title="Open this board's solution"
+            className="rounded-lg transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70"
+          >
+            <CardGroup cards={board} overlap />
+          </button>
+        ) : (
+          <CardGroup cards={board} overlap />
+        ))}
 
       {opponents.map((p, i) => (
         <PlayerBlock key={i} cards={p.cards} label={p.name} />

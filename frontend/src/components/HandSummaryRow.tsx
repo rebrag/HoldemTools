@@ -42,6 +42,9 @@ export interface HandSummaryRowProps {
   /** When set, the card-fan region becomes an expand/collapse toggle. */
   onPreviewClick?: () => void;
   previewExpanded?: boolean;
+  /** Makes the preview's board fan clickable (see HandPreview.onBoardClick).
+   *  Mutually exclusive with onPreviewClick — nested buttons are invalid. */
+  onBoardClick?: () => void;
 }
 
 const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
@@ -56,6 +59,7 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
   onError,
   onPreviewClick,
   previewExpanded,
+  onBoardClick,
 }) => {
   const navigate = useNavigate();
   const summary = useMemo(() => summaryFromRawText(rawText), [rawText]);
@@ -101,7 +105,13 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
     }
   };
 
-  const fans = <HandPreview rawText={rawText} tone={tone} />;
+  const fans = (
+    <HandPreview
+      rawText={rawText}
+      tone={tone}
+      onBoardClick={onPreviewClick ? undefined : onBoardClick}
+    />
+  );
 
   const stat = (text: string, v: string | null) => (
     <div className="flex items-baseline justify-between gap-1.5 leading-tight">

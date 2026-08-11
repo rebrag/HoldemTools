@@ -8,6 +8,7 @@ import PlayingCard from "@/components/PlayingCard";
 import HandSummaryRow from "@/components/HandSummaryRow";
 import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import { boardToCards } from "@/lib/solver/postflopNode";
+import { summaryFromRawText } from "@/pages/handhistory/create/replay";
 import {
   solutionKey,
   solutionOpenUrl,
@@ -243,53 +244,71 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
                     From your hands
                   </h3>
                   <div className="space-y-3">
-                    {handGroups.map((group) => (
-                      <div
-                        key={group.key}
-                        className="rounded-xl border border-white/10 bg-white/[0.03] p-2"
-                      >
-                        <div className="mb-2">
-                          {group.handHistoryId != null &&
-                          handTextById?.[group.handHistoryId] ? (
-                            <HandSummaryRow
-                              rawText={handTextById[group.handHistoryId]}
-                              tone="dark"
-                              replayHref={`/hand-history/replay/${group.handHistoryId}`}
-                              solutionHref={solutionOpenUrl(group.boards[0])}
-                              onOpenSolution={() => onOpen(group.boards[0])}
-                              shareId={group.handHistoryId}
-                              onDelete={
-                                onDeleteHand
-                                  ? () => void onDeleteHand(group.handHistoryId!)
-                                  : undefined
-                              }
-                              onNavigate={onClose}
-                            />
-                          ) : (
-                            <span className="text-[0.7rem] text-gray-400">
-                              {group.handHistoryId == null
-                                ? "Recorded hand"
-                                : "Hand no longer saved"}
-                            </span>
+                    {handGroups.map((group) => {
+                      const rawText =
+                        group.handHistoryId != null
+                          ? handTextById?.[group.handHistoryId]
+                          : undefined;
+                      /* The preview's board fan is the click target that opens
+                         the solution, so the separate flop tiles only render
+                         when the preview can't show a board (no saved text, or
+                         a legacy hand without a replay payload). */
+                      const boardInPreview = rawText
+                        ? (summaryFromRawText(rawText)?.board.length ?? 0) > 0
+                        : false;
+                      return (
+                        <div
+                          key={group.key}
+                          className="rounded-xl border border-white/10 bg-white/[0.03] p-2"
+                        >
+                          <div className={boardInPreview ? "" : "mb-2"}>
+                            {rawText ? (
+                              <HandSummaryRow
+                                rawText={rawText}
+                                tone="dark"
+                                replayHref={`/hand-history/replay/${group.handHistoryId}`}
+                                solutionHref={solutionOpenUrl(group.boards[0])}
+                                onOpenSolution={() => onOpen(group.boards[0])}
+                                onBoardClick={() => {
+                                  onOpen(group.boards[0]);
+                                  onClose();
+                                }}
+                                shareId={group.handHistoryId}
+                                onDelete={
+                                  onDeleteHand
+                                    ? () => void onDeleteHand(group.handHistoryId!)
+                                    : undefined
+                                }
+                                onNavigate={onClose}
+                              />
+                            ) : (
+                              <span className="text-[0.7rem] text-gray-400">
+                                {group.handHistoryId == null
+                                  ? "Recorded hand"
+                                  : "Hand no longer saved"}
+                              </span>
+                            )}
+                          </div>
+                          {!boardInPreview && (
+                            <div className="flex flex-wrap gap-2">
+                              {group.boards.map((entry) => (
+                                <BoardTile
+                                  key={solutionKey(entry)}
+                                  entry={entry}
+                                  busy={busy}
+                                  onOpen={() => onOpen(entry)}
+                                  onRemove={
+                                    onRemove
+                                      ? () => void remove([entry], `${entry.board} removed`)
+                                      : undefined
+                                  }
+                                />
+                              ))}
+                            </div>
                           )}
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          {group.boards.map((entry) => (
-                            <BoardTile
-                              key={solutionKey(entry)}
-                              entry={entry}
-                              busy={busy}
-                              onOpen={() => onOpen(entry)}
-                              onRemove={
-                                onRemove
-                                  ? () => void remove([entry], `${entry.board} removed`)
-                                  : undefined
-                              }
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </section>
               )}
