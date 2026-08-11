@@ -1,19 +1,14 @@
 // src/components/HandPreview.tsx
-// Visual summary of a saved hand: the hero's hole cards, the board, and the
-// hole cards + name of the villain who committed the most chips, all parsed
-// from the hand's rawText (its embedded replay payload is the single source
-// of truth). Shared by the hand-history list, the bankroll session modal, and
-// the solved-flops library. Hands with no embedded replay payload
-// (legacy/imported) fall back to the first text line.
+// Visual summary of a saved hand: every known hand (hero + revealed villains,
+// each labeled with its player's name) and the board, all parsed from the
+// hand's rawText (its embedded replay payload is the single source of truth).
+// The card-fan half of HandSummaryRow, which adds the stat stack and action
+// buttons around it. Hands with no embedded replay payload (legacy/imported)
+// fall back to the first text line.
 import React, { useMemo } from "react";
 import PlayingCard from "@/components/PlayingCard";
 import { CardBack } from "@/components/PokerTable";
-import {
-  buildHandPreview,
-  parseReplay,
-  stripReplay,
-  type HandPreview as HandPreviewData,
-} from "@/pages/handhistory/create/replay";
+import { summaryFromRawText, stripReplay } from "@/pages/handhistory/create/replay";
 
 const CARD_W = 22;
 
@@ -22,24 +17,15 @@ const CARD_W = 22;
 const Slot: React.FC<{ code: string | null }> = ({ code }) =>
   code ? <PlayingCard code={code} size="sm" width={CARD_W} /> : <CardBack w={CARD_W} />;
 
-// A row of cards. `overlap` fans them so a long board takes less width; each
-// card keeps a white ring + rising z-index so its (left) corner index stays
-// legible over the previous card.
-const CardGroup: React.FC<{ cards: (string | null)[]; overlap?: boolean }> = ({
-  cards,
-  overlap,
-}) => (
+// A row of cards, fanned: each card overlaps the previous with a white ring +
+// rising z-index so its (left) corner index stays legible over the previous
+// card, keeping long boards narrow.
+const CardGroup: React.FC<{ cards: (string | null)[] }> = ({ cards }) => (
   <div className="flex">
     {cards.map((c, i) => (
       <div
         key={i}
-        className={
-          i === 0
-            ? ""
-            : overlap
-            ? "-ml-[7px] rounded-md ring-1 ring-white"
-            : "ml-0.5"
-        }
+        className={i === 0 ? "" : "-ml-[7px] rounded-md ring-1 ring-white"}
         style={{ zIndex: i }}
       >
         <Slot code={c} />
@@ -55,19 +41,29 @@ function firstLine(rawText: string): string {
   return line.length > 120 ? `${line.slice(0, 120)}…` : line;
 }
 
-const HandPreview: React.FC<{ rawText: string }> = ({ rawText }) => {
-  const preview = useMemo<HandPreviewData | null>(() => {
-    const data = parseReplay(rawText);
-    return data ? buildHandPreview(data) : null;
-  }, [rawText]);
+const HandPreview: React.FC<{
+  rawText: string;
+  /** Palette for muted text: "light" (default — hand-history page) or
+   *  "dark" (Solution Library, bankroll session drawer). */
+  tone?: "light" | "dark";
+  /** Makes the board fan a button (the Solution Library opens the hand's
+   *  solved board with it). Only rendered when the preview shows a board.
+   *  Don't combine with a wrapping preview-click button — nested buttons
+   *  are invalid markup. */
+  onBoardClick?: () => void;
+}> = ({ rawText, tone = "light", onBoardClick }) => {
+  const summary = useMemo(() => summaryFromRawText(rawText), [rawText]);
 
-  if (!preview) {
+  const dark = tone === "dark";
+  const muted = dark ? "text-slate-400" : "text-gray-500";
+
+  if (!summary) {
     return (
-      <div className="mt-1 truncate font-mono text-[11px] text-gray-500">{firstLine(rawText)}</div>
+      <div className={`mt-1 truncate font-mono text-[11px] ${muted}`}>{firstLine(rawText)}</div>
     );
   }
 
-  const { players, board } = preview;
+  const { players, board } = summary;
   const hero = players.find((p) => p.isHero) ?? null;
   const opponents = players.filter((p) => !p.isHero);
 
@@ -77,12 +73,12 @@ const HandPreview: React.FC<{ rawText: string }> = ({ rawText }) => {
     hero: isHero,
   }) => (
     <div className="flex flex-col items-center gap-0.5">
-      <CardGroup cards={cards.length ? cards : [null, null]} overlap />
+      <CardGroup cards={cards.length ? cards : [null, null]} />
       <span
         className={
           isHero
             ? "text-[8px] font-semibold uppercase tracking-wide text-emerald-600"
-            : "max-w-[72px] truncate text-[9px] font-medium text-gray-500"
+            : `max-w-[72px] truncate text-[9px] font-medium ${muted}`
         }
       >
         {label}
@@ -90,28 +86,27 @@ const HandPreview: React.FC<{ rawText: string }> = ({ rawText }) => {
     </div>
   );
 
-  const Dot = () => (
-    <span className="text-gray-300" aria-hidden="true">
-      ·
-    </span>
-  );
-
   return (
-    <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
+    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
       {hero && <PlayerBlock cards={hero.cards} label="Hero" hero />}
 
-      {board.length > 0 && (
-        <>
-          {hero && <Dot />}
-          <CardGroup cards={board} overlap />
-        </>
-      )}
+      {board.length > 0 &&
+        (onBoardClick ? (
+          <button
+            type="button"
+            onClick={onBoardClick}
+            aria-label="Open solution"
+            title="Open this board's solution"
+            className="rounded-lg transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70"
+          >
+            <CardGroup cards={board} />
+          </button>
+        ) : (
+          <CardGroup cards={board} />
+        ))}
 
       {opponents.map((p, i) => (
-        <React.Fragment key={i}>
-          {(hero || board.length > 0 || i > 0) && <Dot />}
-          <PlayerBlock cards={p.cards} label={p.name} />
-        </React.Fragment>
+        <PlayerBlock key={i} cards={p.cards} label={p.name} />
       ))}
     </div>
   );

@@ -63,6 +63,7 @@ import { comboKey, handClassOf } from "@/lib/solver/comboDetail";
 import { usePostflopSession } from "@/hooks/usePostflopSession";
 import usePostflopIndex from "@/hooks/usePostflopIndex";
 import useHandHistoryTexts from "@/hooks/useHandHistoryTexts";
+import { authedFetch } from "@/lib/api";
 import PostflopLine from "./PostflopLine";
 import { preflopNodeFiles, usePreflopLineNodes } from "./usePreflopLineNodes";
 import PostflopLibrary from "./PostflopLibrary";
@@ -1516,9 +1517,11 @@ const Solver = ({ user }: SolverProps) => {
         />
       )}
 
-      {/* SOLUTION LIBRARY MODAL */}
-      {POSTFLOP_ENABLED && showLibrary && (
+      {/* SOLUTION LIBRARY MODAL — stays mounted so the drawer's exit
+          animation can play; `open` does the showing/hiding. */}
+      {POSTFLOP_ENABLED && (
         <PostflopLibrary
+          open={showLibrary}
           entries={pfIndex.entries}
           loading={pfIndex.loading}
           signInRequired={pfIndex.signInRequired}
@@ -1531,6 +1534,11 @@ const Solver = ({ user }: SolverProps) => {
           onRemove={removeSolvedBoards}
           onRestore={pfIndex.unhide}
           handTextById={handTexts.byId}
+          onDeleteHand={async (id) => {
+            if (!window.confirm("Delete this hand history? This can't be undone.")) return;
+            const res = await authedFetch(`/api/handhistory/${id}`, { method: "DELETE" });
+            if (res.ok) handTexts.forget(id);
+          }}
         />
       )}
 

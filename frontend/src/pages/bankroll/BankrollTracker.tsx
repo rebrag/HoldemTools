@@ -27,6 +27,7 @@ import { useIsDesktop } from "./desktop/useIsDesktop";
 import type { DesktopLayoutProps } from "./desktop/shared";
 import LayoutCommandDeck from "./desktop/LayoutCommandDeck";
 import LoginSignupModal from "@/components/LoginSignupModal";
+import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import { useLocalStorageState } from "@/hooks/useLocalStorageState";
 import AutoFitText from "@/components/AutoFitText";
 
@@ -1034,39 +1035,46 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
         </div>
       )}
 
-      {/* overlay modal (for drafts or edits) — shared by both layouts */}
-      {overlayVisible && (
-        <BankrollModalPortal>
-          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-            <div className="w-full max-w-3xl px-4 py-6 max-h-[calc(100vh-3rem)] overflow-y-auto">
-              <BankrollFormModal
-                form={form}
-                knownLocations={knownLocations}
-                knownGames={knownGames}
-                autoProfit={autoProfit}
-                sessionDuration={sessionDuration}
-                canUseTimerControls={canUseTimerControls}
-                isTimerRunning={isTimerRunning}
-                saving={saving}
-                editingId={editingId}
-                user={user}
-                draftHands={activeDraftHands}
-                onDraftHandsChange={updateActiveDraftHands}
-                onChange={onChange}
-                onLocationChange={handleLocationSelectChange}
-                onGameChange={handleGameSelectChange}
-                onStartNow={setStartToNow}
-                onEndNow={setEndToNowAndSave}       // ✅ uses new async version
-                onSave={() => void handleSave()}    // ✅ actually calls handleSave
-                onCancel={cancelModal}
-                onMinimize={handleMinimize}
-                errorMessage={formError}
-              />
-
-            </div>
-          </div>
-        </BankrollModalPortal>
-      )}
+      {/* overlay modal (for drafts or edits) — shared by both layouts. The
+          portal stays (it lifts the drawer above transformed ancestors and the
+          z-30 draft chips); the drawer stays mounted and `open` toggles so its
+          exit animation plays. Backdrop clicks don't close: a stray tap must
+          not discard an in-progress edit. */}
+      <BankrollModalPortal>
+        <ResponsiveDrawer
+          open={overlayVisible}
+          onClose={cancelModal}
+          scrollMode="panel"
+          desktopMaxWidthClassName="sm:max-w-3xl"
+          zClassName="z-40"
+          closeOnBackdrop={false}
+          ariaLabel={editingId ? "Edit session" : "Add session"}
+        >
+          <BankrollFormModal
+            form={form}
+            knownLocations={knownLocations}
+            knownGames={knownGames}
+            autoProfit={autoProfit}
+            sessionDuration={sessionDuration}
+            canUseTimerControls={canUseTimerControls}
+            isTimerRunning={isTimerRunning}
+            saving={saving}
+            editingId={editingId}
+            user={user}
+            draftHands={activeDraftHands}
+            onDraftHandsChange={updateActiveDraftHands}
+            onChange={onChange}
+            onLocationChange={handleLocationSelectChange}
+            onGameChange={handleGameSelectChange}
+            onStartNow={setStartToNow}
+            onEndNow={setEndToNowAndSave}
+            onSave={() => void handleSave()}
+            onCancel={cancelModal}
+            onMinimize={handleMinimize}
+            errorMessage={formError}
+          />
+        </ResponsiveDrawer>
+      </BankrollModalPortal>
 
       {/* minimized chips for all in-progress drafts */}
       {draftsWithStart.length > 0 && (

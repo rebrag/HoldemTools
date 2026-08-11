@@ -8,18 +8,14 @@
 // Hands are associated with the session, so they inherit its date/time rather
 // than carrying their own.
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import type { User } from "firebase/auth";
 import { AnimatePresence, motion } from "framer-motion";
-import { Play, Library } from "lucide-react";
 import LoadingIndicator from "@/components/LoadingIndicator";
-import CopyButton from "@/components/CopyButton";
-import RowActionButton from "@/components/RowActionButton";
+import HandSummaryRow from "@/components/HandSummaryRow";
 import { authedFetch } from "@/lib/api";
-import HandPreview from "@/components/HandPreview";
 import useHandSolutions from "@/hooks/useHandSolutions";
 import { solutionOpenUrl } from "@/lib/solver/postflopLibrary";
-import { parseReplay } from "@/pages/handhistory/create/replay";
+import { summaryFromRawText } from "@/pages/handhistory/create/replay";
 import type { HandHistory } from "@/pages/handhistory/types";
 
 // A hand typed against an unsaved (draft) session — no server id yet.
@@ -30,13 +26,14 @@ export interface LocalHand {
 
 interface Row {
   key: string;
-  label: string;
   rawText: string;
   /** Has an embedded replay payload, so /hand-history/replay/{key} works.
    *  Always false for draft hands: they have no server id to route to. */
   replayable: boolean;
   /** Deep link to this hand's solved board on /solutions, or null. */
   solutionHref: string | null;
+  /** Server hand id (session mode), for the Share button. */
+  serverId: number | null;
 }
 
 interface Props {
@@ -62,7 +59,6 @@ const SessionHandHistories: React.FC<Props> = ({
   draftHands,
   onDraftChange,
 }) => {
-  const navigate = useNavigate();
   const [items, setItems] = useState<HandHistory[]>([]); // session mode only
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -107,8 +103,8 @@ const SessionHandHistories: React.FC<Props> = ({
     };
   }, [mode, user, sessionId]);
 
-  // Memoized: parseReplay decodes a base64 JSON payload per hand, which is
-  // too much work to redo on every expand/collapse render.
+  // Memoized: summaryFromRawText decodes a base64 JSON payload per hand (its
+  // module cache makes repeats cheap, but no reason to churn it per render).
   const rows: Row[] = useMemo(
     () =>
       mode === "session"
@@ -116,18 +112,18 @@ const SessionHandHistories: React.FC<Props> = ({
             const solution = solutionByHandId[h.id];
             return {
               key: String(h.id),
-              label: `Hand #${h.id}`,
               rawText: h.rawText,
-              replayable: parseReplay(h.rawText) != null,
+              replayable: summaryFromRawText(h.rawText) != null,
               solutionHref: solution ? solutionOpenUrl(solution) : null,
+              serverId: h.id,
             };
           })
-        : (draftHands ?? []).map((h, i) => ({
+        : (draftHands ?? []).map((h) => ({
             key: h.localId,
-            label: `Hand ${i + 1}`,
             rawText: h.rawText,
             replayable: false,
             solutionHref: null,
+            serverId: null,
           })),
     [mode, items, draftHands, solutionByHandId]
   );
@@ -154,12 +150,12 @@ const SessionHandHistories: React.FC<Props> = ({
   };
 
   return (
-    <div className="mt-5 border-t border-gray-200 pt-4">
+    <div className="mt-5 border-t border-white/10 pt-4">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-gray-900">
+        <h3 className="text-sm font-semibold text-slate-100">
           Hand Histories
           {rows.length > 0 && (
-            <span className="ml-1.5 text-xs font-normal text-gray-500">
+            <span className="ml-1.5 text-xs font-normal text-slate-400">
               ({rows.length})
             </span>
           )}
@@ -167,7 +163,7 @@ const SessionHandHistories: React.FC<Props> = ({
       </div>
 
       {error && (
-        <div className="mb-2 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700">
+        <div className="mb-2 rounded-md border border-rose-500/40 bg-rose-950/60 px-2.5 py-1.5 text-xs text-rose-200">
           {error}
         </div>
       )}
@@ -177,11 +173,11 @@ const SessionHandHistories: React.FC<Props> = ({
           <LoadingIndicator />
         </div>
       ) : rows.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-3 py-4 text-center text-xs text-gray-500">
+        <p className="rounded-lg border border-dashed border-white/15 bg-white/5 px-3 py-4 text-center text-xs text-slate-400">
           No hands logged for this session yet.
         </p>
       ) : (
-        <ul className="space-y-2">
+        <ul className="overflow-hidden rounded-lg border border-white/10 divide-y divide-white/10">
           <AnimatePresence initial={false}>
             {rows.map((row) => {
               const expanded = expandedKey === row.key;
@@ -193,52 +189,21 @@ const SessionHandHistories: React.FC<Props> = ({
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, x: -16 }}
-                  className="rounded-lg border border-gray-200 bg-white p-2.5"
+                  className="bg-white/5 p-2.5"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setExpandedKey(expanded ? null : row.key)}
-                      className="min-w-0 flex-1 text-left"
-                      aria-expanded={expanded}
-                    >
-                      <div className="text-[11px] font-semibold text-gray-700">
-                        {row.label}
-                      </div>
-                      {!expanded && <HandPreview rawText={row.rawText} />}
-                    </button>
-                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-                      {row.replayable && (
-                        <RowActionButton
-                          tone="replay"
-                          label="Replay hand"
-                          icon={<Play className="h-4 w-4" fill="currentColor" />}
-                          onClick={() =>
-                            navigate(`/hand-history/replay/${row.key}`)
-                          }
-                        />
-                      )}
-                      {solutionHref && (
-                        <RowActionButton
-                          tone="solution"
-                          label="View solution"
-                          icon={<Library className="h-4 w-4" />}
-                          onClick={() => navigate(solutionHref)}
-                        />
-                      )}
-                      <CopyButton
-                        text={row.rawText}
-                        className="rounded-md border border-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-700 hover:bg-gray-100"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(row.key)}
-                        className="rounded-md border border-rose-200 px-2 py-0.5 text-[11px] font-medium text-rose-600 hover:bg-rose-50"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
+                  <HandSummaryRow
+                    rawText={row.rawText}
+                    tone="dark"
+                    replayHref={
+                      row.replayable ? `/hand-history/replay/${row.key}` : null
+                    }
+                    solutionHref={solutionHref}
+                    shareId={row.replayable ? row.serverId : null}
+                    onDelete={() => void handleDelete(row.key)}
+                    onError={setError}
+                    onPreviewClick={() => setExpandedKey(expanded ? null : row.key)}
+                    previewExpanded={expanded}
+                  />
 
                   <AnimatePresence initial={false}>
                     {expanded && (
@@ -248,7 +213,7 @@ const SessionHandHistories: React.FC<Props> = ({
                         animate={{ opacity: 1, height: "auto" }}
                         exit={{ opacity: 0, height: 0 }}
                         transition={{ duration: 0.2, ease: "easeInOut" }}
-                        className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-gray-50 p-2.5 font-mono text-[11px] leading-relaxed text-gray-800"
+                        className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-black/30 p-2.5 font-mono text-[11px] leading-relaxed text-slate-200"
                       >
                         {row.rawText}
                       </motion.pre>
