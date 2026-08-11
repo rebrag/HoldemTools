@@ -1,19 +1,14 @@
 // src/components/HandPreview.tsx
-// Visual summary of a saved hand: the hero's hole cards, the board, and the
-// hole cards + name of the villain who committed the most chips, all parsed
-// from the hand's rawText (its embedded replay payload is the single source
-// of truth). Shared by the hand-history list, the bankroll session modal, and
-// the solved-flops library. Hands with no embedded replay payload
-// (legacy/imported) fall back to the first text line.
+// Visual summary of a saved hand: every known hand (hero + revealed villains,
+// each labeled with its player's name) and the board, all parsed from the
+// hand's rawText (its embedded replay payload is the single source of truth).
+// The card-fan half of HandSummaryRow, which adds the stat stack and action
+// buttons around it. Hands with no embedded replay payload (legacy/imported)
+// fall back to the first text line.
 import React, { useMemo } from "react";
 import PlayingCard from "@/components/PlayingCard";
 import { CardBack } from "@/components/PokerTable";
-import {
-  buildHandPreview,
-  parseReplay,
-  stripReplay,
-  type HandPreview as HandPreviewData,
-} from "@/pages/handhistory/create/replay";
+import { summaryFromRawText, stripReplay } from "@/pages/handhistory/create/replay";
 
 const CARD_W = 22;
 
@@ -55,19 +50,24 @@ function firstLine(rawText: string): string {
   return line.length > 120 ? `${line.slice(0, 120)}…` : line;
 }
 
-const HandPreview: React.FC<{ rawText: string }> = ({ rawText }) => {
-  const preview = useMemo<HandPreviewData | null>(() => {
-    const data = parseReplay(rawText);
-    return data ? buildHandPreview(data) : null;
-  }, [rawText]);
+const HandPreview: React.FC<{
+  rawText: string;
+  /** Palette for muted text: "light" (default — hand-history page) or
+   *  "dark" (Solution Library, bankroll session drawer). */
+  tone?: "light" | "dark";
+}> = ({ rawText, tone = "light" }) => {
+  const summary = useMemo(() => summaryFromRawText(rawText), [rawText]);
 
-  if (!preview) {
+  const dark = tone === "dark";
+  const muted = dark ? "text-slate-400" : "text-gray-500";
+
+  if (!summary) {
     return (
-      <div className="mt-1 truncate font-mono text-[11px] text-gray-500">{firstLine(rawText)}</div>
+      <div className={`mt-1 truncate font-mono text-[11px] ${muted}`}>{firstLine(rawText)}</div>
     );
   }
 
-  const { players, board } = preview;
+  const { players, board } = summary;
   const hero = players.find((p) => p.isHero) ?? null;
   const opponents = players.filter((p) => !p.isHero);
 
@@ -82,7 +82,7 @@ const HandPreview: React.FC<{ rawText: string }> = ({ rawText }) => {
         className={
           isHero
             ? "text-[8px] font-semibold uppercase tracking-wide text-emerald-600"
-            : "max-w-[72px] truncate text-[9px] font-medium text-gray-500"
+            : `max-w-[72px] truncate text-[9px] font-medium ${muted}`
         }
       >
         {label}
@@ -90,28 +90,14 @@ const HandPreview: React.FC<{ rawText: string }> = ({ rawText }) => {
     </div>
   );
 
-  const Dot = () => (
-    <span className="text-gray-300" aria-hidden="true">
-      ·
-    </span>
-  );
-
   return (
-    <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
+    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
       {hero && <PlayerBlock cards={hero.cards} label="Hero" hero />}
 
-      {board.length > 0 && (
-        <>
-          {hero && <Dot />}
-          <CardGroup cards={board} overlap />
-        </>
-      )}
+      {board.length > 0 && <CardGroup cards={board} overlap />}
 
       {opponents.map((p, i) => (
-        <React.Fragment key={i}>
-          {(hero || board.length > 0 || i > 0) && <Dot />}
-          <PlayerBlock cards={p.cards} label={p.name} />
-        </React.Fragment>
+        <PlayerBlock key={i} cards={p.cards} label={p.name} />
       ))}
     </div>
   );

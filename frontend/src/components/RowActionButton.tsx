@@ -17,8 +17,33 @@ const TONES: Record<RowActionTone, string> = {
   delete: "border-rose-300 bg-rose-50 text-rose-600 hover:bg-rose-100",
 };
 
+// Same palette translated for dark panels (drawer surfaces).
+const DARK_TONES: Record<RowActionTone, string> = {
+  replay: "border-emerald-400/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20",
+  solution: "border-violet-400/40 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20",
+  share: "border-sky-400/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20",
+  copy: "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10",
+  delete: "border-rose-400/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20",
+};
+
 // Transient success look (Copy/Share confirmation) — always emerald.
 const SUCCESS_TONE = "border-emerald-400 bg-emerald-100 text-emerald-700";
+const DARK_SUCCESS_TONE = "border-emerald-400/60 bg-emerald-500/25 text-emerald-200";
+
+/** The full class string for one of these buttons, exported so link-shaped
+ *  siblings (HandSummaryRow's Replay <Link>) can render identically. */
+export function rowActionClasses(
+  tone: RowActionTone,
+  variant: "light" | "dark" = "light",
+  success = false
+): string {
+  const toneClasses = success
+    ? variant === "dark"
+      ? DARK_SUCCESS_TONE
+      : SUCCESS_TONE
+    : (variant === "dark" ? DARK_TONES : TONES)[tone];
+  return `inline-flex h-8 w-8 items-center justify-center rounded-lg border shadow-sm transition-colors disabled:opacity-40 ${toneClasses}`;
+}
 
 const RowActionButton: React.FC<{
   icon: React.ReactNode;
@@ -27,7 +52,8 @@ const RowActionButton: React.FC<{
   onClick: (e: React.MouseEvent) => void;
   disabled?: boolean;
   success?: boolean; // show the emerald "done" state (e.g. after copy)
-}> = ({ icon, label, tone, onClick, disabled, success }) => {
+  variant?: "light" | "dark";
+}> = ({ icon, label, tone, onClick, disabled, success, variant = "light" }) => {
   const reduce = useReducedMotion();
   return (
     <motion.button
@@ -41,9 +67,7 @@ const RowActionButton: React.FC<{
       title={label}
       whileTap={disabled || reduce ? undefined : { scale: 0.88 }}
       whileHover={disabled || reduce ? undefined : { y: -1 }}
-      className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border shadow-sm transition-colors disabled:opacity-40 ${
-        success ? SUCCESS_TONE : TONES[tone]
-      }`}
+      className={rowActionClasses(tone, variant, success)}
     >
       {icon}
     </motion.button>

@@ -61,21 +61,24 @@ const BankrollFormModal: React.FC<Props> = ({
   };
 
   return (
-    <div className="relative rounded-2xl border border-emerald-300/40 bg-white/95 p-4 shadow-2xl shadow-emerald-500/30 backdrop-blur-sm">
+    // The hosting ResponsiveDrawer owns the panel chrome (background, border,
+    // radius, padding) and the Close button; this renders only the form.
+    <div className="relative">
       {/* 🔹 Centered spinner overlay while saving */}
       {saving && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-white/60">
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/60">
           <LoadingIndicator />
         </div>
       )}
 
-      <div className="mb-3 flex items-center justify-between gap-2">
+      {/* pr-10 keeps the header clear of the drawer's absolute Close button */}
+      <div className="mb-3 flex items-center justify-between gap-2 pr-10">
         <div className="flex items-center gap-2">
-          <h2 className="text-base font-semibold text-gray-900">
+          <h2 className="text-base font-semibold text-slate-100">
             {editingId ? "Edit Session" : "Add Session"}
           </h2>
           {editingId && (
-            <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-[2px] text-[10px] font-medium text-gray-600">
+            <span className="inline-flex items-center rounded-full bg-white/10 px-2 py-[2px] text-[10px] font-medium text-slate-300">
               Editing existing
             </span>
           )}
@@ -86,28 +89,20 @@ const BankrollFormModal: React.FC<Props> = ({
             <button
               type="button"
               onClick={onMinimize}
-              className="inline-flex items-center rounded-full border border-emerald-200 bg-white px-3 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-50 transition"
+              className="inline-flex items-center rounded-full border border-emerald-400/40 bg-white/5 px-3 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/10 transition"
             >
               Minimize
             </button>
           )}
-          <button
-            type="button"
-            onClick={onCancel}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition"
-            aria-label="Close"
-          >
-            <span className="text-sm">✕</span>
-          </button>
         </div>
       </div>
 
       {/* Row 1: Type + Start + End */}
       <div className="flex flex-wrap gap-3">
         <div className="flex flex-col gap-1 w-[130px]">
-          <label className="text-xs font-medium text-gray-700">Type</label>
+          <label className="text-xs font-medium text-slate-300">Type</label>
           <select
-            className="rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
+            className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-sm text-slate-100 [&>option]:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-emerald-400/60 transition"
             value={form.type}
             onChange={(e) => onChange("type", e.target.value)}
           >
@@ -118,20 +113,20 @@ const BankrollFormModal: React.FC<Props> = ({
         </div>
 
         <div className="flex-1 flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-700">Start</label>
+          <label className="text-xs font-medium text-slate-300">Start</label>
           <input
             type="datetime-local"
-            className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
+            className="w-full rounded-md border border-white/10 bg-white/5 px-2 py-1 text-sm text-slate-100 [color-scheme:dark] focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-emerald-400/60 transition"
             value={form.start}
             onChange={(e) => onChange("start", e.target.value)}
           />
         </div>
 
         <div className="flex-1 flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-700">End</label>
+          <label className="text-xs font-medium text-slate-300">End</label>
           <input
             type="datetime-local"
-            className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
+            className="w-full rounded-md border border-white/10 bg-white/5 px-2 py-1 text-sm text-slate-100 [color-scheme:dark] focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-emerald-400/60 transition"
             value={form.end}
             onChange={(e) => onChange("end", e.target.value)}
           />
@@ -141,9 +136,9 @@ const BankrollFormModal: React.FC<Props> = ({
       {/* Row 2: Location + Game + Buy-in + Cash-out */}
       <div className="mt-4 flex flex-wrap gap-3">
         <div className="flex flex-col gap-1 w-[180px]">
-          <label className="text-xs font-medium text-gray-700">Location</label>
+          <label className="text-xs font-medium text-slate-300">Location</label>
           <select
-            className="rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
+            className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-sm text-slate-100 [&>option]:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-emerald-400/60 transition"
             value={form.location || ""}
             onChange={onLocationChange}
           >
@@ -158,9 +153,9 @@ const BankrollFormModal: React.FC<Props> = ({
         </div>
 
         <div className="flex flex-col gap-1 w-[160px]">
-          <label className="text-xs font-medium text-gray-700">Game</label>
+          <label className="text-xs font-medium text-slate-300">Game</label>
           <select
-            className="rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
+            className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-sm text-slate-100 [&>option]:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-emerald-400/60 transition"
             value={form.blinds || ""}
             onChange={onGameChange}
           >
@@ -175,12 +170,12 @@ const BankrollFormModal: React.FC<Props> = ({
         </div>
 
         <div className="flex-1 min-w-[120px] flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-700">Buy-in</label>
+          <label className="text-xs font-medium text-slate-300">Buy-in</label>
           <input
             type="tel"
             inputMode="decimal"
             pattern="[0-9]*"
-            className="w-full rounded-md border border-gray-300 px-2 py-1 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
+            className="w-full rounded-md border border-white/10 bg-white/5 px-2 py-1 text-base sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-emerald-400/60 transition"
             value={form.buyIn}
             onChange={(e) => onChange("buyIn", e.target.value)}
             placeholder="200"
@@ -188,12 +183,12 @@ const BankrollFormModal: React.FC<Props> = ({
         </div>
 
         <div className="flex-1 min-w-[120px] flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-700">Cash-out</label>
+          <label className="text-xs font-medium text-slate-300">Cash-out</label>
           <input
             type="tel"
             inputMode="decimal"
             pattern="[0-9]*"
-            className="w-full rounded-md border border-gray-300 px-2 py-1 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
+            className="w-full rounded-md border border-white/10 bg-white/5 px-2 py-1 text-base sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-emerald-400/60 transition"
             value={form.cashOut}
             onChange={(e) => onChange("cashOut", e.target.value)}
             placeholder="520"
@@ -202,7 +197,7 @@ const BankrollFormModal: React.FC<Props> = ({
       </div>
 
       {errorMessage && (
-        <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs text-rose-700">
+        <div className="mt-3 rounded-md border border-rose-500/40 bg-rose-950/60 px-3 py-1.5 text-xs text-rose-200">
           {errorMessage}
         </div>
       )}
@@ -238,7 +233,7 @@ const BankrollFormModal: React.FC<Props> = ({
             )}
 
             {sessionDuration && (
-              <span className="text-xs font-medium text-gray-700">
+              <span className="text-xs font-medium text-slate-300">
                 Duration: {sessionDuration.hours}:
                 {String(sessionDuration.minutes).padStart(2, "0")}
               </span>
@@ -247,7 +242,7 @@ const BankrollFormModal: React.FC<Props> = ({
             {autoProfit !== null && (
               <span
                 className={`text-xs font-medium ${
-                  autoProfit >= 0 ? "text-emerald-600" : "text-rose-600"
+                  autoProfit >= 0 ? "text-emerald-400" : "text-rose-400"
                 }`}
               >
                 Net: {autoProfit >= 0 ? "+" : "-"}$
@@ -260,7 +255,7 @@ const BankrollFormModal: React.FC<Props> = ({
             <button
               type="button"
               onClick={onCancel}
-              className="text-xs text-gray-500 underline underline-offset-2 hover:text-gray-700 text-left"
+              className="text-xs text-slate-400 underline underline-offset-2 hover:text-slate-200 text-left"
             >
               Discard changes
             </button>
