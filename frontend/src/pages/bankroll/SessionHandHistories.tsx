@@ -14,6 +14,7 @@ import LoadingIndicator from "@/components/LoadingIndicator";
 import HandSummaryRow from "@/components/HandSummaryRow";
 import { authedFetch } from "@/lib/api";
 import useHandSolutions from "@/hooks/useHandSolutions";
+import { replayOpenUrl } from "@/lib/handHistoryLinks";
 import { solutionOpenUrl } from "@/lib/solver/postflopLibrary";
 import { summaryFromRawText } from "@/pages/handhistory/create/replay";
 import type { HandHistory } from "@/pages/handhistory/types";
@@ -194,9 +195,7 @@ const SessionHandHistories: React.FC<Props> = ({
                   <HandSummaryRow
                     rawText={row.rawText}
                     tone="dark"
-                    replayHref={
-                      row.replayable ? `/hand-history/replay/${row.key}` : null
-                    }
+                    replayHref={row.replayable ? replayOpenUrl(row.key) : null}
                     solutionHref={solutionHref}
                     shareId={row.replayable ? row.serverId : null}
                     onDelete={() => void handleDelete(row.key)}

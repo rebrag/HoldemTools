@@ -7,6 +7,7 @@ import { useDelayedLoading } from "@/hooks/useDelayedLoading";
 import { authedFetch } from "@/lib/api";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import useHandSolutions from "@/hooks/useHandSolutions";
+import useNoOverscroll from "@/hooks/useNoOverscroll";
 import { solutionOpenUrl } from "@/lib/solver/postflopLibrary";
 import HandHistorySecondaryNav from "./HandHistorySecondaryNav";
 import HandRow from "./HandRow";
@@ -58,6 +59,9 @@ function formatDay(iso: string): string {
 
 const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   const navigate = useAppNavigate();
+  // The list paginates rather than growing without bound, so the rubber-band
+  // only ever reveals backdrop below the last row.
+  useNoOverscroll();
   const [items, setItems] = useState<HandHistory[]>([]);
   // Seeded from whether a fetch is guaranteed on mount — see BankrollTracker;
   // starting at `false` flashes the "no hand histories yet" empty state first.

@@ -7,8 +7,11 @@ import fixture from "./fixtures/postflop.json" with { type: "json" };
  * /hand-history: "View solution", which deep-links to that board on
  * /solutions. The mapping comes from the same overlaid index the solved-flops
  * library reads (source: "handHistory" + hand_history_id, attached
- * server-side per viewer), so a hand shows the button exactly when its
+ * server-side per viewer), so a hand shows the action exactly when its
  * solution is openable.
+ *
+ * It is a real link with target="_blank": opening a solution leaves the list,
+ * so it opens in a new tab and the hand list stays where the user left it.
  */
 
 const { index, manifest, flopBundle } = fixture;
@@ -37,13 +40,15 @@ const hhManifest = {
 
 let api: ApiStub;
 
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
+test.beforeEach(async ({ page, context }) => {
+  await context.addInitScript(() => {
     window.localStorage.setItem("tourSeen", "1");
     window.localStorage.setItem("singleRangeView", "1");
     window.localStorage.setItem("ht_dev_signed_in", "true");
   });
-  api = await stubSolverApi(page, {
+  // Context-scoped: the "View solution" link opens a second tab, which needs
+  // the same stubs as the first.
+  api = await stubSolverApi(context, {
     postflop: { index: hhIndex, manifest: hhManifest, streets: { "r.0": flopBundle }, stacks: HH_STACKS },
     handHistories: [
       { id: SOLVED_HAND_ID, rawText: SOLVED_TEXT },
@@ -57,30 +62,41 @@ test.afterEach(() => {
   if (api) expect(api.unhandled).toEqual([]);
 });
 
-test("only the solved hand offers a View solution button", async ({ page }) => {
+test("only the solved hand offers a View solution link", async ({ page }) => {
   // Both hands render (HandPreview falls back to the first text line).
   const solvedRow = page.locator("li", { hasText: SOLVED_TEXT });
   const unsolvedRow = page.locator("li", { hasText: UNSOLVED_TEXT });
   await expect(solvedRow).toBeVisible();
   await expect(unsolvedRow).toBeVisible();
 
-  await expect(solvedRow.getByRole("button", { name: "View solution" })).toBeVisible();
-  await expect(unsolvedRow.getByRole("button", { name: "View solution" })).toHaveCount(0);
+  const link = solvedRow.getByRole("link", { name: "View solution" });
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute("target", "_blank");
+  await expect(unsolvedRow.getByRole("link", { name: "View solution" })).toHaveCount(0);
 });
 
-test("clicking it lands on /solutions with the board open", async ({
+test("clicking it opens /solutions in a new tab with the board open", async ({
   page,
+  context,
   isMobile,
 }) => {
   test.skip(!!isMobile, "asserts on the opened study matrix - desktop-only");
 
-  await page
-    .locator("li", { hasText: SOLVED_TEXT })
-    .getByRole("button", { name: "View solution" })
-    .click();
+  const [solutions] = await Promise.all([
+    context.waitForEvent("page"),
+    page
+      .locator("li", { hasText: SOLVED_TEXT })
+      .getByRole("link", { name: "View solution" })
+      .click(),
+  ]);
 
   // The deep link routes to /solutions and auto-opens the hand's board.
-  await expect(page).toHaveURL(/\/solutions/);
-  await expect(page.getByTestId("hand-cell").first()).toBeVisible({ timeout: 45_000 });
-  await expect(page).not.toHaveURL(/open=/);
+  await expect(solutions).toHaveURL(/\/solutions/);
+  await expect(solutions.getByTestId("hand-cell").first()).toBeVisible({
+    timeout: 45_000,
+  });
+  await expect(solutions).not.toHaveURL(/open=/);
+
+  // The hand list is untouched in the tab the user came from.
+  await expect(page).toHaveURL(/\/hand-history$/);
 });

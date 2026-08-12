@@ -7,6 +7,7 @@ import { Trash2 } from "lucide-react";
 import PlayingCard from "@/components/PlayingCard";
 import HandSummaryRow from "@/components/HandSummaryRow";
 import ResponsiveDrawer from "@/components/ResponsiveDrawer";
+import { replayOpenUrl } from "@/lib/handHistoryLinks";
 import { boardToCards } from "@/lib/solver/postflopNode";
 import { summaryFromRawText } from "@/pages/handhistory/create/replay";
 import {
@@ -263,7 +264,7 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
                               <HandSummaryRow
                                 rawText={rawText}
                                 tone="dark"
-                                replayHref={`/hand-history/replay/${group.handHistoryId}`}
+                                replayHref={replayOpenUrl(String(group.handHistoryId))}
                                 solutionHref={solutionOpenUrl(group.boards[0])}
                                 onOpenSolution={() => onOpen(group.boards[0])}
                                 onBoardClick={() => {

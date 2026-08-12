@@ -22,6 +22,7 @@ import PokerTable from "@/components/PokerTable";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import { authedFetch } from "@/lib/api";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
+import useNoOverscroll from "@/hooks/useNoOverscroll";
 import { positionLabelsForSeats } from "./create/positions";
 import { buildTableSeats, potView, TableCenter } from "./create/tableView";
 import { parseReplay, reconstructFrames, stripReplay } from "./create/replay";
@@ -49,6 +50,9 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
   const navigate = useAppNavigate();
   const { localHands } = useLocalHandHistories();
   const reduce = useReducedMotion();
+  // The replayer budgets table + caption + transport to one viewport, so the
+  // rubber-band only ever reveals backdrop.
+  useNoOverscroll();
 
   const [load, setLoad] = useState<LoadState>({ status: "loading" });
 

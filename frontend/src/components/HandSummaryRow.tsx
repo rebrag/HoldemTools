@@ -7,7 +7,6 @@
 // prop; the row owns Copy and Share end to end so every surface gets them
 // without re-implementing clipboard/token plumbing.
 import React, { useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
 import { Play, Library, Share2, Copy, Check, Trash2 } from "lucide-react";
 import RowActionButton, { rowActionClasses } from "@/components/RowActionButton";
 import HandPreview from "@/components/HandPreview";
@@ -25,17 +24,20 @@ export interface HandSummaryRowProps {
   rawText: string;
   /** Palette: "light" (hand-history page) or "dark" (drawer surfaces). */
   tone?: "light" | "dark";
-  /** Replay route; rendered as a real <Link> ("Replay hand"). Omit to hide. */
+  /** Replay route ("Replay hand"). Opens in a new tab. Omit to hide. */
   replayHref?: string | null;
-  /** Solution deep link; the button navigates to it unless onOpenSolution
-   *  overrides (the Solution Library opens the board in place instead). */
+  /** Solution deep link. Opens in a new tab unless onOpenSolution overrides
+   *  (the Solution Library opens the board in place, since the viewer is
+   *  already on /solutions). */
   solutionHref?: string | null;
   onOpenSolution?: () => void;
   /** Server hand id — enables Share (gated by SHARE_ENABLED). */
   shareId?: number | null;
   /** Delete the hand. The host owns confirm + API + list state. */
   onDelete?: () => void;
-  /** Called after Replay/Solution navigation (e.g. close a hosting drawer). */
+  /** Called after an in-place solution open, so a hosting drawer can close
+   *  over the board it just loaded. The new-tab actions never fire it: the
+   *  host page is exactly where the user left it. */
   onNavigate?: () => void;
   /** Surface Share failures; defaults to console.warn. */
   onError?: (message: string) => void;
@@ -61,7 +63,6 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
   previewExpanded,
   onBoardClick,
 }) => {
-  const navigate = useNavigate();
   const summary = useMemo(() => summaryFromRawText(rawText), [rawText]);
   const [flash, setFlash] = useState<"copied" | "shared" | null>(null);
   const [sharing, setSharing] = useState(false);
@@ -153,33 +154,53 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
         )}
 
         <ActionGrid>
+          {/* Replay and Solution both leave the page the row is sitting on, so
+              both open in a new tab and the list stays exactly where it was.
+              Real anchors rather than window.open, so middle-click, ⌘-click and
+              "open in new tab" all behave the way the icon promises. */}
           {replayHref && (
-            <Link
+            <a
               key="replay"
-              to={replayHref}
-              onClick={onNavigate}
+              href={replayHref}
+              target="_blank"
+              rel="noopener noreferrer"
               aria-label="Replay hand"
               title="Replay hand"
               className={rowActionClasses("replay", tone, false, "sm")}
             >
               <Play className="h-3.5 w-3.5" fill="currentColor" />
-            </Link>
+            </a>
           )}
-          {solutionHref && (
-            <RowActionButton
-              key="solution"
-              tone="solution"
-              variant={tone}
-              size="sm"
-              label="View solution"
-              icon={<Library className="h-3.5 w-3.5" />}
-              onClick={() => {
-                if (onOpenSolution) onOpenSolution();
-                else navigate(solutionHref);
-                onNavigate?.();
-              }}
-            />
-          )}
+          {/* The one exception: the Solution Library is itself on /solutions,
+              so it overrides with onOpenSolution and loads the board in place
+              rather than booting a second copy of the app. */}
+          {solutionHref &&
+            (onOpenSolution ? (
+              <RowActionButton
+                key="solution"
+                tone="solution"
+                variant={tone}
+                size="sm"
+                label="View solution"
+                icon={<Library className="h-3.5 w-3.5" />}
+                onClick={() => {
+                  onOpenSolution();
+                  onNavigate?.();
+                }}
+              />
+            ) : (
+              <a
+                key="solution"
+                href={solutionHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="View solution"
+                title="View solution"
+                className={rowActionClasses("solution", tone, false, "sm")}
+              >
+                <Library className="h-3.5 w-3.5" />
+              </a>
+            ))}
           {SHARE_ENABLED && shareId != null && (
             <RowActionButton
               key="share"

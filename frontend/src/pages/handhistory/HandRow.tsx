@@ -9,6 +9,7 @@
 import React from "react";
 import { AnimatePresence, motion, type Variants } from "framer-motion";
 import HandSummaryRow from "@/components/HandSummaryRow";
+import { replayOpenUrl } from "@/lib/handHistoryLinks";
 import type { ToolRow } from "./types";
 
 const itemVariants: Variants = {
@@ -57,7 +58,7 @@ const HandRow: React.FC<HandRowProps> = ({
 
     <HandSummaryRow
       rawText={row.rawText}
-      replayHref={row.replayable ? `/hand-history/replay/${row.key}` : null}
+      replayHref={row.replayable ? replayOpenUrl(row.key) : null}
       solutionHref={solutionHref}
       shareId={
         row.replayable && !row.isLocal && !row.synthetic && row.server
