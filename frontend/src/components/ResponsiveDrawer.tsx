@@ -12,6 +12,7 @@ import { useEffect } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { X } from "lucide-react";
 import useWindowDimensions from "@/hooks/useWindowDimensions";
+import useBodyScrollLock from "@/hooks/useBodyScrollLock";
 
 export interface ResponsiveDrawerProps {
   open: boolean;
@@ -50,19 +51,16 @@ const ResponsiveDrawer: React.FC<ResponsiveDrawerProps> = ({
   const reduceMotion = useReducedMotion();
   const isMobile = windowWidth < 640; // Tailwind `sm` breakpoint
 
-  /* ---------- close on Escape + lock body scroll (only while open) ---------- */
+  /* ---------- close on Escape (scroll lock is the shared ref-counted hook) --- */
+  useBodyScrollLock(open);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prevOverflow;
-    };
+    return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
   /* ---------- entrance motion (slide-up on mobile, scale on desktop) ------- */

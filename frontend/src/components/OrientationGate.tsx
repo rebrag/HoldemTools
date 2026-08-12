@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Smartphone } from "lucide-react";
+import useBodyScrollLock from "@/hooks/useBodyScrollLock";
 
 /* True while the viewport reads as a landscape phone. Uses the orientation
  * media query (aspect-based, resilient to soft-keyboard viewport jiggle on
@@ -56,15 +57,8 @@ const OrientationGate: React.FC = () => {
   const blocked = useMobileLandscape();
   const reduceMotion = useReducedMotion();
 
-  /* Scroll-lock behind the overlay, same pattern as ResponsiveDrawer. */
-  useEffect(() => {
-    if (!blocked) return;
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [blocked]);
+  /* Scroll-lock behind the overlay, shared with every other overlay. */
+  useBodyScrollLock(blocked);
 
   return (
     <AnimatePresence>

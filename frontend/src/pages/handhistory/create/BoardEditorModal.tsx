@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import PlayingCard from "@/components/PlayingCard";
 import RankSuitKeypad from "@/components/RankSuitKeypad";
+import useBodyScrollLock from "@/hooks/useBodyScrollLock";
 
 interface Props {
   board: (string | null)[]; // length 5
@@ -18,17 +19,14 @@ const BoardEditorModal: React.FC<Props> = ({ board, otherUsed, onSave, onClose }
     board.filter((c): c is string => !!c)
   );
 
+  useBodyScrollLock(true);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
-    };
+    return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
   if (typeof document === "undefined") return null;
