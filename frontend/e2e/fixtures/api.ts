@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { BrowserContext, Page } from "@playwright/test";
 import { foldersFixture, type FolderWithMetadataFixture } from "./folders";
 import { getInitialMapping } from "../../src/lib/solver/getInitialMapping";
 
@@ -91,7 +91,9 @@ export type PostflopFixture = {
 };
 
 export async function stubSolverApi(
-  page: Page,
+  /** A page, or the whole context when a spec follows a link into a second
+   *  tab - `page.route` covers only the page it was registered on. */
+  page: Page | BrowserContext,
   opts: {
     postflop?: PostflopFixture;
     handHistories?: HandHistoryFixture[];

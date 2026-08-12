@@ -9,6 +9,7 @@ import { Play, Library, Share2, Copy, Check, Trash2, MoreHorizontal } from "luci
 import { SHARE_ENABLED } from "@/lib/shareApi";
 import RowActionButton from "@/components/RowActionButton";
 import HandPreview from "@/components/HandPreview";
+import { replayOpenUrl } from "@/lib/handHistoryLinks";
 import type { ToolRow } from "./types";
 
 const itemVariants: Variants = {
@@ -38,8 +39,6 @@ type HandRowProps = {
   onCopy: (row: ToolRow) => void;
   onShare: (row: ToolRow) => void;
   onDelete: (row: ToolRow) => void;
-  onReplay: (key: string) => void;
-  onOpenSolution: (href: string) => void;
 };
 
 const HandRow: React.FC<HandRowProps> = ({
@@ -55,8 +54,6 @@ const HandRow: React.FC<HandRowProps> = ({
   onCopy,
   onShare,
   onDelete,
-  onReplay,
-  onOpenSolution,
 }) => {
   // Secondary actions, shared between the desktop inline row and the
   // mobile "⋯" drawer.
@@ -123,12 +120,14 @@ const HandRow: React.FC<HandRowProps> = ({
         </button>
 
         <div className="flex shrink-0 items-center gap-1.5">
+          {/* Replay and Solution both leave the list, so both open in a new
+              tab (see RowActionButton's href form). */}
           {row.replayable && (
             <RowActionButton
               tone="replay"
               label="Replay hand"
               icon={<Play className="h-4 w-4" fill="currentColor" />}
-              onClick={() => onReplay(row.key)}
+              href={replayOpenUrl(row.key)}
             />
           )}
           {/* Inline at every breakpoint, like Replay: it only exists on
@@ -138,7 +137,7 @@ const HandRow: React.FC<HandRowProps> = ({
               tone="solution"
               label="View solution"
               icon={<Library className="h-4 w-4" />}
-              onClick={() => onOpenSolution(solutionHref)}
+              href={solutionHref}
             />
           )}
           {/* Desktop: secondary actions inline */}

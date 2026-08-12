@@ -8,6 +8,7 @@ import MultiRangeMobileView from "./views/MultiRangeMobileView";
 import { displayedPot } from "@/lib/pokerPot";
 import { getInitialMapping } from "@/lib/solver/getInitialMapping";
 import useKeyboardShortcuts from "@/hooks/useKeyboardShortcuts";
+import useNoOverscroll from "@/hooks/useNoOverscroll";
 import useSolverLayout from "./useSolverLayout";
 import useFolders from "@/hooks/useFolders";
 import useFiles from "@/hooks/useFiles";
@@ -1161,13 +1162,8 @@ const Solver = ({ user }: SolverProps) => {
   }, [matrixDisplayMode]);
 
   /* This page budgets its layouts to fit the viewport, so the touch
-   * rubber-band only reveals backdrop. The class (see index.css) kills
-   * document-level overscroll while the solver is mounted; it has to go on
-   * <html> because the document, not an inner container, is the scroller. */
-  useEffect(() => {
-    document.documentElement.classList.add("no-overscroll");
-    return () => document.documentElement.classList.remove("no-overscroll");
-  }, []);
+   * rubber-band only reveals backdrop. */
+  useNoOverscroll();
 
   // Postflop modal side-effects
   useEffect(() => {

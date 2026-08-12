@@ -17,6 +17,7 @@ import CopyButton from "@/components/CopyButton";
 import { authedFetch } from "@/lib/api";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import { useSavedTableLayout } from "@/hooks/useSavedTableLayout";
+import useNoOverscroll from "@/hooks/useNoOverscroll";
 import SeatEditorModal, { type SeatEditResult } from "./SeatEditorModal";
 import BoardEditorModal from "./BoardEditorModal";
 import QuickSetupDrawer, { type QuickSetupRow } from "./QuickSetupDrawer";
@@ -166,6 +167,9 @@ const CreateHandHistory: React.FC<Props> = ({
 }) => {
   const navigate = useNavigate();
   const embedded = !!onComplete;
+  // Both phases size the table to the viewport, so the rubber-band only ever
+  // reveals backdrop and makes the felt feel unanchored.
+  useNoOverscroll();
   // Signed-out saves go to the device-local store (migrated on sign-in). We also
   // read localHands to seed defaults from the most recent hand when signed out.
   const { addLocal, localHands } = useLocalHandHistories();

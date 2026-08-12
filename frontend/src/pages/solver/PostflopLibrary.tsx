@@ -4,9 +4,9 @@
 // to take it out of this viewer's library (reversible - see SolutionsController).
 import React, { useMemo, useRef, useState } from "react";
 import { Trash2, X } from "lucide-react";
-import { Link } from "react-router-dom";
 import PlayingCard from "@/components/PlayingCard";
 import HandPreview from "@/components/HandPreview";
+import { replayOpenUrl } from "@/lib/handHistoryLinks";
 import { boardToCards } from "@/lib/solver/postflopNode";
 import { solutionKey, type PostflopIndexEntry } from "@/lib/solver/postflopLibrary";
 
@@ -247,14 +247,17 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
                               </span>
                             )}
                           </div>
+                          {/* Opens in a new tab so the library - and whatever
+                              board is loaded behind it - survives the trip. */}
                           {group.handHistoryId != null && (
-                            <Link
-                              to={`/hand-history/replay/${group.handHistoryId}`}
-                              onClick={onClose}
+                            <a
+                              href={replayOpenUrl(String(group.handHistoryId))}
+                              target="_blank"
+                              rel="noopener noreferrer"
                               className="shrink-0 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[0.65rem] font-semibold text-emerald-300 hover:bg-emerald-500/15 hover:text-emerald-200"
                             >
                               Replay hand
-                            </Link>
+                            </a>
                           )}
                         </div>
                         <div className="flex flex-wrap gap-2">

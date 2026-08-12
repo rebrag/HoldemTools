@@ -20,30 +20,69 @@ const TONES: Record<RowActionTone, string> = {
 // Transient success look (Copy/Share confirmation) — always emerald.
 const SUCCESS_TONE = "border-emerald-400 bg-emerald-100 text-emerald-700";
 
-const RowActionButton: React.FC<{
+type RowActionProps = {
   icon: React.ReactNode;
   label: string;
   tone: RowActionTone;
-  onClick: (e: React.MouseEvent) => void;
   disabled?: boolean;
   success?: boolean; // show the emerald "done" state (e.g. after copy)
-}> = ({ icon, label, tone, onClick, disabled, success }) => {
+} & (
+  | { onClick: (e: React.MouseEvent) => void; href?: never }
+  /** Renders a real anchor that opens in a new tab. Actions that leave the
+   *  page (replay, solution) use this so the list stays where it is, and so
+   *  middle-click / ⌘-click / "open in new tab" behave as the user expects -
+   *  none of which a button can offer. */
+  | { href: string; onClick?: never }
+);
+
+const RowActionButton: React.FC<RowActionProps> = ({
+  icon,
+  label,
+  tone,
+  href,
+  onClick,
+  disabled,
+  success,
+}) => {
   const reduce = useReducedMotion();
+  const className = `inline-flex h-8 w-8 items-center justify-center rounded-lg border shadow-sm transition-colors disabled:opacity-40 ${
+    success ? SUCCESS_TONE : TONES[tone]
+  }`;
+  const motionProps = {
+    whileTap: disabled || reduce ? undefined : { scale: 0.88 },
+    whileHover: disabled || reduce ? undefined : { y: -1 },
+  };
+
+  if (href) {
+    return (
+      <motion.a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        // Don't toggle the row's expand/collapse on the way out.
+        onClick={(e) => e.stopPropagation()}
+        aria-label={label}
+        title={label}
+        {...motionProps}
+        className={className}
+      >
+        {icon}
+      </motion.a>
+    );
+  }
+
   return (
     <motion.button
       type="button"
       onClick={(e) => {
         e.stopPropagation(); // don't toggle the row's expand/collapse
-        onClick(e);
+        onClick?.(e);
       }}
       disabled={disabled}
       aria-label={label}
       title={label}
-      whileTap={disabled || reduce ? undefined : { scale: 0.88 }}
-      whileHover={disabled || reduce ? undefined : { y: -1 }}
-      className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border shadow-sm transition-colors disabled:opacity-40 ${
-        success ? SUCCESS_TONE : TONES[tone]
-      }`}
+      {...motionProps}
+      className={className}
     >
       {icon}
     </motion.button>

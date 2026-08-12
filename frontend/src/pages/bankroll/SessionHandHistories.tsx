@@ -8,7 +8,6 @@
 // Hands are associated with the session, so they inherit its date/time rather
 // than carrying their own.
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import type { User } from "firebase/auth";
 import { AnimatePresence, motion } from "framer-motion";
 import { Play, Library } from "lucide-react";
@@ -18,6 +17,7 @@ import RowActionButton from "@/components/RowActionButton";
 import { authedFetch } from "@/lib/api";
 import HandPreview from "@/components/HandPreview";
 import useHandSolutions from "@/hooks/useHandSolutions";
+import { replayOpenUrl } from "@/lib/handHistoryLinks";
 import { solutionOpenUrl } from "@/lib/solver/postflopLibrary";
 import { parseReplay } from "@/pages/handhistory/create/replay";
 import type { HandHistory } from "@/pages/handhistory/types";
@@ -62,7 +62,6 @@ const SessionHandHistories: React.FC<Props> = ({
   draftHands,
   onDraftChange,
 }) => {
-  const navigate = useNavigate();
   const [items, setItems] = useState<HandHistory[]>([]); // session mode only
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -208,14 +207,14 @@ const SessionHandHistories: React.FC<Props> = ({
                       {!expanded && <HandPreview rawText={row.rawText} />}
                     </button>
                     <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                      {/* New tab, so the session modal the user is editing
+                          isn't torn down behind them. */}
                       {row.replayable && (
                         <RowActionButton
                           tone="replay"
                           label="Replay hand"
                           icon={<Play className="h-4 w-4" fill="currentColor" />}
-                          onClick={() =>
-                            navigate(`/hand-history/replay/${row.key}`)
-                          }
+                          href={replayOpenUrl(row.key)}
                         />
                       )}
                       {solutionHref && (
@@ -223,7 +222,7 @@ const SessionHandHistories: React.FC<Props> = ({
                           tone="solution"
                           label="View solution"
                           icon={<Library className="h-4 w-4" />}
-                          onClick={() => navigate(solutionHref)}
+                          href={solutionHref}
                         />
                       )}
                       <CopyButton
