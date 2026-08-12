@@ -33,6 +33,9 @@ export interface HandSummaryRowProps {
   onOpenSolution?: () => void;
   /** Server hand id — enables Share (gated by SHARE_ENABLED). */
   shareId?: number | null;
+  /** The hand's already-minted public token. When present, Share hands out
+   *  the link straight away instead of paying a round trip to mint one. */
+  shareToken?: string | null;
   /** Delete the hand. The host owns confirm + API + list state. */
   onDelete?: () => void;
   /** Called after an in-place solution open, so a hosting drawer can close
@@ -56,6 +59,7 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
   solutionHref,
   onOpenSolution,
   shareId,
+  shareToken,
   onDelete,
   onNavigate,
   onError,
@@ -83,10 +87,13 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
   // Mint a public share link and offer it via the native share sheet (mobile)
   // or the clipboard (desktop) — same flow the hand-history page always had.
   const handleShare = async () => {
-    if (shareId == null) return;
+    if (shareId == null && !shareToken) return;
     setSharing(true);
     try {
-      const url = shareUrl(await createShareToken(shareId));
+      // Hands are minted a token when they're saved, so this is normally a
+      // pure string build; minting only happens for older hands.
+      const token = shareToken ?? (await createShareToken(shareId!));
+      const url = shareUrl(token);
       if (navigator.share) {
         try {
           await navigator.share({ title: "Poker hand replay", url });
@@ -201,7 +208,7 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
                 <Library className="h-3.5 w-3.5" />
               </a>
             ))}
-          {SHARE_ENABLED && shareId != null && (
+          {SHARE_ENABLED && (shareId != null || !!shareToken) && (
             <RowActionButton
               key="share"
               tone="share"

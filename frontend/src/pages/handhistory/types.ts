@@ -6,6 +6,10 @@ export interface HandHistory {
   userId: string;
   rawText: string;
   sessionId: string | null; // optional bankroll-session link; unused by UI for now
+  /** Unguessable public id for this hand. Minted when the hand is saved, so
+   *  its replay link works for anyone, signed in or not (see replayHref).
+   *  Null only for hands whose owner revoked sharing. */
+  shareToken: string | null;
   createdAt: string; // ISO
   updatedAt: string | null; // ISO
 }
