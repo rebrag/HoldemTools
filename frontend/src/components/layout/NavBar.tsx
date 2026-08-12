@@ -18,6 +18,7 @@ import {
 } from "firebase/auth";
 import { DEV_AUTH_BYPASS, useDevAuthUser, devAuthSignIn, devAuthSignOut } from "@/lib/devAuth";
 import { useAuthGate } from "@/context/AuthGate";
+import useBodyScrollLock from "@/hooks/useBodyScrollLock";
 
 // Routes that require a signed-in user. Navigating here while signed out opens
 // the login modal on the current page and defers the route change until success.
@@ -180,18 +181,17 @@ const NavBar: React.FC<NavBarProps> = () => {
     }
   };
 
+  useBodyScrollLock(menuOpen);
+
   useEffect(() => {
     if (!menuOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") closeMenu();
     };
     document.addEventListener("keydown", onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     const id = window.setTimeout(() => modalRef.current?.focus(), 0);
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prevOverflow;
       window.clearTimeout(id);
     };
   }, [menuOpen]);

@@ -5,7 +5,7 @@
 // exact same engine as the creator (buildEngine → applyAction → setWinners), so
 // the replayed table is identical to what was recorded. Transport controls step
 // through frames or auto-advance one action every 2 seconds.
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useAppNavigate } from "@/components/layout/RouteProgress";
 import type { User } from "firebase/auth";
@@ -21,6 +21,7 @@ import {
 import PokerTable from "@/components/PokerTable";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import { authedFetch } from "@/lib/api";
+import { cacheHandText, readCachedHandText } from "@/lib/handTextCache";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import useNoOverscroll from "@/hooks/useNoOverscroll";
 import { positionLabelsForSeats } from "./create/positions";
@@ -54,12 +55,18 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
   // rubber-band only ever reveals backdrop.
   useNoOverscroll();
 
+  // Read through a ref: the resolver only ever needs the CURRENT local hands,
+  // and depending on the array itself would re-run (and re-fetch) on every
+  // render that hands back a new array identity.
+  const localHandsRef = useRef(localHands);
+  localHandsRef.current = localHands;
+
   const [load, setLoad] = useState<LoadState>({ status: "loading" });
 
   // Resolve the hand's rawText. Shared mode → fetch the public endpoint by
   // token (works for anyone, signed in or not). Owner mode → the dev fixture,
-  // then the signed-in server list, then the device-local store, matched on the
-  // row's string key.
+  // then the device-local store, then the cross-tab text cache for an instant
+  // first paint, with a by-id fetch behind it.
   useEffect(() => {
     let cancelled = false;
     setLoad({ status: "loading" });
@@ -92,29 +99,43 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
       setLoad({ status: "ready", rawText: buildTestHandText() });
       return;
     }
-    if (!user) {
-      const hit = localHands.find((h) => h.localId === key);
-      setLoad(hit ? { status: "ready", rawText: hit.rawText } : { status: "missing" });
+    // Device-local (signed-out) hands never touch the network.
+    const local = localHandsRef.current.find((h) => h.localId === key);
+    if (local) {
+      setLoad({ status: "ready", rawText: local.rawText });
       return;
     }
+
+    // Paint from the cross-tab cache first: the list that opened this tab
+    // already had the text, so the replay can start before Firebase has even
+    // restored the session. The fetch below still runs and swaps in newer
+    // text if the hand was edited elsewhere.
+    const cached = readCachedHandText(key);
+    if (cached) setLoad({ status: "ready", rawText: cached });
+
+    if (!user) {
+      if (!cached) setLoad({ status: "missing" });
+      return;
+    }
+
     void (async () => {
       try {
-        const res = await authedFetch("/api/handhistory");
+        // One hand by id, not the whole library.
+        const res = await authedFetch(`/api/handhistory/${encodeURIComponent(key)}`);
         if (!res.ok) throw new Error();
-        const data = (await res.json()) as HandHistory[];
-        const hit = Array.isArray(data)
-          ? data.find((h) => String(h.id) === key)
-          : undefined;
-        if (cancelled) return;
-        setLoad(hit ? { status: "ready", rawText: hit.rawText } : { status: "missing" });
+        const hand = (await res.json()) as HandHistory;
+        if (cancelled || typeof hand?.rawText !== "string") return;
+        cacheHandText(key, hand.rawText);
+        setLoad({ status: "ready", rawText: hand.rawText });
       } catch {
-        if (!cancelled) setLoad({ status: "missing" });
+        // A cached copy is still a working replay; only a cold miss is fatal.
+        if (!cancelled && !cached) setLoad({ status: "missing" });
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [key, token, shared, user, localHands]);
+  }, [key, token, shared, user]);
 
   const rawText = load.status === "ready" ? load.rawText : "";
   const data = useMemo(

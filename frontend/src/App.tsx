@@ -78,7 +78,16 @@ function App() {
     return () => document.removeEventListener("focusin", handleFocusIn);
   }, []);
 
-  if (loading) {
+  // A shared replay is public: it resolves through the anonymous
+  // /api/shared/{token} endpoint and renders the same view for everyone, so
+  // it must not sit behind Firebase restoring a session it will never use.
+  // Reading location directly (rather than useLocation) keeps this above the
+  // Router and costs nothing - a shared link is always a fresh document load.
+  const isPublicRoute =
+    typeof window !== "undefined" &&
+    window.location.pathname.startsWith("/hand-history/shared/");
+
+  if (loading && !isPublicRoute) {
     return (
       <div className="absolute inset-0 z-10 flex items-center justify-center transition-opacity duration-300">
         <LoadingIndicator />

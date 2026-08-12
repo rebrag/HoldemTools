@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { authedFetch } from "@/lib/api";
+import { cacheHandTexts, forgetCachedHandText } from "@/lib/handTextCache";
 
 /**
  * The signed-in user's saved hands, indexed by id -> rawText.
@@ -14,6 +15,7 @@ import { authedFetch } from "@/lib/api";
  */
 const useHandHistoryTexts = (enabled: boolean) => {
   const [byId, setById] = useState<Record<number, string>>({});
+  const [shareTokenById, setShareTokenById] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -25,9 +27,18 @@ const useHandHistoryTexts = (enabled: boolean) => {
       try {
         const res = await authedFetch("/api/handhistory");
         if (!res.ok) throw new Error(`${res.status}`);
-        const rows: { id: number; rawText: string }[] = await res.json();
+        const rows: { id: number; rawText: string; shareToken?: string | null }[] =
+          await res.json();
         if (cancelled) return;
         setById(Object.fromEntries(rows.map((r) => [r.id, r.rawText])));
+        setShareTokenById(
+          Object.fromEntries(
+            rows.filter((r) => !!r.shareToken).map((r) => [r.id, r.shareToken as string])
+          )
+        );
+        // The library's rows link to replays that open in a new tab; seed the
+        // cache so those tabs paint immediately.
+        cacheHandTexts(rows.map((r) => [String(r.id), r.rawText] as [string, string]));
       } catch (err) {
         // Non-fatal: the library still lists the boards, just without a
         // preview of the hand that produced them.
@@ -46,6 +57,7 @@ const useHandHistoryTexts = (enabled: boolean) => {
   /** Evict one hand after it is deleted, so consumers fall back to their
    *  "hand no longer saved" state without a refetch. */
   const forget = useCallback((id: number) => {
+    forgetCachedHandText(String(id));
     setById((prev) => {
       if (!(id in prev)) return prev;
       const next = { ...prev };
@@ -54,7 +66,7 @@ const useHandHistoryTexts = (enabled: boolean) => {
     });
   }, []);
 
-  return { byId, loading, forget };
+  return { byId, shareTokenById, loading, forget };
 };
 
 export default useHandHistoryTexts;

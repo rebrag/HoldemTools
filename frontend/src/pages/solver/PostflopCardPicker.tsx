@@ -14,6 +14,11 @@ export interface PostflopCardPickerProps {
   onPick: (card: string) => void;
   onClose: () => void;
   onCancelPending: () => void;
+  /** The card that actually came on this street in the recorded hand behind
+   *  this solve, offered as a one-tap shortcut. Null for sim solves, for a
+   *  hand that never got this far, or once the viewer has branched off the
+   *  runout the hand actually took. */
+  playedCard?: string | null;
 }
 
 const PendingFlip = ({ pending }: { pending: PendingStreet }) => {
@@ -60,8 +65,10 @@ const PostflopCardPicker: React.FC<PostflopCardPickerProps> = ({
   onPick,
   onClose,
   onCancelPending,
+  playedCard,
 }) => {
   const streetLabel = picker.street === "turn" ? "turn" : "river";
+  const showPlayed = !!playedCard && !usedCards.has(playedCard);
 
   return (
     <div
@@ -112,6 +119,24 @@ const PostflopCardPicker: React.FC<PostflopCardPickerProps> = ({
                 <>Any card is pulled from the full solve on demand (a few seconds).</>
               )}
             </p>
+            {showPlayed && (
+              <button
+                type="button"
+                onClick={() => onPick(playedCard!)}
+                className="mb-3 flex w-full items-center gap-2 rounded-xl border border-amber-400/40 bg-amber-500/10 px-2.5 py-2 text-left transition-colors hover:bg-amber-500/20"
+                title={`Deal the ${playedCard}, the ${streetLabel} from your hand`}
+              >
+                <PlayingCard code={playedCard!} width={34} />
+                <span className="text-[0.7rem] leading-tight text-amber-100">
+                  <span className="font-semibold">Came in your hand</span>
+                  <br />
+                  <span className="text-amber-200/80">
+                    Deal the {playedCard} to follow the real {streetLabel}.
+                  </span>
+                </span>
+              </button>
+            )}
+
             <div className="max-h-[320px] overflow-y-auto pb-1">
               <CardPicker
                 used={usedCards}

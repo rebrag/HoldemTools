@@ -13,8 +13,9 @@ import { AnimatePresence, motion } from "framer-motion";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import HandSummaryRow from "@/components/HandSummaryRow";
 import { authedFetch } from "@/lib/api";
+import { cacheHandTexts, forgetCachedHandText } from "@/lib/handTextCache";
 import useHandSolutions from "@/hooks/useHandSolutions";
-import { replayOpenUrl } from "@/lib/handHistoryLinks";
+import { bestReplayUrl } from "@/lib/handHistoryLinks";
 import { solutionOpenUrl } from "@/lib/solver/postflopLibrary";
 import { summaryFromRawText } from "@/pages/handhistory/create/replay";
 import type { HandHistory } from "@/pages/handhistory/types";
@@ -35,6 +36,8 @@ interface Row {
   solutionHref: string | null;
   /** Server hand id (session mode), for the Share button. */
   serverId: number | null;
+  /** Public token, when the hand has one (see bestReplayUrl). */
+  shareToken: string | null;
 }
 
 interface Props {
@@ -117,6 +120,7 @@ const SessionHandHistories: React.FC<Props> = ({
               replayable: summaryFromRawText(h.rawText) != null,
               solutionHref: solution ? solutionOpenUrl(solution) : null,
               serverId: h.id,
+              shareToken: h.shareToken ?? null,
             };
           })
         : (draftHands ?? []).map((h) => ({
@@ -125,9 +129,19 @@ const SessionHandHistories: React.FC<Props> = ({
             replayable: false,
             solutionHref: null,
             serverId: null,
+            shareToken: null,
           })),
     [mode, items, draftHands, solutionByHandId]
   );
+
+  // Seed the cross-tab cache for the replay tabs these rows open.
+  useEffect(() => {
+    cacheHandTexts(
+      rows
+        .filter((r) => r.replayable)
+        .map((r) => [r.key, r.rawText] as [string, string])
+    );
+  }, [rows]);
 
   const handleDelete = async (key: string) => {
     if (!window.confirm("Delete this hand? This can't be undone.")) return;
@@ -139,6 +153,7 @@ const SessionHandHistories: React.FC<Props> = ({
 
     const prev = itemsRef.current;
     setItems((p) => p.filter((i) => String(i.id) !== key));
+    forgetCachedHandText(key);
     try {
       const res = await authedFetch(`/api/handhistory/${key}`, {
         method: "DELETE",
@@ -195,9 +210,12 @@ const SessionHandHistories: React.FC<Props> = ({
                   <HandSummaryRow
                     rawText={row.rawText}
                     tone="dark"
-                    replayHref={row.replayable ? replayOpenUrl(row.key) : null}
+                    replayHref={
+                      row.replayable ? bestReplayUrl(row.key, row.shareToken) : null
+                    }
                     solutionHref={solutionHref}
                     shareId={row.replayable ? row.serverId : null}
+                    shareToken={row.shareToken}
                     onDelete={() => void handleDelete(row.key)}
                     onError={setError}
                     onPreviewClick={() => setExpandedKey(expanded ? null : row.key)}

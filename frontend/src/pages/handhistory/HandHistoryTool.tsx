@@ -5,6 +5,7 @@ import { AnimatePresence, motion, type Variants } from "framer-motion";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import { useDelayedLoading } from "@/hooks/useDelayedLoading";
 import { authedFetch } from "@/lib/api";
+import { cacheHandTexts, forgetCachedHandText } from "@/lib/handTextCache";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import useHandSolutions from "@/hooks/useHandSolutions";
 import useNoOverscroll from "@/hooks/useNoOverscroll";
@@ -266,6 +267,12 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   );
   const remaining = rows.length - visibleRows.length;
 
+  // Seed the cross-tab cache so the replay tab these rows link to paints
+  // without waiting on auth + a round trip.
+  useEffect(() => {
+    cacheHandTexts(visibleRows.map((r) => [r.key, r.rawText] as [string, string]));
+  }, [visibleRows]);
+
   // Group the (already date-sorted) visible rows by calendar day so the list
   // shows one day header instead of a timestamp on every row.
   const groups = useMemo(() => {
@@ -293,6 +300,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
       }
       const prev = itemsRef.current;
       setItems((p) => p.filter((i) => String(i.id) !== row.key));
+      forgetCachedHandText(row.key);
       try {
         const res = await authedFetch(`/api/handhistory/${row.server!.id}`, {
           method: "DELETE",

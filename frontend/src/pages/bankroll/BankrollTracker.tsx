@@ -235,21 +235,9 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
     };
   }, [drafts]);
 
-  /* ───────────────── Lock body scroll while overlay is visible ───────────────── */
-
+  /* The ResponsiveDrawer hosting the form owns the scroll lock; a second lock
+     here would fight it (see useBodyScrollLock). */
   const overlayVisible = mode !== null && isModalExpanded;
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    if (!overlayVisible) return;
-
-    const originalOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    return () => {
-      document.body.style.overflow = originalOverflow;
-    };
-  }, [overlayVisible]);
 
   /* ───────────────── Load sessions from API ───────────────── */
 

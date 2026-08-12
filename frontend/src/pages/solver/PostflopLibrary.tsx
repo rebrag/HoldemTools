@@ -7,7 +7,7 @@ import { Trash2 } from "lucide-react";
 import PlayingCard from "@/components/PlayingCard";
 import HandSummaryRow from "@/components/HandSummaryRow";
 import ResponsiveDrawer from "@/components/ResponsiveDrawer";
-import { replayOpenUrl } from "@/lib/handHistoryLinks";
+import { bestReplayUrl } from "@/lib/handHistoryLinks";
 import { boardToCards } from "@/lib/solver/postflopNode";
 import { summaryFromRawText } from "@/pages/handhistory/create/replay";
 import {
@@ -31,6 +31,8 @@ export interface PostflopLibraryProps {
   onRestore?: (entries: PostflopIndexEntry[]) => Promise<void>;
   /** Saved hand id -> rawText, for the preview above each hand's boards. */
   handTextById?: Record<number, string>;
+  /** Saved hand id -> public share token, so Replay links are auth-free. */
+  shareTokenById?: Record<number, string>;
   /** Delete the hand history itself (confirm + API + cache eviction live in
    *  the host). Board removal stays on the per-tile trash button. */
   onDeleteHand?: (id: number) => void | Promise<void>;
@@ -104,6 +106,7 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
   onRemove,
   onRestore,
   handTextById,
+  shareTokenById,
   onDeleteHand,
 }) => {
   /* What the last remove took out, so it can be put back. Cleared on a timer
@@ -264,7 +267,11 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
                               <HandSummaryRow
                                 rawText={rawText}
                                 tone="dark"
-                                replayHref={replayOpenUrl(String(group.handHistoryId))}
+                                replayHref={bestReplayUrl(
+                                  String(group.handHistoryId),
+                                  shareTokenById?.[group.handHistoryId!]
+                                )}
+                                shareToken={shareTokenById?.[group.handHistoryId!] ?? null}
                                 solutionHref={solutionOpenUrl(group.boards[0])}
                                 onOpenSolution={() => onOpen(group.boards[0])}
                                 onBoardClick={() => {

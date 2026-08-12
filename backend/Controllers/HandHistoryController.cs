@@ -72,6 +72,20 @@ namespace PokerRangeAPI2.Controllers
                 .OrderByDescending(h => h.CreatedAt)
                 .ToListAsync();
 
+            // Backfill: hands saved before tokens were minted on create still
+            // need one, or their replay links would stay auth-gated forever.
+            // Doing it as the owner lists their hands avoids a migration and
+            // touches each hand exactly once.
+            var unshared = items.Where(h => string.IsNullOrEmpty(h.ShareToken)).ToList();
+            if (unshared.Count > 0)
+            {
+                foreach (var hand in unshared)
+                {
+                    hand.ShareToken = ShareTokenGenerator.NewToken();
+                }
+                await _db.SaveChangesAsync();
+            }
+
             return Ok(items);
         }
 
@@ -122,6 +136,12 @@ namespace PokerRangeAPI2.Controllers
                 UserId = uid, // from the token, never the body
                 RawText = dto.RawText,
                 SessionId = dto.SessionId,
+                // Minted up front so the replay link is public and auth-free
+                // from the moment the hand is saved: the owner can send it to
+                // anyone, and opening it needs one anonymous GET rather than a
+                // Firebase round trip. The token is unguessable (see
+                // ShareTokenGenerator) and revocable via DELETE {id}/share.
+                ShareToken = ShareTokenGenerator.NewToken(),
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = null
             };
