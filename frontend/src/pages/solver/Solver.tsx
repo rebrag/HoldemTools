@@ -65,6 +65,12 @@ import { usePostflopSession } from "@/hooks/usePostflopSession";
 import usePostflopIndex from "@/hooks/usePostflopIndex";
 import useHandHistoryTexts from "@/hooks/useHandHistoryTexts";
 import { authedFetch } from "@/lib/api";
+import { cacheHandText, readCachedHandText } from "@/lib/handTextCache";
+import {
+  buildActualHandLine,
+  labelMatchesActual,
+  type ActualHandLine,
+} from "@/lib/solver/handActualLine";
 import PostflopLine from "./PostflopLine";
 import { preflopNodeFiles, usePreflopLineNodes } from "./usePreflopLineNodes";
 import PostflopLibrary from "./PostflopLibrary";
@@ -1031,6 +1037,69 @@ const Solver = ({ user }: SolverProps) => {
   ]);
 
   // Open a previously solved board from the library (tier-gated like folders).
+  /* What the player actually did, and what the deck actually gave, in the
+     hand behind the open solve - the viewer marks both so a study session can
+     be read against the real hand. Sim solves have no hand, so this stays
+     null and every hint disappears. The text comes from the cross-tab cache
+     when the library already loaded it, otherwise one by-id fetch. */
+  const [actualLine, setActualLine] = useState<ActualHandLine | null>(null);
+
+  const loadActualHandLine = useCallback(async (entry: PostflopIndexEntry) => {
+    const id = entry.source === "handHistory" ? entry.hand_history_id : null;
+    if (typeof id !== "number") {
+      setActualLine(null);
+      return;
+    }
+    const cached = readCachedHandText(String(id));
+    if (cached) {
+      setActualLine(buildActualHandLine(cached));
+      return;
+    }
+    setActualLine(null);
+    try {
+      const res = await authedFetch(`/api/handhistory/${id}`);
+      if (!res.ok) return;
+      const hand = (await res.json()) as { rawText?: string };
+      if (typeof hand?.rawText !== "string") return;
+      cacheHandText(String(id), hand.rawText);
+      setActualLine(buildActualHandLine(hand.rawText));
+    } catch {
+      /* hints are a bonus; the solve itself is unaffected */
+    }
+  }, []);
+
+  /* Hints only make sense while the viewer is still walking the line the hand
+     actually took: replay the visited line against the hand's own actions and
+     runout, and the moment they diverge (a different bet size, a different
+     turn) stop claiming to know what happened next. */
+  const playedHints = useMemo<{ action: string | null; card: string | null }>(() => {
+    const none = { action: null, card: null };
+    const view = pf.view;
+    if (!actualLine || !view || !view.seatMeta?.length) return none;
+
+    const runout = [actualLine.turn, actualLine.river].filter((c): c is string => !!c);
+    let nextAction = 0;
+    let nextCard = 0;
+    for (const item of view.line) {
+      if (item.kind === "card") {
+        if (runout[nextCard] !== item.label) return none;
+        nextCard += 1;
+        continue;
+      }
+      const actual = actualLine.actions[nextAction];
+      if (!actual || !labelMatchesActual(item.label, actual)) return none;
+      nextAction += 1;
+    }
+
+    const upcoming = actualLine.actions[nextAction];
+    return {
+      action: upcoming
+        ? view.actions.find((a) => labelMatchesActual(a.display, upcoming))?.display ?? null
+        : null,
+      card: view.picker ? runout[nextCard] ?? null : null,
+    };
+  }, [actualLine, pf.view]);
+
   const openSolvedBoard = useCallback(
     async (entry: PostflopIndexEntry) => {
       setShowLibrary(false);
@@ -1065,8 +1134,9 @@ const Solver = ({ user }: SolverProps) => {
       }
       setCurrentBoard(boardToCards(entry.board));
       await pf.open(manifest);
+      void loadActualHandLine(entry);
     },
-    [uid, folderMetaMap, folders, tier, tierLoading, actuallyOpenFolder, pf]
+    [uid, folderMetaMap, folders, tier, tierLoading, actuallyOpenFolder, pf, loadActualHandLine]
   );
 
   /* Deep link: /solutions?open=<stacks|node|board> (minted by solutionOpenUrl,
@@ -1469,6 +1539,7 @@ const Solver = ({ user }: SolverProps) => {
       actions={pf.view.actions}
       onActionClick={(display) => void pf.clickAction(display)}
       actionsDisabled={!!pf.view.pendingStreet}
+      playedAction={playedHints.action}
       fillHeight
     />
   ) : (
@@ -1530,6 +1601,7 @@ const Solver = ({ user }: SolverProps) => {
           onRemove={removeSolvedBoards}
           onRestore={pfIndex.unhide}
           handTextById={handTexts.byId}
+          shareTokenById={handTexts.shareTokenById}
           onDeleteHand={async (id) => {
             if (!window.confirm("Delete this hand history? This can't be undone.")) return;
             const res = await authedFetch(`/api/handhistory/${id}`, { method: "DELETE" });
@@ -1548,6 +1620,7 @@ const Solver = ({ user }: SolverProps) => {
           onPick={(card) => void pf.pickCard(card)}
           onClose={pf.closePicker}
           onCancelPending={pf.cancelPending}
+          playedCard={playedHints.card}
         />
       )}
 

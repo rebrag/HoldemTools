@@ -51,6 +51,9 @@ export interface PostflopLineProps {
   actorStackMoney?: number | null;
   actions?: { display: string }[];
   onActionClick?: (display: string) => void;
+  /** Display label of the action taken in the recorded hand at THIS node, when
+   *  the viewer is still walking that hand's line. Marked "Played". */
+  playedAction?: string | null;
   /** Disable all action buttons (e.g. while a street extraction is pending). */
   actionsDisabled?: boolean;
 }
@@ -97,10 +100,12 @@ const OptionRow: React.FC<{
   /** Units of the bet labels per big blind; see getColorForAction. */
   sizeRef?: number;
   taken?: boolean;
+  /** This is the action the player actually took in the recorded hand. */
+  played?: boolean;
   disabled?: boolean;
   onClick?: () => void;
   title?: string;
-}> = ({ action, sizeRef = 1, taken, disabled, onClick, title }) => (
+}> = ({ action, sizeRef = 1, taken, played, disabled, onClick, title }) => (
   <button
     type="button"
     /* The card body is clickable too, so a row click must not also count as
@@ -130,6 +135,14 @@ const OptionRow: React.FC<{
     >
       {action}
     </span>
+    {played && (
+      <span
+        className="ml-auto rounded-sm bg-amber-400/20 px-1 text-[0.5rem] font-semibold uppercase leading-tight tracking-wide text-amber-200"
+        title="What you did in this hand"
+      >
+        Played
+      </span>
+    )}
   </button>
 );
 
@@ -152,6 +165,7 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
   actions,
   onActionClick,
   actionsDisabled,
+  playedAction,
 }) => {
   /* Postflop labels are in the solve's money; the colour ramp is calibrated
    * in big blinds, so tell it how much money makes one. */
@@ -319,9 +333,14 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
                     key={a.display}
                     action={a.display}
                     sizeRef={sizeRef}
+                    played={!!playedAction && a.display === playedAction}
                     disabled={actionsDisabled}
                     onClick={onActionClick ? () => onActionClick(a.display) : undefined}
-                    title={`${actorSeat ?? "To act"}: ${a.display}`}
+                    title={
+                      playedAction && a.display === playedAction
+                        ? `${actorSeat ?? "To act"}: ${a.display} - what you did in this hand`
+                        : `${actorSeat ?? "To act"}: ${a.display}`
+                    }
                   />
                 ))}
               </div>
