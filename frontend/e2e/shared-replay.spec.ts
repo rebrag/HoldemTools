@@ -10,12 +10,15 @@ import { test, expect } from "@playwright/test";
 const TOKEN = "sharedtoken123456789ab";
 
 test("a shared replay opens with no auth and only that hand's data", async ({ page }) => {
-  // Build the fixture hand's text (payload included) via the app's own module.
+  // Build the fixture hand's text (payload included) via the app's own module,
+  // so the shared hand is a real one rather than a hand-written blob. The
+  // specifier is passed in as a value: it is a URL the dev server resolves at
+  // runtime, not a module this spec can import (tsc would try to find it).
   await page.goto("/");
-  const rawText = await page.evaluate(async () => {
-    const fixture = await import("/src/pages/handhistory/create/testHand.ts");
+  const rawText = await page.evaluate(async (modulePath) => {
+    const fixture = (await import(modulePath)) as { buildTestHandText: () => string };
     return fixture.buildTestHandText();
-  });
+  }, "/src/pages/handhistory/create/testHand.ts");
 
   const authed: string[] = [];
   const sharedCalls: string[] = [];
