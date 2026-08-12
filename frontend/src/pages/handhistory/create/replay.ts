@@ -245,30 +245,44 @@ export interface PreviewPlayer {
   isHero: boolean;
 }
 
-export interface HandPreview {
+export interface HandSummary {
   /** Hero (when a hero seat exists) followed by every opponent whose hole cards
    *  were recorded, ordered by chips committed. */
   players: PreviewPlayer[];
   /** Known community cards, in dealt order (may be empty for preflop-only hands). */
   board: string[];
+  /** Final pot in chips (uncalled excess already returned to the aggressor). */
+  finalPot: number;
+  bb: number;
+  /** false for hands that ended preflop (fold-outs never advance the street). */
+  sawFlop: boolean;
+  potAtFlop: number | null;
+  /** Effective flop stack ÷ flop pot. 0 for preflop all-ins; null when no flop. */
+  flopSpr: number | null;
+  /** Players still in the hand when the flop was dealt; null when no flop. */
+  playersAtFlop: number | null;
 }
 
-// Fold the recorded actions into a single final engine, without retaining the
-// per-action frames reconstructFrames keeps — cheaper for rendering a list of
-// hands where only end-of-hand totals (totalCommitted) and cards are needed.
-export function finalEngine(data: ReplayData): Engine {
+// Fold the recorded actions into a single final engine (no per-action frames —
+// cheaper than reconstructFrames for list rendering), capturing the live
+// players' stacks at the moment the flop is dealt along the way. The capture is
+// correct even when one action runs out the whole board: no chips move after
+// preflop in that case, so stacks at the first `reached >= 1` observation are
+// the stacks behind when the flop hit.
+export function buildHandSummary(data: ReplayData): HandSummary {
   let e = buildEngine(data.state);
-  for (const a of data.actions) e = applyAction(e, a.kind, a.to);
-  return e;
-}
+  let flopStacks: { stack: number; isHero: boolean }[] | null = null;
+  for (const a of data.actions) {
+    e = applyAction(e, a.kind, a.to);
+    if (flopStacks == null && e.reached >= 1) {
+      flopStacks = e.players
+        .map((p, i) => ({ p, i }))
+        .filter(({ p }) => !p.folded)
+        .map(({ p, i }) => ({ stack: p.stack, isHero: i === e.heroIndex }));
+    }
+  }
 
-// Extract the pieces the hand-history list preview renders: the hero, the board,
-// and every opponent whose hole cards were recorded (showdown/revealed hands),
-// ordered by chips committed so the most-involved players appear first.
-export function buildHandPreview(data: ReplayData): HandPreview {
-  const e = finalEngine(data);
   const heroIdx = e.heroIndex;
-
   const players: PreviewPlayer[] = [];
   if (heroIdx != null) {
     const h = e.players[heroIdx];
@@ -280,8 +294,57 @@ export function buildHandPreview(data: ReplayData): HandPreview {
     .sort((a, b) => b.p.totalCommitted - a.p.totalCommitted)
     .forEach(({ p }) => players.push({ cards: p.hole, name: p.name, isHero: false }));
 
+  // Effective stack for SPR: hero-centric when the hero saw the flop
+  // (min of hero vs the largest opponent stack — the most hero can play for);
+  // otherwise the second-largest live stack (the largest that can be matched).
+  // Heads-up both reduce to the smaller of the two stacks.
+  // Gate on `reached`, not potStart: streetMeta pre-fills potStart 0 for
+  // undealt streets.
+  const sawFlop = e.reached >= 1;
+  const playersAtFlop = sawFlop && flopStacks ? flopStacks.length : null;
+  let potAtFlop: number | null = null;
+  let flopSpr: number | null = null;
+  if (sawFlop && flopStacks && flopStacks.length >= 2) {
+    potAtFlop = e.streetMeta[1].potStart;
+    const hero = flopStacks.find((s) => s.isHero);
+    const others = flopStacks.filter((s) => s !== hero).map((s) => s.stack);
+    const eff = hero
+      ? Math.min(hero.stack, Math.max(...others))
+      : [...others].sort((a, b) => b - a)[1];
+    if (potAtFlop > 0) flopSpr = eff / potAtFlop;
+  }
+
   return {
     players,
     board: data.state.board.filter((c): c is string => !!c),
+    finalPot: e.pot,
+    bb: e.bb,
+    sawFlop,
+    potAtFlop,
+    flopSpr,
+    playersAtFlop,
   };
+}
+
+// rawText → summary, memoized. Hands are immutable once saved, so the raw text
+// is a safe cache key; the cap only matters for very long browsing sessions.
+// Shared by every list surface (hand history, session modal, solution library),
+// so each hand is parsed and replayed at most once ever.
+const SUMMARY_CACHE_MAX = 300;
+const summaryCache = new Map<string, HandSummary | null>();
+
+export function summaryFromRawText(rawText: string): HandSummary | null {
+  if (summaryCache.has(rawText)) {
+    const hit = summaryCache.get(rawText)!;
+    summaryCache.delete(rawText); // refresh insertion order (LRU)
+    summaryCache.set(rawText, hit);
+    return hit;
+  }
+  const data = parseReplay(rawText);
+  const summary = data ? buildHandSummary(data) : null;
+  summaryCache.set(rawText, summary);
+  if (summaryCache.size > SUMMARY_CACHE_MAX) {
+    summaryCache.delete(summaryCache.keys().next().value as string);
+  }
+  return summary;
 }

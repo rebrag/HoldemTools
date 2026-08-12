@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { authedFetch } from "@/lib/api";
 
 /**
@@ -43,7 +43,18 @@ const useHandHistoryTexts = (enabled: boolean) => {
     };
   }, [enabled]);
 
-  return { byId, loading };
+  /** Evict one hand after it is deleted, so consumers fall back to their
+   *  "hand no longer saved" state without a refetch. */
+  const forget = useCallback((id: number) => {
+    setById((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }, []);
+
+  return { byId, loading, forget };
 };
 
 export default useHandHistoryTexts;

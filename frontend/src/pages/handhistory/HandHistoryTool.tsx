@@ -5,8 +5,6 @@ import { AnimatePresence, motion, type Variants } from "framer-motion";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import { useDelayedLoading } from "@/hooks/useDelayedLoading";
 import { authedFetch } from "@/lib/api";
-import { copyText } from "@/lib/clipboard";
-import { createShareToken, shareUrl } from "@/lib/shareApi";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import useHandSolutions from "@/hooks/useHandSolutions";
 import useNoOverscroll from "@/hooks/useNoOverscroll";
@@ -14,7 +12,7 @@ import { solutionOpenUrl } from "@/lib/solver/postflopLibrary";
 import HandHistorySecondaryNav from "./HandHistorySecondaryNav";
 import HandRow from "./HandRow";
 import FlyingCards from "./FlyingCards";
-import { parseReplay, stripReplay } from "./create/replay";
+import { summaryFromRawText, stripReplay } from "./create/replay";
 import { TEST_HAND_ID, buildTestHandText, SHOW_TEST_HAND } from "./create/testHand";
 import type {
   HandHistory,
@@ -75,17 +73,10 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   const [reloadNonce, setReloadNonce] = useState(0);
 
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
-  const [menuKey, setMenuKey] = useState<string | null>(null); // which row's mobile action menu is open
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [sessionsById, setSessionsById] = useState<Map<string, BankrollSession>>(
     new Map()
   );
-  // Transient per-row confirmation ("copied"/"shared") shown on the action
-  // buttons for ~1.5s, and the row whose share request is in flight.
-  const [flash, setFlash] = useState<{ key: string; kind: "copied" | "shared" } | null>(
-    null
-  );
-  const [sharingKey, setSharingKey] = useState<string | null>(null);
 
   // Which saved hands have a solved board, for the "view solution" button.
   const solutionByHandId = useHandSolutions(Boolean(user));
@@ -228,7 +219,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
           isLocal: false,
           rawText: hh.rawText,
           clean: stripReplay(hh.rawText),
-          replayable: parseReplay(hh.rawText) != null,
+          replayable: summaryFromRawText(hh.rawText) != null,
           createdAt: hh.createdAt,
           sessionId: hh.sessionId,
           server: hh,
@@ -238,7 +229,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
           isLocal: true,
           rawText: h.rawText,
           clean: stripReplay(h.rawText),
-          replayable: parseReplay(h.rawText) != null,
+          replayable: summaryFromRawText(h.rawText) != null,
           createdAt: h.createdAt,
           sessionId: null,
         }));
@@ -254,7 +245,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
         clean: stripReplay(testRawText),
         // Carries an embedded payload and is resolved by TEST_HAND_ID on the
         // replay route (rebuilt on demand since it isn't persisted).
-        replayable: parseReplay(testRawText) != null,
+        replayable: summaryFromRawText(testRawText) != null,
         createdAt: "2020-01-01T00:00:00.000Z",
         sessionId: null,
         synthetic: true,
@@ -291,53 +282,6 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   // Row callbacks are useCallback-stable so the memoized HandRow only
   // re-renders when its own expanded/menu/flash state changes.
 
-  // Flash a transient "copied"/"shared" confirmation on a row's button.
-  const flashRow = useCallback((key: string, kind: "copied" | "shared") => {
-    setFlash({ key, kind });
-    window.setTimeout(
-      () => setFlash((f) => (f && f.key === key ? null : f)),
-      1500
-    );
-  }, []);
-
-  const handleCopy = useCallback(
-    async (row: ToolRow) => {
-      if (await copyText(row.clean)) flashRow(row.key, "copied");
-    },
-    [flashRow]
-  );
-
-  // Mint a public share link for a server-backed hand and offer it via the
-  // native share sheet (mobile) or the clipboard (desktop).
-  const handleShare = useCallback(
-    async (row: ToolRow) => {
-      if (!row.server) return;
-      setSharingKey(row.key);
-      setError(null);
-      try {
-        const token = await createShareToken(row.server.id);
-        const url = shareUrl(token);
-        if (navigator.share) {
-          try {
-            await navigator.share({ title: "Poker hand replay", url });
-            flashRow(row.key, "shared");
-          } catch {
-            /* user dismissed the share sheet — no-op */
-          }
-        } else if (await copyText(url)) {
-          flashRow(row.key, "shared");
-        }
-      } catch (e) {
-        setError(
-          e instanceof Error ? e.message : "We couldn't create a share link."
-        );
-      } finally {
-        setSharingKey(null);
-      }
-    },
-    [flashRow]
-  );
-
   const handleDelete = useCallback(
     async (row: ToolRow) => {
       if (row.synthetic) return; // the test fixture isn't deletable
@@ -366,10 +310,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     (key: string) => setExpandedKey((k) => (k === key ? null : key)),
     []
   );
-  const toggleMenu = useCallback(
-    (key: string) => setMenuKey((k) => (k === key ? null : key)),
-    []
-  );
+
   return (
     <>
       <HandHistorySecondaryNav
@@ -461,14 +402,9 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                   meta={session ? sessionMeta(session) : ""}
                   solutionHref={solution ? solutionOpenUrl(solution) : null}
                   expanded={expandedKey === row.key}
-                  menuOpen={menuKey === row.key}
-                  flashKind={flash?.key === row.key ? flash.kind : null}
-                  sharing={sharingKey === row.key}
                   onToggleExpand={toggleExpand}
-                  onToggleMenu={toggleMenu}
-                  onCopy={handleCopy}
-                  onShare={handleShare}
                   onDelete={handleDelete}
+                  onError={setError}
                 />
               );
             }),

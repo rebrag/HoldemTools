@@ -2,15 +2,23 @@
 // from: hands the viewer recorded (previewed and linked back to the hand) and
 // boards solved off a preflop sim line. Click a board to reopen it; remove one
 // to take it out of this viewer's library (reversible - see SolutionsController).
-import React, { useMemo, useRef, useState } from "react";
-import { Trash2, X } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Trash2 } from "lucide-react";
 import PlayingCard from "@/components/PlayingCard";
-import HandPreview from "@/components/HandPreview";
+import HandSummaryRow from "@/components/HandSummaryRow";
+import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import { replayOpenUrl } from "@/lib/handHistoryLinks";
 import { boardToCards } from "@/lib/solver/postflopNode";
-import { solutionKey, type PostflopIndexEntry } from "@/lib/solver/postflopLibrary";
+import { summaryFromRawText } from "@/pages/handhistory/create/replay";
+import {
+  solutionKey,
+  solutionOpenUrl,
+  type PostflopIndexEntry,
+} from "@/lib/solver/postflopLibrary";
 
 export interface PostflopLibraryProps {
+  /** Parent stays mounted and toggles this so the drawer's exit animation plays. */
+  open: boolean;
   entries: PostflopIndexEntry[];
   loading: boolean;
   signInRequired?: boolean;
@@ -23,6 +31,9 @@ export interface PostflopLibraryProps {
   onRestore?: (entries: PostflopIndexEntry[]) => Promise<void>;
   /** Saved hand id -> rawText, for the preview above each hand's boards. */
   handTextById?: Record<number, string>;
+  /** Delete the hand history itself (confirm + API + cache eviction live in
+   *  the host). Board removal stays on the per-tile trash button. */
+  onDeleteHand?: (id: number) => void | Promise<void>;
 }
 
 type LineGroup = {
@@ -83,6 +94,7 @@ const BoardTile: React.FC<{
 );
 
 const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
+  open,
   entries,
   loading,
   signInRequired,
@@ -92,6 +104,7 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
   onRemove,
   onRestore,
   handTextById,
+  onDeleteHand,
 }) => {
   /* What the last remove took out, so it can be put back. Cleared on a timer
      so the pill doesn't linger over the list forever. */
@@ -175,30 +188,33 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
 
   const isEmpty = handGroups.length === 0 && lineGroups.length === 0;
 
-  return (
-    <div
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60"
-      onMouseDown={onClose}
-    >
-      <div
-        className="relative w-full max-w-2xl mx-3 max-h-[85vh] flex flex-col rounded-2xl bg-slate-900/95 border border-emerald-500/40 shadow-2xl p-4 text-gray-100"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 text-gray-300 hover:text-white border border-white/10 shadow-sm"
-          aria-label="Close"
-        >
-          <X size={14} />
-        </button>
+  /* The component stays mounted across open/close now, so an undo pill from a
+     previous visit would otherwise greet the next open. */
+  useEffect(() => {
+    if (open) return;
+    if (undoTimer.current) window.clearTimeout(undoTimer.current);
+    setUndo(null);
+  }, [open]);
 
-        <h2 className="text-base font-semibold mb-1">Solution Library</h2>
+  return (
+    <ResponsiveDrawer
+      open={open}
+      onClose={onClose}
+      scrollMode="custom"
+      desktopMaxWidthClassName="sm:max-w-2xl"
+      zClassName="z-[80]"
+      ariaLabelledBy="solution-library-title"
+    >
+      <div className="px-4 pt-2 sm:pt-4 pr-12">
+        <h2 id="solution-library-title" className="text-base font-semibold mb-1">
+          Solution Library
+        </h2>
         <p className="text-xs text-gray-300 mb-3">
           Every board that has been solved. Open one to browse its postflop strategy.
         </p>
+      </div>
 
-        <div className="overflow-y-auto pr-1 -mr-1">
+      <div className="flex-1 overflow-y-auto px-4 pb-6">
           {signInRequired ? (
             <div className="py-8 flex flex-col items-center gap-3 text-center">
               <p className="text-sm text-gray-300">
@@ -228,17 +244,41 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
                   <h3 className="mb-2 text-[0.7rem] font-semibold uppercase tracking-wider text-emerald-300">
                     From your hands
                   </h3>
-                  <div className="space-y-3">
-                    {handGroups.map((group) => (
-                      <div
-                        key={group.key}
-                        className="rounded-xl border border-white/10 bg-white/[0.03] p-2"
-                      >
-                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                          <div className="min-w-0 flex-1">
-                            {group.handHistoryId != null &&
-                            handTextById?.[group.handHistoryId] ? (
-                              <HandPreview rawText={handTextById[group.handHistoryId]} />
+                  <div className="overflow-hidden rounded-xl border border-white/10 divide-y divide-white/10">
+                    {handGroups.map((group) => {
+                      const rawText =
+                        group.handHistoryId != null
+                          ? handTextById?.[group.handHistoryId]
+                          : undefined;
+                      /* The preview's board fan is the click target that opens
+                         the solution, so the separate flop tiles only render
+                         when the preview can't show a board (no saved text, or
+                         a legacy hand without a replay payload). */
+                      const boardInPreview = rawText
+                        ? (summaryFromRawText(rawText)?.board.length ?? 0) > 0
+                        : false;
+                      return (
+                        <div key={group.key} className="bg-white/[0.03] p-2">
+                          <div className={boardInPreview ? "" : "mb-2"}>
+                            {rawText ? (
+                              <HandSummaryRow
+                                rawText={rawText}
+                                tone="dark"
+                                replayHref={replayOpenUrl(String(group.handHistoryId))}
+                                solutionHref={solutionOpenUrl(group.boards[0])}
+                                onOpenSolution={() => onOpen(group.boards[0])}
+                                onBoardClick={() => {
+                                  onOpen(group.boards[0]);
+                                  onClose();
+                                }}
+                                shareId={group.handHistoryId}
+                                onDelete={
+                                  onDeleteHand
+                                    ? () => void onDeleteHand(group.handHistoryId!)
+                                    : undefined
+                                }
+                                onNavigate={onClose}
+                              />
                             ) : (
                               <span className="text-[0.7rem] text-gray-400">
                                 {group.handHistoryId == null
@@ -247,36 +287,26 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
                               </span>
                             )}
                           </div>
-                          {/* Opens in a new tab so the library - and whatever
-                              board is loaded behind it - survives the trip. */}
-                          {group.handHistoryId != null && (
-                            <a
-                              href={replayOpenUrl(String(group.handHistoryId))}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="shrink-0 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[0.65rem] font-semibold text-emerald-300 hover:bg-emerald-500/15 hover:text-emerald-200"
-                            >
-                              Replay hand
-                            </a>
+                          {!boardInPreview && (
+                            <div className="flex flex-wrap gap-2">
+                              {group.boards.map((entry) => (
+                                <BoardTile
+                                  key={solutionKey(entry)}
+                                  entry={entry}
+                                  busy={busy}
+                                  onOpen={() => onOpen(entry)}
+                                  onRemove={
+                                    onRemove
+                                      ? () => void remove([entry], `${entry.board} removed`)
+                                      : undefined
+                                  }
+                                />
+                              ))}
+                            </div>
                           )}
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          {group.boards.map((entry) => (
-                            <BoardTile
-                              key={solutionKey(entry)}
-                              entry={entry}
-                              busy={busy}
-                              onOpen={() => onOpen(entry)}
-                              onRemove={
-                                onRemove
-                                  ? () => void remove([entry], `${entry.board} removed`)
-                                  : undefined
-                              }
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </section>
               )}
@@ -331,22 +361,21 @@ const PostflopLibrary: React.FC<PostflopLibraryProps> = ({
           )}
         </div>
 
-        {undo && onRestore && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
-            <div className="pointer-events-auto inline-flex items-center gap-3 rounded-full border border-white/15 bg-slate-800/95 px-3 py-1.5 text-[0.7rem] text-gray-200 shadow-lg backdrop-blur-sm animate-in fade-in slide-in-from-bottom-2 duration-200">
-              <span>{undo.label}</span>
-              <button
-                type="button"
-                onClick={() => void restore()}
-                className="font-semibold text-emerald-300 hover:text-emerald-200"
-              >
-                Undo
-              </button>
-            </div>
+      {undo && onRestore && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+          <div className="pointer-events-auto inline-flex items-center gap-3 rounded-full border border-white/15 bg-slate-800/95 px-3 py-1.5 text-[0.7rem] text-gray-200 shadow-lg backdrop-blur-sm animate-in fade-in slide-in-from-bottom-2 duration-200">
+            <span>{undo.label}</span>
+            <button
+              type="button"
+              onClick={() => void restore()}
+              className="font-semibold text-emerald-300 hover:text-emerald-200"
+            >
+              Undo
+            </button>
           </div>
-        )}
-      </div>
-    </div>
+        </div>
+      )}
+    </ResponsiveDrawer>
   );
 };
 
