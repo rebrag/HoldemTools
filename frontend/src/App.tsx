@@ -1,6 +1,6 @@
 import { lazy, useEffect, useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
-import { onAuthStateChanged, signOut, User } from "firebase/auth";
+import { getRedirectResult, onAuthStateChanged, signOut, User } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import OrientationGate from "@/components/OrientationGate";
@@ -34,6 +34,14 @@ function App() {
   const devUser = useDevAuthUser();
 
   useEffect(() => {
+    // Mobile signs in via signInWithRedirect (see lib/firebase.ts), which lands
+    // back here after the Google round trip. The session completes on its own
+    // through onAuthStateChanged; this call exists because it is the only place
+    // a redirect sign-in ERROR is ever reported. Resolves null on ordinary
+    // loads, so it is free when there is no round trip to finish.
+    getRedirectResult(auth).catch((e) => {
+      console.error("Google sign-in (redirect) failed:", e);
+    });
     return onAuthStateChanged(auth, (u) => {
       // In dev bypass mode the dummy auth owns login state; don't let a lingering
       // real Firebase session bleed in — sign it out so "logout" truly logs out.

@@ -8,6 +8,8 @@
 // without re-implementing clipboard/token plumbing.
 import React, { useMemo, useState } from "react";
 import { Play, Library, Share2, Copy, Check, Trash2 } from "lucide-react";
+import { useAppNavigate } from "@/components/layout/RouteProgress";
+import { isCoarsePointer } from "@/lib/pointer";
 import RowActionButton, { rowActionClasses } from "@/components/RowActionButton";
 import HandPreview from "@/components/HandPreview";
 import { summaryFromRawText, stripReplay } from "@/pages/handhistory/create/replay";
@@ -70,6 +72,25 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
   const summary = useMemo(() => summaryFromRawText(rawText), [rawText]);
   const [flash, setFlash] = useState<"copied" | "shared" | null>(null);
   const [sharing, setSharing] = useState(false);
+  const navigate = useAppNavigate();
+
+  // Desktop: Replay/Solution open a new tab so the list stays put, and the
+  // real anchor keeps middle-click / cmd-click honest. Touch devices instead
+  // navigate in place (SPA route, so no second app boot): on iOS a tab opened
+  // from a page lives in the opener's WebContent process, and two copies of
+  // the app in one process is what got replay tabs killed with Safari's
+  // "A problem repeatedly occurred". Back returns to the list either way,
+  // and a long-press can still open the anchor in a new tab deliberately.
+  const newTab = !isCoarsePointer();
+  const linkProps = (href: string) =>
+    newTab
+      ? ({ target: "_blank", rel: "noopener noreferrer" } as const)
+      : ({
+          onClick: (e: React.MouseEvent) => {
+            e.preventDefault();
+            navigate(href);
+          },
+        } as const);
 
   const dark = tone === "dark";
   const label = dark ? "text-slate-400" : "text-gray-500";
@@ -161,16 +182,13 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
         )}
 
         <ActionGrid>
-          {/* Replay and Solution both leave the page the row is sitting on, so
-              both open in a new tab and the list stays exactly where it was.
-              Real anchors rather than window.open, so middle-click, ⌘-click and
-              "open in new tab" all behave the way the icon promises. */}
+          {/* Replay and Solution both leave the page the row is sitting on -
+              new tab on desktop, in-place navigation on touch (see linkProps). */}
           {replayHref && (
             <a
               key="replay"
               href={replayHref}
-              target="_blank"
-              rel="noopener noreferrer"
+              {...linkProps(replayHref)}
               aria-label="Replay hand"
               title="Replay hand"
               className={rowActionClasses("replay", tone, false, "sm")}
@@ -199,8 +217,7 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
               <a
                 key="solution"
                 href={solutionHref}
-                target="_blank"
-                rel="noopener noreferrer"
+                {...linkProps(solutionHref)}
                 aria-label="View solution"
                 title="View solution"
                 className={rowActionClasses("solution", tone, false, "sm")}
