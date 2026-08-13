@@ -11,11 +11,10 @@ import { openBillingPortal } from "@/lib/stripe/openBillingPortal";
 import {
   getAuth,
   onAuthStateChanged,
-  GoogleAuthProvider,
-  signInWithPopup,
   signOut,
   type User,
 } from "firebase/auth";
+import { signInWithGoogle } from "@/lib/firebase";
 import { DEV_AUTH_BYPASS, useDevAuthUser, devAuthSignIn, devAuthSignOut } from "@/lib/devAuth";
 import { useAuthGate } from "@/context/AuthGate";
 import useBodyScrollLock from "@/hooks/useBodyScrollLock";
@@ -150,9 +149,9 @@ const NavBar: React.FC<NavBarProps> = () => {
       setMenuOpen(false);
       return;
     }
-    const auth = getAuth();
-    const provider = new GoogleAuthProvider();
-    await signInWithPopup(auth, provider);
+    // Shared helper so this picks popup vs redirect the same way the login
+    // modal does (redirect on touch devices - see lib/firebase.ts).
+    await signInWithGoogle();
     setMenuOpen(false);
   };
 

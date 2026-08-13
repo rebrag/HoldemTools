@@ -8,8 +8,11 @@ import {
   signOut,
   GoogleAuthProvider,
   signInWithPopup,
+  signInWithRedirect,
+  type User,
 } from "firebase/auth";
 import { FirebaseError } from "firebase/app";
+import { isCoarsePointer } from "@/lib/pointer";
 
 /**
  * Run against the local Firebase Emulator Suite instead of the real project.
@@ -35,12 +38,37 @@ const emulatorConfig = {
   appId: "1:000000000000:web:demoemulator",
 };
 
+/**
+ * Hosts where the Firebase auth handler is served from the app's OWN origin:
+ * vercel.json proxies /__/auth/* and /__/firebase/* through to the
+ * gto-lite.firebaseapp.com handler, so setting authDomain to the app's host
+ * keeps the whole OAuth round trip same-site. That matters twice over:
+ *
+ *  - Safari's tracking prevention partitions storage for the cross-site
+ *    firebaseapp.com handler, which is what makes the classic popup/redirect
+ *    flows flaky there.
+ *  - On iOS the handler page shares the opener tab's WebContent process; with
+ *    the app tab heavy, that shared process was being killed and sign-in died
+ *    with Safari's "A problem repeatedly occurred".
+ *
+ * The list is explicit rather than "any current host" because each host must
+ * be an authorized redirect URI on the Google OAuth client - a *.vercel.app
+ * preview can't be whitelisted, so previews keep the firebaseapp.com handler.
+ */
+const SAME_ORIGIN_AUTH_HOSTS = ["www.holdemtools.com", "holdemtools.com"];
+const sameOriginAuthHost =
+  !USE_FIREBASE_EMULATOR &&
+  typeof window !== "undefined" &&
+  SAME_ORIGIN_AUTH_HOSTS.includes(window.location.hostname)
+    ? window.location.hostname
+    : null;
+
 // Firebase config from environment variables
 const firebaseConfig = USE_FIREBASE_EMULATOR
   ? emulatorConfig
   : {
       apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+      authDomain: sameOriginAuthHost ?? import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
       projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
       storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
       messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
@@ -64,16 +92,26 @@ if (USE_FIREBASE_EMULATOR) {
 
 const provider = new GoogleAuthProvider();
 
-const signInWithGoogle = async () => {
-  try {
-    const result = await signInWithPopup(auth, provider);
-    const user = result.user;
-    console.log("User info:", user);
-    return user;
-  } catch (error) {
-    console.error("Google sign-in error:", error);
-    throw error;
+/**
+ * Google sign-in, flow chosen by device.
+ *
+ * Touch devices use the redirect flow: no popup means no second page sharing
+ * the app tab's process on iOS (see SAME_ORIGIN_AUTH_HOSTS above for why that
+ * was killing sign-in). Redirect is only reliable when the handler is
+ * same-site, so it is gated on sameOriginAuthHost; everywhere else (desktop,
+ * localhost, vercel previews) keeps the popup.
+ *
+ * On the redirect path this promise never settles - the page navigates away,
+ * and the result lands via getRedirectResult/onAuthStateChanged after the
+ * round trip back. Callers' post-await code simply doesn't run, which is the
+ * behavior they want anyway (the whole page is about to reload).
+ */
+const signInWithGoogle = async (): Promise<User> => {
+  if (sameOriginAuthHost && isCoarsePointer()) {
+    return signInWithRedirect(auth, provider);
   }
+  const result = await signInWithPopup(auth, provider);
+  return result.user;
 };
 
 export {
