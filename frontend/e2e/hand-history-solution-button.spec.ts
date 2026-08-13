@@ -10,8 +10,12 @@ import fixture from "./fixtures/postflop.json" with { type: "json" };
  * server-side per viewer), so a hand shows the action exactly when its
  * solution is openable.
  *
- * It is a real link with target="_blank": opening a solution leaves the list,
- * so it opens in a new tab and the hand list stays where the user left it.
+ * It is a real link. On desktop it carries target="_blank": opening a solution
+ * leaves the list, so it opens in a new tab and the hand list stays where the
+ * user left it. On touch devices it navigates in place instead - on iOS a tab
+ * opened from a page shares the opener's WebContent process, and a second live
+ * copy of the app in that process is what got these tabs killed with Safari's
+ * "A problem repeatedly occurred" (see HandSummaryRow / lib/pointer.ts).
  */
 
 const { index, manifest, flopBundle } = fixture;
@@ -62,7 +66,7 @@ test.afterEach(() => {
   if (api) expect(api.unhandled).toEqual([]);
 });
 
-test("only the solved hand offers a View solution link", async ({ page }) => {
+test("only the solved hand offers a View solution link", async ({ page, isMobile }) => {
   // Both hands render (HandPreview falls back to the first text line).
   const solvedRow = page.locator("li", { hasText: SOLVED_TEXT });
   const unsolvedRow = page.locator("li", { hasText: UNSOLVED_TEXT });
@@ -71,7 +75,9 @@ test("only the solved hand offers a View solution link", async ({ page }) => {
 
   const link = solvedRow.getByRole("link", { name: "View solution" });
   await expect(link).toBeVisible();
-  await expect(link).toHaveAttribute("target", "_blank");
+  // New tab on desktop, in-place navigation on touch (see the header note).
+  if (isMobile) await expect(link).not.toHaveAttribute("target");
+  else await expect(link).toHaveAttribute("target", "_blank");
   await expect(unsolvedRow.getByRole("link", { name: "View solution" })).toHaveCount(0);
 });
 
@@ -99,4 +105,14 @@ test("clicking it opens /solutions in a new tab with the board open", async ({
 
   // The hand list is untouched in the tab the user came from.
   await expect(page).toHaveURL(/\/hand-history$/);
+});
+
+test("mobile: View solution navigates in place", async ({ page, isMobile }) => {
+  test.skip(!isMobile, "desktop opens a new tab - covered by the test above");
+
+  await page
+    .locator("li", { hasText: SOLVED_TEXT })
+    .getByRole("link", { name: "View solution" })
+    .click();
+  await expect(page).toHaveURL(/\/solutions/);
 });
