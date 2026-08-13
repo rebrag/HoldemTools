@@ -1,37 +1,65 @@
 // src/pages/handhistory/create/BoardEditorModal.tsx
-import React, { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
+// Board card entry for the recorder, in the app's shared overlay shell: a
+// bottom sheet under 640px (thumb-reachable, which matters most when this
+// opens itself mid-hand to ask for the turn or the river) and a centered modal
+// above it.
+//
+// Dismissing COMMITS. Every pick is already visible in the slot row above the
+// keypad, so there is nothing hidden to discard, and the auto-open flow makes
+// silent discard actively harmful: a user who taps the turn card and then taps
+// the backdrop must keep that card. "Cancel" stays as the explicit way to back
+// out with the board untouched.
+//
+// The old hand-rolled shell avoided `backdrop-filter` on the dialog because a
+// `min-h-full` scroll layer plus a blurred dialog pinned iOS Safari re-blurring
+// the animated backdrop every frame. ResponsiveDrawer doesn't have that layer -
+// it sizes the panel with `max-h-[92vh]` inside an `absolute inset-0` flex box -
+// and the same shell is already used elsewhere on this page (QuickSetupDrawer).
+import React, { useEffect, useId, useState } from "react";
 import PlayingCard from "@/components/PlayingCard";
 import RankSuitKeypad from "@/components/RankSuitKeypad";
-import useBodyScrollLock from "@/hooks/useBodyScrollLock";
+import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 
 interface Props {
+  /** Mount permanently and toggle this, so the sheet's exit animation plays. */
+  open: boolean;
   board: (string | null)[]; // length 5
   otherUsed: Set<string>; // cards assigned to seats
+  /** Heading — run-it-twice hands mount two of these. */
+  title?: string;
   onSave: (board: (string | null)[]) => void;
   onClose: () => void;
 }
 
 const SLOT_LABELS = ["Flop", "Flop", "Flop", "Turn", "River"];
 
-const BoardEditorModal: React.FC<Props> = ({ board, otherUsed, onSave, onClose }) => {
-  const [cards, setCards] = useState<string[]>(
+const BoardEditorModal: React.FC<Props> = ({
+  open,
+  board,
+  otherUsed,
+  title = "Board",
+  onSave,
+  onClose,
+}) => {
+  // Both boards stay mounted, so the heading id has to be per-instance.
+  const titleId = useId();
+  const [cards, setCards] = useState<string[]>(() =>
     board.filter((c): c is string => !!c)
   );
 
-  useBodyScrollLock(true);
-
+  // Re-seed from the live board each time the sheet opens. The component stays
+  // mounted for its exit animation, so the initializer only ever runs once.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  if (typeof document === "undefined") return null;
+    if (open) setCards(board.filter((c): c is string => !!c));
+    // `board` is intentionally not a dependency: re-syncing while the sheet is
+    // open would fight the user's own edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const gridUsed = new Set<string>([...otherUsed, ...cards]);
+  // The next empty slot is what the keypad fills, so a board with a gap earlier
+  // than the street being asked about gets caught up first.
+  const target = cards.length < 5 ? SLOT_LABELS[cards.length] : undefined;
 
   const handlePick = (code: string) => {
     setCards((prev) => {
@@ -47,97 +75,96 @@ const BoardEditorModal: React.FC<Props> = ({ board, otherUsed, onSave, onClose }
     onSave(padded);
   };
 
-  return createPortal(
-    // Centered flex box; the dialog scrolls internally when tall. Deliberately
-    // avoids a `min-h-full` scroll layer + `backdrop-filter` on the dialog: that
-    // combination pins iOS Safari re-blurring the animated backdrop every frame,
-    // stalling the open for seconds. Opaque dialog + internal scroll keeps it
-    // centered and scroll-safe without any backdrop-filter cost.
-    <div className="fixed inset-0 z-[1300] flex items-center justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-8">
-      {/* Clicking the backdrop commits the board (same as "Done"), not discard. */}
-      <div className="absolute inset-0 bg-black/50" onPointerDown={save} aria-hidden="true" />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Edit board"
-        className="relative z-[1310] max-h-full w-full max-w-sm overflow-y-auto rounded-2xl border border-emerald-300/40 bg-white p-4 shadow-2xl shadow-emerald-500/30"
-        onPointerDown={(e) => e.stopPropagation()}
-      >
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="text-base font-semibold text-gray-900">Board</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition"
-          >
-            <span className="text-sm">✕</span>
-          </button>
-        </div>
-
-        <div className="mb-1 flex items-center justify-between">
-          <span className="text-xs font-medium text-gray-700">
-            Flop · Turn · River
-          </span>
-          {cards.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setCards([])}
-              className="text-[11px] text-gray-500 underline underline-offset-2 hover:text-gray-700"
-            >
-              Clear
-            </button>
-          )}
-        </div>
-        <div className="mb-3 flex gap-2">
-          {SLOT_LABELS.map((label, i) =>
-            cards[i] ? (
+  return (
+    <ResponsiveDrawer
+      open={open}
+      onClose={save}
+      scrollMode="custom"
+      desktopMaxWidthClassName="sm:max-w-sm"
+      /* Matches the stacking the hand-rolled portal had, so the orientation
+         gate (which documents itself as sitting above it) still wins. */
+      zClassName="z-[1300]"
+      showCloseButton={false}
+      ariaLabelledBy={titleId}
+    >
+      <>
+        <div className="px-5 pt-2 sm:pt-5 pb-3">
+          <div className="flex items-baseline justify-between gap-2">
+            <h2 id={titleId} className="text-lg font-bold tracking-tight text-white">
+              {title}
+            </h2>
+            {cards.length > 0 && (
               <button
-                key={i}
                 type="button"
-                onClick={() => handlePick(cards[i])}
-                aria-label={`Remove ${cards[i]}`}
-                className="transition-transform hover:-translate-y-[1px] active:scale-95"
+                onClick={() => setCards([])}
+                className="text-[11px] text-slate-400 underline underline-offset-2 transition-colors hover:text-slate-200"
               >
-                <PlayingCard code={cards[i]} size="md" width={38} />
+                Clear
               </button>
-            ) : (
-              <div
-                key={i}
-                className="flex aspect-[3/4] w-[38px] flex-col items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50 text-[8px] text-gray-400"
-              >
-                {label}
-              </div>
-            )
-          )}
+            )}
+          </div>
+          <p className="mt-1 text-xs text-slate-400">
+            {target ? `Tap the ${target.toLowerCase()} card.` : "Board complete."}{" "}
+            Tap a dealt card to take it back.
+          </p>
         </div>
 
-        <RankSuitKeypad
-          used={gridUsed}
-          onPick={handlePick}
-          targetLabel={cards.length < 5 ? SLOT_LABELS[cards.length] : undefined}
-          className="rounded-xl border border-slate-700 bg-slate-900 p-2.5"
-        />
+        <div className="flex-1 overflow-y-auto px-5 pb-3">
+          <div className="mb-3 flex gap-2">
+            {SLOT_LABELS.map((label, i) =>
+              cards[i] ? (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => handlePick(cards[i])}
+                  aria-label={`Remove ${cards[i]}`}
+                  className="rounded-lg transition-transform hover:-translate-y-[1px] active:scale-95"
+                >
+                  <PlayingCard code={cards[i]} size="md" width={38} />
+                </button>
+              ) : (
+                <div
+                  key={i}
+                  className={`flex aspect-[3/4] w-[38px] flex-col items-center justify-center rounded-lg border border-dashed text-[8px] transition-colors ${
+                    // The slot the keypad is about to fill, so an auto-opened
+                    // sheet shows at a glance which card it is asking for.
+                    i === cards.length
+                      ? "border-emerald-400 bg-emerald-400/10 text-emerald-300"
+                      : "border-white/20 bg-white/5 text-slate-500"
+                  }`}
+                >
+                  {label}
+                </div>
+              )
+            )}
+          </div>
 
-        <div className="mt-4 flex items-center justify-end gap-3">
+          <RankSuitKeypad
+            used={gridUsed}
+            onPick={handlePick}
+            targetLabel={target}
+            className="rounded-xl border border-slate-700 bg-slate-900 p-2.5"
+          />
+        </div>
+
+        <div className="flex gap-2 border-t border-hairline px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button
             type="button"
             onClick={onClose}
-            className="text-xs text-gray-500 underline underline-offset-2 hover:text-gray-700"
+            className="flex-1 cursor-pointer rounded-xl border border-hairline bg-white/5 py-2.5 text-sm font-medium text-slate-100 transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
           >
             Cancel
           </button>
           <button
             type="button"
             onClick={save}
-            className="inline-flex items-center rounded-full bg-emerald-600 px-5 py-1.5 text-sm font-semibold text-white shadow-md shadow-emerald-500/40 transition-transform duration-150 hover:-translate-y-[1px] hover:bg-emerald-500 active:translate-y-[1px]"
+            className="flex-1 cursor-pointer rounded-xl bg-accent py-2.5 text-sm font-semibold text-on-accent transition-all hover:shadow-glow focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
           >
             Done
           </button>
         </div>
-      </div>
-    </div>,
-    document.body
+      </>
+    </ResponsiveDrawer>
   );
 };
 

@@ -14,6 +14,16 @@ test("a shared replay opens with no auth and only that hand's data", async ({ pa
   // so the shared hand is a real one rather than a hand-written blob. The
   // specifier is passed in as a value: it is a URL the dev server resolves at
   // runtime, not a module this spec can import (tsc would try to find it).
+  // The homepage fires a best-effort SQL warm-up at the real API, throttled
+  // hourly through this key (see Homepage.tsx). It has nothing to do with the
+  // shared path, but it is in flight while the route below is being registered,
+  // so whether it lands as an "other" API call is a pure race - and when it
+  // loses, the request escapes the suite to Azure. Pre-dating the throttle
+  // stops it firing at all.
+  await page.addInitScript(() => {
+    window.localStorage.setItem("ht_sql_warmup_last_hit_v1", String(Date.now()));
+  });
+
   await page.goto("/");
   const rawText = await page.evaluate(async (modulePath) => {
     const fixture = (await import(modulePath)) as { buildTestHandText: () => string };

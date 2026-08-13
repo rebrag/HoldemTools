@@ -36,6 +36,14 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : [["list"]],
 
+  /* Above Playwright's 5s default. The suite is fullyParallel against a DEV
+     server, so a route's first paint pays for on-demand transforms of the
+     bundle it needs while every other worker is asking for its own - /solutions
+     lands in ~1.3s serially and had been blowing past 5s under an 8-worker run.
+     This only bounds how long a FAILING assertion waits; a passing one still
+     resolves as soon as the condition holds. */
+  expect: { timeout: 15_000 },
+
   use: {
     baseURL: BASE_URL,
     trace: "on-first-retry",
