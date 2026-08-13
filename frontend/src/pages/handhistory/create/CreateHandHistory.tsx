@@ -649,6 +649,33 @@ const CreateHandHistory: React.FC<Props> = ({
     });
   };
 
+  // Closing the flop's betting deals the turn, and closing the turn's deals the
+  // river - so ask for that card right then, while the spot is still in front
+  // of the user, instead of leaving the board half-empty until showdown (where
+  // a missing card silently downgrades the winner to a manual pick).
+  //
+  // The sheet fills the earliest empty slot first, so a hand whose flop was
+  // never entered is caught up by the turn prompt rather than needing its own.
+  // The flop itself isn't prompted for: it's normally set during setup, and
+  // interrupting the moment the hand starts would be noise.
+  const promptedStreetRef = useRef(0);
+  useEffect(() => {
+    // Only while the hand is still being played. An all-in run-out finishes in
+    // one step, and that path already has the showdown UI (and possibly the
+    // solve offer) competing for the screen.
+    if (!engine || engine.done) return;
+    const street = engine.street;
+    // Undo rewound past a street we already asked about: re-arm, so replaying
+    // it prompts again if the card is still missing.
+    if (street < promptedStreetRef.current) promptedStreetRef.current = street;
+    if (street <= promptedStreetRef.current) return;
+    promptedStreetRef.current = street;
+    // Turn is board slot 3, river is slot 4.
+    const slot = street === 2 ? 3 : street === 3 ? 4 : -1;
+    if (slot < 0 || state.board[slot]) return;
+    setEditingBoard(true);
+  }, [engine, state.board]);
+
   const confirmWinners = () => {
     if (!engine || winnerSel.length === 0) return;
     const board = engine.winners === null ? 1 : 2;
@@ -907,7 +934,15 @@ const CreateHandHistory: React.FC<Props> = ({
   const pot = potView(engine, unitMode);
 
   return (
-    <div className="mx-auto max-w-6xl overflow-x-clip px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+    // Full-height flex column (standalone only) so the controls column can be
+    // pushed flush to the bottom with `mt-auto`, the same way the replayer docks
+    // its transport bar into the mobile thumb-zone. Embedded in the bankroll
+    // modal the page has no viewport of its own, so it stays a plain block.
+    <div
+      className={`mx-auto flex max-w-6xl flex-col overflow-x-clip px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] ${
+        embedded ? "" : "min-h-[calc(100dvh-3rem)]"
+      }`}
+    >
       {/* One-list entry of every seat's name and stack. Mounted permanently so
           the drawer's exit animation plays (see ResponsiveDrawer). */}
       <QuickSetupDrawer
@@ -977,7 +1012,7 @@ const CreateHandHistory: React.FC<Props> = ({
           </button>
         </div>
       )}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-8">
+      <div className="flex flex-1 flex-col gap-4 lg:flex-row lg:items-start lg:gap-8">
       {/* ───────── Table (left column) ───────── */}
       <div className="w-full lg:flex-1 lg:min-w-0 relative pt-2">
       {/* Placement banner overlays the table top so it takes no flow height —
@@ -1034,7 +1069,13 @@ const CreateHandHistory: React.FC<Props> = ({
       </div>
 
       {/* ───────── Controls (right column) ───────── */}
-      <div className="w-full lg:w-[400px] lg:flex-shrink-0">
+      {/* `mt-auto` docks this to the bottom of the viewport on mobile (setup
+          form and action panel alike); on lg it's a side column again, where an
+          auto top margin would instead push it to the bottom of the row. */}
+      <div
+        data-testid="hh-controls"
+        className="mt-auto w-full lg:mt-0 lg:w-[400px] lg:flex-shrink-0"
+      >
       {/* ───────── Action phase ───────── */}
       {phase === "action" && engine && (
         <>
@@ -1240,8 +1281,8 @@ const CreateHandHistory: React.FC<Props> = ({
             </Field>
           </div>
 
-          <div className="mt-3 flex flex-col gap-1">
-            <label className="text-xs font-medium text-gray-700">Comment</label>
+          <label className="mt-3 flex flex-col gap-1">
+            <span className="text-xs font-medium text-gray-700">Comment</span>
             <textarea
               rows={1}
               className={`${inputCls} resize-y`}
@@ -1249,7 +1290,7 @@ const CreateHandHistory: React.FC<Props> = ({
               onChange={(e) => update({ comment: e.target.value })}
               placeholder="Optional note about this hand…"
             />
-          </div>
+          </label>
 
           <p className="mt-3 text-[11px] text-gray-500">
             Tap each seat to set its name, stack, and hole cards. Mark the dealer
@@ -1316,38 +1357,43 @@ const CreateHandHistory: React.FC<Props> = ({
         );
       })()}
 
-      {editingBoard && (
-        <BoardEditorModal
-          board={state.board}
-          otherUsed={usedCards(state, state.board)}
-          onSave={(board) => {
-            update({ board });
-            setEditingBoard(false);
-          }}
-          onClose={() => setEditingBoard(false)}
-        />
-      )}
+      {/* Both board sheets stay mounted so their exit animation plays (see
+          ResponsiveDrawer). */}
+      <BoardEditorModal
+        open={editingBoard}
+        board={state.board}
+        otherUsed={usedCards(state, state.board)}
+        title={state.numBoards === 2 ? "Board 1" : "Board"}
+        onSave={(board) => {
+          update({ board });
+          setEditingBoard(false);
+        }}
+        onClose={() => setEditingBoard(false)}
+      />
 
-      {editingBoard2 && (
-        <BoardEditorModal
-          board={state.board2}
-          otherUsed={usedCards(state, state.board2)}
-          onSave={(board2) => {
-            update({ board2 });
-            setEditingBoard2(false);
-          }}
-          onClose={() => setEditingBoard2(false)}
-        />
-      )}
+      <BoardEditorModal
+        open={editingBoard2}
+        board={state.board2}
+        otherUsed={usedCards(state, state.board2)}
+        title="Board 2"
+        onSave={(board2) => {
+          update({ board2 });
+          setEditingBoard2(false);
+        }}
+        onClose={() => setEditingBoard2(false)}
+      />
     </div>
   );
 };
 
+// The control is nested inside the <label> rather than sitting next to it, so
+// it's implicitly associated with no id/htmlFor bookkeeping - assistive tech
+// announces the field's name, and tapping the caption focuses the input.
 const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
-  <div className="flex flex-col gap-1">
-    <label className="text-xs font-medium text-gray-700">{label}</label>
+  <label className="flex flex-col gap-1">
+    <span className="text-xs font-medium text-gray-700">{label}</span>
     {children}
-  </div>
+  </label>
 );
 
 export default CreateHandHistory;

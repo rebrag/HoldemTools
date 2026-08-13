@@ -2,10 +2,10 @@
 // One saved-hand row in the Hand History list. The row body (card fans, stat
 // stack, action buttons) is the shared HandSummaryRow so hands look identical
 // here, in the bankroll session drawer, and in the Solution Library; this
-// wrapper adds what is list-specific: the session meta pill, the expand/
-// collapse raw-text panel, and the enter/exit motion. Memoized so top-level
-// state changes in HandHistoryTool only reconcile the rows whose props
-// actually changed.
+// wrapper adds what is list-specific: the expand/collapse raw-text panel and
+// the enter/exit motion. The session label is a group header owned by
+// HandHistoryTool, not a per-row pill. Memoized so top-level state changes in
+// HandHistoryTool only reconcile the rows whose props actually changed.
 import React from "react";
 import { AnimatePresence, motion, type Variants } from "framer-motion";
 import HandSummaryRow from "@/components/HandSummaryRow";
@@ -25,8 +25,6 @@ const itemVariants: Variants = {
 
 type HandRowProps = {
   row: ToolRow;
-  /** Linked bankroll-session label ("location · blinds"), or "". */
-  meta: string;
   /** Deep link to this hand's solved board on /solutions, or null when the
    *  hand has no solution. A plain string so React.memo stays effective. */
   solutionHref: string | null;
@@ -38,7 +36,6 @@ type HandRowProps = {
 
 const HandRow: React.FC<HandRowProps> = ({
   row,
-  meta,
   solutionHref,
   expanded,
   onToggleExpand,
@@ -48,14 +45,8 @@ const HandRow: React.FC<HandRowProps> = ({
   <motion.li
     variants={itemVariants}
     exit="exit"
-    className="px-3 py-1.5 transition-colors hover:bg-emerald-50/60"
+    className="px-2 py-1.5 transition-colors hover:bg-emerald-50/60 sm:px-3"
   >
-    {meta && (
-      <div className="mb-0.5 inline-flex max-w-full items-center gap-1 truncate rounded-full bg-emerald-50 px-2 py-[1px] text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-        🗓 {meta}
-      </div>
-    )}
-
     <HandSummaryRow
       rawText={row.rawText}
       replayHref={

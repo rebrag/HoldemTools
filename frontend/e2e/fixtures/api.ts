@@ -66,7 +66,15 @@ export type ApiStub = {
 };
 
 /** A saved hand as /api/handhistory returns it (rawText carries the replay). */
-export type HandHistoryFixture = { id: number; rawText: string };
+export type HandHistoryFixture = {
+  id: number;
+  rawText: string;
+  /** Bankroll session this hand belongs to; the list groups consecutive hands
+   *  that share one under a single session header. */
+  sessionId?: string | null;
+  /** Drives the list's day header, and the newest-first sort. */
+  createdAt?: string;
+};
 
 export type SolutionRefFixture = {
   stacks: string;

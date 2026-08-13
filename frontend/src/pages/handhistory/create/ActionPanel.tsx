@@ -15,20 +15,23 @@ interface Props {
 const actionBtn =
   "rounded-lg px-3 py-3 text-sm font-bold uppercase tracking-wide text-white transition active:translate-y-[1px] disabled:opacity-40 disabled:cursor-not-allowed";
 
-// Pot-fraction quick sizings shown as pill buttons.
+// Pot-fraction quick sizings shown as pill buttons. Deliberately just the two
+// sizings people actually reach for at the table - the rest of the range is a
+// nudge or a typed amount away, and All in sits beside them as its own pill.
 const POT_FRACTIONS: { f: number; label: string }[] = [
-  { f: 0.25, label: "1/4" },
   { f: 0.5, label: "1/2" },
-  { f: 0.75, label: "3/4" },
   { f: 1, label: "Pot" },
 ];
+
+// Sentinel for the All-in pill, which isn't a pot fraction (it's the stack).
+const ALLIN = "allin" as const;
 
 const ActionPanel: React.FC<Props> = ({ engine, unitMode, onAction, onUndo, canUndo }) => {
   const la = legalActions(engine);
   const player = engine.toAct != null ? engine.players[engine.toAct] : null;
 
   const [raiseTo, setRaiseTo] = useState<number | null>(null);
-  const [activeFrac, setActiveFrac] = useState<number | null>(null);
+  const [activeFrac, setActiveFrac] = useState<number | typeof ALLIN | null>(null);
   // Free-text override of the sizing input so users can type ANY amount,
   // including an invalid one. null = mirror the derived numeric value.
   const [raiseText, setRaiseText] = useState<string | null>(null);
@@ -75,10 +78,12 @@ const ActionPanel: React.FC<Props> = ({ engine, unitMode, onAction, onUndo, canU
   // A pot-fraction raise/bet "to" amount: call the current bet, then add a
   // fraction of the resulting pot. f = 1 is a full pot-sized bet/raise.
   const fracRaiseTo = (f: number) => clamp(engine.currentBet + f * potAfterCall);
-  // Nudge step: one displayed unit (1 chip, or 1 BB worth of chips).
-  const step = unitMode === "chips" ? 1 : bb;
+  // Nudge step: half a big blind, in either display unit. Chip-accurate steps
+  // (1 chip) are far too fine to be useful at real stakes, where a single BB is
+  // already several chips.
+  const step = bb / 2;
 
-  const setSize = (chips: number, frac: number | null) => {
+  const setSize = (chips: number, frac: number | typeof ALLIN | null) => {
     setRaiseTo(chips);
     setActiveFrac(frac);
     setRaiseText(null);
@@ -129,6 +134,17 @@ const ActionPanel: React.FC<Props> = ({ engine, unitMode, onAction, onUndo, canU
                 {label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => setSize(la.maxTo, ALLIN)}
+              className={`rounded-md px-2 py-1 text-[11px] font-semibold uppercase tracking-wide transition ${
+                activeFrac === ALLIN
+                  ? "bg-rose-500 text-white"
+                  : "bg-rose-500/20 text-rose-200 hover:bg-rose-500/30"
+              }`}
+            >
+              All in
+            </button>
           </div>
 
           <input

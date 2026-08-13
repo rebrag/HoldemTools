@@ -273,18 +273,36 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     cacheHandTexts(visibleRows.map((r) => [r.key, r.rawText] as [string, string]));
   }, [visibleRows]);
 
-  // Group the (already date-sorted) visible rows by calendar day so the list
-  // shows one day header instead of a timestamp on every row.
+  // Group the (already date-sorted) visible rows twice over: by calendar day so
+  // the list shows one day header instead of a timestamp on every row, then
+  // within a day by bankroll session, so a night's worth of hands sits under a
+  // single "Hard Rock Tampa · 2/5 NL" header rather than repeating that pill on
+  // every row. Hands with no session are grouped together headerless - there's
+  // nothing to label them with.
   const groups = useMemo(() => {
-    const out: { day: string; rows: ToolRow[] }[] = [];
+    type Block = { sessionId: string | null; meta: string; rows: ToolRow[] };
+    const out: { day: string; blocks: Block[] }[] = [];
     for (const row of visibleRows) {
       const day = formatDay(row.createdAt);
-      const last = out[out.length - 1];
-      if (last && last.day === day) last.rows.push(row);
-      else out.push({ day, rows: [row] });
+      let group = out[out.length - 1];
+      if (!group || group.day !== day) {
+        group = { day, blocks: [] };
+        out.push(group);
+      }
+      const last = group.blocks[group.blocks.length - 1];
+      if (last && last.sessionId === row.sessionId) {
+        last.rows.push(row);
+      } else {
+        const session = row.sessionId ? sessionsById.get(row.sessionId) : null;
+        group.blocks.push({
+          sessionId: row.sessionId,
+          meta: session ? sessionMeta(session) : "",
+          rows: [row],
+        });
+      }
     }
     return out;
-  }, [visibleRows]);
+  }, [visibleRows, sessionsById]);
 
   // Row callbacks are useCallback-stable so the memoized HandRow only
   // re-renders when its own expanded/menu/flash state changes.
@@ -386,8 +404,10 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
         </motion.div>
       ) : (
         <>
+        {/* Edge-to-edge on phones (the -mx-4 cancels the page gutter) so the
+            card fans get the full screen width; a rounded card again from sm. */}
         <motion.ul
-          className="divide-y divide-emerald-100 overflow-hidden rounded-2xl border border-emerald-300/40 bg-white/90 shadow-sm shadow-emerald-500/10"
+          className="-mx-4 divide-y divide-emerald-100 overflow-hidden border-y border-emerald-300/40 bg-white/90 shadow-sm shadow-emerald-500/10 sm:mx-0 sm:rounded-2xl sm:border-x"
           variants={listVariants}
           initial="hidden"
           animate="visible"
@@ -400,22 +420,36 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
             >
               {group.day}
             </li>,
-            ...group.rows.map((row) => {
-              const session = row.sessionId ? sessionsById.get(row.sessionId) : null;
-              const solution = row.server ? solutionByHandId[row.server.id] : undefined;
-              return (
-                <HandRow
-                  key={row.key}
-                  row={row}
-                  meta={session ? sessionMeta(session) : ""}
-                  solutionHref={solution ? solutionOpenUrl(solution) : null}
-                  expanded={expandedKey === row.key}
-                  onToggleExpand={toggleExpand}
-                  onDelete={handleDelete}
-                  onError={setError}
-                />
-              );
-            }),
+            ...group.blocks.flatMap((block) => [
+              ...(block.meta
+                ? [
+                    <li
+                      key={`session-${block.rows[0].key}`}
+                      className="flex items-center gap-1.5 px-3 pb-0.5 pt-1.5 text-[11px] font-semibold text-emerald-800"
+                    >
+                      <span aria-hidden="true">🗓</span>
+                      <span className="truncate">{block.meta}</span>
+                      <span className="ml-auto shrink-0 rounded-full bg-emerald-50 px-2 py-[1px] text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                        {block.rows.length} hand{block.rows.length === 1 ? "" : "s"}
+                      </span>
+                    </li>,
+                  ]
+                : []),
+              ...block.rows.map((row) => {
+                const solution = row.server ? solutionByHandId[row.server.id] : undefined;
+                return (
+                  <HandRow
+                    key={row.key}
+                    row={row}
+                    solutionHref={solution ? solutionOpenUrl(solution) : null}
+                    expanded={expandedKey === row.key}
+                    onToggleExpand={toggleExpand}
+                    onDelete={handleDelete}
+                    onError={setError}
+                  />
+                );
+              }),
+            ]),
           ])}
           </AnimatePresence>
         </motion.ul>
