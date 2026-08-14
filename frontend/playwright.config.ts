@@ -16,10 +16,25 @@ import { loadEnv } from "vite";
    second checkout would attach to the first checkout's server and report
    passing results for code it never loaded. */
 const DEV_PORT = Number(loadEnv("development", process.cwd(), "").VITE_DEV_PORT) || 5173;
-const BASE_URL = `http://localhost:${DEV_PORT}`;
+
+/* The mocked suite gets its own port, offset from the checkout's dev port.
+   The suite compiles in VITE_DEV_AUTH_BYPASS and stubs every API route, so
+   letting reuseExistingServer attach to a developer's real-auth server on
+   DEV_PORT meant specs silently ran against a build with none of those
+   assumptions (and the developer's browser session got a bypass server on
+   the next restart). On its own port the only thing the suite can ever
+   reuse is a previous mock-lane server with identical env. The injected
+   VITE_DEV_PORT wins over the generated .env because Vite's loadEnv applies
+   process.env last. The real-account lane (playwright.authed.config.ts)
+   keeps targeting DEV_PORT. */
+const MOCK_PORT = DEV_PORT + 100;
+const BASE_URL = `http://localhost:${MOCK_PORT}`;
 
 export default defineConfig({
   testDir: "./e2e",
+  /* Authed specs run against the REAL dev server and real account via
+     playwright.authed.config.ts - never as part of the mocked suite. */
+  testIgnore: "**/authed/**",
   outputDir: "./test-results",
   snapshotDir: "./e2e/__screenshots__",
   /* Baselines are per-platform on purpose: text antialiasing differs enough
@@ -84,6 +99,7 @@ export default defineConfig({
        POSTFLOP_ENABLED: gates the solved-flops library button. Without it the
        postflop specs have no way into a board at all. */
     env: {
+      VITE_DEV_PORT: String(MOCK_PORT),
       VITE_DEV_AUTH_BYPASS: "true",
       VITE_POSTFLOP_ENABLED: "true",
     },
