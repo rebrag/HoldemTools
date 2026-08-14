@@ -8,8 +8,12 @@ import { test, expect, type Page } from "@playwright/test";
  *    viewport, so they suppress document-level overscroll (`no-overscroll` on
  *    <html>, see useNoOverscroll). Leaving the section has to release it, or
  *    every other page inherits a rubber-band it never asked to lose.
- *  - Opening a replay leaves the list, so it opens in a new tab and the list
- *    the user was reading stays exactly where it was.
+ *  - Opening a replay leaves the list. On desktop it opens in a new tab so the
+ *    list stays exactly where it was; on touch devices it navigates in place,
+ *    because on iOS a tab opened from a page shares the opener's WebContent
+ *    process and a second live copy of the app in that process is what got
+ *    replay tabs killed with Safari's "A problem repeatedly occurred"
+ *    (see HandSummaryRow / lib/pointer.ts).
  *
  * No API stubs: signed out, /hand-history reads the device-local store and the
  * dev-only sample hand, so nothing here reaches a real endpoint.
@@ -41,10 +45,12 @@ test("hand-history routes suppress overscroll, and release it on leave", async (
   await expect.poll(() => htmlClass(page)).not.toContain("no-overscroll");
 });
 
-test("a replay opens in a new tab, leaving the list where it was", async ({
+test("desktop: a replay opens in a new tab, leaving the list where it was", async ({
   page,
   context,
+  isMobile,
 }) => {
+  test.skip(!!isMobile, "touch devices navigate in place - see the mobile variant");
   await page.goto("/hand-history");
 
   const link = page.getByRole("link", { name: "Replay hand" }).first();
@@ -54,4 +60,25 @@ test("a replay opens in a new tab, leaving the list where it was", async ({
   await expect(replay).toHaveURL(/\/hand-history\/replay\//);
   await expect(page).toHaveURL(/\/hand-history$/);
   await expect.poll(() => htmlClass(replay)).toContain("no-overscroll");
+});
+
+test("mobile: a replay navigates in place, and Back returns to the list", async ({
+  page,
+  isMobile,
+}) => {
+  test.skip(!isMobile, "desktop keeps the new tab - see the desktop variant");
+  await page.goto("/hand-history");
+
+  // No target="_blank": the same tab must host the replay (see header note).
+  const link = page.getByRole("link", { name: "Replay hand" }).first();
+  await expect(link).toBeVisible();
+  await expect(link).not.toHaveAttribute("target");
+
+  await link.click();
+  await expect(page).toHaveURL(/\/hand-history\/replay\//);
+  await expect.poll(() => htmlClass(page)).toContain("no-overscroll");
+
+  // The list is one Back away - SPA history, not a lost tab.
+  await page.goBack();
+  await expect(page).toHaveURL(/\/hand-history$/);
 });
