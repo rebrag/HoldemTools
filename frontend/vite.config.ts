@@ -1,12 +1,60 @@
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react-swc'
 import tailwindcss from '@tailwindcss/vite'
 import path from "path"
+import { existsSync, readFileSync } from "node:fs"
+import { homedir } from "node:os"
+import dotenv from "dotenv"
+
+/**
+ * Dev-only auto-sign-in as the developer's real account.
+ *
+ * Serves the E2E_EMAIL / E2E_PASSWORD pair from ~/.holdemtools/env/e2e.env
+ * (the same outside-the-repo file the authed Playwright lane uses) at
+ * /__dev/real-auth-creds, and src/lib/devRealAuth.ts fetches it on page load
+ * to sign the app in when no session exists. This is what lets a dev server -
+ * including one driven by an agent's browser - see the account's real hand
+ * histories and solutions without the password ever entering the repo, the
+ * bundle, or a chat.
+ *
+ * Scope guards, in order: configureServer only exists on the DEV server (a
+ * production build has no trace of this); the endpoint answers loopback
+ * requests only (a --host LAN exposure for phone testing does not leak it);
+ * the file is re-read per request so edits apply live; values are never
+ * logged. Opt out with DEV_REAL_AUTH=false; inert when the file is absent or
+ * the emulators are on.
+ */
+function devRealAuth(mode: string): Plugin {
+  return {
+    name: "dev-real-auth",
+    configureServer(server) {
+      const env = loadEnv(mode, process.cwd(), '')
+      const disabled =
+        (process.env.DEV_REAL_AUTH ?? env.DEV_REAL_AUTH) === "false" ||
+        (process.env.USE_FIREBASE_EMULATOR ?? env.USE_FIREBASE_EMULATOR) === "true"
+      if (disabled) return
+      server.middlewares.use("/__dev/real-auth-creds", (req, res) => {
+        const notFound = () => { res.statusCode = 404; res.end() }
+        const addr = req.socket.remoteAddress
+        if (addr !== "127.0.0.1" && addr !== "::1" && addr !== "::ffff:127.0.0.1") return notFound()
+        const dir = process.env.HOLDEMTOOLS_ENV_DIR || path.join(homedir(), ".holdemtools", "env")
+        const file = path.join(dir, "e2e.env")
+        if (!existsSync(file)) return notFound()
+        const creds = dotenv.parse(readFileSync(file, "utf8"))
+        if (!creds.E2E_EMAIL || !creds.E2E_PASSWORD) return notFound()
+        res.setHeader("Content-Type", "application/json")
+        res.setHeader("Cache-Control", "no-store")
+        res.end(JSON.stringify({ email: creds.E2E_EMAIL, password: creds.E2E_PASSWORD }))
+      })
+    },
+  }
+}
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => ({
   plugins: [react(),
     tailwindcss(),
+    devRealAuth(mode),
   ],
   server: {
     // Fixed dev port so parallel sessions/worktrees don't collide. strictPort

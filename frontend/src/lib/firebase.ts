@@ -90,6 +90,19 @@ if (USE_FIREBASE_EMULATOR) {
   connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
 }
 
+// Dev-only: sign in as the developer's real account when the dev server offers
+// credentials (see devRealAuth in vite.config.ts). The import.meta.env.DEV
+// guard makes production builds drop the dynamic import - devRealAuth.ts never
+// ships. Skipped under the auth bypass (which force-signs-out real sessions)
+// and under the emulators (real-project credentials mean nothing there).
+if (
+  import.meta.env.DEV &&
+  !USE_FIREBASE_EMULATOR &&
+  import.meta.env.VITE_DEV_AUTH_BYPASS !== "true"
+) {
+  void import("@/lib/devRealAuth").then((m) => m.autoSignIn(auth));
+}
+
 const provider = new GoogleAuthProvider();
 
 /**

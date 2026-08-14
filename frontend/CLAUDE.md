@@ -9,6 +9,33 @@
 Every new `VITE_*` var must also be added to the committed `.env.example`, which is the
 required-keys manifest `npm run env:check` validates against.
 
+## Auth in dev and E2E - pick the right lane
+
+Most UI here only renders when an authed account has data behind it, so verifying "as a
+signed-in user" is the common case, and there is a dedicated mechanism for it.
+
+- **`npm run dev` is already signed in.**
+When `~/.holdemtools/env/e2e.env` exists (it holds `E2E_EMAIL`/`E2E_PASSWORD` for the
+developer's real account), the dev server auto-signs the app in on load via a
+localhost-only endpoint - real hand histories, solutions, and tier, in any browser
+pointed at the server, including an agent-driven one.
+Nothing ships in production builds.
+Disable with `DEV_REAL_AUTH=false` when you need to work signed-out across reloads.
+- **Do NOT enable `VITE_DEV_AUTH_BYPASS` to get a signed-in state.**
+The bypass compiles in a mock user whose fake token 401s on every `[Authorize]`
+endpoint AND force-signs-out the real session - it can never show per-account data.
+It exists only for the mocked E2E suite and signed-out shell work.
+- **E2E:** `npm run test:e2e` is the fast mocked suite (own port `VITE_DEV_PORT + 100`,
+bypass + stubbed API, no real data).
+`npm run test:e2e:authed` runs `e2e/authed/` signed in as the real account against the
+real deployed API (read-only by fixture); it skips cleanly when `e2e.env` is absent.
+- **Never read, print, or copy the contents of `~/.holdemtools/env/e2e.env`.**
+The scripts and the dev server consume it directly; no task requires seeing the values.
+- **Dev servers that talk to the real API must run on ports 5173-5179** - the deployed
+API's CORS allowlist covers only that range (backend/Program.cs).
+Off-range ports sign in fine but every API call fails on CORS.
+When 5173 is busy (another session), use the `frontend-alt-port` launch config (5179).
+
 ## Frontend tendencies
 - please include animations to make the web app feel like a game for end users
 - most users will be mobile users, but will also have desktop users, ensure that pages make good use of space (limit unused space where there's just backgrounds being displayed) and most regions are either click-able in a useful way or display useful information
