@@ -17,5 +17,14 @@
     "baseUrl": "..",
     "paths": { "@/*": ["src/*"] }
   },
-  "include": [".", "../playwright.config.ts", "../playwright.authed.config.ts"]
+  /* ../src/types holds the ambient declarations for untyped npm modules
+     (phe, pokersolver). Imported app code reaches those modules, but ambient
+     .d.ts files only apply when included, so specs whose import graph touches
+     them (e.g. the hand-replay engine) would fail typecheck without this. */
+  "include": [
+    ".",
+    "../playwright.config.ts",
+    "../playwright.authed.config.ts",
+    "../src/types"
+  ]
 }

@@ -72,6 +72,7 @@ const SingleRangeMobileView = ({
   tableSeatsOverride,
   money,
   autoPinBySeat,
+  playedAction,
 }: SingleRangeMobileViewProps) => {
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
   const { ref: wrapRef, top, bottomInset } = useTopOffset();
@@ -294,6 +295,7 @@ const SingleRangeMobileView = ({
               onActionClick={(action) =>
                 activeFile && onActionClick(action, activeFile)
               }
+              playedAction={playedAction}
             />
           </div>
         </div>

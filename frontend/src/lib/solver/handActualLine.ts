@@ -64,20 +64,41 @@ function labelAmount(display: string): number | null {
 }
 
 /**
- * Does this solver action label correspond to the action actually taken?
+ * The option label the actual action corresponds to, or null when none does.
  *
  * ALLIN is its own label rather than a size, so an all-in bet matches it
- * directly. Sized bets compare numerically with a cent of tolerance, since
- * the label is a rounded rendering of the same underlying chips.
+ * directly. Sized bets pick the CLOSEST candidate, capped at 20% relative
+ * error: the tree's sizes are whole-percent-of-pot discretizations of the
+ * real amounts ($20 becomes "Bet 20.1", $200 "Bet 199.3"), so exact
+ * comparison never fires, while the cap keeps a genuinely different size
+ * from being claimed as played.
  */
-export function labelMatchesActual(display: string, actual: ActualAction): boolean {
-  const label = display.trim();
-  if (actual.kind === "fold") return label === "Fold";
-  if (actual.kind === "check") return label === "Check";
-  if (actual.kind === "call") return label === "Call" || label === "ALLIN";
+export function matchPlayedOption(
+  options: string[],
+  actual: ActualAction
+): string | null {
+  const labels = options.map((o) => o.trim());
+  if (actual.kind === "fold") return labels.includes("Fold") ? "Fold" : null;
+  if (actual.kind === "check") return labels.includes("Check") ? "Check" : null;
+  if (actual.kind === "call") {
+    // A tree call is always the "Call" branch; "ALLIN" is an aggressive
+    // action, matched only as a fallback when a shove was called and the
+    // node has no plain Call label.
+    if (labels.includes("Call")) return "Call";
+    return actual.allIn && labels.includes("ALLIN") ? "ALLIN" : null;
+  }
 
-  if (label === "ALLIN") return actual.allIn;
-  if (!/^(Bet|Raise to)\b/i.test(label)) return false;
-  const amount = labelAmount(label);
-  return amount != null && actual.amount != null && Math.abs(amount - actual.amount) < 0.01;
+  // bet / raise
+  if (actual.allIn && labels.includes("ALLIN")) return "ALLIN";
+  if (actual.amount == null) return null;
+  let best: { label: string; diff: number } | null = null;
+  for (const label of labels) {
+    if (!/^(Bet|Raise to)\b/i.test(label)) continue;
+    const amount = labelAmount(label);
+    if (amount == null) continue;
+    const diff = Math.abs(amount - actual.amount);
+    if (!best || diff < best.diff) best = { label, diff };
+  }
+  if (!best) return null;
+  return best.diff <= Math.max(actual.amount * 0.2, 0.01) ? best.label : null;
 }

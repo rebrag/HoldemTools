@@ -23,6 +23,9 @@ interface ActionSummaryProps {
    *  sidebar) instead of side by side. The panels split the parent's height
    *  equally, so give the wrapper a definite height. */
   vertical?: boolean;
+  /** Display label of the action actually taken in the hand behind this
+   *  solve, when known - its panel gets a PLAYED badge. */
+  playedAction?: string | null;
 }
 
 const shadeColor = (hex: string, percent: number) => {
@@ -44,6 +47,7 @@ const ActionSummary: React.FC<ActionSummaryProps> = ({
   onActionClick = () => {},
   compact,
   vertical,
+  playedAction,
 }) => {
   const panelMinH = compact ? PANEL_MIN_H_COMPACT : PANEL_MIN_H;
   /* Vertical panels split the parent's height instead of carrying a floor. */
@@ -107,8 +111,18 @@ const ActionSummary: React.FC<ActionSummaryProps> = ({
               whileHover={{ backgroundColor: hover }}
               transition={{ type: "spring", stiffness: 900, damping: 50 }}
             >
-              <span className="block truncate text-[11px] font-semibold text-white/90 leading-tight">
-                {agg.action}
+              <span className="flex items-center justify-between gap-1">
+                <span className="block truncate text-[11px] font-semibold text-white/90 leading-tight">
+                  {agg.action}
+                </span>
+                {playedAction === agg.action && (
+                  <span
+                    className="rounded-sm bg-black/30 px-1 text-[0.5rem] font-semibold uppercase leading-tight tracking-wide text-amber-200"
+                    title="What you did in this hand"
+                  >
+                    Played
+                  </span>
+                )}
               </span>
               {compact ? (
                 <span className="flex items-baseline justify-between gap-1">
