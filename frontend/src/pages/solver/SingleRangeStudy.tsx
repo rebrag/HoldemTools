@@ -67,6 +67,9 @@ interface SingleRangeStudyProps {
   /** Seat -> the hand that seat held in the recorded hand (hand-history
    *  solves). Seeds the pin when a board is opened. */
   autoPinBySeat?: Record<string, { hand: string; combo: string }>;
+  /** Display label of the action actually taken in the hand, badged PLAYED
+   *  on the action summary. */
+  playedAction?: string | null;
 
   /** Measured content width (px) and viewport height / chrome offset. */
   baseW: number;
@@ -115,6 +118,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   money,
   activePlayer,
   autoPinBySeat,
+  playedAction,
   baseW,
   viewH,
   topOffset,
@@ -242,6 +246,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
             data={activeGrid}
             loading={!activeDataLoaded}
             onActionClick={(action) => activeFile && onActionClick(action, activeFile)}
+            playedAction={playedAction}
           />
 
           <HandBreakdown

@@ -30,43 +30,48 @@ export function facingBet(nodeId: string): boolean {
 
 /**
  * Chips each player has committed on COMPLETED postflop streets along this
- * node's path. Pio bet labels are street-cumulative "commit to NNN" amounts,
- * and a street only completes matched (call or check-through), so the last
- * bet of each finished street is what both players put in.
+ * node's path. Pio bet labels are hand-cumulative "commit to NNN" amounts -
+ * running totals of a player's whole postflop investment, never resetting at
+ * a street boundary - and a street only completes matched (call or
+ * check-through), so the last bet seen before the current street is what both
+ * players have put in. A check-through street has no bet segment and the
+ * carry simply persists.
  */
 export function priorStreetCommitChips(nodeId: string): number {
   const segs = nodeId.split(":").slice(2); // drop "r","0"
-  let total = 0;
-  let lastBetThisStreet = 0;
+  let carry = 0; // cumulative commit at the last street boundary
+  let lastBet: number | null = null; // last bNNN seen on the street in progress
   for (const seg of segs) {
     if (isCardSegment(seg)) {
-      total += lastBetThisStreet; // street completed by the deal
-      lastBetThisStreet = 0;
+      if (lastBet != null) carry = lastBet; // street completed by the deal
+      lastBet = null;
     } else {
       const m = seg.match(/^b(\d+)$/);
-      if (m) lastBetThisStreet = Number(m[1]);
+      if (m) lastBet = Number(m[1]);
     }
   }
-  return total; // the in-progress street is not included
+  return carry; // the in-progress street is not included
 }
 
 /**
  * Chips each player has in front of them on the CURRENT (unfinished) street.
  * Heads-up postflop the actor alternates strictly, OOP first on every street,
- * and Pio bet labels are street-cumulative "commit to NNN" amounts - so
- * replaying the street's segments gives each side's live bet.
+ * and Pio bet labels are hand-cumulative "commit to NNN" amounts - so each
+ * side's live bet is its latest cumulative value less what it had already
+ * committed on completed streets.
  */
 export function currentStreetCommitChips(nodeId: string): {
   oop: number;
   ip: number;
 } {
+  const prior = priorStreetCommitChips(nodeId);
   const commit = { oop: 0, ip: 0 };
   let toCall = 0;
   streetActionsOf(nodeId).forEach((seg, i) => {
     const who = i % 2 === 0 ? "oop" : "ip";
     const bet = seg.match(/^b(\d+)$/);
     if (bet) {
-      commit[who] = Number(bet[1]);
+      commit[who] = Number(bet[1]) - prior;
       toCall = commit[who];
     } else if (seg === "c") {
       commit[who] = toCall; // a call matches the outstanding bet; a check is 0
@@ -79,10 +84,10 @@ export function currentStreetCommitChips(nodeId: string): {
  * How the money at a node sits on the table: chips already pooled in the
  * middle, and each side's live bet in front of them.
  *
- * Derived from the node path rather than Pio's `pot` triple, which reports
- * each player's chips as a running total for the whole postflop tree - taking
- * it at face value leaves a called flop bet parked in front of both seats for
- * the rest of the hand instead of in the pot.
+ * Derived from the node path rather than Pio's `pot` triple; both use the
+ * same hand-cumulative running totals, but taking the triple at face value
+ * leaves a called flop bet parked in front of both seats for the rest of the
+ * hand instead of in the pot.
  *
  * `streetComplete` (a chance node waiting on a turn/river card) sweeps the
  * street's matched bets into the middle, the way a dealer would before dealing.
@@ -193,21 +198,24 @@ export function formatPioAction(
   if (m) {
     const chips = Number(m[1]);
     if (effectiveStackChips != null && effectiveStackChips > 0) {
-      const remaining = effectiveStackChips - priorStreetCommitChips(nodeId);
-      // 1 raw Pio chip of tolerance - the smallest amount the solve can
-      // express, whatever the scale.
-      if (remaining > 0 && chips >= remaining - 1) return "ALLIN";
+      // Both sides are hand-cumulative postflop totals, so they compare
+      // directly. 1 raw Pio chip of tolerance - the smallest amount the
+      // solve can express, whatever the scale.
+      if (chips >= effectiveStackChips - 1) return "ALLIN";
     }
+    // The bNNN value is the actor's whole-hand postflop commitment; the bet
+    // on this street is what exceeds their completed-street carry.
+    const net = chips - priorStreetCommitChips(nodeId);
     if (chipScale != null) {
-      // The scale is a power of ten and `chips` is an integer, so this many
+      // The scale is a power of ten and `net` is an integer, so this many
       // decimals renders it losslessly. That matters beyond looks: the label
       // doubles as a JsonData key, and two bets that round onto the same
       // string would overwrite each other and misdirect node navigation.
       const decimals = Math.max(0, Math.round(Math.log10(chipScale)));
-      const text = trimTrailingZeros((chips / chipScale).toFixed(decimals));
+      const text = trimTrailingZeros((net / chipScale).toFixed(decimals));
       return facingBet(nodeId) ? `Raise to ${text}` : `Bet ${text}`;
     }
-    const bb = chips / 100;
+    const bb = net / 100;
     const amount = Number.isInteger(bb) ? String(bb) : bb.toFixed(1);
     return facingBet(nodeId) ? `Raise to ${amount}bb` : `Bet ${amount}bb`;
   }
