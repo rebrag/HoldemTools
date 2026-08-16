@@ -17,10 +17,15 @@ const AccountMenu: React.FC<AccountMenuProps> = ({
   userEmail,
 }) => {
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex min-w-0 flex-col gap-2">
       {displayLabel && (
-        <div className="text-sm font-medium text-gray-700">
-          Account{userEmail ? `: ${userEmail}` : ":"}
+        <div className="min-w-0 text-xs font-medium text-slate-400">
+          Account
+          {userEmail ? (
+            <span className="block truncate text-sm text-slate-200" title={userEmail}>
+              {userEmail}
+            </span>
+          ) : null}
         </div>
       )}
 
@@ -31,7 +36,11 @@ const AccountMenu: React.FC<AccountMenuProps> = ({
             // eslint-disable-next-line @typescript-eslint/no-unused-expressions
             isLoggedIn ? onLogout() : onLogin();
           }}
-          className="rounded-md bg-gray-900 text-white px-3 py-1.5 text-sm hover:bg-gray-800"
+          className={
+            isLoggedIn
+              ? "rounded-lg border border-white/10 bg-white/5 px-4 py-1.5 text-sm font-medium text-slate-200 transition-colors hover:bg-white/10 hover:text-white"
+              : "rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold text-on-accent transition-all hover:shadow-glow"
+          }
         >
           {isLoggedIn ? "Logout" : "Login"}
         </button>

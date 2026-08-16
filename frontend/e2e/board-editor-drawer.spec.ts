@@ -5,14 +5,17 @@ import { stubSolverApi, type ApiStub } from "./fixtures/api";
  * The recorder's board card picker is the shared ResponsiveDrawer: a bottom
  * sheet on a phone, a centered modal on desktop.
  *
- * It also opens itself. Closing the flop's betting deals the turn and closing
- * the turn's deals the river, so the recorder asks for that card right then
- * rather than leaving the board half-empty until showdown - where a missing
- * card silently downgrades the winner to a manual pick.
+ * It also opens itself. Each street's close deals cards - preflop's deals the
+ * flop, the flop's deals the turn, the turn's deals the river - so the
+ * recorder asks for them right then rather than leaving the board half-empty
+ * until showdown, where a missing card silently downgrades the winner to a
+ * manual pick. An auto-opened sheet also commits itself the moment the
+ * requested street is complete, so the flow is tap-tap-tap and back to the
+ * action; manual opens keep Done as the only way to finish.
  *
- * The sheet always fills the earliest empty slot, so it doubles as the catch-up
- * for a board that was never filled in: the flop gets no prompt of its own, but
- * a missing flop is what the turn's prompt asks for first.
+ * The sheet always fills the earliest empty slot, so it doubles as the
+ * catch-up for a board that was never filled in: a dismissed flop prompt is
+ * what the turn's prompt asks for first.
  */
 
 let api: ApiStub;
@@ -102,8 +105,9 @@ test("the river follows once the turn's betting closes", async ({ page }) => {
   for (let i = 0; i < 4; i++) await checkOrCall(page); // preflop + flop
 
   await expect(page.getByRole("dialog")).toContainText("Tap the turn card");
+  // Picking the turn card completes the request, so the sheet commits and
+  // closes itself - no Done tap needed.
   await pickCard(page, "9", "♦");
-  await page.getByRole("button", { name: "Done" }).click();
   await expect(page.getByRole("dialog")).toBeHidden();
 
   await checkOrCall(page); // turn
@@ -112,6 +116,32 @@ test("the river follows once the turn's betting closes", async ({ page }) => {
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("Tap the river card");
+});
+
+test("the flop is asked for when preflop closes, and the sheet closes itself", async ({
+  page,
+}) => {
+  await startHeadsUp(page); // no flop entered up front
+
+  await checkOrCall(page); // preflop
+  await checkOrCall(page);
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Tap the flop card");
+
+  await pickCard(page, "A", "♥");
+  await pickCard(page, "K", "♦");
+  await pickCard(page, "7", "♣");
+  // Third flop card completes the request: the sheet commits itself.
+  await expect(dialog).toBeHidden();
+
+  // Committed for real: the flop's betting closes into the turn prompt, which
+  // asks for the turn card - not the flop again.
+  await checkOrCall(page);
+  await checkOrCall(page);
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Tap the turn card");
 });
 
 test("dismissing it does not re-open it for the same street", async ({ page }) => {
@@ -132,20 +162,31 @@ test("dismissing it does not re-open it for the same street", async ({ page }) =
   await expect(page.getByRole("dialog")).toContainText("Tap the turn card");
 });
 
-test("an unfilled board is caught up by the turn's prompt", async ({ page }) => {
+test("a dismissed flop prompt is caught up by the turn's prompt", async ({ page }) => {
   await startHeadsUp(page); // no flop entered
 
-  for (let i = 0; i < 4; i++) await checkOrCall(page);
+  await checkOrCall(page); // preflop closes into the flop prompt...
+  await checkOrCall(page);
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Tap the flop card");
+  await page.getByRole("button", { name: "Cancel" }).click(); // ...which is declined
+  await expect(dialog).toBeHidden();
+
+  await checkOrCall(page); // flop
+  await checkOrCall(page);
 
   // Earliest gap first: three flop cards are owed before the turn is.
-  const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("Tap the flop card");
 
   await pickCard(page, "A", "♥");
   await pickCard(page, "K", "♦");
   await pickCard(page, "7", "♣");
+  // Three cards in, the turn is still owed - the sheet stays for it...
   await expect(dialog).toContainText("Tap the turn card");
+  // ...and commits itself once it lands.
+  await pickCard(page, "9", "♦");
+  await expect(dialog).toBeHidden();
 });
 
 test("a board entered up front is not asked about again", async ({ page }) => {
@@ -171,8 +212,11 @@ test("dismissing by backdrop keeps the card that was just tapped", async ({
   page,
   viewport,
 }) => {
-  await startHeadsUp(page, { flop: true });
-  for (let i = 0; i < 4; i++) await checkOrCall(page);
+  // The flop prompt, one card in: a street left incomplete on purpose, so the
+  // auto-commit stays out of the picture and the backdrop is what closes it.
+  await startHeadsUp(page);
+  await checkOrCall(page); // preflop closes into the flop prompt
+  await checkOrCall(page);
   await expect(page.getByRole("dialog")).toBeVisible();
 
   // The keypad emits its completed card from an effect, so wait for the slot to

@@ -15,8 +15,10 @@ import { test, expect, type Page } from "@playwright/test";
  *    replay tabs killed with Safari's "A problem repeatedly occurred"
  *    (see HandSummaryRow / lib/pointer.ts).
  *
- * No API stubs: signed out, /hand-history reads the device-local store and the
- * dev-only sample hand, so nothing here reaches a real endpoint.
+ * Signed out, /hand-history reads the device-local store and the dev-only
+ * sample hand, so nothing here reaches a real endpoint. The one exception is
+ * the overscroll test, which leaves via Bankroll Tracker and stubs /api/* so
+ * that page's fetches stay off the network too.
  */
 
 const htmlClass = (page: Page) =>
@@ -33,6 +35,14 @@ const gotoTool = async (page: Page, name: string) => {
 test("hand-history routes suppress overscroll, and release it on leave", async ({
   page,
 }) => {
+  // Leaving must be an SPA navigation (a full load starts without the class and
+  // would pass vacuously), and the destination must not suppress overscroll
+  // itself. Of the navbar tools that leaves Bankroll Tracker (Solutions also
+  // suppresses it), which sits behind the auth gate - so sign the dev-bypass
+  // user in, and stub its API calls to keep the test off the network.
+  await page.route("**/api/**", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: "[]" })
+  );
   await page.goto("/hand-history");
   await expect.poll(() => htmlClass(page)).toContain("no-overscroll");
 
@@ -40,8 +50,11 @@ test("hand-history routes suppress overscroll, and release it on leave", async (
   await expect(page).toHaveURL(/\/hand-history\/create/);
   await expect.poll(() => htmlClass(page)).toContain("no-overscroll");
 
-  await gotoTool(page, "Equity Calculator");
-  await expect(page).toHaveURL(/\/equity/);
+  await page.evaluate(() =>
+    (window as unknown as { __devAuth: { signIn: () => void } }).__devAuth.signIn()
+  );
+  await gotoTool(page, "Bankroll Tracker");
+  await expect(page).toHaveURL(/\/bankroll/);
   await expect.poll(() => htmlClass(page)).not.toContain("no-overscroll");
 });
 

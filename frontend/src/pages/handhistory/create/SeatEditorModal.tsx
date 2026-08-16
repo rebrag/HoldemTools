@@ -1,9 +1,18 @@
 // src/pages/handhistory/create/SeatEditorModal.tsx
-import React, { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
+// Seat editor in the app's shared overlay shell (ResponsiveDrawer): a bottom
+// sheet under 640px - thumb-reachable card entry mid-hand - and a centered
+// modal above it, matching the board editor and quick setup.
+//
+// Dismissing (backdrop / Escape) COMMITS, same contract as BoardEditorModal:
+// every edit is already visible in the form, so there is nothing hidden to
+// discard, and "Cancel" stays as the explicit way to back out untouched.
+//
+// The parent keeps this mounted and toggles `open` so the sheet's exit
+// animation plays; internal state re-seeds from props each time it opens.
+import React, { useEffect, useId, useState } from "react";
 import PlayingCard from "@/components/PlayingCard";
 import RankSuitKeypad from "@/components/RankSuitKeypad";
-import useBodyScrollLock from "@/hooks/useBodyScrollLock";
+import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import type { HoleCards, Seat } from "./types";
 
 export interface SeatEditResult {
@@ -15,6 +24,8 @@ export interface SeatEditResult {
 }
 
 interface Props {
+  /** Mount permanently and toggle this, so the sheet's exit animation plays. */
+  open: boolean;
   positionLabel: string;
   seat: Seat;
   isButton: boolean;
@@ -38,7 +49,35 @@ interface Props {
   onMove?: () => void; // start moving this player to another seat
 }
 
+const fieldCls =
+  "w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-slate-500 transition-colors focus:outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/40";
+
+/** One row of the grouped toggle list: label left, checkbox right, the whole
+ *  row tappable. Dimmed (not hidden) while sitting out, so the layout holds. */
+const ToggleRow: React.FC<{
+  label: React.ReactNode;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+}> = ({ label, checked, disabled, onChange }) => (
+  <label
+    className={`flex cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2.5 transition-colors ${
+      disabled ? "cursor-default opacity-40" : "hover:bg-white/5"
+    }`}
+  >
+    <span className="text-sm text-slate-200">{label}</span>
+    <input
+      type="checkbox"
+      checked={checked}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.checked)}
+      className="h-4 w-4 shrink-0 accent-emerald-500"
+    />
+  </label>
+);
+
 const SeatEditorModal: React.FC<Props> = ({
+  open,
   positionLabel,
   seat,
   isButton,
@@ -55,6 +94,7 @@ const SeatEditorModal: React.FC<Props> = ({
   onEmpty,
   onMove,
 }) => {
+  const titleId = useId();
   const [name, setName] = useState(seat.name);
   const [stack, setStack] = useState(seat.stack);
   const [hole, setHole] = useState<HoleCards>(seat.holeCards);
@@ -69,17 +109,24 @@ const SeatEditorModal: React.FC<Props> = ({
   const [hideTouched, setHideTouched] = useState(false);
   const [straddleAmt, setStraddleAmt] = useState(straddleAmount);
 
-  useBodyScrollLock(true);
-
+  // Re-seed from the live seat each time the sheet opens. The component stays
+  // mounted for its exit animation, so the initializers only ever run once.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  if (typeof document === "undefined") return null;
+    if (!open) return;
+    setName(seat.name);
+    setStack(seat.stack);
+    setHole(seat.holeCards);
+    setMakeButton(isButton);
+    setMakeHero(isHero);
+    setMakeStraddle(isStraddle);
+    setSittingOut(!!seat.sittingOut);
+    setHideCards(seat.hideUntilShowdown ?? !isHero);
+    setHideTouched(false);
+    setStraddleAmt(straddleAmount);
+    // Props are intentionally not dependencies: re-syncing while the sheet is
+    // open would fight the user's own edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const selected = hole.filter((c): c is string => !!c);
   const gridUsed = new Set<string>([...otherUsed, ...selected]);
@@ -126,141 +173,124 @@ const SeatEditorModal: React.FC<Props> = ({
     });
   };
 
-  return createPortal(
-    // Centered flex box; the dialog scrolls internally when tall. Deliberately
-    // avoids a `min-h-full` scroll layer + `backdrop-filter` on the dialog: that
-    // combination pins iOS Safari re-blurring the animated backdrop every frame,
-    // stalling the open for seconds. Opaque dialog + internal scroll keeps it
-    // centered and scroll-safe without any backdrop-filter cost.
-    <div className="fixed inset-0 z-[1300] flex items-center justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-8">
-      {/* Clicking the backdrop commits the edit (same as "Done"), not discard. */}
-      <div className="absolute inset-0 bg-black/50" onPointerDown={save} aria-hidden="true" />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Edit seat ${positionLabel}`}
-        className="relative z-[1310] max-h-full w-full max-w-sm overflow-y-auto rounded-2xl border border-emerald-300/40 bg-white p-4 shadow-2xl shadow-emerald-500/30"
-        onPointerDown={(e) => e.stopPropagation()}
-      >
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="text-base font-semibold text-gray-900">
-            Seat · {positionLabel}
+  return (
+    <ResponsiveDrawer
+      open={open}
+      onClose={save}
+      scrollMode="custom"
+      desktopMaxWidthClassName="sm:max-w-sm"
+      /* Above the recorder's own overlays, matching the board editor. */
+      zClassName="z-[1300]"
+      showCloseButton={false}
+      ariaLabelledBy={titleId}
+    >
+      <>
+        {/* ── Header: the seat being edited is the headline ─────────────── */}
+        <div className="px-5 pt-2 sm:pt-5 pb-3">
+          <h2 id={titleId} className="text-lg font-bold tracking-tight text-white">
+            {positionLabel}
+            <span className="ml-2 text-sm font-medium text-slate-400">seat</span>
           </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition"
-          >
-            <span className="text-sm">✕</span>
-          </button>
         </div>
 
-        <div className="flex flex-wrap gap-3">
-          <div className="flex-1 min-w-[140px] flex flex-col gap-1">
-            <label className="text-xs font-medium text-gray-700">
-              Name <span className="text-gray-400">(optional)</span>
+        <div className="flex-1 overflow-y-auto px-5 pb-4">
+          {/* ── Who's sitting here ────────────────────────────────────── */}
+          <div className="grid grid-cols-[1fr_112px] gap-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-slate-300">
+                Name <span className="text-slate-500">(optional)</span>
+              </span>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onFocus={(e) => e.currentTarget.select()}
+                placeholder={positionLabel}
+                className={fieldCls}
+              />
             </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onFocus={(e) => e.currentTarget.select()}
-              placeholder={positionLabel}
-              className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
-            />
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-slate-300">Stack</span>
+              <input
+                type="tel"
+                inputMode="decimal"
+                value={stack}
+                onChange={(e) => setStack(e.target.value)}
+                onFocus={(e) => e.currentTarget.select()}
+                placeholder="100"
+                className={fieldCls}
+              />
+            </label>
           </div>
-          <div className="w-[120px] flex flex-col gap-1">
-            <label className="text-xs font-medium text-gray-700">Stack</label>
-            <input
-              type="tel"
-              inputMode="decimal"
-              value={stack}
-              onChange={(e) => setStack(e.target.value)}
-              onFocus={(e) => e.currentTarget.select()}
-              placeholder="100"
-              className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
-            />
-          </div>
-        </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-4">
-          <label
-            className={`inline-flex items-center gap-2 text-xs font-medium ${
-              sittingOut ? "text-gray-400" : "text-gray-700"
-            }`}
-          >
-            <input
-              type="checkbox"
+          {/* ── Table roles, grouped in one contained list ────────────── */}
+          <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-1">
+            <ToggleRow
+              label="Dealer button here"
               checked={!sittingOut && makeButton}
               disabled={sittingOut}
-              onChange={(e) => setMakeButton(e.target.checked)}
-              className="h-4 w-4 accent-emerald-600"
+              onChange={setMakeButton}
             />
-            Dealer button here
-          </label>
-          <label
-            className={`inline-flex items-center gap-2 text-xs font-medium ${
-              sittingOut ? "text-gray-400" : "text-gray-700"
-            }`}
-          >
-            <input
-              type="checkbox"
+            <ToggleRow
+              label="This is my hand (hero)"
               checked={!sittingOut && makeHero}
               disabled={sittingOut}
-              onChange={(e) => {
-                setMakeHero(e.target.checked);
+              onChange={(on) => {
+                setMakeHero(on);
                 // Follow the hero/non-hero hide default until the user overrides it.
-                if (!hideTouched) setHideCards(!e.target.checked);
+                if (!hideTouched) setHideCards(!on);
               }}
-              className="h-4 w-4 accent-emerald-600"
             />
-            This is my hand (hero)
-          </label>
-          {canStraddle && (
-            <label
-              className={`inline-flex items-center gap-2 text-xs font-medium ${
-                sittingOut ? "text-gray-400" : "text-gray-700"
-              }`}
-            >
-              <input
-                type="checkbox"
-                checked={!sittingOut && makeStraddle}
-                disabled={sittingOut}
-                onChange={(e) => setMakeStraddle(e.target.checked)}
-                className="h-4 w-4 accent-emerald-600"
-              />
-              {
-                ["Posts a straddle", "Posts the double straddle", "Posts the triple straddle"][
-                  straddleOrder
-                ] ?? "Posts a straddle"
-              }
-            </label>
-          )}
-          {!sittingOut && (
-            <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-700">
-              <input
-                type="checkbox"
+            {canStraddle && (
+              <>
+                <ToggleRow
+                  label={
+                    ["Posts a straddle", "Posts the double straddle", "Posts the triple straddle"][
+                      straddleOrder
+                    ] ?? "Posts a straddle"
+                  }
+                  checked={!sittingOut && makeStraddle}
+                  disabled={sittingOut}
+                  onChange={setMakeStraddle}
+                />
+                {!sittingOut && makeStraddle && (
+                  <div className="flex items-center justify-between gap-3 px-3 pb-2.5 pt-0.5">
+                    <span className="text-xs text-slate-400">
+                      {["Straddle", "Double straddle", "Triple straddle"][straddleOrder] ??
+                        "Straddle"}{" "}
+                      amount
+                    </span>
+                    <input
+                      type="tel"
+                      inputMode="decimal"
+                      value={straddleAmt}
+                      onChange={(e) => setStraddleAmt(e.target.value)}
+                      className={`${fieldCls} w-24 py-1.5 text-right`}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+            {!sittingOut && (
+              <ToggleRow
+                label={
+                  <>
+                    Hide cards until showdown{" "}
+                    <span className="text-slate-500">(replays only)</span>
+                  </>
+                }
                 checked={hideCards}
-                onChange={(e) => {
-                  setHideCards(e.target.checked);
+                onChange={(on) => {
+                  setHideCards(on);
                   setHideTouched(true);
                 }}
-                className="h-4 w-4 accent-emerald-600"
               />
-              <span>
-                Hide cards until showdown{" "}
-                <span className="font-normal text-gray-400">(replays only)</span>
-              </span>
-            </label>
-          )}
-          {allowStructural && (
-            <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-700">
-              <input
-                type="checkbox"
+            )}
+            {allowStructural && (
+              <ToggleRow
+                label="Sitting out"
                 checked={sittingOut}
-                onChange={(e) => {
-                  const on = e.target.checked;
+                onChange={(on) => {
                   setSittingOut(on);
                   if (on) {
                     setMakeButton(false);
@@ -268,116 +298,104 @@ const SeatEditorModal: React.FC<Props> = ({
                     setMakeStraddle(false);
                   }
                 }}
-                className="h-4 w-4 accent-emerald-600"
               />
-              Sitting out
-            </label>
+            )}
+          </div>
+
+          {/* ── Hole cards (a sitting-out seat isn't dealt any) ───────── */}
+          {!sittingOut && (
+            <div className="mt-4">
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="text-xs font-medium text-slate-300">Hole cards</span>
+                {selected.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setHole(pad([]))}
+                    className="text-[11px] text-slate-400 underline underline-offset-2 transition-colors hover:text-slate-200"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <div className="mb-2 flex flex-wrap gap-2">
+                {Array.from({ length: capacity }, (_, i) => hole[i] ?? null).map((c, i) =>
+                  c ? (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => handlePick(c)}
+                      aria-label={`Remove ${c}`}
+                      className="rounded-lg transition-transform hover:-translate-y-[1px] active:scale-95"
+                    >
+                      <PlayingCard code={c} size="md" width={40} />
+                    </button>
+                  ) : (
+                    <div
+                      key={i}
+                      className={`flex aspect-[3/4] w-10 items-center justify-center rounded-lg border border-dashed text-[10px] transition-colors ${
+                        // The slot the keypad fills next, so it's obvious where
+                        // the tapped card will land.
+                        i === selected.length
+                          ? "border-emerald-400 bg-emerald-400/10 text-emerald-300"
+                          : "border-white/20 bg-white/5 text-slate-500"
+                      }`}
+                    >
+                      ?
+                    </div>
+                  )
+                )}
+              </div>
+              <RankSuitKeypad
+                used={gridUsed}
+                onPick={handlePick}
+                targetLabel={
+                  selected.length < capacity ? name.trim() || positionLabel : undefined
+                }
+                className="rounded-xl border border-slate-700 bg-slate-900 p-2.5"
+              />
+            </div>
+          )}
+
+          {/* ── Setup-phase structural actions ────────────────────────── */}
+          {allowStructural && seat.occupied && (
+            <div className="mt-4 flex items-center gap-2 border-t border-white/10 pt-3">
+              <button
+                type="button"
+                onClick={() => onMove?.()}
+                className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-slate-200 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                ↔ Move player
+              </button>
+              <button
+                type="button"
+                onClick={() => onEmpty?.()}
+                className="flex-1 rounded-lg border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-400/20 hover:text-rose-200"
+              >
+                ✕ Empty seat
+              </button>
+            </div>
           )}
         </div>
 
-        {canStraddle && makeStraddle && (
-          <div className="mt-3 flex items-center gap-2">
-            <label className="text-xs font-medium text-gray-700">
-              {["Straddle", "Double straddle", "Triple straddle"][straddleOrder] ??
-                "Straddle"}{" "}
-              amount
-            </label>
-            <input
-              type="tel"
-              inputMode="decimal"
-              value={straddleAmt}
-              onChange={(e) => setStraddleAmt(e.target.value)}
-              className="w-24 rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
-            />
-          </div>
-        )}
-
-        {/* Hole cards (a sitting-out seat isn't dealt any) */}
-        {!sittingOut && (
-        <div className="mt-4">
-          <div className="mb-1 flex items-center justify-between">
-            <label className="text-xs font-medium text-gray-700">Hole cards</label>
-            {selected.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setHole([null, null])}
-                className="text-[11px] text-gray-500 underline underline-offset-2 hover:text-gray-700"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-          <div className="mb-2 flex flex-wrap gap-2">
-            {Array.from({ length: capacity }, (_, i) => hole[i] ?? null).map((c, i) =>
-              c ? (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => handlePick(c)}
-                  aria-label={`Remove ${c}`}
-                  className="transition-transform hover:-translate-y-[1px] active:scale-95"
-                >
-                  <PlayingCard code={c} size="md" width={40} />
-                </button>
-              ) : (
-                <div
-                  key={i}
-                  className="flex aspect-[3/4] w-10 items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50 text-[10px] text-gray-400"
-                >
-                  ?
-                </div>
-              )
-            )}
-          </div>
-          <RankSuitKeypad
-            used={gridUsed}
-            onPick={handlePick}
-            targetLabel={
-              selected.length < capacity ? name.trim() || positionLabel : undefined
-            }
-            className="rounded-xl border border-slate-700 bg-slate-900 p-2.5"
-          />
-        </div>
-        )}
-
-        {allowStructural && seat.occupied && (
-          <div className="mt-4 flex items-center gap-4 border-t border-gray-100 pt-3">
-            <button
-              type="button"
-              onClick={() => onMove?.()}
-              className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-600"
-            >
-              ↔ Move player
-            </button>
-            <button
-              type="button"
-              onClick={() => onEmpty?.()}
-              className="inline-flex items-center gap-1 text-xs font-medium text-rose-600 underline underline-offset-2 hover:text-rose-500"
-            >
-              ✕ Empty seat
-            </button>
-          </div>
-        )}
-
-        <div className="mt-4 flex items-center justify-end gap-3">
+        {/* ── Pinned footer ───────────────────────────────────────────── */}
+        <div className="flex gap-2 border-t border-hairline px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button
             type="button"
             onClick={onClose}
-            className="text-xs text-gray-500 underline underline-offset-2 hover:text-gray-700"
+            className="flex-1 cursor-pointer rounded-xl border border-hairline bg-white/5 py-2.5 text-sm font-medium text-slate-100 transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
           >
             Cancel
           </button>
           <button
             type="button"
             onClick={save}
-            className="inline-flex items-center rounded-full bg-emerald-600 px-5 py-1.5 text-sm font-semibold text-white shadow-md shadow-emerald-500/40 transition-transform duration-150 hover:-translate-y-[1px] hover:bg-emerald-500 active:translate-y-[1px]"
+            className="flex-1 cursor-pointer rounded-xl bg-accent py-2.5 text-sm font-semibold text-on-accent transition-all hover:shadow-glow focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
           >
             Done
           </button>
         </div>
-      </div>
-    </div>,
-    document.body
+      </>
+    </ResponsiveDrawer>
   );
 };
 

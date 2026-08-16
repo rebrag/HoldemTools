@@ -27,6 +27,11 @@ interface Props {
   otherUsed: Set<string>; // cards assigned to seats
   /** Heading — run-it-twice hands mount two of these. */
   title?: string;
+  /** When the sheet was auto-opened for a street, the card count that
+   *  completes it (flop 3, turn 4, river 5): reaching it commits and closes
+   *  after a beat, so the user sees the card land before the sheet leaves.
+   *  Null/undefined (manual opens) keeps Done as the only way to finish. */
+  autoCloseAt?: number | null;
   onSave: (board: (string | null)[]) => void;
   onClose: () => void;
 }
@@ -38,6 +43,7 @@ const BoardEditorModal: React.FC<Props> = ({
   board,
   otherUsed,
   title = "Board",
+  autoCloseAt,
   onSave,
   onClose,
 }) => {
@@ -74,6 +80,18 @@ const BoardEditorModal: React.FC<Props> = ({
     const padded: (string | null)[] = Array.from({ length: 5 }, (_, i) => cards[i] ?? null);
     onSave(padded);
   };
+
+  // Auto-opened sheets commit themselves the moment the requested street is
+  // complete. The pause lets the picked card render in its slot first, and the
+  // cleanup cancels the commit if the user takes a card back within it.
+  useEffect(() => {
+    if (!open || autoCloseAt == null) return;
+    if (cards.length < autoCloseAt) return;
+    const id = window.setTimeout(save, 350);
+    return () => window.clearTimeout(id);
+    // `save` is re-created per render; `cards` is the input that matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, autoCloseAt, cards]);
 
   return (
     <ResponsiveDrawer

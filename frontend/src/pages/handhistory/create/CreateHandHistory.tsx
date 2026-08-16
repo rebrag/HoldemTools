@@ -189,8 +189,17 @@ const CreateHandHistory: React.FC<Props> = ({
     () => draftRef.current ?? createInitialState(DEFAULT_TABLE_SIZE, setupDefaults)
   );
   const [editingSeat, setEditingSeat] = useState<number | null>(null);
+  // Last seat the editor showed, so the permanently-mounted drawer keeps valid
+  // props while its exit animation plays after editingSeat returns to null.
+  const lastEditedSeatRef = useRef(0);
+  if (editingSeat !== null) lastEditedSeatRef.current = editingSeat;
   const [editingBoard, setEditingBoard] = useState(false);
   const [editingBoard2, setEditingBoard2] = useState(false);
+  // When the board sheet was auto-opened by a street arriving, this is the card
+  // count that completes the request (flop 3, turn 4, river 5) — the sheet
+  // commits itself when the user reaches it. Null for manual opens, which keep
+  // the explicit Done button as the only way to finish.
+  const [boardAutoClose, setBoardAutoClose] = useState<number | null>(null);
   const [phase, setPhase] = useState<"setup" | "action">("setup");
   const [placement, setPlacement] = useState<Placement>(null);
   const [quickSetupOpen, setQuickSetupOpen] = useState(false);
@@ -649,15 +658,16 @@ const CreateHandHistory: React.FC<Props> = ({
     });
   };
 
-  // Closing the flop's betting deals the turn, and closing the turn's deals the
-  // river - so ask for that card right then, while the spot is still in front
-  // of the user, instead of leaving the board half-empty until showdown (where
-  // a missing card silently downgrades the winner to a manual pick).
+  // Each street deals new board cards - closing preflop deals the flop, the
+  // flop's betting deals the turn, the turn's deals the river - so ask for
+  // those cards right then, while the spot is still in front of the user,
+  // instead of leaving the board half-empty until showdown (where a missing
+  // card silently downgrades the winner to a manual pick).
   //
   // The sheet fills the earliest empty slot first, so a hand whose flop was
   // never entered is caught up by the turn prompt rather than needing its own.
-  // The flop itself isn't prompted for: it's normally set during setup, and
-  // interrupting the moment the hand starts would be noise.
+  // Once the requested street is complete the sheet commits itself (see
+  // boardAutoClose above), so the flow is tap-tap-tap and back to the action.
   const promptedStreetRef = useRef(0);
   useEffect(() => {
     // Only while the hand is still being played. An all-in run-out finishes in
@@ -670,9 +680,11 @@ const CreateHandHistory: React.FC<Props> = ({
     if (street < promptedStreetRef.current) promptedStreetRef.current = street;
     if (street <= promptedStreetRef.current) return;
     promptedStreetRef.current = street;
-    // Turn is board slot 3, river is slot 4.
-    const slot = street === 2 ? 3 : street === 3 ? 4 : -1;
-    if (slot < 0 || state.board[slot]) return;
+    // Streets 1/2/3 (flop/turn/river) need the first 3/4/5 board slots filled.
+    const cardsNeeded = street === 1 ? 3 : street === 2 ? 4 : street === 3 ? 5 : 0;
+    if (!cardsNeeded) return;
+    if (state.board.slice(0, cardsNeeded).every((c) => !!c)) return;
+    setBoardAutoClose(cardsNeeded);
     setEditingBoard(true);
   }, [engine, state.board]);
 
@@ -1059,7 +1071,10 @@ const CreateHandHistory: React.FC<Props> = ({
             state={state}
             engine={engine}
             editable
-            onEditBoard={() => setEditingBoard(true)}
+            onEditBoard={() => {
+              setBoardAutoClose(null);
+              setEditingBoard(true);
+            }}
             onEditBoard2={() => setEditingBoard2(true)}
             onAddBoard={() => update({ numBoards: 2 })}
             onRemoveBoard={() => update({ numBoards: 1 })}
@@ -1321,12 +1336,16 @@ const CreateHandHistory: React.FC<Props> = ({
       </div>
       </div>
 
-      {editingSeat !== null && (() => {
+      {(() => {
+        // Mounted permanently (like the board sheets) so the drawer's exit
+        // animation plays: while closing, it renders against the last seat
+        // edited, clamped in case the table shrank since.
+        const seatIdx = Math.min(editingSeat ?? lastEditedSeatRef.current, state.seats.length - 1);
         // This seat's slot in the straddle chain: its existing position, or the
         // next open one (straddle → double → triple). The amount handed to the
         // modal is the posted amount, or the doubled default for a fresh one.
         const straddles = straddlesOf(state);
-        const existingIdx = straddles.findIndex((s) => s.seat === editingSeat);
+        const existingIdx = straddles.findIndex((s) => s.seat === seatIdx);
         const straddleOrder = existingIdx >= 0 ? existingIdx : straddles.length;
         const straddleAmount =
           existingIdx >= 0
@@ -1334,24 +1353,24 @@ const CreateHandHistory: React.FC<Props> = ({
             : defaultStraddleAmount(straddles, straddleOrder, state.bigBlind);
         return (
         <SeatEditorModal
-          positionLabel={labels[editingSeat] || `Seat ${editingSeat + 1}`}
-          seat={state.seats[editingSeat]}
-          isButton={state.buttonSeat === editingSeat}
-          isHero={state.heroSeat === editingSeat}
+          open={editingSeat !== null}
+          positionLabel={labels[seatIdx] || `Seat ${seatIdx + 1}`}
+          seat={state.seats[seatIdx]}
+          isButton={state.buttonSeat === seatIdx}
+          isHero={state.heroSeat === seatIdx}
           isStraddle={existingIdx >= 0}
           straddleOrder={straddleOrder}
           straddleAmount={straddleAmount}
           canStraddle={existingIdx >= 0 || straddles.length < MAX_STRADDLES}
           capacity={cardsPerHand}
-          otherUsed={usedCards(state, state.seats[editingSeat].holeCards)}
-          onSave={(result) => saveSeat(editingSeat, result)}
+          otherUsed={usedCards(state, state.seats[seatIdx].holeCards)}
+          onSave={(result) => saveSeat(seatIdx, result)}
           onClose={() => setEditingSeat(null)}
           allowStructural={phase === "setup"}
-          onEmpty={() => emptySeatAt(editingSeat)}
+          onEmpty={() => emptySeatAt(seatIdx)}
           onMove={() => {
-            const from = editingSeat;
             setEditingSeat(null);
-            setPlacement({ kind: "move", from });
+            setPlacement({ kind: "move", from: seatIdx });
           }}
         />
         );
@@ -1364,6 +1383,7 @@ const CreateHandHistory: React.FC<Props> = ({
         board={state.board}
         otherUsed={usedCards(state, state.board)}
         title={state.numBoards === 2 ? "Board 1" : "Board"}
+        autoCloseAt={boardAutoClose}
         onSave={(board) => {
           update({ board });
           setEditingBoard(false);
