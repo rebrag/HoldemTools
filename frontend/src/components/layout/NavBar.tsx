@@ -36,7 +36,7 @@ const TierPill: React.FC<{ tier: "free" | "plus" | "pro"; loading?: boolean }> =
   if (loading) {
     return (
       <span
-        className="inline-block h-5 w-16 rounded-full bg-gray-200 animate-pulse"
+        className="inline-block h-5 w-16 rounded-full bg-white/10 animate-pulse"
         aria-hidden="true"
       />
     );
@@ -45,10 +45,10 @@ const TierPill: React.FC<{ tier: "free" | "plus" | "pro"; loading?: boolean }> =
   const label = tier === "pro" ? "Pro" : tier === "plus" ? "Plus" : "Free";
   const cls =
     tier === "pro"
-      ? "bg-emerald-100 text-emerald-800 ring-emerald-200"
+      ? "bg-emerald-400/15 text-emerald-300 ring-emerald-400/30"
       : tier === "plus"
-      ? "bg-amber-100 text-amber-800 ring-amber-200"
-      : "bg-gray-100 text-gray-800 ring-gray-200";
+      ? "bg-amber-400/15 text-amber-300 ring-amber-400/30"
+      : "bg-white/10 text-slate-300 ring-white/15";
 
   return (
     <span
@@ -64,15 +64,13 @@ const TierPill: React.FC<{ tier: "free" | "plus" | "pro"; loading?: boolean }> =
 const NavBar: React.FC<NavBarProps> = () => {
   const navigate = useAppNavigate();
   const { pathname } = useLocation();
-  const section = pathname.startsWith("/equity")
-    ? "equity"
-    : pathname.startsWith("/bankroll")
+  const section = pathname.startsWith("/bankroll")
     ? "bankroll"
     : pathname.startsWith("/hand-history")
     ? "handHistory"
-    : pathname.startsWith("/course")
-    ? "course"
-    : "solver";
+    : pathname.startsWith("/solutions") || pathname.startsWith("/solver")
+    ? "solver"
+    : "";
 
   const [menuOpen, setMenuOpen] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -232,25 +230,17 @@ const NavBar: React.FC<NavBarProps> = () => {
     else navigate(path);
   };
 
+  // The Course and Equity Calculator pages stay routable by URL, but no longer
+  // earn navbar slots — the bar carries only the core tools.
   const tools: { label: string; path: string; section: string }[] = [
-    { label: "Course", path: "/course", section: "course" },
-    { label: "Equity Calculator", path: "/equity", section: "equity" },
     { label: "Bankroll Tracker", path: "/bankroll", section: "bankroll" },
     { label: "Hand Histories", path: "/hand-history", section: "handHistory" },
     { label: "Solutions", path: "/solutions", section: "solver" },
   ];
 
-  // Optional: ring color on navbar based on tier
-  const tierRing =
-    tier === "pro"
-      ? "ring-emerald-500/40"
-      : tier === "plus"
-      ? "ring-amber-500/40"
-      : "ring-gray-300/60";
-
   return (
     <nav
-      className={`fixed top-0 left-0 right-0 bg-white shadow-md z-80 ring-1 ${tierRing}`}
+      className="fixed top-0 left-0 right-0 z-80 border-b border-white/10 bg-slate-950/75 backdrop-blur-xl"
       aria-busy={loading || undefined}
     >
       <div
@@ -263,7 +253,7 @@ const NavBar: React.FC<NavBarProps> = () => {
             e.preventDefault();
             openMenu();
           }}
-          className="text-gray-600 hover:text-gray-800 focus:outline-none p-1 rounded-md hover:bg-gray-100"
+          className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
           aria-label="Open menu"
         >
           <svg className="w-6 h-6" viewBox="0 0 24 24" stroke="currentColor" fill="none">
@@ -297,7 +287,7 @@ const NavBar: React.FC<NavBarProps> = () => {
               WebkitMaskImage: "-webkit-radial-gradient(white, black)",
             }}
           />
-          <span className="text-base font-semibold tracking-wide text-gray-900 whitespace-nowrap">
+          <span className="text-base font-semibold tracking-tight text-slate-100 whitespace-nowrap">
             HoldemTools
           </span>
         </a>
@@ -321,7 +311,7 @@ const NavBar: React.FC<NavBarProps> = () => {
                 WebkitMaskImage: "-webkit-radial-gradient(white, black)",
               }}
             />
-            <span className="text-sm sm:text-base font-semibold tracking-wide text-gray-900">
+            <span className="text-sm sm:text-base font-semibold tracking-tight text-slate-100">
               HoldemTools
             </span>
           </a>
@@ -343,7 +333,11 @@ const NavBar: React.FC<NavBarProps> = () => {
                   e.preventDefault();
                   go(t.path);
                 }}
-                className="rounded-lg px-3 py-1.5 text-sm font-medium ring-1 shadow-sm transition-all active:scale-95 bg-gray-50 text-gray-700 ring-gray-200 hover:bg-white hover:text-gray-900 hover:ring-gray-300 hover:shadow"
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-all active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
+                  section === t.section
+                    ? "bg-white/10 text-white"
+                    : "text-slate-300 hover:bg-white/5 hover:text-white"
+                }`}
                 aria-current={section === t.section ? "page" : undefined}
               >
                 {t.label}
@@ -359,7 +353,7 @@ const NavBar: React.FC<NavBarProps> = () => {
                 e.preventDefault();
                 setToolsOpen((v) => !v);
               }}
-              className="inline-flex items-center gap-1 rounded-md bg-gray-100 px-2.5 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-200 shadow"
+              className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-medium text-slate-200 transition-colors hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
               aria-haspopup="menu"
               aria-expanded={toolsOpen}
             >
@@ -376,7 +370,7 @@ const NavBar: React.FC<NavBarProps> = () => {
             {toolsOpen && (
               <div
                 ref={toolsMenuRef}
-                className="absolute right-0 mt-2 w-48 rounded-lg bg-white shadow-lg ring-1 ring-black/5 z-50"
+                className="absolute right-0 mt-2 w-48 overflow-hidden rounded-xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl z-50"
               >
                 <div className="py-1">
                   {tools.map((t) => (
@@ -386,7 +380,11 @@ const NavBar: React.FC<NavBarProps> = () => {
                         e.preventDefault();
                         go(t.path);
                       }}
-                      className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
+                      className={`w-full text-left px-3 py-2 text-sm transition-colors ${
+                        section === t.section
+                          ? "bg-white/5 text-emerald-300"
+                          : "text-slate-200 hover:bg-white/5 hover:text-white"
+                      }`}
                       aria-current={section === t.section ? "page" : undefined}
                     >
                       {t.label}
@@ -415,11 +413,11 @@ const NavBar: React.FC<NavBarProps> = () => {
               aria-labelledby="navbar-modal-title"
               ref={modalRef}
               tabIndex={-1}
-              className="absolute top-14 left-2 sm:left-4 w-64 sm:w-72 max-w-[90vw] rounded-2xl bg-white shadow-2xl outline-none z-[1210]"
+              className="absolute top-14 left-2 sm:left-4 w-64 sm:w-72 max-w-[90vw] rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl outline-none z-[1210]"
               onPointerDown={(e) => e.stopPropagation()}
             >
-              <div className="flex items-center justify-between px-4 py-3 border-b">
-                <h2 id="navbar-modal-title" className="text-base font-semibold text-gray-900">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+                <h2 id="navbar-modal-title" className="text-base font-semibold text-slate-100">
                   Menu
                 </h2>
                 <button
@@ -427,7 +425,7 @@ const NavBar: React.FC<NavBarProps> = () => {
                     e.preventDefault();
                     closeMenu();
                   }}
-                  className="p-2 rounded-md hover:bg-gray-100 text-gray-600"
+                  className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-white/10 hover:text-white"
                   aria-label="Close menu"
                 >
                   <svg className="h-5 w-5" viewBox="0 0 24 24" stroke="currentColor" fill="none">
@@ -460,14 +458,14 @@ const NavBar: React.FC<NavBarProps> = () => {
                       type="button"
                       onClick={handleManageBilling}
                       disabled={billingBusy}
-                      className="w-full inline-flex items-center justify-center rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-60"
+                      className="w-full inline-flex items-center justify-center rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-slate-200 transition-colors hover:bg-white/10 disabled:opacity-60"
                     >
                       {billingBusy ? "Opening billing…" : "Manage subscription"}
                     </button>
                   )}
 
                   {user && tier === "free" && (
-                    <p className="text-[11px] text-gray-500">
+                    <p className="text-[11px] text-slate-400">
                       You're on the <strong>Free</strong> tier. Open a locked sim to upgrade to
                       Plus or Pro.
                     </p>
