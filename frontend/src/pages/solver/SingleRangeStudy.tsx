@@ -70,6 +70,9 @@ interface SingleRangeStudyProps {
   autoPinBySeat?: Record<string, { hand: string; combo: string }>;
   /** Click-to-navigate for the table's seats — see seatNavigation.ts. */
   seatNav?: (pos: string) => SeatNavTarget | null;
+  /** Display label of the action actually taken in the hand, badged PLAYED
+   *  on the action summary. */
+  playedAction?: string | null;
 
   /** Measured content width (px) and viewport height / chrome offset. */
   baseW: number;
@@ -119,6 +122,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   activePlayer,
   autoPinBySeat,
   seatNav,
+  playedAction,
   baseW,
   viewH,
   topOffset,
@@ -251,6 +255,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
             data={activeGrid}
             loading={!activeDataLoaded}
             onActionClick={(action) => activeFile && onActionClick(action, activeFile)}
+            playedAction={playedAction}
           />
 
           <HandBreakdown

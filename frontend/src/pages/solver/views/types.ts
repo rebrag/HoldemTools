@@ -74,6 +74,10 @@ export interface SingleRangeViewProps extends SolverRangeBaseProps {
   /** Matrix display mode (Strategy / EV / Equity) - desktop study view only. */
   displayMode?: MatrixDisplayMode;
   onDisplayModeChange?: (mode: MatrixDisplayMode) => void;
+  /** Display label of the action actually taken in the hand behind this
+   *  solve, badged PLAYED on the action summary. Only set while the displayed
+   *  range is the acting seat's. */
+  playedAction?: string | null;
 }
 
 /**

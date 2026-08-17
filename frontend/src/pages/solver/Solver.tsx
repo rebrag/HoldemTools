@@ -69,7 +69,7 @@ import { authedFetch } from "@/lib/api";
 import { cacheHandText, readCachedHandText } from "@/lib/handTextCache";
 import {
   buildActualHandLine,
-  labelMatchesActual,
+  matchPlayedOption,
   type ActualHandLine,
 } from "@/lib/solver/handActualLine";
 import PostflopLine from "./PostflopLine";
@@ -1081,21 +1081,21 @@ const Solver = ({ user }: SolverProps) => {
     const runout = [actualLine.turn, actualLine.river].filter((c): c is string => !!c);
     let nextAction = 0;
     let nextCard = 0;
-    for (const item of view.line) {
-      if (item.kind === "card") {
-        if (runout[nextCard] !== item.label) return none;
+    for (const node of view.lineNodes) {
+      if (node.kind === "card") {
+        if (runout[nextCard] !== node.label) return none;
         nextCard += 1;
         continue;
       }
       const actual = actualLine.actions[nextAction];
-      if (!actual || !labelMatchesActual(item.label, actual)) return none;
+      if (!actual || matchPlayedOption(node.options, actual) !== node.taken) return none;
       nextAction += 1;
     }
 
     const upcoming = actualLine.actions[nextAction];
     return {
       action: upcoming
-        ? view.actions.find((a) => labelMatchesActual(a.display, upcoming))?.display ?? null
+        ? matchPlayedOption(view.actions.map((a) => a.display), upcoming)
         : null,
       card: view.picker ? runout[nextCard] ?? null : null,
     };
@@ -1427,6 +1427,11 @@ const Solver = ({ user }: SolverProps) => {
    * viewing the opponent's plate falls back to hand-class averages. */
   const activeComboDetail =
     pf.view && activePlayer === pf.view.actorSeat ? pf.view.actorCombos : null;
+
+  /* The PLAYED badge on the action summary describes the acting seat's
+   * decision, so it hides while the opponent's range is on screen. */
+  const summaryPlayedAction =
+    pf.view && activePlayer === pf.view.actorSeat ? playedHints.action : null;
 
   /* Hand-history solves know what each player actually held, so the study view
    * opens on that hand instead of an empty breakdown: the class for the matrix
@@ -1769,6 +1774,7 @@ const Solver = ({ user }: SolverProps) => {
                 money={pfMoney}
                 autoPinBySeat={autoPinBySeat}
                 seatNav={seatNav}
+                playedAction={summaryPlayedAction}
               />
             ) : mode === "single-mobile" ? (
               <SingleRangeMobileView
@@ -1802,6 +1808,7 @@ const Solver = ({ user }: SolverProps) => {
                 money={pfMoney}
                 autoPinBySeat={autoPinBySeat}
                 seatNav={seatNav}
+                playedAction={summaryPlayedAction}
               />
             ) : mode === "multi-desktop" ? (
               <MultiRangeDesktopView

@@ -18,10 +18,14 @@ import {
   type TreeParams,
 } from "../src/lib/solver/treeConfig";
 import {
+  currentStreetCommitChips,
   formatPioAction,
+  potSplitChips,
   preflopCommitChips,
+  priorStreetCommitChips,
   stackBehindChips,
 } from "../src/lib/solver/postflopNode";
+import { matchPlayedOption, type ActualAction } from "../src/lib/solver/handActualLine";
 import { fmtMoney } from "../src/pages/solver/boardDisplay";
 
 /* These run once, not per browser project. */
@@ -234,4 +238,107 @@ test("preflop commit and stack-behind math follow the scale", () => {
 
   // stackBehindChips is pure chips in / chips out, so it is unit agnostic.
   expect(stackBehindChips("r:0:b300", "oop", 1500, 400)).toBe(800);
+});
+
+/* Pio's bNNN segments are hand-cumulative: a player's whole postflop
+   investment, never resetting at a street boundary. The numbers below are a
+   real solved hand (chipScale 10, $67 flop pot): flop went bet $20.1 /
+   raise to $74.8 / call, and the turn bet segment reads b2741 = 748 carried
+   from the flop + 1993 actually bet. The viewer used to re-add the flop money
+   and display "Bet 274.1" for a $199.3 bet. */
+const TURN_NODE = "r:0:c:b201:b748:c:7s";
+const RIVER_NODE = "r:0:c:b201:b748:c:7s:b2741:c:2h";
+
+test("prior-street commit is the cumulative carry, not a per-street sum", () => {
+  expect(priorStreetCommitChips(TURN_NODE)).toBe(748);
+  // Two betting streets: the last cumulative value, not 748 + 2741.
+  expect(priorStreetCommitChips(RIVER_NODE)).toBe(2741);
+  // A check-through street has no bet segment; the carry persists.
+  expect(priorStreetCommitChips("r:0:b201:c:7s:c:c:2h")).toBe(201);
+});
+
+test("live street bets subtract the carry from the cumulative segment", () => {
+  expect(currentStreetCommitChips(`${TURN_NODE}:b2741`)).toEqual({ oop: 1993, ip: 0 });
+  // A call matches the outstanding street-relative bet.
+  expect(currentStreetCommitChips(`${TURN_NODE}:b2741:c`)).toEqual({
+    oop: 1993,
+    ip: 1993,
+  });
+});
+
+test("turn and river labels show the street's bet, not the hand total", () => {
+  expect(formatPioAction("b2741", TURN_NODE, 6000, 10)).toBe("Bet 199.3");
+  // Facing the turn bet, a raise label is street-relative too.
+  expect(formatPioAction("b6000", `${TURN_NODE}:b2741`, 12000, 10)).toBe(
+    "Raise to 525.2"
+  );
+  // Sims share the node-id format, so the bb branch subtracts the carry too.
+  expect(formatPioAction("b300", "r:0:b100:c:7s", null)).toBe("Bet 2bb");
+  // Donk flop then check-through turn: the carry survives to the river.
+  expect(formatPioAction("b1200", "r:0:b201:c:7s:c:c:2h", 6000, 10)).toBe("Bet 99.9");
+});
+
+test("ALLIN on later streets compares cumulative against cumulative", () => {
+  expect(formatPioAction("b6000", TURN_NODE, 6000, 10)).toBe("ALLIN");
+  expect(formatPioAction("b5999", TURN_NODE, 6000, 10)).toBe("ALLIN");
+  // The old street-relative rule flagged exactly this bet as ALLIN
+  // (6000 - 748 = 5252); it leaves 748 chips behind and is just a bet.
+  expect(formatPioAction("b5252", TURN_NODE, 6000, 10)).toBe("Bet 450.4");
+});
+
+test("pot math no longer re-adds completed streets", () => {
+  // Turn pot: 670 + 2 x 748 = 2166 chips (216.6 display).
+  expect(potSplitChips(TURN_NODE, 670).potChips).toBe(2166);
+  // River pot after the called turn bet: 670 + 2 x 2741, not 670 + 2 x 3489.
+  expect(potSplitChips(RIVER_NODE, 670).potChips).toBe(6152);
+  // Live turn bets sit in front of the seats until matched.
+  expect(potSplitChips(`${TURN_NODE}:b2741`, 670)).toEqual({
+    potChips: 2166,
+    oopChips: 1993,
+    ipChips: 0,
+  });
+  // Stacks behind on a multi-street line: carry once, live bet once.
+  expect(stackBehindChips(`${TURN_NODE}:b2741`, "oop", 15000, 400)).toBe(
+    15000 - 400 - 748 - 1993
+  );
+});
+
+/* The PLAYED hint: solver sizes are whole-percent-of-pot discretizations of
+   the hand's real amounts, so the matcher picks the closest sized option and
+   accepts it within 20% - never a wildly different size. */
+const bet = (amount: number, allIn = false): ActualAction => ({
+  kind: "bet",
+  amount,
+  allIn,
+});
+
+test("played-action matching picks the closest size within tolerance", () => {
+  const options = ["Check", "Bet 15", "Bet 20.1", "Bet 33.5"];
+  expect(matchPlayedOption(options, bet(20))).toBe("Bet 20.1");
+  expect(matchPlayedOption(["Check", "Bet 199.3"], bet(200))).toBe("Bet 199.3");
+  expect(matchPlayedOption(["Fold", "Call", "Raise to 74.8"], {
+    kind: "raise",
+    amount: 75,
+    allIn: false,
+  })).toBe("Raise to 74.8");
+  // Nothing near the actual size: no claim.
+  expect(matchPlayedOption(options, bet(60))).toBeNull();
+  // The 20% cap is relative, so big bets keep proportional slack.
+  expect(matchPlayedOption(["Bet 240"], bet(200))).toBe("Bet 240");
+  expect(matchPlayedOption(["Bet 245"], bet(200))).toBeNull();
+});
+
+test("played-action matching handles the non-sized labels", () => {
+  expect(matchPlayedOption(["Check", "Bet 20.1"], { kind: "check", amount: null, allIn: false })).toBe("Check");
+  expect(matchPlayedOption(["Fold", "Call"], { kind: "fold", amount: null, allIn: false })).toBe("Fold");
+  expect(matchPlayedOption(["Fold", "Call"], { kind: "call", amount: null, allIn: false })).toBe("Call");
+  // A call facing a raise where an aggressive ALLIN option is also on the
+  // node: the call is the Call branch, never the shove.
+  expect(matchPlayedOption(["ALLIN", "Call", "Fold"], { kind: "call", amount: null, allIn: false })).toBe("Call");
+  // Calling a shove in a tree whose call branch is labeled ALLIN.
+  expect(matchPlayedOption(["Fold", "ALLIN"], { kind: "call", amount: null, allIn: true })).toBe("ALLIN");
+  // An all-in bet matches the ALLIN label directly, whatever its size.
+  expect(matchPlayedOption(["Check", "ALLIN"], bet(612, true))).toBe("ALLIN");
+  // No matching label at the node: no claim.
+  expect(matchPlayedOption(["Bet 20.1"], { kind: "check", amount: null, allIn: false })).toBeNull();
 });

@@ -39,6 +39,7 @@ const SingleRangeDesktopView = ({
   money,
   autoPinBySeat,
   seatNav,
+  playedAction,
 }: SingleRangeDesktopViewProps) => {
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
   const { ref: wrapRef, top: topOffset, bottomInset } = useTopOffset();
@@ -97,6 +98,7 @@ const SingleRangeDesktopView = ({
           activePlayer={activePlayer}
           autoPinBySeat={autoPinBySeat}
           seatNav={seatNav}
+          playedAction={playedAction}
         />
       </div>
     </div>
