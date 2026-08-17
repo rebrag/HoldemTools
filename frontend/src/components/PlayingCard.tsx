@@ -32,10 +32,11 @@ function toName(code: string) {
 // Default widths when no explicit width is provided
 const SIZE_WIDTH: Record<Size, number> = { sm: 40, md: 48, lg: 64 };
 
-// Font-size ratios relative to the card's own rendered width (via cqw
-// container query units). All corner/center sizing and offsets are
-// expressed as fractions of the card width so they stay proportionate at
-// any rendered size, not just the size the ratios were tuned at.
+// Font-size ratios relative to the card's own rendered width. All corner/center
+// sizing and offsets are expressed as fractions of the card width so they stay
+// proportionate at any rendered size, not just the size the ratios were tuned
+// at. A px width resolves them to px directly; a CSS-length width falls back to
+// cqw container query units (see below).
 const RATIOS: Record<
   Size,
   { center: number; cornerRank: number; cornerSuit: number; cornerInset: number }
@@ -57,8 +58,21 @@ const PlayingCard: React.FC<PlayingCardProps> = ({ code, size = "md", width, cla
   const s = (code?.[1]?.toLowerCase() ?? "s") as keyof typeof SUIT_INFO;
   const suit = SUIT_INFO[s] ?? SUIT_INFO.s;
 
-  const widthToken = typeof width === "number" ? `${width}px` : width || `${SIZE_WIDTH[size]}px`;
+  // A px width (a number, or the size default) is known here, so every derived
+  // length can be resolved to px up front. Only a caller-supplied CSS length -
+  // a clamp() expression, or "100%" in CardPicker's fill-cell mode - is unknown
+  // until layout, and those cards keep the container-query path.
+  //
+  // The split matters for paint cost: `container-type: inline-size` imposes
+  // layout/style containment, and the hand-history list renders ~180 cards at
+  // once (previews) while the tables render a dozen more. iOS Safari repaints
+  // that many contained subtrees slowly enough that cards visibly blank out
+  // mid-scroll, so the common case avoids containment entirely.
+  const px = typeof width === "number" ? width : width == null ? SIZE_WIDTH[size] : null;
+  const widthToken = px != null ? `${px}px` : (width as string);
   const ratio = RATIOS[size];
+  const len = (fraction: number) =>
+    px != null ? `${fraction * px}px` : `${fraction * 100}cqw`;
 
   return (
     <div
@@ -69,22 +83,21 @@ const PlayingCard: React.FC<PlayingCardProps> = ({ code, size = "md", width, cla
       )}
       style={{
         width: widthToken,
-        containerType: "inline-size",
+        ...(px == null ? { containerType: "inline-size" } : null),
       } as React.CSSProperties}
       aria-label={toName(code)}
       role="img"
       title={toName(code)}
     >
-      {/* big center suit — sized in cqw (% of this element's own rendered
-          width) so it scales correctly whether `width` is a px number, a
-          percentage (grid fill-cell mode), or a clamp() expression. Using
-          a CSS var + calc() here breaks when width is a percentage, since
-          font-size percentages resolve against the parent's font-size, not
-          this element's width. */}
+      {/* big center suit — when the width is only a CSS length this is sized in
+          cqw (% of this element's own rendered width) so it scales correctly
+          whether that length is a percentage (grid fill-cell mode) or a clamp()
+          expression. A CSS var + calc() would not do: font-size percentages
+          resolve against the parent's font-size, not this element's width. */}
       <div
         className={clsx("pointer-events-none", suit.color)}
         aria-hidden="true"
-        style={{ fontSize: `${ratio.center * 100}cqw` }}
+        style={{ fontSize: len(ratio.center) }}
       >
         {suit.symbol}
       </div>
@@ -93,33 +106,27 @@ const PlayingCard: React.FC<PlayingCardProps> = ({ code, size = "md", width, cla
           proportionate whether the card is 30px or 130px wide */}
       <div
         className="absolute flex flex-col items-center leading-none"
-        style={{
-          top: `${ratio.cornerInset * 100}cqw`,
-          left: `${ratio.cornerInset * 100}cqw`,
-        }}
+        style={{ top: len(ratio.cornerInset), left: len(ratio.cornerInset) }}
       >
         <span className={clsx("font-semibold", suit.color)}
-              style={{ fontSize: `${ratio.cornerRank * 100}cqw` }}>
+              style={{ fontSize: len(ratio.cornerRank) }}>
           {rankLabel(r)}
         </span>
         <span className={clsx(suit.color)}
-              style={{ fontSize: `${ratio.cornerSuit * 100}cqw` }}>
+              style={{ fontSize: len(ratio.cornerSuit) }}>
           {suit.symbol}
         </span>
       </div>
       <div
         className="absolute flex rotate-180 flex-col items-center leading-none"
-        style={{
-          bottom: `${ratio.cornerInset * 100}cqw`,
-          right: `${ratio.cornerInset * 100}cqw`,
-        }}
+        style={{ bottom: len(ratio.cornerInset), right: len(ratio.cornerInset) }}
       >
         <span className={clsx("font-semibold", suit.color)}
-              style={{ fontSize: `${ratio.cornerRank * 100}cqw` }}>
+              style={{ fontSize: len(ratio.cornerRank) }}>
           {rankLabel(r)}
         </span>
         <span className={clsx(suit.color)}
-              style={{ fontSize: `${ratio.cornerSuit * 100}cqw` }}>
+              style={{ fontSize: len(ratio.cornerSuit) }}>
           {suit.symbol}
         </span>
       </div>

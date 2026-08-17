@@ -343,7 +343,11 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
         onCreate={() => navigate("/hand-history/create")}
       />
 
-      <div className="mx-auto max-w-3xl px-4 pt-5 pb-12">
+      {/* No top padding on phones: the list is full-bleed there, so any gap
+          under the secondary nav reads as a stray band of backdrop rather than
+          breathing room. Each child that isn't the list restores its own inset
+          (mt-4) so nothing else ends up flush against the bar. */}
+      <div className="mx-auto max-w-3xl px-4 pb-12 sm:pt-5">
       <FlyingCards />
 
       <AnimatePresence>
@@ -352,7 +356,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            className="mb-4 overflow-hidden rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
+            className="mb-4 mt-4 overflow-hidden rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 sm:mt-0"
           >
             Saved on this device.{" "}
             <span className="font-semibold">Sign in</span> to sync your hand
@@ -367,7 +371,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            className="mb-4 overflow-hidden rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"
+            className="mb-4 mt-4 overflow-hidden rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 sm:mt-0"
           >
             {error}
           </motion.div>
@@ -383,7 +387,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ type: "spring", stiffness: 240, damping: 22 }}
-          className="rounded-2xl border border-dashed border-emerald-300/50 bg-white/70 px-6 py-12 text-center backdrop-blur-sm"
+          className="mt-4 rounded-2xl border border-dashed border-emerald-300/50 bg-white/70 px-6 py-12 text-center backdrop-blur-sm sm:mt-0"
         >
           <motion.div
             aria-hidden="true"
@@ -405,9 +409,16 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
       ) : (
         <>
         {/* Edge-to-edge on phones (the -mx-4 cancels the page gutter) so the
-            card fans get the full screen width; a rounded card again from sm. */}
+            card fans get the full screen width; a rounded card again from sm.
+            On phones it starts flush under the secondary nav, whose own bottom
+            border is the only rule needed between the two - hence border-b
+            here, and all four sides only once the list becomes a card.
+            The fill is fully opaque on purpose: FlyingCards animates behind
+            every page, and a translucent list forces the browser to re-blend
+            (and so repaint) every row against a moving backdrop on each scroll
+            frame, which is what left card fans blank mid-scroll on iOS. */}
         <motion.ul
-          className="-mx-4 divide-y divide-emerald-100 overflow-hidden border-y border-emerald-300/40 bg-white/90 shadow-sm shadow-emerald-500/10 sm:mx-0 sm:rounded-2xl sm:border-x"
+          className="-mx-4 divide-y divide-emerald-100 overflow-hidden border-b border-emerald-300/40 bg-white shadow-sm shadow-emerald-500/10 sm:mx-0 sm:rounded-2xl sm:border"
           variants={listVariants}
           initial="hidden"
           animate="visible"
