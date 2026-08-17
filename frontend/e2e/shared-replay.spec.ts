@@ -57,11 +57,12 @@ test("a shared replay opens with no auth and only that hand's data", async ({ pa
   await page.goto(`/hand-history/shared/${TOKEN}`, { waitUntil: "domcontentloaded" });
 
   // The table renders with the hand's seats and stacks, so it resolved end to
-  // end - and it is flagged as a shared view.
+  // end - and it is in shared mode, which the back link gives away: a shared
+  // recipient has no hand-history list to go back to, so it points home.
   await expect(page.getByRole("button", { name: /^Seat BTN/ })).toBeVisible({
     timeout: 15_000,
   });
-  await expect(page.getByText("Shared", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "HoldemTools" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Play" }).first()).toBeVisible();
 
   // One hand's worth of data and nothing else: no library listing, no authed

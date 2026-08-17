@@ -294,7 +294,7 @@ const PokerTable: React.FC<PokerTableProps> = ({
                 {(seat.holeCards || seat.isButton) && (
                   <div className="relative flex gap-0.5">
                     {seat.holeCards && (
-                      <div className={`flex gap-0.5 ${dimClass}`}>
+                      <div className={`flex ${dimClass}`}>
                         {seat.holeCards.map((c, h) => {
                           // Shrink cards a little for 4-5 card (PLO) hands so the
                           // row still fits the seat footprint.
@@ -302,12 +302,30 @@ const PokerTable: React.FC<PokerTableProps> = ({
                             seat.holeCards!.length >= 4
                               ? Math.round(cardBackWidth * 0.72)
                               : cardBackWidth;
-                          if (c) return <PlayingCard key={h} code={c} size="sm" width={w} />;
-                          if (!seat.emptySlotsAsPlaceholders) return <CardBack key={h} w={w} />;
+                          // Cards are dealt fanned, each tucked under the next,
+                          // so a hand takes ~20% less width per extra card and
+                          // stops crowding the neighbouring seats. The offset is
+                          // a fraction of the card so it holds at any size, and
+                          // z-index rises left to right so the part that
+                          // identifies a card - its top-left index - is the part
+                          // that stays uncovered.
+                          const overlap = h === 0 ? 0 : Math.round(w * 0.22);
                           return (
-                            <div key={h} className="relative" style={{ width: w }}>
-                              <div className="aspect-[3/4] rounded-[4px] border border-dashed border-white/30 bg-black/15" />
-                              {seat.nextSlotIndex === h && <NextSlotHighlight />}
+                            <div
+                              key={h}
+                              className="relative shrink-0"
+                              style={{ width: w, marginLeft: -overlap, zIndex: h }}
+                            >
+                              {c ? (
+                                <PlayingCard code={c} size="sm" width={w} />
+                              ) : !seat.emptySlotsAsPlaceholders ? (
+                                <CardBack w={w} />
+                              ) : (
+                                <>
+                                  <div className="aspect-[3/4] rounded-[4px] border border-dashed border-white/30 bg-black/15" />
+                                  {seat.nextSlotIndex === h && <NextSlotHighlight />}
+                                </>
+                              )}
                             </div>
                           );
                         })}

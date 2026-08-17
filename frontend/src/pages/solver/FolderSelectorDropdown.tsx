@@ -260,7 +260,11 @@ const FolderSelectorDropdown: React.FC<Props> = ({
 
   if (placement) {
     const { anchor, viewport } = placement;
-    elementTop = anchor.bottom + VIEWPORT_MARGIN;
+    // Rounded for the same reason panelLeft is below: the anchor's bottom is a
+    // fractional coordinate that varies with whatever the header above it
+    // settled at, and landing the panel on a half pixel blurs every row of text
+    // it renders (and shifted the visual baseline by a pixel at random).
+    elementTop = Math.round(anchor.bottom + VIEWPORT_MARGIN);
 
     if (isMobile) {
       // Sheet: near-full-width and centered; the tag rail is inlined instead.

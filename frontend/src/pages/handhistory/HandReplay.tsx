@@ -26,7 +26,7 @@ import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import useNoOverscroll from "@/hooks/useNoOverscroll";
 import { positionLabelsForSeats } from "./create/positions";
 import { buildTableSeats, potView, TableCenter } from "./create/tableView";
-import { parseReplay, reconstructFrames, stripReplay } from "./create/replay";
+import { parseReplay, reconstructFrames } from "./create/replay";
 import { legalActions } from "./create/engine";
 import { useReplayEquities } from "./create/useReplayEquities";
 import { TEST_HAND_ID, buildTestHandText, SHOW_TEST_HAND } from "./create/testHand";
@@ -153,11 +153,6 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
         : [],
     [data]
   );
-  const title = useMemo(
-    () => (rawText ? stripReplay(rawText).split("\n").find((l) => l.trim()) ?? "" : ""),
-    [rawText]
-  );
-
   // Per-street equities for the shown / all-in players, computed once per hand
   // from the resolved final frame (not per scrubbed frame).
   const finalEngine = replay ? replay.frames[replay.frames.length - 1] : null;
@@ -353,27 +348,19 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
 
   return (
     <div className="mx-auto flex min-h-[calc(100dvh-3rem)] max-w-3xl flex-col overflow-x-clip px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
-      {/* Header */}
-      <div className="mb-2 flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <button
-            type="button"
-            onClick={() => navigate(shared ? "/" : "/hand-history")}
-            className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-emerald-200/80 transition hover:text-white"
-          >
-            <ChevronLeft className="h-3.5 w-3.5" /> {shared ? "HoldemTools" : "Hand histories"}
-          </button>
-          <div className="flex items-center gap-2">
-            <h1 className="truncate text-sm font-semibold text-white sm:text-base">
-              {title || "Hand replay"}
-            </h1>
-            {shared && (
-              <span className="shrink-0 rounded-full bg-sky-500/90 px-2 py-[1px] text-[10px] font-bold text-white">
-                Shared
-              </span>
-            )}
-          </div>
-        </div>
+      {/* Header — just the two controls. The hand's first text line used to sit
+          here as a title, but it is the serializer's boilerplate ("Hand
+          converted by HoldemTools: <url>"), which says nothing about the hand
+          and cost a line of the phone viewport the table wants. */}
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={() => navigate(shared ? "/" : "/hand-history")}
+          className="inline-flex min-w-0 items-center gap-1 text-xs font-medium text-emerald-200/80 transition hover:text-white"
+        >
+          <ChevronLeft className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">{shared ? "HoldemTools" : "Hand histories"}</span>
+        </button>
         <button
           type="button"
           onClick={() => setUnitMode((u) => (u === "bb" ? "chips" : "bb"))}
