@@ -15,6 +15,7 @@ import useFiles from "@/hooks/useFiles";
 import axios from "axios";
 import { JsonData, passiveAction, plateActions } from "@/lib/solver/utils";
 import Line from "./Line";
+import { canPassAction, indexLineBySeat, resolveSeatNav } from "./seatNavigation";
 import { Steps } from "intro.js-react";
 import "intro.js/introjs.css";
 import { User } from "firebase/auth";
@@ -1522,6 +1523,43 @@ const Solver = ({ user }: SolverProps) => {
     [pf.view]
   );
 
+  /* Clicking a seat on the single-range view's table navigates the preflop
+   * tree exactly the way the Line strip's seat cards do: seats still to act
+   * are folded/checked/called up to, seats that already acted are rewound to.
+   *
+   * Suppressed inside a postflop session - the table is then showing a board,
+   * not the preflop tree, and the postflop line has its own navigation. */
+  const seatLineIndex = useMemo(
+    () => indexLineBySeat(preflopLine, actingOrder),
+    [preflopLine, actingOrder]
+  );
+  const activeCanPass = canPassAction(plateData[plateMapping[activePlayer]]);
+  const seatNav = useCallback(
+    (pos: string) =>
+      pf.view
+        ? null
+        : resolveSeatNav({
+            pos,
+            positions: actingOrder,
+            activePlayer,
+            alive: alivePlayers[pos] ?? true,
+            activeCanPass,
+            actionsBeforeSeat: seatLineIndex.actionsBeforeSeat,
+            onSkipToSeat: skipToSeat,
+            onRewindTo: rewindPreflopTo,
+          }),
+    [
+      pf.view,
+      actingOrder,
+      activePlayer,
+      alivePlayers,
+      activeCanPass,
+      seatLineIndex,
+      skipToSeat,
+      rewindPreflopTo,
+    ]
+  );
+
   /* The line strip beside the sim panel in StudyTopStrip - the one header
    * every layout shares. It fills its flex cell and stretches to the panel's
    * height. */
@@ -1735,6 +1773,7 @@ const Solver = ({ user }: SolverProps) => {
                 tableSeatsOverride={hhTableSeats}
                 money={pfMoney}
                 autoPinBySeat={autoPinBySeat}
+                seatNav={seatNav}
                 playedAction={summaryPlayedAction}
               />
             ) : mode === "single-mobile" ? (
@@ -1768,6 +1807,7 @@ const Solver = ({ user }: SolverProps) => {
                 tableSeatsOverride={hhTableSeats}
                 money={pfMoney}
                 autoPinBySeat={autoPinBySeat}
+                seatNav={seatNav}
                 playedAction={summaryPlayedAction}
               />
             ) : mode === "multi-desktop" ? (

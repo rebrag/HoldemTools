@@ -17,6 +17,15 @@ const OVERLAP      = 8;    // vertical overlap between chips in a stack
 const MAX_SINGLE   = 20;   // chips per column in single-stack mode
 const MAX_PER_DENOM = 12;  // chips per column in multi-stack mode
 
+// Horizontal ("spread") mode. The step is wider than the vertical OVERLAP
+// because a spread reads by chip FACE, not by edge: 15px of a 42px chip leaves
+// the denomination legible, where the 8px edge slice of a tower does not. Rows
+// stack upward once full, so a big pot grows into a shallow bank rather than a
+// line that outruns the table.
+const H_STEP       = 15;   // px between chip centers in a spread
+const H_ROW_GAP    = 6;    // px between wrapped rows
+const MAX_PER_ROW  = 12;   // chips per row before wrapping
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /** Break `amount` into the fewest chips, largest denomination first. */
@@ -123,23 +132,39 @@ function ChipFace({ cx, cy, chip, r = CHIP_R }) {
   );
 }
 
+/** Split `chips` into groups of at most `max`, preserving order. */
+function chunk(chips, max) {
+  const groups = [];
+  const rem = [...chips];
+  while (rem.length) groups.push(rem.splice(0, max));
+  return groups;
+}
+
 /**
- * Render one or more columns of chips for a given ordered array of chip objects.
- * `maxPerCol` controls when a new column starts.
+ * Render chips for a given ordered array of chip objects, either as vertical
+ * towers (default) or as a horizontal spread.
+ *
+ * Vertical: columns of at most `maxPerCol`, each chip stacked on the one below.
+ * Horizontal: rows of at most MAX_PER_ROW, laid left→right and wrapping upward.
+ *
+ * Either way later chips paint over earlier ones, so passing the list smallest
+ * denomination first puts the big chips on top — the tower's crown, the
+ * spread's right edge.
+ *
  * Returns an <svg> element sized to fit exactly.
  */
-function StackSVG({ chips, maxPerCol, label }) {
+function StackSVG({ chips, maxPerCol, label, horizontal = false }) {
   const D = CHIP_R * 2;
-  const cols = Math.ceil(chips.length / maxPerCol);
-  const svgW = cols * D + (cols - 1) * 10;
 
-  // Split into columns
-  const groups = [];
-  let rem = [...chips];
-  for (let c = 0; c < cols; c++) groups.push(rem.splice(0, maxPerCol));
+  const groups = chunk(chips, horizontal ? MAX_PER_ROW : maxPerCol);
+  const longest = Math.max(...groups.map((g) => g.length));
 
-  const maxInCol = Math.max(...groups.map((g) => g.length));
-  const svgH = maxInCol * OVERLAP + (D - OVERLAP) + 16;
+  const svgW = horizontal
+    ? (longest - 1) * H_STEP + D
+    : groups.length * D + (groups.length - 1) * 10;
+  const svgH = horizontal
+    ? groups.length * (D + H_ROW_GAP) - H_ROW_GAP + 8
+    : longest * OVERLAP + (D - OVERLAP) + 16;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
@@ -152,13 +177,19 @@ function StackSVG({ chips, maxPerCol, label }) {
         aria-hidden="true"
       >
         <ChipDefs />
-        {groups.map((group, colIdx) => {
-          const cx = CHIP_R + colIdx * (D + 10);
-          return group.map((chip, rowIdx) => {
-            const cy = svgH - CHIP_R - 8 - rowIdx * OVERLAP;
-            return <ChipFace key={`${colIdx}-${rowIdx}`} cx={cx} cy={cy} chip={chip} />;
-          });
-        })}
+        {groups.map((group, groupIdx) =>
+          group.map((chip, i) => {
+            // Horizontal: rows fill from the bottom up, so the first (smallest)
+            // chips sit on the front row nearest the reader.
+            const cx = horizontal
+              ? CHIP_R + i * H_STEP
+              : CHIP_R + groupIdx * (D + 10);
+            const cy = horizontal
+              ? svgH - CHIP_R - 4 - groupIdx * (D + H_ROW_GAP)
+              : svgH - CHIP_R - 8 - i * OVERLAP;
+            return <ChipFace key={`${groupIdx}-${i}`} cx={cx} cy={cy} chip={chip} />;
+          })
+        )}
       </svg>
       {label && (
         <span
@@ -185,6 +216,9 @@ function StackSVG({ chips, maxPerCol, label }) {
  *   amount      {number}  Bet amount in dollars (required)
  *   singleStack {boolean} When true (default), all chips form one mixed tower.
  *                         When false, each denomination gets its own stack.
+ *   horizontal  {boolean} Spread the chips left→right instead of stacking them
+ *                         upward. Use where vertical growth would collide with
+ *                         something above — the pot sitting under the board.
  *   showLabel   {boolean} Show the dollar amount label below the stack (default true)
  *   showBreakdown {boolean} Show denomination pills below the stack (default true)
  *
@@ -192,10 +226,12 @@ function StackSVG({ chips, maxPerCol, label }) {
  *   <ChipStack amount={51} />
  *   <ChipStack amount={1137} singleStack={false} />
  *   <ChipStack amount={350} showBreakdown={false} />
+ *   <ChipStack amount={220} horizontal />
  */
 export default function ChipStack({
   amount,
   singleStack = true,
+  horizontal = false,
   showLabel = true,
   showBreakdown = true,
   showAmount = true,
@@ -287,6 +323,7 @@ export default function ChipStack({
           <StackSVG
             chips={singleChipList}
             maxPerCol={MAX_SINGLE}
+            horizontal={horizontal}
             label={showLabel ? `$${amount.toLocaleString()}` : undefined}
           />
         ) : (
@@ -297,6 +334,7 @@ export default function ChipStack({
                 key={c.value}
                 chips={flat}
                 maxPerCol={MAX_PER_DENOM}
+                horizontal={horizontal}
                 label={`${c.count}× ${c.label}`}
               />
             );

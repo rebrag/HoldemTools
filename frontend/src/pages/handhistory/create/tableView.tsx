@@ -209,9 +209,14 @@ export const TableCenter: React.FC<{
           </button>
         )
       )}
-      <span className="text-[9px] font-semibold uppercase tracking-widest text-white/25">
-        HoldemTools
-      </span>
+      {/* Watermark fills the felt under the board only while the table is
+          being set up. Once the hand is live the pot sits there instead (see
+          PokerTable's potPlacement="below"), and on a phone the two overlap. */}
+      {!engine && (
+        <span className="text-[9px] font-semibold uppercase tracking-widest text-white/25">
+          HoldemTools
+        </span>
+      )}
     </>
   );
 };

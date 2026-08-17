@@ -1,9 +1,11 @@
 // src/components/NavBar.tsx
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
+import { motion, useReducedMotion } from "framer-motion";
+import { Grid3x3, History, Wallet, type LucideIcon } from "lucide-react";
 import { useAppNavigate } from "@/components/layout/RouteProgress";
-import { preloadAllRoutes, preloadRoute } from "@/lib/routePreload";
+import { preloadRoute } from "@/lib/routePreload";
 import AccountMenu from "@/components/layout/AccountMenu";
 import { useCurrentTier } from "@/context/TierContext";
 import { openBillingPortal } from "@/lib/stripe/openBillingPortal";
@@ -76,9 +78,10 @@ const NavBar: React.FC<NavBarProps> = () => {
   const modalRef = useRef<HTMLDivElement>(null);
   const { tier, loading } = useCurrentTier();
 
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const toolsBtnRef = useRef<HTMLButtonElement>(null);
-  const toolsMenuRef = useRef<HTMLDivElement>(null);
+  // The active tool's pill slides between segments; layoutId is document-global,
+  // so scope it to this bar.
+  const reduceMotion = useReducedMotion();
+  const pillGroupId = useId();
 
   // Desktop brand placement: keep the logo at the toolbar's true center, but slide
   // it left just enough to never overlap the right-aligned tool buttons.
@@ -93,8 +96,9 @@ const NavBar: React.FC<NavBarProps> = () => {
       const brand = brandRef.current;
       const tools = toolsRowRef.current;
       if (!row || !brand || !tools) return;
-      // Only clamp when the inline (desktop) tools are actually shown.
-      if (getComputedStyle(tools).display === "none") {
+      // Only clamp when the desktop brand is the one on screen; below `lg` it is
+      // display:none and the separate centered mobile brand is showing instead.
+      if (getComputedStyle(brand).display === "none") {
         setBrandLeft(null);
         return;
       }
@@ -193,37 +197,9 @@ const NavBar: React.FC<NavBarProps> = () => {
     };
   }, [menuOpen]);
 
-  // close Tools on outside click / escape
-  useEffect(() => {
-    const onDocDown = (e: PointerEvent) => {
-      if (!toolsOpen) return;
-      const t = e.target as Node | null;
-      if (toolsBtnRef.current?.contains(t as Node)) return;
-      if (toolsMenuRef.current?.contains(t as Node)) return;
-      setToolsOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setToolsOpen(false);
-    };
-    document.addEventListener("pointerdown", onDocDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onDocDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [toolsOpen]);
-
   const { requireAuth } = useAuthGate();
 
-  // Touch has no hover to preload from, and the dropdown navigates on
-  // pointerdown, so opening the menu is the only signal available. It precedes
-  // the selection tap by a few hundred ms — enough to warm the chunks.
-  useEffect(() => {
-    if (toolsOpen) preloadAllRoutes();
-  }, [toolsOpen]);
-
   const go = (path: string) => {
-    setToolsOpen(false);
     // Protected routes go through the auth gate: it navigates when signed in, or
     // opens the login modal here (redirecting after login) when signed out.
     if (PROTECTED_PATHS.has(path)) requireAuth(path);
@@ -232,10 +208,10 @@ const NavBar: React.FC<NavBarProps> = () => {
 
   // The Course and Equity Calculator pages stay routable by URL, but no longer
   // earn navbar slots — the bar carries only the core tools.
-  const tools: { label: string; path: string; section: string }[] = [
-    { label: "Bankroll Tracker", path: "/bankroll", section: "bankroll" },
-    { label: "Hand Histories", path: "/hand-history", section: "handHistory" },
-    { label: "Solutions", path: "/solutions", section: "solver" },
+  const tools: { label: string; path: string; section: string; Icon: LucideIcon }[] = [
+    { label: "Bankroll Tracker", path: "/bankroll", section: "bankroll", Icon: Wallet },
+    { label: "Hand Histories", path: "/hand-history", section: "handHistory", Icon: History },
+    { label: "Solutions", path: "/solutions", section: "solver", Icon: Grid3x3 },
   ];
 
   return (
@@ -317,11 +293,19 @@ const NavBar: React.FC<NavBarProps> = () => {
           </a>
         </div>
 
-        {/* right: inline tool links on desktop, dropdown on smaller screens */}
-        <div className="relative z-10">
-          {/* Inline links (desktop) */}
-          <div ref={toolsRowRef} className="hidden lg:flex items-center gap-2">
-            {tools.map((t) => (
+        {/* right: the tool switcher — one segmented pill group at every width,
+            so a tool is always one tap away and the current one is legible
+            without hovering. Labels collapse to icons on narrow screens; the
+            aria-label carries the name either way. */}
+        <div
+          ref={toolsRowRef}
+          className="relative z-10 inline-flex items-center gap-0.5 rounded-full border border-white/10 bg-white/[0.07] p-[3px]"
+          role="group"
+          aria-label="Tools"
+        >
+          {tools.map((t) => {
+            const active = section === t.section;
+            return (
               <button
                 key={t.path}
                 // Warm the route's chunk on intent, so the click usually has
@@ -333,67 +317,39 @@ const NavBar: React.FC<NavBarProps> = () => {
                   e.preventDefault();
                   go(t.path);
                 }}
-                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-all active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
-                  section === t.section
-                    ? "bg-white/10 text-white"
-                    : "text-slate-300 hover:bg-white/5 hover:text-white"
+                aria-label={t.label}
+                aria-current={active ? "page" : undefined}
+                className={`relative inline-flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-sm font-medium transition-colors active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 sm:px-3 ${
+                  active
+                    ? "text-emerald-950"
+                    : "text-slate-300 hover:bg-white/10 hover:text-white"
                 }`}
-                aria-current={section === t.section ? "page" : undefined}
               >
-                {t.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Dropdown (mobile / tablet) */}
-          <div className="lg:hidden">
-            <button
-              ref={toolsBtnRef}
-              onPointerDown={(e) => {
-                e.preventDefault();
-                setToolsOpen((v) => !v);
-              }}
-              className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-medium text-slate-200 transition-colors hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-              aria-haspopup="menu"
-              aria-expanded={toolsOpen}
-            >
-              Tools
-              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                <path
-                  fillRule="evenodd"
-                  d="M5.23 7.21a.75.75 0 011.06.02L10 11.188l3.71-3.957a.75.75 0 111.08 1.04l-4.24 4.52a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z"
-                  clipRule="evenodd"
+                {/* The sliding pill lives behind the content, so the label and
+                    icon keep one color transition rather than two. */}
+                {active && (
+                  <motion.span
+                    layoutId={reduceMotion ? undefined : `${pillGroupId}-tool-pill`}
+                    className="absolute inset-0 rounded-full bg-emerald-400 shadow-sm"
+                    transition={{ type: "spring", stiffness: 500, damping: 40 }}
+                  />
+                )}
+                <t.Icon
+                  size={16}
+                  strokeWidth={2.2}
+                  className="relative z-10 shrink-0"
+                  aria-hidden="true"
                 />
-              </svg>
-            </button>
-
-            {toolsOpen && (
-              <div
-                ref={toolsMenuRef}
-                className="absolute right-0 mt-2 w-48 overflow-hidden rounded-xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl z-50"
-              >
-                <div className="py-1">
-                  {tools.map((t) => (
-                    <button
-                      key={t.path}
-                      onPointerDown={(e) => {
-                        e.preventDefault();
-                        go(t.path);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm transition-colors ${
-                        section === t.section
-                          ? "bg-white/5 text-emerald-300"
-                          : "text-slate-200 hover:bg-white/5 hover:text-white"
-                      }`}
-                      aria-current={section === t.section ? "page" : undefined}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+                {/* Labels appear only at `lg`, the same breakpoint where the
+                    brand stops being absolutely centered. Showing them earlier
+                    widens this group into the centered brand, which has no JS
+                    clamp to get out of the way (the desktop brand does). */}
+                <span className="relative z-10 hidden whitespace-nowrap lg:inline">
+                  {t.label}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 

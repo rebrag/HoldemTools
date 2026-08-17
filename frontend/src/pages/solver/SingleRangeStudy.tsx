@@ -19,6 +19,7 @@ import { MatrixHeightModePill } from "./FolderSelector";
 import ActionSummary from "./ActionSummary";
 import HandBreakdown from "./HandBreakdown";
 import SolverTableCenter from "./SolverTableCenter";
+import { useSeatNavigation, type SeatNavTarget } from "./seatNavigation";
 import { boardCardWidth, solverPotLabel, type MoneyDisplay } from "./boardDisplay";
 
 interface SingleRangeStudyProps {
@@ -67,6 +68,8 @@ interface SingleRangeStudyProps {
   /** Seat -> the hand that seat held in the recorded hand (hand-history
    *  solves). Seeds the pin when a board is opened. */
   autoPinBySeat?: Record<string, { hand: string; combo: string }>;
+  /** Click-to-navigate for the table's seats — see seatNavigation.ts. */
+  seatNav?: (pos: string) => SeatNavTarget | null;
   /** Display label of the action actually taken in the hand, badged PLAYED
    *  on the action summary. */
   playedAction?: string | null;
@@ -118,6 +121,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   money,
   activePlayer,
   autoPinBySeat,
+  seatNav,
   playedAction,
   baseW,
   viewH,
@@ -127,6 +131,10 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
   /* Bet labels carry the solve's money; the colour ramp is calibrated in
    * big blinds, so tell it how much money makes one. */
   const sizeRef = money?.bbSize && money.bbSize > 0 ? money.bbSize : 1;
+
+  /* Clicking a seat walks the preflop tree to that player's decision, the same
+   * way the Line strip's cards do. */
+  const { seats: navSeats, onSeatClick } = useSeatNavigation(tableSeats, seatNav);
 
   /* Pin/hover, auto-pin seeding, display-mode fallback, and matrix display
    * data - shared with the mobile dock via useStudyState. */
@@ -220,7 +228,8 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
             <PokerTable
               moneyToggle={money}
               size={seatCount}
-              seats={tableSeats}
+              seats={navSeats}
+              onSeatClick={onSeatClick}
               className="w-full"
               maxWidthClassName="max-w-none"
               aspectClassName="aspect-[7/5]"
