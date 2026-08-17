@@ -312,9 +312,21 @@ test.describe("mobile sheet", () => {
 
   test("sheet looks right scrolled to the tagged rows", async ({ page }) => {
     const dropdown = await openDropdown(page);
-    await page.getByTestId("folder-dropdown-scroll").evaluate((el) => {
+    const scroller = page.getByTestId("folder-dropdown-scroll");
+    await scroller.evaluate((el) => {
       el.scrollTop = el.scrollHeight;
     });
+    /* Wait for the offset to actually reach the bottom before comparing
+       pixels. The desktop counterpart polls the rail's transform for the same
+       reason; without a wait here the shot can catch the sheet mid-scroll,
+       which is what made this flake under a loaded machine. */
+    await expect
+      .poll(() =>
+        scroller.evaluate(
+          (el) => Math.ceil(el.scrollTop + el.clientHeight) >= el.scrollHeight
+        )
+      )
+      .toBe(true);
     await expect(dropdown).toHaveScreenshot("sheet-scrolled.png", {
       stylePath: SNAPSHOT_STYLE,
       maxDiffPixelRatio: 0.01,

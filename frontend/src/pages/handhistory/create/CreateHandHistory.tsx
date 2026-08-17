@@ -1065,6 +1065,7 @@ const CreateHandHistory: React.FC<Props> = ({
         maxWidthClassName="max-w-2xl"
         potAmount={pot?.amount}
         potLabel={pot?.label}
+        potPlacement="below"
         potWinnerSeatIndex={pot?.winnerSeatIndex}
         center={
           <TableCenter

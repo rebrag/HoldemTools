@@ -45,6 +45,12 @@ export interface PokerTableSeat {
   nextSlotIndex?: number;
   /** emerald ring around the whole seat: marks the seat selected for editing. */
   highlighted?: boolean;
+  /** Opt this seat out of `onSeatClick` (no handler, no pointer cursor, no
+   *  hover cue) while its neighbours stay clickable. Defaults to true, so a
+   *  table that passes onSeatClick keeps every seat live unless told otherwise. */
+  interactive?: boolean;
+  /** Tooltip on the seat, e.g. what clicking it will do. */
+  title?: string;
   /** extra node rendered below the badges (e.g. an equity readout).
    *  Must not contain interactive elements: the seat root is a <button>. */
   extra?: React.ReactNode;
@@ -59,6 +65,13 @@ export interface PokerTableProps {
   potAmount?: number;
   /** Text label shown under the pot chips, e.g. "Flop · Pot 22 BB". */
   potLabel?: string;
+  /** Where the pot sits relative to the board in the center slot.
+   *  - "above" (default): chips tower upward above the board, label beneath them.
+   *  - "below": chips spread horizontally under the board, label beneath.
+   *    Reads like a real table (the pot is pushed in front of the board) and
+   *    keeps a growing pot from creeping over the cards, which an upward tower
+   *    does once the stack is tall. */
+  potPlacement?: "above" | "below";
   /** When set, the pot slides partway toward this seat index (winner award). */
   potWinnerSeatIndex?: number | null;
   onSeatClick?: (index: number) => void;
@@ -98,6 +111,7 @@ const PokerTable: React.FC<PokerTableProps> = ({
   center,
   potAmount,
   potLabel,
+  potPlacement = "above",
   potWinnerSeatIndex,
   onSeatClick,
   feltStyle,
@@ -113,15 +127,21 @@ const PokerTable: React.FC<PokerTableProps> = ({
   const coords = coordsOverride ?? seatCoords(size);
 
   // Pot layer: the label is centered at (POT_BASE_X, POT_BASE_Y) with the chip
-  // stack floating just above it. POT_BASE_Y sits above the board cards (~41% of
-  // the table height) so neither the label nor the chips cover them. When a
-  // winner is set the pot slides ~45% of the way toward that seat; animating
-  // left/top gives a smooth "chips pushed to the winner" motion.
+  // stack floating just above it ("above") or spread below the board with the
+  // label under it ("below"). Either way the base Y clears the board cards so
+  // neither the label nor the chips cover them. When a winner is set the pot
+  // slides ~45% of the way toward that seat; animating left/top gives a smooth
+  // "chips pushed to the winner" motion.
   const showPot = potAmount != null && Math.round(potAmount) >= 1;
+  const potBelow = potPlacement === "below";
   const potWinnerCoord =
     potWinnerSeatIndex != null ? coords[potWinnerSeatIndex] : null;
   const POT_BASE_X = 50;
-  const POT_BASE_Y = 36; // label center, just above the board
+  // "above": label center just above the board. "below": center of the
+  // chips+label block, low enough to clear the board on a phone (where the
+  // cards take the largest share of the table's height) and still well short
+  // of the bottom seat's bet, which lands at ~80% for a bottom-center seat.
+  const POT_BASE_Y = potBelow ? 65 : 36;
   const POT_SLIDE = 0.45;
   const potX = potWinnerCoord
     ? POT_BASE_X + (potWinnerCoord.x - POT_BASE_X) * POT_SLIDE
@@ -166,16 +186,35 @@ const PokerTable: React.FC<PokerTableProps> = ({
               aria-hidden="true"
             >
               <div className="relative flex flex-col items-center">
-                <div className="absolute bottom-full left-1/2 mb-0.5 -translate-x-1/2">
-                  <div style={{ transform: "scale(0.6)", transformOrigin: "center bottom" }}>
+                {potBelow ? (
+                  /* Spread sits in normal flow above the label, so the layer's
+                     anchor grows downward from the board instead of upward
+                     into it. A horizontal spread is short enough that it does
+                     not need to be lifted out of the box the way the tower is. */
+                  <div
+                    className="flex justify-center"
+                    style={{ transform: "scale(0.6)", transformOrigin: "center bottom" }}
+                  >
                     <ChipStack
                       amount={potAmount!}
+                      horizontal
                       showLabel={false}
                       showBreakdown={false}
                       showAmount={false}
                     />
                   </div>
-                </div>
+                ) : (
+                  <div className="absolute bottom-full left-1/2 mb-0.5 -translate-x-1/2">
+                    <div style={{ transform: "scale(0.6)", transformOrigin: "center bottom" }}>
+                      <ChipStack
+                        amount={potAmount!}
+                        showLabel={false}
+                        showBreakdown={false}
+                        showAmount={false}
+                      />
+                    </div>
+                  </div>
+                )}
                 {potLabel && (
                   <span className="whitespace-nowrap rounded-full bg-black/50 px-3 py-0.5 text-[11px] font-semibold text-white shadow">
                     {potLabel}
@@ -190,7 +229,7 @@ const PokerTable: React.FC<PokerTableProps> = ({
             if (seat.hidden) return null;
             const coord = coords[i];
             if (!coord) return null;
-            const clickable = !!onSeatClick;
+            const clickable = !!onSeatClick && seat.interactive !== false;
 
             // Bet pushed toward the table center: interpolate ~30% from the
             // seat's rim position toward the middle (50,50).
@@ -234,11 +273,17 @@ const PokerTable: React.FC<PokerTableProps> = ({
               <button
                 type="button"
                 onClick={clickable ? () => onSeatClick!(i) : undefined}
-                className={`absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5 ${
-                  clickable ? "cursor-pointer" : "cursor-default"
+                title={seat.title}
+                className={`absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5 rounded-lg transition-transform ${
+                  // A clickable seat lifts slightly on hover: the seat is a
+                  // cluster of badges rather than one surface, so a background
+                  // tint would only light part of it.
+                  clickable
+                    ? "cursor-pointer hover:-translate-y-[calc(50%+2px)] active:scale-95"
+                    : "cursor-default"
                 } ${
                   seat.highlighted
-                    ? "rounded-lg ring-2 ring-emerald-400 ring-offset-1 ring-offset-transparent"
+                    ? "ring-2 ring-emerald-400 ring-offset-1 ring-offset-transparent"
                     : ""
                 }`}
                 style={{ left: `${coord.x}%`, top: `${coord.y}%` }}

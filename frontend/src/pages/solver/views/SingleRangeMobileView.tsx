@@ -21,6 +21,7 @@ import SeatStatsPanel from "../SeatStatsPanel";
 import ActionSummary from "../ActionSummary";
 import HandBreakdown from "../HandBreakdown";
 import useStudyState from "../useStudyState";
+import { useSeatNavigation } from "../seatNavigation";
 import { boardCardWidth, solverPotLabel } from "../boardDisplay";
 import useActiveRange from "./useActiveRange";
 import useTopOffset from "./useTopOffset";
@@ -72,6 +73,7 @@ const SingleRangeMobileView = ({
   tableSeatsOverride,
   money,
   autoPinBySeat,
+  seatNav,
 }: SingleRangeMobileViewProps) => {
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
   const { ref: wrapRef, top, bottomInset } = useTopOffset();
@@ -89,6 +91,13 @@ const SingleRangeMobileView = ({
     seatNames,
     money,
   });
+
+  /* Tapping a seat walks the preflop tree to that player's decision, the same
+   * way the Line strip's cards do. */
+  const { seats: navSeats, onSeatClick } = useSeatNavigation(
+    tableSeatsOverride ?? tableSeats,
+    seatNav
+  );
 
   /* Pin/hover, auto-pin seeding, display-mode fallback, and matrix display
    * data - identical behavior to the desktop study view. */
@@ -185,7 +194,8 @@ const SingleRangeMobileView = ({
                 >
                   <PokerTable
                     size={tableSeatsOverride?.length ?? positions.length}
-                    seats={tableSeatsOverride ?? tableSeats}
+                    seats={navSeats}
+                    onSeatClick={onSeatClick}
                     className="w-full"
                     maxWidthClassName="max-w-none"
                     aspectClassName="aspect-[7/5]"

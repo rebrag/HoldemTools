@@ -9,6 +9,7 @@ import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
 import type { MatrixDisplayMode } from "@/lib/solver/matrixDisplayMode";
 import type { NodeStats } from "@/lib/solver/nodeStats";
 import type { PokerTableSeat } from "@/components/PokerTable";
+import type { SeatNavTarget } from "../seatNavigation";
 import type { MoneyDisplay } from "../boardDisplay";
 
 export interface SolverRangeBaseProps {
@@ -50,6 +51,12 @@ export interface SolverRangeBaseProps {
 export interface SingleRangeViewProps extends SolverRangeBaseProps {
   windowWidth: number;
   windowHeight: number;
+  /** Click-to-navigate for the table's seats: given a seat's position, what a
+   *  click on it should do, or null when that seat is not reachable from the
+   *  current node. Same rule the Line strip's cards use (seatNavigation.ts).
+   *  Absent inside a postflop session, where the preflop tree is not what the
+   *  table is showing. */
+  seatNav?: (pos: string) => SeatNavTarget | null;
   /** Board card codes when a postflop board is in play: dealt onto the
    *  table's center slot, and used to name the street on the pot label. */
   board?: string[];

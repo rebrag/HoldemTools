@@ -38,6 +38,7 @@ const SingleRangeDesktopView = ({
   tableSeatsOverride,
   money,
   autoPinBySeat,
+  seatNav,
 }: SingleRangeDesktopViewProps) => {
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
   const { ref: wrapRef, top: topOffset, bottomInset } = useTopOffset();
@@ -95,6 +96,7 @@ const SingleRangeDesktopView = ({
           money={money}
           activePlayer={activePlayer}
           autoPinBySeat={autoPinBySeat}
+          seatNav={seatNav}
         />
       </div>
     </div>
