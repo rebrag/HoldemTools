@@ -10,7 +10,11 @@ import PlayingCard from "@/components/PlayingCard";
 import { CardBack } from "@/components/PokerTable";
 import { summaryFromRawText, stripReplay } from "@/pages/handhistory/create/replay";
 
-const CARD_W = 22;
+const CARD_W = 26;
+// Cards in the fan overlap, but the face's rank+suit sits centred, so the
+// overlap has to stay clear of it - anything past ~a fifth of the card width
+// starts eating the glyphs it exists to keep legible.
+const CARD_OVERLAP = Math.round(CARD_W * 0.15);
 
 // One card slot: a known code renders face-up; null renders a face-down back
 // (unknown/unrecorded card).
@@ -18,15 +22,14 @@ const Slot: React.FC<{ code: string | null }> = ({ code }) =>
   code ? <PlayingCard code={code} size="sm" width={CARD_W} /> : <CardBack w={CARD_W} />;
 
 // A row of cards, fanned: each card overlaps the previous with a white ring +
-// rising z-index so its (left) corner index stays legible over the previous
-// card, keeping long boards narrow.
+// rising z-index so both faces stay legible while long boards stay narrow.
 const CardGroup: React.FC<{ cards: (string | null)[] }> = ({ cards }) => (
   <div className="flex">
     {cards.map((c, i) => (
       <div
         key={i}
-        className={i === 0 ? "" : "-ml-[7px] rounded-md ring-1 ring-white"}
-        style={{ zIndex: i }}
+        className={i === 0 ? "" : "rounded-md ring-1 ring-white"}
+        style={{ zIndex: i, marginLeft: i === 0 ? undefined : -CARD_OVERLAP }}
       >
         <Slot code={c} />
       </div>

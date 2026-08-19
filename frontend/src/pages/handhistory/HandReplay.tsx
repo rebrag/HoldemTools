@@ -348,19 +348,12 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
 
   return (
     <div className="mx-auto flex min-h-[calc(100dvh-3rem)] max-w-3xl flex-col overflow-x-clip px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
-      {/* Header — just the two controls. The hand's first text line used to sit
-          here as a title, but it is the serializer's boilerplate ("Hand
-          converted by HoldemTools: <url>"), which says nothing about the hand
-          and cost a line of the phone viewport the table wants. */}
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={() => navigate(shared ? "/" : "/hand-history")}
-          className="inline-flex min-w-0 items-center gap-1 text-xs font-medium text-emerald-200/80 transition hover:text-white"
-        >
-          <ChevronLeft className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate">{shared ? "HoldemTools" : "Hand histories"}</span>
-        </button>
+      {/* Header — the unit toggle alone. What used to sit to its left was the
+          hand's first text line as a title (the serializer's "Hand converted by
+          HoldemTools: <url>" boilerplate, which says nothing about the hand)
+          and a back link duplicating the navbar above it. Both cost a line of
+          the phone viewport that the table wants. */}
+      <div className="mb-2 flex items-center justify-end">
         <button
           type="button"
           onClick={() => setUnitMode((u) => (u === "bb" ? "chips" : "bb"))}
