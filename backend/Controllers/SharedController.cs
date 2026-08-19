@@ -29,6 +29,13 @@ namespace PokerRangeAPI2.Controllers
             // Returned EXACTLY as stored — the client decodes an embedded payload,
             // so the text must not be modified or stripped.
             public string RawText { get; set; } = default!;
+
+            // The hand's server id. Not sensitive: every id-keyed endpoint
+            // authorizes by owner, so knowing an id grants nothing. It lets a
+            // signed-in owner viewing their own share link resolve extras that
+            // are keyed by hand id (e.g. the replay page's "view solution"
+            // button, which reads the per-viewer solved-boards index).
+            public int Id { get; set; }
         }
 
         // GET /api/shared/{token}
@@ -51,7 +58,7 @@ namespace PokerRangeAPI2.Controllers
                 return NotFound();
             }
 
-            return Ok(new SharedHandResponse { RawText = hand.RawText });
+            return Ok(new SharedHandResponse { RawText = hand.RawText, Id = hand.Id });
         }
     }
 }

@@ -1,6 +1,7 @@
 // src/pages/handhistory/create/types.ts
 // State model for the Advanced Hand History recorder (visual hand entry).
 import type { EvalGame } from "@/lib/handEval";
+import { positionLabelsForSeats } from "./positions";
 
 // Hole cards for a seat. Length matches the game's hand size (2 for Hold'em,
 // 4 for PLO, 5 for PLO5); empty slots are null.
@@ -56,8 +57,16 @@ export interface AdvancedHandState {
   bigBlind: string;
   ante: string; // per-player ante (0 = none)
   /** Posted straddles in posting order (first entry is the initial straddle,
-   *  then the double straddle, then the triple). Any position may straddle. */
+   *  then the double straddle, then the triple). Any position may straddle.
+   *  These are seat-pinned (placed via the seat editor); the setup form's
+   *  UTG straddle lives in `utgStraddle` instead. */
   straddles: StraddlePost[];
+  /** The setup form's straddle amount. When set (> 0), a straddle is posted
+   *  by whoever sits directly after the big blind — resolved at read time
+   *  (see straddlesOf), so it follows that position when the button moves.
+   *  Optional so old replay payloads, which predate the field, deserialize
+   *  unchanged. Empty string / unparseable = no straddle. */
+  utgStraddle?: string;
   /** @deprecated Legacy single-straddle fields. Old saved replay payloads
    *  embed them; straddlesOf() folds them into `straddles` on read. */
   straddleSeat?: number | null;
@@ -114,15 +123,55 @@ export function nextActiveSeat(seats: Seat[], from: number): number {
   return from;
 }
 
-// The state's straddles in posting order. Old replay payloads predate the
-// `straddles` array and carry the legacy single-straddle fields instead, so
-// every reader goes through this instead of touching `state.straddles` raw.
-export function straddlesOf(state: AdvancedHandState): StraddlePost[] {
+// The seat-pinned straddles (placed via the seat editor) in posting order.
+// Old replay payloads predate the `straddles` array and carry the legacy
+// single-straddle fields instead, so every reader goes through this (or the
+// resolved straddlesOf below) instead of touching `state.straddles` raw.
+// State mutations (seat edits, moves, quick setup) operate on THIS list; the
+// setup form's UTG straddle is derived and must never be materialized here,
+// or it would stop following the button.
+export function explicitStraddlesOf(state: AdvancedHandState): StraddlePost[] {
   if (state.straddles?.length) return state.straddles.slice(0, MAX_STRADDLES);
   if (state.straddleSeat != null) {
     return [{ seat: state.straddleSeat, amount: state.straddleAmount ?? "" }];
   }
   return [];
+}
+
+// The setup form's straddle amount as a number, or null when off/unparseable.
+export function utgStraddleAmountOf(state: AdvancedHandState): number | null {
+  const n = parseFloat(state.utgStraddle ?? "");
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// The seat the setup form's UTG straddle lands on: the first active seat
+// after the big blind. Recomputed at read time, so the straddle stays on the
+// player after the BB no matter how the button or seats move. Null when the
+// table has no big blind (fewer than two active seats). Heads-up the seat
+// after the BB is the button — the standard button straddle.
+export function utgStraddleSeat(state: AdvancedHandState): number | null {
+  const labels = positionLabelsForSeats(
+    state.seats.map((s) => isActiveSeat(s)),
+    state.buttonSeat
+  );
+  const bbSeat = labels.indexOf("BB");
+  if (bbSeat < 0) return null;
+  return nextActiveSeat(state.seats, bbSeat);
+}
+
+// The state's straddles in posting order, fully resolved: the setup form's
+// UTG straddle (when set) posts first, then the seat-pinned chain. A pinned
+// straddle on the same seat is superseded rather than doubled up. This is
+// the list the engine, the table preview, and the seat editor read.
+export function straddlesOf(state: AdvancedHandState): StraddlePost[] {
+  const explicit = explicitStraddlesOf(state);
+  if (utgStraddleAmountOf(state) == null) return explicit;
+  const seat = utgStraddleSeat(state);
+  if (seat == null) return explicit;
+  return [
+    { seat, amount: state.utgStraddle! },
+    ...explicit.filter((s) => s.seat !== seat),
+  ].slice(0, MAX_STRADDLES);
 }
 
 // Default size for the straddle at `order` (0-based) given the straddles posted
@@ -151,7 +200,7 @@ export function resizeHoleCards(hole: HoleCards, cards: number): HoleCards {
 // Optional overrides let callers seed the setup (e.g. from a bankroll session's
 // game/blinds). The game determines each seat's hole-card count.
 export type InitialStateOverrides = Partial<
-  Pick<AdvancedHandState, "game" | "smallBlind" | "bigBlind" | "ante">
+  Pick<AdvancedHandState, "game" | "smallBlind" | "bigBlind" | "ante" | "utgStraddle">
 >;
 
 // Table size a fresh form starts with, and what "clear all" resets to. The
@@ -171,6 +220,7 @@ export function createInitialState(
     bigBlind: overrides?.bigBlind ?? "1",
     ante: overrides?.ante ?? "0",
     straddles: [],
+    utgStraddle: "",
     numBoards: 1,
     comment: "",
     buttonSeat: 0,

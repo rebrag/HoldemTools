@@ -15,6 +15,15 @@ interface ShareTokenResponse {
 }
 interface SharedHandResponse {
   rawText: string;
+  /** The hand's server id (see SharedController). Older API deployments omit
+   *  it, so consumers must tolerate its absence. */
+  id?: number;
+}
+
+export interface SharedHand {
+  rawText: string;
+  /** Null when the API predates the id field. */
+  handId: number | null;
 }
 
 /**
@@ -35,12 +44,15 @@ export async function createShareToken(handId: number): Promise<string> {
  * Fetch a shared hand's rawText by its public token. Deliberately a plain
  * (unauthenticated) fetch: anyone with the link can view, signed in or not.
  */
-export async function fetchSharedHand(token: string): Promise<string> {
+export async function fetchSharedHand(token: string): Promise<SharedHand> {
   const res = await fetch(`${API_BASE_URL}/api/shared/${encodeURIComponent(token)}`);
   if (!res.ok) throw new Error(`Shared hand not found (${res.status}).`);
   const data = (await res.json()) as SharedHandResponse;
   if (typeof data?.rawText !== "string") throw new Error("Shared hand was malformed.");
-  return data.rawText;
+  return {
+    rawText: data.rawText,
+    handId: typeof data.id === "number" ? data.id : null,
+  };
 }
 
 /** Revoke a hand's share token (authed). Wired for a future "unshare" control. */

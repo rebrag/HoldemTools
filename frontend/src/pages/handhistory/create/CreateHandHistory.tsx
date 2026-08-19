@@ -51,6 +51,7 @@ import {
   DEFAULT_TABLE_SIZE,
   defaultStraddleAmount,
   evalGameId,
+  explicitStraddlesOf,
   handSize,
   isActiveSeat,
   MAX_STRADDLES,
@@ -59,7 +60,10 @@ import {
   resizeSeats,
   straddlesOf,
   usedCards,
+  utgStraddleAmountOf,
+  utgStraddleSeat,
   type AdvancedHandState,
+  type StraddlePost,
 } from "./types";
 
 // Setup-phase tap-to-place mode: after arming it, the next seat tap either moves
@@ -76,6 +80,7 @@ function applyDefaults(base: AdvancedHandState, d: HandDefaults): AdvancedHandSt
   if (d.smallBlind != null) next.smallBlind = d.smallBlind;
   if (d.bigBlind != null) next.bigBlind = d.bigBlind;
   if (d.ante != null) next.ante = d.ante;
+  if (d.utgStraddle != null) next.utgStraddle = d.utgStraddle;
   const size =
     d.tableSize && d.tableSize >= 2 && d.tableSize <= 9 ? d.tableSize : next.tableSize;
   next.tableSize = size;
@@ -236,10 +241,26 @@ const CreateHandHistory: React.FC<Props> = ({
   const pendingNavRef = useRef(false);
   // Resolves to the saved hand's id, so a solve queued from this hand can be
   // linked back to it in the solved-flops library. The save runs concurrently
-  // with the solve prompt, so this is a promise rather than a value: by the
-  // time the user has walked the tree-building panel it has almost always
-  // settled, and awaiting it removes the race instead of assuming it away.
+  // with the solve prompt, so this is a promise rather than a value. It is
+  // armed (made pending) the moment the completed hand is offered a solve —
+  // NOT when the save starts: the auto-save waits for showdown equity, so on
+  // a showdown hand the user can accept the solve and walk the whole
+  // tree-building panel before the save even begins. A promise created at
+  // save start was still the initial resolved null in that window, and the
+  // solve uploaded unlinked. saveHand resolves the pending promise, arming
+  // its own when the hand skipped the solve offer.
   const savedHandIdRef = useRef<Promise<number | null>>(Promise.resolve(null));
+  const savedHandIdResolveRef = useRef<((id: number | null) => void) | null>(null);
+  const armSavedHandId = () => {
+    if (savedHandIdResolveRef.current) return; // already pending
+    savedHandIdRef.current = new Promise<number | null>((resolve) => {
+      savedHandIdResolveRef.current = resolve;
+    });
+  };
+  const resolveSavedHandId = (id: number | null) => {
+    savedHandIdResolveRef.current?.(id);
+    savedHandIdResolveRef.current = null;
+  };
   // Defaults seeding (standalone mode): copy the most recent saved hand's setup
   // once, unless the user has already touched the form or hit Clear all.
   const seededRef = useRef(false);
@@ -386,20 +407,33 @@ const CreateHandHistory: React.FC<Props> = ({
     // Straddles keep their posting order: an existing straddle updates its
     // amount in place; a new one joins the end of the chain (as the double or
     // triple straddle); unchecking removes it and lets the later ones move up.
-    const priorStraddles = straddlesOf(state);
-    const straddles = makeStraddle
-      ? priorStraddles.some((s) => s.seat === index)
-        ? priorStraddles.map((s) =>
-            s.seat === index ? { ...s, amount: straddleAmount } : s
-          )
-        : [...priorStraddles, { seat: index, amount: straddleAmount }]
-      : priorStraddles.filter((s) => s.seat !== index);
+    // The setup form's UTG straddle is derived (it follows the seat after the
+    // BB), so edits to that seat route to the utgStraddle field instead of
+    // pinning a straddle to the seat — pinning it would stop it moving with
+    // the button.
+    const utgSeat = utgStraddleAmountOf(state) != null ? utgStraddleSeat(state) : null;
+    const priorStraddles = explicitStraddlesOf(state).filter((s) => s.seat !== utgSeat);
+    let utgStraddle = state.utgStraddle;
+    let straddles: StraddlePost[];
+    if (utgSeat === index) {
+      utgStraddle = makeStraddle ? straddleAmount : "";
+      straddles = priorStraddles;
+    } else {
+      straddles = makeStraddle
+        ? priorStraddles.some((s) => s.seat === index)
+          ? priorStraddles.map((s) =>
+              s.seat === index ? { ...s, amount: straddleAmount } : s
+            )
+          : [...priorStraddles, { seat: index, amount: straddleAmount }]
+        : priorStraddles.filter((s) => s.seat !== index);
+    }
     const nextState: AdvancedHandState = {
       ...state,
       seats,
       buttonSeat: makeButton ? index : reassign(state.buttonSeat),
       heroSeat: makeHero ? index : reassign(state.heroSeat),
       straddles,
+      utgStraddle,
     };
     setState(nextState);
     // Mid-hand edits (stack, revealed hole cards, name, straddle) are applied by
@@ -446,7 +480,7 @@ const CreateHandHistory: React.FC<Props> = ({
         seats,
         buttonSeat: snap(prev.buttonSeat),
         heroSeat: snap(prev.heroSeat),
-        straddles: straddlesOf(prev).filter((st) => isActiveSeat(seats[st.seat])),
+        straddles: explicitStraddlesOf(prev).filter((st) => isActiveSeat(seats[st.seat])),
       };
     });
     setQuickSetupOpen(false);
@@ -465,7 +499,7 @@ const CreateHandHistory: React.FC<Props> = ({
       ),
       buttonSeat: swap(prev.buttonSeat),
       heroSeat: swap(prev.heroSeat),
-      straddles: straddlesOf(prev).map((s) => ({ ...s, seat: swap(s.seat) })),
+      straddles: explicitStraddlesOf(prev).map((s) => ({ ...s, seat: swap(s.seat) })),
     }));
   };
 
@@ -486,7 +520,7 @@ const CreateHandHistory: React.FC<Props> = ({
         seats,
         buttonSeat: reassign(prev.buttonSeat),
         heroSeat: reassign(prev.heroSeat),
-        straddles: straddlesOf(prev).filter((s) => s.seat !== index),
+        straddles: explicitStraddlesOf(prev).filter((s) => s.seat !== index),
       };
     });
     setEditingSeat(null);
@@ -534,6 +568,7 @@ const CreateHandHistory: React.FC<Props> = ({
         smallBlind: "0.5",
         bigBlind: "1",
         ante: "0",
+        utgStraddle: "",
         game: "Holdem",
         tableSize: DEFAULT_TABLE_SIZE,
         seats: Array.from({ length: DEFAULT_TABLE_SIZE }, () => ({ name: "", stack: "" })),
@@ -719,10 +754,7 @@ const CreateHandHistory: React.FC<Props> = ({
     }
     setSaving(true);
     setSaveError(null);
-    let resolveHandId: (id: number | null) => void = () => {};
-    savedHandIdRef.current = new Promise<number | null>((resolve) => {
-      resolveHandId = resolve;
-    });
+    armSavedHandId();
     try {
       const res = await authedFetch("/api/handhistory", {
         method: "POST",
@@ -734,9 +766,9 @@ const CreateHandHistory: React.FC<Props> = ({
       // the solve simply goes unlinked.
       try {
         const saved: { id?: number } = await res.json();
-        resolveHandId(typeof saved?.id === "number" ? saved.id : null);
+        resolveSavedHandId(typeof saved?.id === "number" ? saved.id : null);
       } catch {
-        resolveHandId(null);
+        resolveSavedHandId(null);
       }
       clearSetupDraft();
       // While the solve modal is up, the save completes silently in the
@@ -755,7 +787,7 @@ const CreateHandHistory: React.FC<Props> = ({
       setSaving(false);
       // No-op once already resolved; guarantees an unsaved hand never leaves
       // a solve upload waiting on a promise that will not settle.
-      resolveHandId(null);
+      resolveSavedHandId(null);
     }
   };
 
@@ -820,6 +852,9 @@ const CreateHandHistory: React.FC<Props> = ({
       (engine.numBoards === 1 || !!engine.winners2);
     if (!isComplete) return;
     solveOfferedRef.current = true;
+    // Arm the hand-id link before the prompt shows: the auto-save may still
+    // be waiting on equity, and it resolves this same promise when it lands.
+    armSavedHandId();
     setSolvePrompt(solveExtract);
   }, [solveExtract, engine]);
 
@@ -863,10 +898,15 @@ const CreateHandHistory: React.FC<Props> = ({
     setSolveError(null);
     try {
       const text = buildTreeConfigText(params, flopCards);
-      // The concurrent save has had the whole tree-building panel to finish;
-      // wait for it anyway so the library can link the solved board back to
-      // this hand. Null (save failed, or signed-out flow) just means unlinked.
-      const handHistoryId = await savedHandIdRef.current.catch(() => null);
+      // The concurrent save may still be running — or not even started, when
+      // the showdown-equity worker is what the auto-save is waiting on — so
+      // wait for it, letting the library link the solved board back to this
+      // hand. Null (save failed, signed-out flow, or a save that never lands
+      // within the timeout) just means unlinked.
+      const handHistoryId = await Promise.race([
+        savedHandIdRef.current.catch(() => null),
+        new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 20_000)),
+      ]);
       const result = await uploadGameTree({
         handHistoryId,
         folder: solveOffer.folder,
@@ -1065,7 +1105,6 @@ const CreateHandHistory: React.FC<Props> = ({
         maxWidthClassName="max-w-2xl"
         potAmount={pot?.amount}
         potLabel={pot?.label}
-        potPlacement="below"
         potWinnerSeatIndex={pot?.winnerSeatIndex}
         center={
           <TableCenter
@@ -1285,12 +1324,24 @@ const CreateHandHistory: React.FC<Props> = ({
               </select>
             </Field>
           </div>
-          <div className="mt-3 grid grid-cols-3 gap-3">
+          <div className="mt-3 grid grid-cols-4 gap-3">
             <Field label="Small blind">
               <input type="tel" inputMode="decimal" className={inputCls} value={state.smallBlind} onChange={(e) => update({ smallBlind: e.target.value })} />
             </Field>
             <Field label="Big blind">
               <input type="tel" inputMode="decimal" className={inputCls} value={state.bigBlind} onChange={(e) => update({ bigBlind: e.target.value })} />
+            </Field>
+            {/* The straddle is posted by whoever sits after the BB — it follows
+                that position when the button moves (see utgStraddleSeat). */}
+            <Field label="Straddle">
+              <input
+                type="tel"
+                inputMode="decimal"
+                className={inputCls}
+                value={state.utgStraddle ?? ""}
+                placeholder="None"
+                onChange={(e) => update({ utgStraddle: e.target.value })}
+              />
             </Field>
             <Field label="Ante (total)">
               <input type="tel" inputMode="decimal" className={inputCls} value={state.ante} onChange={(e) => update({ ante: e.target.value })} />
