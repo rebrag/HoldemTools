@@ -303,13 +303,14 @@ const PokerTable: React.FC<PokerTableProps> = ({
                               ? Math.round(cardBackWidth * 0.72)
                               : cardBackWidth;
                           // Cards are dealt fanned, each tucked under the next,
-                          // so a hand takes ~20% less width per extra card and
+                          // so a hand takes ~16% less width per extra card and
                           // stops crowding the neighbouring seats. The offset is
                           // a fraction of the card so it holds at any size, and
-                          // z-index rises left to right so the part that
-                          // identifies a card - its top-left index - is the part
-                          // that stays uncovered.
-                          const overlap = h === 0 ? 0 : Math.round(w * 0.22);
+                          // stops short of the centred rank+suit the card is
+                          // identified by (see PlayingCard) - overlap much past
+                          // this and the fan starts hiding the "10" it exists to
+                          // keep legible.
+                          const overlap = h === 0 ? 0 : Math.round(w * 0.16);
                           return (
                             <div
                               key={h}

@@ -57,12 +57,12 @@ test("a shared replay opens with no auth and only that hand's data", async ({ pa
   await page.goto(`/hand-history/shared/${TOKEN}`, { waitUntil: "domcontentloaded" });
 
   // The table renders with the hand's seats and stacks, so it resolved end to
-  // end - and it is in shared mode, which the back link gives away: a shared
-  // recipient has no hand-history list to go back to, so it points home.
+  // end. Shared mode itself is no longer visible in the chrome (the header is
+  // down to the unit toggle), so it is pinned by the request assertions below:
+  // one anonymous /api/shared call and nothing authed.
   await expect(page.getByRole("button", { name: /^Seat BTN/ })).toBeVisible({
     timeout: 15_000,
   });
-  await expect(page.getByRole("button", { name: "HoldemTools" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Play" }).first()).toBeVisible();
 
   // One hand's worth of data and nothing else: no library listing, no authed

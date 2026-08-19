@@ -32,19 +32,26 @@ function toName(code: string) {
 // Default widths when no explicit width is provided
 const SIZE_WIDTH: Record<Size, number> = { sm: 40, md: 48, lg: 64 };
 
-// Font-size ratios relative to the card's own rendered width. All corner/center
-// sizing and offsets are expressed as fractions of the card width so they stay
-// proportionate at any rendered size, not just the size the ratios were tuned
+// The face is one centred rank over one centred suit, rather than the
+// traditional pair of corner indices around a big centre pip. Most of the app
+// is read on a phone, where a board card lands somewhere around 22-36px wide:
+// at that size the classic layout spends its pixels drawing the same rank and
+// suit three times over, so each copy ends up too small to read. One glyph
+// pair gets the whole face instead.
+//
+// Sizes are fractions of the card's own rendered width, so they stay
+// proportionate at any rendered size rather than only the one they were tuned
 // at. A px width resolves them to px directly; a CSS-length width falls back to
 // cqw container query units (see below).
-const RATIOS: Record<
-  Size,
-  { center: number; cornerRank: number; cornerSuit: number; cornerInset: number }
-> = {
-  sm: { center: 0.62, cornerRank: 0.4, cornerSuit: 0.3, cornerInset: 0.07 },
-  md: { center: 0.58, cornerRank: 0.36, cornerSuit: 0.27, cornerInset: 0.07 },
-  lg: { center: 0.62, cornerRank: 0.4, cornerSuit: 0.3, cornerInset: 0.07 },
-};
+//
+// Anything that overlaps cards in a fan has to leave the outer ~20% of the
+// width clear on each side, which is where these ratios put the edge of the
+// widest glyph. `PokerTable` and `HandPreview` are the two fans today.
+const RANK_RATIO = 0.66;
+// "10" is the one two-glyph rank, so it gets its own (narrower) size rather
+// than overflowing or forcing every other rank to shrink to match it.
+const RANK_RATIO_WIDE = 0.56;
+const SUIT_RATIO = 0.55;
 
 interface PlayingCardProps {
   code: string;                 // "As", "Td", "7c"
@@ -70,9 +77,10 @@ const PlayingCard: React.FC<PlayingCardProps> = ({ code, size = "md", width, cla
   // mid-scroll, so the common case avoids containment entirely.
   const px = typeof width === "number" ? width : width == null ? SIZE_WIDTH[size] : null;
   const widthToken = px != null ? `${px}px` : (width as string);
-  const ratio = RATIOS[size];
   const len = (fraction: number) =>
     px != null ? `${fraction * px}px` : `${fraction * 100}cqw`;
+
+  const rank = rankLabel(r);
 
   return (
     <div
@@ -89,46 +97,25 @@ const PlayingCard: React.FC<PlayingCardProps> = ({ code, size = "md", width, cla
       role="img"
       title={toName(code)}
     >
-      {/* big center suit — when the width is only a CSS length this is sized in
-          cqw (% of this element's own rendered width) so it scales correctly
-          whether that length is a percentage (grid fill-cell mode) or a clamp()
-          expression. A CSS var + calc() would not do: font-size percentages
-          resolve against the parent's font-size, not this element's width. */}
+      {/* When the width is only a CSS length these are sized in cqw (% of this
+          element's own rendered width) so they scale correctly whether that
+          length is a percentage (grid fill-cell mode) or a clamp() expression.
+          A CSS var + calc() would not do: font-size percentages resolve
+          against the parent's font-size, not this element's width. */}
       <div
-        className={clsx("pointer-events-none", suit.color)}
+        className={clsx(
+          "pointer-events-none flex flex-col items-center leading-none",
+          suit.color
+        )}
         aria-hidden="true"
-        style={{ fontSize: len(ratio.center) }}
       >
-        {suit.symbol}
-      </div>
-
-      {/* corner indices — offset scales with card width so it stays
-          proportionate whether the card is 30px or 130px wide */}
-      <div
-        className="absolute flex flex-col items-center leading-none"
-        style={{ top: len(ratio.cornerInset), left: len(ratio.cornerInset) }}
-      >
-        <span className={clsx("font-semibold", suit.color)}
-              style={{ fontSize: len(ratio.cornerRank) }}>
-          {rankLabel(r)}
+        <span
+          className="font-semibold"
+          style={{ fontSize: len(rank.length > 1 ? RANK_RATIO_WIDE : RANK_RATIO) }}
+        >
+          {rank}
         </span>
-        <span className={clsx(suit.color)}
-              style={{ fontSize: len(ratio.cornerSuit) }}>
-          {suit.symbol}
-        </span>
-      </div>
-      <div
-        className="absolute flex rotate-180 flex-col items-center leading-none"
-        style={{ bottom: len(ratio.cornerInset), right: len(ratio.cornerInset) }}
-      >
-        <span className={clsx("font-semibold", suit.color)}
-              style={{ fontSize: len(ratio.cornerRank) }}>
-          {rankLabel(r)}
-        </span>
-        <span className={clsx(suit.color)}
-              style={{ fontSize: len(ratio.cornerSuit) }}>
-          {suit.symbol}
-        </span>
+        <span style={{ fontSize: len(SUIT_RATIO) }}>{suit.symbol}</span>
       </div>
     </div>
   );
