@@ -13,6 +13,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   ChevronLeft,
   ChevronRight,
+  Library,
   Pause,
   Play,
   SkipBack,
@@ -22,7 +23,10 @@ import PokerTable from "@/components/PokerTable";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import { authedFetch } from "@/lib/api";
 import { cacheHandText, readCachedHandText } from "@/lib/handTextCache";
+import { isCoarsePointer } from "@/lib/pointer";
+import { solutionOpenUrl } from "@/lib/solver/postflopLibrary";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
+import useHandSolutions from "@/hooks/useHandSolutions";
 import useNoOverscroll from "@/hooks/useNoOverscroll";
 import { positionLabelsForSeats } from "./create/positions";
 import { buildTableSeats, potView, TableCenter } from "./create/tableView";
@@ -41,7 +45,11 @@ const SPEEDS = [0.5, 1, 2, 4] as const;
 type LoadState =
   | { status: "loading" }
   | { status: "missing" }
-  | { status: "ready"; rawText: string };
+  // sharedHandId: the server id a shared-link fetch reported (null elsewhere,
+  // and for API deployments that predate the field). Lets a signed-in owner
+  // viewing their own share link still resolve id-keyed extras (the "view
+  // solution" button).
+  | { status: "ready"; rawText: string; sharedHandId?: number | null };
 
 const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
   user,
@@ -78,8 +86,9 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
       }
       void (async () => {
         try {
-          const rawText = await fetchSharedHand(token);
-          if (!cancelled) setLoad({ status: "ready", rawText });
+          const hand = await fetchSharedHand(token);
+          if (!cancelled)
+            setLoad({ status: "ready", rawText: hand.rawText, sharedHandId: hand.handId });
         } catch {
           if (!cancelled) setLoad({ status: "missing" });
         }
@@ -157,6 +166,23 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
   // from the resolved final frame (not per scrubbed frame).
   const finalEngine = replay ? replay.frames[replay.frames.length - 1] : null;
   const eq = useReplayEquities(data?.state ?? null, finalEngine);
+
+  // When this hand has a solved board, deep-link to it on the Solutions page.
+  // The solved-flops index is per-viewer ([Authorize]), so only the signed-in
+  // owner ever gets a match: on the owner route the id is the URL key; on a
+  // share link it's the id the fetch reported. Anyone else's map simply
+  // doesn't contain this hand. Device-local / test hands have a non-numeric
+  // key and never match.
+  const solutionByHandId = useHandSolutions(Boolean(user));
+  const handId = shared
+    ? load.status === "ready"
+      ? load.sharedHandId ?? NaN
+      : NaN
+    : key
+    ? Number(key)
+    : NaN;
+  const solution = Number.isInteger(handId) ? solutionByHandId[handId] : undefined;
+  const solutionHref = solution ? solutionOpenUrl(solution) : null;
 
   // The frame on which the hand locks into an all-in (the action that closed
   // betting with the players committed). From here on the run-out is decided, so
@@ -348,12 +374,33 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
 
   return (
     <div className="mx-auto flex min-h-[calc(100dvh-3rem)] max-w-3xl flex-col overflow-x-clip px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
-      {/* Header — the unit toggle alone. What used to sit to its left was the
+      {/* Header — the solution link (when this hand has a solved board) and
+          the unit toggle. What used to sit here besides the toggle was the
           hand's first text line as a title (the serializer's "Hand converted by
           HoldemTools: <url>" boilerplate, which says nothing about the hand)
           and a back link duplicating the navbar above it. Both cost a line of
           the phone viewport that the table wants. */}
-      <div className="mb-2 flex items-center justify-end">
+      <div className="mb-2 flex items-center justify-end gap-2">
+        {solutionHref && (
+          <a
+            href={solutionHref}
+            {...(isCoarsePointer()
+              ? // In-place SPA navigation on touch: a child tab would share the
+                // opener's WebContent process on iOS, which is what got replay
+                // tabs killed (see HandSummaryRow's linkProps).
+                {
+                  onClick: (e: React.MouseEvent) => {
+                    e.preventDefault();
+                    navigate(solutionHref);
+                  },
+                }
+              : { target: "_blank" as const, rel: "noopener noreferrer" as const })}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-sky-300/40 bg-slate-900/70 px-3 py-1 text-[11px] font-medium text-sky-100 transition hover:bg-slate-800 active:scale-95"
+          >
+            <Library className="h-3.5 w-3.5" />
+            View solution
+          </a>
+        )}
         <button
           type="button"
           onClick={() => setUnitMode((u) => (u === "bb" ? "chips" : "bb"))}
@@ -373,7 +420,6 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
           maxWidthClassName="max-w-2xl"
           potAmount={pot?.amount}
           potLabel={pot?.label}
-          potPlacement="below"
           potWinnerSeatIndex={pot?.winnerSeatIndex}
           center={
             <TableCenter

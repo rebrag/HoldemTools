@@ -27,6 +27,9 @@ export function defaultsFromState(state: AdvancedHandState): HandDefaults {
     smallBlind: cleanNum(state.smallBlind),
     bigBlind: cleanNum(state.bigBlind),
     ante: cleanNum(state.ante),
+    // Carried like the ante: in a straddle game it is on every hand. Old
+    // states predate the field; leave it undefined so it stays untouched.
+    utgStraddle: state.utgStraddle != null ? cleanNum(state.utgStraddle) : undefined,
     tableSize: state.seats.length,
     seats: state.seats.map((s) => ({
       name: s.name,

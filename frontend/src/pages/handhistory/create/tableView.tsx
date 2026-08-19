@@ -211,7 +211,7 @@ export const TableCenter: React.FC<{
       )}
       {/* Watermark fills the felt under the board only while the table is
           being set up. Once the hand is live the pot sits there instead (see
-          PokerTable's potPlacement="below"), and on a phone the two overlap. */}
+          PokerTable's pot layer), and on a phone the two overlap. */}
       {!engine && (
         <span className="text-[9px] font-semibold uppercase tracking-widest text-white/25">
           HoldemTools

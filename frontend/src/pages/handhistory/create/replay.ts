@@ -282,6 +282,23 @@ export function buildHandSummary(data: ReplayData): HandSummary {
     }
   }
 
+  // Final pot excludes any uncalled bet. A betting round that completes
+  // returns the uncalled excess itself (engine returnUncalled), but a fold-out
+  // ends the hand mid-round with the winner's unmatched chips still in the
+  // pot — subtract them here so the shown pot is only what was contested.
+  // Folded players' same-street commitments count toward the matched amount
+  // (bet, got raised, folded).
+  let finalPot = e.pot;
+  const liveAtEnd = e.players.filter((p) => !p.folded);
+  if (liveAtEnd.length === 1) {
+    const winner = liveAtEnd[0];
+    const matched = Math.max(
+      0,
+      ...e.players.filter((p) => p !== winner).map((p) => p.committed)
+    );
+    finalPot -= Math.max(0, winner.committed - matched);
+  }
+
   const heroIdx = e.heroIndex;
   const players: PreviewPlayer[] = [];
   if (heroIdx != null) {
@@ -317,7 +334,7 @@ export function buildHandSummary(data: ReplayData): HandSummary {
   return {
     players,
     board: data.state.board.filter((c): c is string => !!c),
-    finalPot: e.pot,
+    finalPot,
     bb: e.bb,
     sawFlop,
     potAtFlop,

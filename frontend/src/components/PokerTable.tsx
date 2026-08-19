@@ -65,13 +65,6 @@ export interface PokerTableProps {
   potAmount?: number;
   /** Text label shown under the pot chips, e.g. "Flop · Pot 22 BB". */
   potLabel?: string;
-  /** Where the pot sits relative to the board in the center slot.
-   *  - "above" (default): chips tower upward above the board, label beneath them.
-   *  - "below": chips spread horizontally under the board, label beneath.
-   *    Reads like a real table (the pot is pushed in front of the board) and
-   *    keeps a growing pot from creeping over the cards, which an upward tower
-   *    does once the stack is tall. */
-  potPlacement?: "above" | "below";
   /** When set, the pot slides partway toward this seat index (winner award). */
   potWinnerSeatIndex?: number | null;
   onSeatClick?: (index: number) => void;
@@ -111,7 +104,6 @@ const PokerTable: React.FC<PokerTableProps> = ({
   center,
   potAmount,
   potLabel,
-  potPlacement = "above",
   potWinnerSeatIndex,
   onSeatClick,
   feltStyle,
@@ -126,22 +118,23 @@ const PokerTable: React.FC<PokerTableProps> = ({
 }) => {
   const coords = coordsOverride ?? seatCoords(size);
 
-  // Pot layer: the label is centered at (POT_BASE_X, POT_BASE_Y) with the chip
-  // stack floating just above it ("above") or spread below the board with the
-  // label under it ("below"). Either way the base Y clears the board cards so
-  // neither the label nor the chips cover them. When a winner is set the pot
-  // slides ~45% of the way toward that seat; animating left/top gives a smooth
-  // "chips pushed to the winner" motion.
+  // Pot layer: chips spread horizontally under the board with the label
+  // beneath them. The presentation is owned here, not by callers, so every
+  // table (recorder, replayer, solver) shows the pot identically: it reads
+  // like a real table (the pot pushed in front of the board) and keeps a
+  // growing pot from creeping over the cards, which an upward tower does once
+  // the stack is tall. When a winner is set the pot slides ~45% of the way
+  // toward that seat; animating left/top gives a smooth "chips pushed to the
+  // winner" motion.
   const showPot = potAmount != null && Math.round(potAmount) >= 1;
-  const potBelow = potPlacement === "below";
   const potWinnerCoord =
     potWinnerSeatIndex != null ? coords[potWinnerSeatIndex] : null;
   const POT_BASE_X = 50;
-  // "above": label center just above the board. "below": center of the
-  // chips+label block, low enough to clear the board on a phone (where the
-  // cards take the largest share of the table's height) and still well short
-  // of the bottom seat's bet, which lands at ~80% for a bottom-center seat.
-  const POT_BASE_Y = potBelow ? 65 : 36;
+  // Center of the chips+label block: low enough to clear the board on a phone
+  // (where the cards take the largest share of the table's height) and still
+  // well short of the bottom seat's bet, which lands at ~80% for a
+  // bottom-center seat.
+  const POT_BASE_Y = 65;
   const POT_SLIDE = 0.45;
   const potX = potWinnerCoord
     ? POT_BASE_X + (potWinnerCoord.x - POT_BASE_X) * POT_SLIDE
@@ -186,35 +179,21 @@ const PokerTable: React.FC<PokerTableProps> = ({
               aria-hidden="true"
             >
               <div className="relative flex flex-col items-center">
-                {potBelow ? (
-                  /* Spread sits in normal flow above the label, so the layer's
-                     anchor grows downward from the board instead of upward
-                     into it. A horizontal spread is short enough that it does
-                     not need to be lifted out of the box the way the tower is. */
-                  <div
-                    className="flex justify-center"
-                    style={{ transform: "scale(0.6)", transformOrigin: "center bottom" }}
-                  >
-                    <ChipStack
-                      amount={potAmount!}
-                      horizontal
-                      showLabel={false}
-                      showBreakdown={false}
-                      showAmount={false}
-                    />
-                  </div>
-                ) : (
-                  <div className="absolute bottom-full left-1/2 mb-0.5 -translate-x-1/2">
-                    <div style={{ transform: "scale(0.6)", transformOrigin: "center bottom" }}>
-                      <ChipStack
-                        amount={potAmount!}
-                        showLabel={false}
-                        showBreakdown={false}
-                        showAmount={false}
-                      />
-                    </div>
-                  </div>
-                )}
+                {/* Spread sits in normal flow above the label, so the layer's
+                    anchor grows downward from the board instead of upward
+                    into it. */}
+                <div
+                  className="flex justify-center"
+                  style={{ transform: "scale(0.6)", transformOrigin: "center bottom" }}
+                >
+                  <ChipStack
+                    amount={potAmount!}
+                    horizontal
+                    showLabel={false}
+                    showBreakdown={false}
+                    showAmount={false}
+                  />
+                </div>
                 {potLabel && (
                   <span className="whitespace-nowrap rounded-full bg-black/50 px-3 py-0.5 text-[11px] font-semibold text-white shadow">
                     {potLabel}
