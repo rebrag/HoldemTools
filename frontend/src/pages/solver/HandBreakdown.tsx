@@ -64,7 +64,7 @@ interface HandBreakdownProps {
 const SUIT_GLYPHS: Record<string, { glyph: string; cls: string }> = {
   h: { glyph: "♥", cls: "text-red-600" },
   d: { glyph: "♦", cls: "text-blue-600" },
-  c: { glyph: "♣", cls: "text-green-900" },
+  c: { glyph: "♣", cls: "text-green-600" },
   s: { glyph: "♠", cls: "text-gray-900" },
 };
 
