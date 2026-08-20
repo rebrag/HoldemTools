@@ -6,7 +6,7 @@ type Size = "sm" | "md" | "lg";
 const SUIT_INFO = {
   h: { label: "hearts",   symbol: "♥", color: "text-red-600"   },
   d: { label: "diamonds", symbol: "♦", color: "text-blue-600"  },
-  c: { label: "clubs",    symbol: "♣", color: "text-green-900" },
+  c: { label: "clubs",    symbol: "♣", color: "text-green-600" },
   s: { label: "spades",   symbol: "♠", color: "text-gray-900"  },
 } as const;
 

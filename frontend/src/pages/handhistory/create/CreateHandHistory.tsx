@@ -208,6 +208,10 @@ const CreateHandHistory: React.FC<Props> = ({
   const [phase, setPhase] = useState<"setup" | "action">("setup");
   const [placement, setPlacement] = useState<Placement>(null);
   const [quickSetupOpen, setQuickSetupOpen] = useState(false);
+  // Bumped on every seat rotation; the button's glyph is transformed to
+  // `rotateSpin * 360deg`, so each press winds it one more full turn and the
+  // CSS transition plays that out as a spin.
+  const [rotateSpin, setRotateSpin] = useState(0);
 
   const [engine, setEngine] = useState<Engine | null>(null);
   const [history, setHistory] = useState<Engine[]>([]);
@@ -501,6 +505,32 @@ const CreateHandHistory: React.FC<Props> = ({
       heroSeat: swap(prev.heroSeat),
       straddles: explicitStraddlesOf(prev).map((s) => ({ ...s, seat: swap(s.seat) })),
     }));
+  };
+
+  // Spin the whole table one seat clockwise: every player (with their stack,
+  // cards and sit-out flag) moves from seat i to seat i+1, and the button,
+  // hero and straddle markers ride along. Because everything shifts together
+  // the cyclic order is untouched, so positions, blinds and action order are
+  // identical afterwards — only where each player is *drawn* changes.
+  //
+  // That is the point: seat 0 is bottom-centre, so this is how you line the
+  // on-screen table up with the real one (usually putting hero where you
+  // actually sat) without re-typing a single name or stack.
+  const rotateSeats = () => {
+    touchedRef.current = true;
+    setRotateSpin((n) => n + 1);
+    setState((prev) => {
+      const n = prev.seats.length;
+      if (n < 2) return prev;
+      const shift = (idx: number) => (idx + 1) % n;
+      return {
+        ...prev,
+        seats: prev.seats.map((_, i) => prev.seats[(i - 1 + n) % n]),
+        buttonSeat: shift(prev.buttonSeat),
+        heroSeat: shift(prev.heroSeat),
+        straddles: explicitStraddlesOf(prev).map((s) => ({ ...s, seat: shift(s.seat) })),
+      };
+    });
   };
 
   // Remove the player at a seat, leaving it empty, and move any button/hero it
@@ -1256,7 +1286,10 @@ const CreateHandHistory: React.FC<Props> = ({
       {/* ───────── Setup phase: config form ───────── */}
       {phase === "setup" && (
         <div className="rounded-2xl border border-emerald-300/40 bg-white/95 p-4 shadow-lg shadow-emerald-500/20 backdrop-blur-sm">
-          <div className="mb-2 flex items-center justify-between gap-3">
+          {/* Wraps rather than squashing: on a narrow phone the two action
+              pills take the first line and the text links drop below. */}
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+            <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setQuickSetupOpen(true)}
@@ -1265,6 +1298,23 @@ const CreateHandHistory: React.FC<Props> = ({
             >
               ⚡ Quick setup
             </button>
+            <button
+              type="button"
+              onClick={rotateSeats}
+              disabled={state.seats.length < 2}
+              className="inline-flex items-center gap-1 rounded-full border border-emerald-500/60 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 active:scale-95 disabled:opacity-40"
+              title="Move every player one seat clockwise — positions and blinds are unchanged, so use it to line the table up with where everyone actually sat"
+            >
+              <span
+                aria-hidden="true"
+                className="inline-block transition-transform duration-500 ease-out"
+                style={{ transform: `rotate(${rotateSpin * 360}deg)` }}
+              >
+                ⟳
+              </span>
+              Rotate seats
+            </button>
+            </div>
             <div className="flex items-center gap-3">
             <button
               type="button"
@@ -1363,7 +1413,9 @@ const CreateHandHistory: React.FC<Props> = ({
             Tap each seat to set its name, stack, and hole cards. Mark the dealer
             button, your own seat (hero), or straddles (up to a triple straddle —
             each defaults to double the last). Use the “+ 2nd board” chip
-            on the table to play a double board. Then press Start to record the action.
+            on the table to play a double board. “Rotate seats” spins everyone one
+            seat clockwise when the drawn table doesn't line up with where you
+            actually sat. Then press Start to record the action.
           </p>
 
           <div className="mt-3 flex items-center justify-between gap-3">
