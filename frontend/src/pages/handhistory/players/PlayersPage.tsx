@@ -13,9 +13,14 @@ import { useDelayedLoading } from "@/hooks/useDelayedLoading";
 import { usePlayers } from "@/hooks/usePlayers";
 import { authedFetch } from "@/lib/api";
 import type { Player } from "@/lib/playersApi";
+import type { BankrollSession } from "@/pages/bankroll/types";
 import { parseReplay } from "../create/replay";
 import type { HandHistory } from "../types";
 import PlayerEditorDrawer from "./PlayerEditorDrawer";
+import LinkHandsDrawer from "./LinkHandsDrawer";
+import { scanUnlinkedNames } from "./relinkHands";
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
 
 const listVariants: Variants = {
   hidden: {},
@@ -35,6 +40,7 @@ const PlayersPage: React.FC<{ user: User | null }> = ({ user }) => {
   // Editor state. `editing` stays set while the drawer animates closed.
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<Player | null>(null);
+  const [linkDrawerOpen, setLinkDrawerOpen] = useState(false);
 
   // Hands-per-player, from one fetch of the user's hands.
   const [hands, setHands] = useState<HandHistory[] | null>(null);
@@ -58,6 +64,43 @@ const PlayersPage: React.FC<{ user: User | null }> = ({ user }) => {
       cancelled = true;
     };
   }, [user]);
+
+  // Bankroll sessions, so the link wizard can label hands with the session's
+  // location/stakes (the context that tells two same-named people apart).
+  // Best-effort, like the hand list's own labels fetch.
+  const [sessionsById, setSessionsById] = useState<Map<string, BankrollSession>>(
+    new Map()
+  );
+  useEffect(() => {
+    if (!user) {
+      setSessionsById(new Map());
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/bankroll?userId=${encodeURIComponent(user.uid)}`
+        );
+        if (!res.ok) return;
+        const data = (await res.json()) as BankrollSession[];
+        if (cancelled) return;
+        setSessionsById(new Map(data.map((s) => [s.id, s])));
+      } catch {
+        // labels only - the wizard works without them
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  // How many distinct unlinked names the wizard would offer - drives the
+  // "link past hands" banner.
+  const unlinkedNameCount = useMemo(
+    () => (hands ? scanUnlinkedNames(hands).groups.length : 0),
+    [hands]
+  );
 
   const handCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -104,6 +147,32 @@ const PlayersPage: React.FC<{ user: User | null }> = ({ user }) => {
           </motion.button>
         )}
       </div>
+
+      {/* ── Retro-link call-out: only when the scan actually found names ── */}
+      {user && unlinkedNameCount > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ type: "spring", stiffness: 260, damping: 24 }}
+          className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-emerald-300/40 bg-emerald-50/90 px-4 py-3"
+        >
+          <p className="min-w-0 text-sm text-emerald-900">
+            <span className="font-semibold">
+              {unlinkedNameCount} name{unlinkedNameCount === 1 ? "" : "s"}
+            </span>{" "}
+            in your recorded hands {unlinkedNameCount === 1 ? "isn't" : "aren't"}{" "}
+            linked to a player yet.
+          </p>
+          <motion.button
+            type="button"
+            whileTap={{ scale: 0.96 }}
+            onClick={() => setLinkDrawerOpen(true)}
+            className="shrink-0 rounded-full border border-emerald-400 bg-white px-3.5 py-1.5 text-xs font-semibold text-emerald-700 shadow-sm transition-colors hover:bg-emerald-100"
+          >
+            Link past hands
+          </motion.button>
+        </motion.div>
+      )}
 
       {!user ? (
         <div className="rounded-2xl border border-dashed border-emerald-300/50 bg-white/70 px-6 py-12 text-center backdrop-blur-sm">
@@ -185,6 +254,20 @@ const PlayersPage: React.FC<{ user: User | null }> = ({ user }) => {
         player={editing}
         handCount={editing ? handCounts.get(editing.id) ?? 0 : undefined}
         onClose={() => setDrawerOpen(false)}
+      />
+
+      <LinkHandsDrawer
+        open={linkDrawerOpen}
+        onClose={() => setLinkDrawerOpen(false)}
+        hands={hands ?? []}
+        sessionsById={sessionsById}
+        onHandsUpdated={(updated) =>
+          setHands((prev) => {
+            if (!prev) return prev;
+            const byId = new Map(updated.map((h) => [h.id, h]));
+            return prev.map((h) => byId.get(h.id) ?? h);
+          })
+        }
       />
     </div>
   );
