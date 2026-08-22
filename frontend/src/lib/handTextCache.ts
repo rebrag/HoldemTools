@@ -13,7 +13,10 @@
 // replay still revalidates in the background and swaps in any newer text -
 // the cache buys the first paint, not correctness.
 const KEY = "ht_hand_text_cache_v1";
-const MAX_ENTRIES = 60;
+// Must exceed the typical visible list depth (25 per "Load more" page) or the
+// LRU thrashes and every write re-serializes the whole cache. Each write
+// stringifies the full record, so keep it modest.
+const MAX_ENTRIES = 150;
 
 type Cache = Record<string, string>;
 

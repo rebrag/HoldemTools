@@ -37,9 +37,36 @@ Off-range ports sign in fine but every API call fails on CORS.
 When 5173 is busy (another session), use the `frontend-alt-port` launch config (5179).
 
 ## Frontend tendencies
-- please include animations to make the web app feel like a game for end users
+- please include animations to make the web app feel like a game for end users;
+"animation" here means event-driven and finite (deals, springs, enter/exit transitions), which cost nothing while idle - see "Battery discipline" below before adding anything that runs continuously
 - most users will be mobile users, but will also have desktop users, ensure that pages make good use of space (limit unused space where there's just backgrounds being displayed) and most regions are either click-able in a useful way or display useful information
 - attempt to use re-useable components before developing from scratch, particularly PlayingCards, PokerTable, DealerButton, ChipStack (for bets)
+
+## Battery discipline (mobile)
+
+Most users are on phones and keep a page open for 8-12 hour live poker sessions, so idle power draw is a product concern, not a nicety.
+A page that is not being interacted with should do zero work: no rAF ticks, no repaints, no timers firing into large re-renders.
+This was learned the hard way (Aug 2026): two always-on decorative animation layers plus a 1 Hz ticker drained a phone through an entire session.
+
+Rules for anything that runs continuously:
+
+- **Never ship an unconditional infinite animation** (`animation: ... infinite`, framer-motion `repeat: Infinity`, self-rescheduling rAF).
+Decorative loops must be gated on all three of `useReducedMotion()`, `usePageVisible()` (pause while the tab is hidden), and `usePowerFriendly()` (freeze or unmount on touch-primary / small-viewport / Data Saver devices).
+`AuroraBackground.tsx` (freezes) and `FlyingCards.tsx` (unmounts) are the reference implementations; the hooks live in `src/hooks/`.
+- **Never continuously animate `scale` or `filter` on blurred or shadowed layers, and never animate anything sitting under a `backdrop-filter` surface.**
+A moving backdrop defeats the compositor's blur cache and forces mobile GPUs to re-rasterize huge bitmaps every frame.
+Static blur is cheap; blur that moves or scales is the single most expensive thing this app has shipped.
+- **Timers tick no finer than the displayed granularity, and stop when hidden.**
+An H:MM readout needs at most a 30s interval.
+Gate the effect on `usePageVisible()` and call the setter once on re-arm so the display catches up on return.
+State set by a timer must not re-render a large tree: `React.memo` the expensive children and keep their props referentially stable (see the live-session ticker + memoized `BankrollStatsGrid` in `src/pages/bankroll/`).
+- **rAF-coalesce raw `resize` and `scroll` listeners.**
+Mobile URL-bar show/hide fires `resize` constantly while scrolling; `useWindowDimensions.ts` is the reference pattern.
+- **Terminate Web Workers on unmount** and register every spawned worker somewhere a cancel path can reach it (see the cleanup effect in `useEquitySimulation.ts`).
+Any polling loop needs a stop condition and a visibility gate.
+- **No unconditional `willChange`**; permanent compositor-layer promotion costs memory and power on phones.
+
+When touching this area, verify with DevTools mobile emulation: Rendering > Paint Flashing should show zero flashes on an idle page, and Performance Monitor CPU should sit near 0%.
 
 ## Reusable card-entry components (src/components/)
 - `PlayingCard` - renders a single face-up card from a code like "As" / "Td".

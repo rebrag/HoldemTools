@@ -1,6 +1,7 @@
 import { CSSProperties, JSX } from "react";
 import { useReducedMotion } from "framer-motion";
 import { usePageVisible } from "@/hooks/usePageVisible";
+import { usePowerFriendly } from "@/hooks/usePowerFriendly";
 import { cn } from "@/lib/utils";
 
 interface AuroraBackgroundProps {
@@ -20,7 +21,11 @@ export function AuroraBackground({
 }: AuroraBackgroundProps): JSX.Element {
   const reduce = useReducedMotion();
   const pageVisible = usePageVisible();
-  const drift = reduce ? "" : "animate-aurora";
+  const powerFriendly = usePowerFriendly();
+  // On battery devices the scale() keyframes force per-frame re-raster of the
+  // blurred blobs (and break backdrop-filter caching above them), so the
+  // blobs render static there - same look at rest, none of the 60fps cost.
+  const drift = reduce || powerFriendly ? "" : "animate-aurora";
   // The blurred blobs are the priciest layers to composite; freeze the drift
   // while the tab is hidden.
   const driftStyle: CSSProperties = pageVisible

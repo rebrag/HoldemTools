@@ -3,6 +3,7 @@ import { useReducedMotion } from "framer-motion";
 import PlayingCard from "@/components/PlayingCard";
 import { CardBack } from "@/components/PokerTable";
 import { usePageVisible } from "@/hooks/usePageVisible";
+import { usePowerFriendly } from "@/hooks/usePowerFriendly";
 
 /**
  * Decorative "cards flying around" backdrop for the Hand History page.
@@ -23,6 +24,7 @@ function randomCode(): string {
 export function FlyingCards({ count = 10 }: { count?: number }): JSX.Element | null {
   const reduce = useReducedMotion();
   const pageVisible = usePageVisible();
+  const powerFriendly = usePowerFriendly();
 
   const cards = useMemo(
     () =>
@@ -40,7 +42,9 @@ export function FlyingCards({ count = 10 }: { count?: number }): JSX.Element | n
     [count]
   );
 
-  if (reduce) return null;
+  // Ten drop-shadowed sprites with scale+opacity keyframes re-raster every
+  // frame; on battery devices the backdrop isn't worth that, so unmount.
+  if (reduce || powerFriendly) return null;
 
   return (
     <div

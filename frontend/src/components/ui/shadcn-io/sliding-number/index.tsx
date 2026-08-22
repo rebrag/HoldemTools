@@ -14,6 +14,14 @@ import useMeasure from 'react-use-measure';
  
 import { cn } from "../../../../lib/utils";
 
+// Hoisted so a parent re-render doesn't hand every digit roller a fresh
+// transition object each time.
+const DEFAULT_TRANSITION: SpringOptions = {
+  stiffness: 200,
+  damping: 20,
+  mass: 0.4,
+};
+
  
 type SlidingNumberRollerProps = {
   prevValue: number;
@@ -117,11 +125,7 @@ function SlidingNumber({
   padStart = false,
   decimalSeparator = '.',
   decimalPlaces = 0,
-  transition = {
-    stiffness: 200,
-    damping: 20,
-    mass: 0.4,
-  },
+  transition = DEFAULT_TRANSITION,
   ...props
 }: SlidingNumberProps) {
   const localRef = React.useRef<HTMLSpanElement>(null);

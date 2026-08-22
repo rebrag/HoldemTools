@@ -1,6 +1,6 @@
 //hooks/useEquitySimluation.ts
 /* eslint-disable no-empty */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { buildDeck, tokenize } from "../lib/cards"; 
 import { gameLabel, GameType } from "../lib/types";
 import { wilsonHalf } from "../lib/stats";
@@ -34,6 +34,21 @@ export function useEquitySimulation() {
 
   const poolRef = useRef<Worker[]>([]);
   const stoppedRef = useRef(false);
+
+  // Kill any in-flight workers when the consumer unmounts (e.g. navigating
+  // away from a replay mid-simulation) - up to MAX_WORKERS per hook instance
+  // would otherwise keep burning CPU until convergence. Terminate refs
+  // directly instead of cancelAll to avoid setState after unmount.
+  useEffect(() => {
+    return () => {
+      stoppedRef.current = true;
+      for (const w of poolRef.current) {
+        try { w.postMessage({ type: "cancel" as const }); } catch {}
+        try { w.terminate(); } catch {}
+      }
+      poolRef.current = [];
+    };
+  }, []);
 
   const cancelAll = () => {
     stoppedRef.current = true;
@@ -101,6 +116,12 @@ export function useEquitySimulation() {
 
     setStatus("Enumerating postflop runouts…");
     const w = new Worker(new URL("../workers/pheEquityWorker.ts", import.meta.url), { type: "module" });
+    // Register with the pool so cancelAll / unmount cleanup can reach it.
+    poolRef.current.push(w);
+    const release = () => {
+      poolRef.current = poolRef.current.filter((x) => x !== w);
+      try { w.terminate(); } catch {}
+    };
 
     w.onmessage = (ev: MessageEvent<ExactMsg>) => {
       const m = ev.data;
@@ -109,14 +130,14 @@ export function useEquitySimulation() {
       if (m.type === "done") {
         const label = b.length === 3 ? "from the flop" : b.length === 4 ? "from the turn" : "on the river";
         setStatus(`Exact enumeration complete ${label} (${gameLabel[game]}).`);
-        try { w.terminate(); } catch {}
+        release();
       }
     };
 
     w.onerror = (e) => {
       console.error(e);
       setStatus("Postflop worker error.");
-      try { w.terminate(); } catch {}
+      release();
     };
 
     w.postMessage({ type: "start-exact", payload: { game, hands, board: b, avail } });

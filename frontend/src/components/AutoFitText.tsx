@@ -23,6 +23,7 @@ const AutoFitText: React.FC<AutoFitTextProps> = ({
 }) => {
   const wrapRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLSpanElement>(null);
+  const lastFitWidthRef = useRef<number>(-1);
   const [size, setSize] = useState<number>(maxPx);
   const [scale, setScale] = useState<number>(1);
 
@@ -33,6 +34,7 @@ const AutoFitText: React.FC<AutoFitTextProps> = ({
 
     const maxW = wrap.clientWidth;
     if (maxW <= 0) return;
+    lastFitWidthRef.current = maxW;
 
     inner.style.fontSize = `${maxPx}px`;
     inner.style.whiteSpace = "nowrap";
@@ -66,7 +68,14 @@ const AutoFitText: React.FC<AutoFitTextProps> = ({
     fit();
     const wrap = wrapRef.current;
     if (!wrap) return;
-    const ro = new ResizeObserver(() => fit());
+    /* In a content-sized container (e.g. an inline-flex button) changing the
+       font size changes the wrapper's width, which fires the observer again -
+       an oscillation. Only refit when the width actually differs from the one
+       the last fit() ran against. */
+    const ro = new ResizeObserver(() => {
+      if (wrap.clientWidth === lastFitWidthRef.current) return;
+      fit();
+    });
     ro.observe(wrap);
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -92,7 +101,6 @@ const AutoFitText: React.FC<AutoFitTextProps> = ({
           whiteSpace: "nowrap",
           transform: `scale(${scale})`,
           transformOrigin: "center",
-          willChange: "transform",
         }}
       >
         {children}

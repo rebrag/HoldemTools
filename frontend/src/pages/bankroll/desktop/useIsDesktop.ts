@@ -13,13 +13,20 @@ export function useIsDesktop(): boolean {
   useEffect(() => {
     const mql = window.matchMedia(QUERY);
     // Also listen to plain resize: emulated viewports (devtools, automation)
-    // don't always dispatch MediaQueryList "change" events.
+    // don't always dispatch MediaQueryList "change" events. rAF-coalesced so
+    // mobile URL-bar show/hide doesn't spam state updates.
     const update = () => setIsDesktop(mql.matches);
+    let raf = 0;
+    const onResize = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(update);
+    };
     mql.addEventListener("change", update);
-    window.addEventListener("resize", update);
+    window.addEventListener("resize", onResize);
     return () => {
+      cancelAnimationFrame(raf);
       mql.removeEventListener("change", update);
-      window.removeEventListener("resize", update);
+      window.removeEventListener("resize", onResize);
     };
   }, []);
 

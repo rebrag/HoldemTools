@@ -1,7 +1,7 @@
 // src/pages/handhistory/HandHistoryTool.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppNavigate } from "@/components/layout/RouteProgress";
-import { AnimatePresence, motion, type Variants } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import LoadingIndicator from "@/components/LoadingIndicator";
 import { useDelayedLoading } from "@/hooks/useDelayedLoading";
 import { authedFetch } from "@/lib/api";
@@ -60,6 +60,7 @@ function formatDay(iso: string): string {
 
 const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   const navigate = useAppNavigate();
+  const reduce = useReducedMotion();
   // The list paginates rather than growing without bound, so the rubber-band
   // only ever reveals backdrop below the last row.
   useNoOverscroll();
@@ -391,8 +392,12 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
         >
           <motion.div
             aria-hidden="true"
-            animate={{ y: [0, -8, 0], rotate: [-4, 4, -4] }}
-            transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+            animate={reduce ? undefined : { y: [0, -8, 0], rotate: [-4, 4, -4] }}
+            transition={
+              reduce
+                ? undefined
+                : { duration: 4, repeat: Infinity, ease: "easeInOut" }
+            }
             className="mx-auto mb-3 w-fit text-4xl"
           >
             🂡

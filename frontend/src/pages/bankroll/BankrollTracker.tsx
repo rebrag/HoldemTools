@@ -29,6 +29,7 @@ import LayoutCommandDeck from "./desktop/LayoutCommandDeck";
 import LoginSignupModal from "@/components/LoginSignupModal";
 import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import { useLocalStorageState } from "@/hooks/useLocalStorageState";
+import { usePageVisible } from "@/hooks/usePageVisible";
 import AutoFitText from "@/components/AutoFitText";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
@@ -217,23 +218,29 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
 
   /* ───────────────── Live duration ticker (any running draft) ───────────────── */
 
+  /* The readouts fed by `now` display H:MM, so a 30s tick is never visibly
+     stale - and it costs 1/30th of the renders over a long live session.
+     Gating on visibility kills the interval while backgrounded; the immediate
+     setNow on re-arm catches the chip up the moment the user returns. */
+  const pageVisible = usePageVisible();
+  const hasRunningDraft = useMemo(
+    () => drafts.some((d) => d.form.start && !d.form.end),
+    [drafts]
+  );
+
   useEffect(() => {
     if (typeof window === "undefined") return;
-
-    const hasRunningDraft = drafts.some(
-      (d) => d.form.start && !d.form.end
-    );
-    if (!hasRunningDraft) return;
+    if (!hasRunningDraft || !pageVisible) return;
 
     setNow(new Date());
     const id = window.setInterval(() => {
       setNow(new Date());
-    }, 1000);
+    }, 30_000);
 
     return () => {
       window.clearInterval(id);
     };
-  }, [drafts]);
+  }, [hasRunningDraft, pageVisible]);
 
   /* The ResponsiveDrawer hosting the form owns the scroll lock; a second lock
      here would fight it (see useBodyScrollLock). */

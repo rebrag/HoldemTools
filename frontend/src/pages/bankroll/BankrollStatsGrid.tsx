@@ -109,4 +109,7 @@ const BankrollStatsGrid: React.FC<Props> = ({
   );
 };
 
-export default BankrollStatsGrid;
+/* Memoized so the live-session duration ticker in BankrollTracker doesn't
+   reconcile the SlidingNumber digit trees on every tick; stats/displayStats
+   are useMemo'd upstream, so props are referentially stable between ticks. */
+export default React.memo(BankrollStatsGrid);

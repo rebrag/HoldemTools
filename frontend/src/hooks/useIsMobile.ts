@@ -18,14 +18,21 @@ export default function useIsMobile(): boolean {
     const mq = window.matchMedia("(max-width: 639px)");
     const sync = () => setIsMobile(mq.matches);
     sync();
+    let raf = 0;
     // Emulated viewports (DevTools, e2e drivers) resize without always firing
     // the media query's `change`, so listen to `resize` too - same workaround
-    // as bankroll's useIsDesktop.
+    // as bankroll's useIsDesktop, rAF-coalesced so mobile URL-bar show/hide
+    // doesn't spam state updates.
+    const onResize = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(sync);
+    };
     mq.addEventListener("change", sync);
-    window.addEventListener("resize", sync);
+    window.addEventListener("resize", onResize);
     return () => {
+      cancelAnimationFrame(raf);
       mq.removeEventListener("change", sync);
-      window.removeEventListener("resize", sync);
+      window.removeEventListener("resize", onResize);
     };
   }, []);
   return isMobile;
