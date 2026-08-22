@@ -8,6 +8,11 @@ interface Props {
   onAction: (kind: ActionKind, amountTo?: number) => void;
   onUndo: () => void;
   canUndo: boolean;
+  /** Step forward again after an Undo (redo). The stack holds the undone
+   *  frames, so after undoing too far the original line can be replayed
+   *  instead of remembered. Recording a new action clears it. */
+  onRedo?: () => void;
+  canRedo?: boolean;
 }
 
 // Action button base (colors applied per-action). Uses the design-kit glass /
@@ -26,7 +31,15 @@ const POT_FRACTIONS: { f: number; label: string }[] = [
 // Sentinel for the All-in pill, which isn't a pot fraction (it's the stack).
 const ALLIN = "allin" as const;
 
-const ActionPanel: React.FC<Props> = ({ engine, unitMode, onAction, onUndo, canUndo }) => {
+const ActionPanel: React.FC<Props> = ({
+  engine,
+  unitMode,
+  onAction,
+  onUndo,
+  canUndo,
+  onRedo,
+  canRedo,
+}) => {
   const la = legalActions(engine);
   const player = engine.toAct != null ? engine.players[engine.toAct] : null;
 
@@ -243,7 +256,10 @@ const ActionPanel: React.FC<Props> = ({ engine, unitMode, onAction, onUndo, canU
         </p>
       )}
 
-      <div className="mt-3 flex justify-end">
+      {/* Undo walks back through the hand (left); Forward replays the undone
+          actions (right), so stepping too far back is recoverable without
+          remembering what actually happened. */}
+      <div className="mt-3 flex items-center justify-between">
         <button
           type="button"
           disabled={!canUndo}
@@ -252,6 +268,16 @@ const ActionPanel: React.FC<Props> = ({ engine, unitMode, onAction, onUndo, canU
         >
           ↩ Undo
         </button>
+        {onRedo && (
+          <button
+            type="button"
+            disabled={!canRedo}
+            onClick={onRedo}
+            className="inline-flex items-center gap-1 rounded-lg bg-white/5 px-4 py-2 text-sm font-semibold text-emerald-100 transition hover:bg-white/10 active:translate-y-[1px] disabled:opacity-40"
+          >
+            Forward ↪
+          </button>
+        )}
       </div>
     </div>
   );

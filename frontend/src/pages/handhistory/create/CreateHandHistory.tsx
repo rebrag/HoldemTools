@@ -270,12 +270,26 @@ const CreateHandHistory: React.FC<Props> = ({
   // CSS transition plays that out as a spin.
   const [rotateSpin, setRotateSpin] = useState(0);
 
-  const [engine, setEngine] = useState<Engine | null>(
-    () => editInitRef.current?.engine ?? null
-  );
-  const [history, setHistory] = useState<Engine[]>(
-    () => editInitRef.current?.history ?? []
-  );
+  // Edit mode opens one step BEFORE the final action - the last decision is
+  // on screen with the action panel live, and Forward (the redo stack, seeded
+  // with the resolved final frame) steps to the recorded end. A hand with no
+  // recorded actions (defensive; shouldn't exist) opens at its only frame.
+  const [engine, setEngine] = useState<Engine | null>(() => {
+    const init = editInitRef.current;
+    if (!init) return null;
+    return init.history.length ? init.history[init.history.length - 1] : init.engine;
+  });
+  const [history, setHistory] = useState<Engine[]>(() => {
+    const init = editInitRef.current;
+    return init && init.history.length ? init.history.slice(0, -1) : [];
+  });
+  // Frames undone (or not yet replayed, in edit mode), newest last. Forward
+  // pops them back; recording a new action or editing the setup clears them
+  // (the stored frames no longer follow from the changed line).
+  const [redoStack, setRedoStack] = useState<Engine[]>(() => {
+    const init = editInitRef.current;
+    return init && init.history.length ? [init.engine] : [];
+  });
   const [winnerSel, setWinnerSel] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -514,6 +528,9 @@ const CreateHandHistory: React.FC<Props> = ({
       frames[frames.length - 1] = last;
       setEngine(last);
       setHistory(frames.slice(0, -1));
+      // Undone frames were built from the pre-edit setup; they no longer
+      // follow from the rebuilt line.
+      setRedoStack([]);
     }
     setEditingSeat(null);
   };
@@ -642,9 +659,14 @@ const CreateHandHistory: React.FC<Props> = ({
     if (editing && edit) {
       const init = buildEditInit(edit.rawText);
       if (init) {
+        // Same shape as the edit-mode mount: one step before the final
+        // action, with Forward holding the resolved end.
         setState(init.state);
-        setEngine(init.engine);
-        setHistory(init.history);
+        setEngine(
+          init.history.length ? init.history[init.history.length - 1] : init.engine
+        );
+        setHistory(init.history.length ? init.history.slice(0, -1) : []);
+        setRedoStack(init.history.length ? [init.engine] : []);
         setWinnerSel([]);
         setSaveError(null);
         setPhase("action");
@@ -659,6 +681,7 @@ const CreateHandHistory: React.FC<Props> = ({
     setState(!embedded && remembered ? applyDefaults(base, remembered) : base);
     setEngine(null);
     setHistory([]);
+    setRedoStack([]);
     setWinnerSel([]);
     setSaveError(null);
     autoSavedRef.current = false;
@@ -787,23 +810,34 @@ const CreateHandHistory: React.FC<Props> = ({
     setPlacement(null);
     setEngine(buildEngine(state));
     setHistory([]);
+    setRedoStack([]);
     setWinnerSel([]);
     setPhase("action");
   };
 
   const act = (kind: ActionKind, amountTo?: number) => {
     if (!engine) return;
-    setHistory((h) => [...h, engine]);
+    setHistory([...history, engine]);
+    // A new action diverges from any undone line - the stored frames no
+    // longer follow from here.
+    setRedoStack([]);
     setEngine(applyAction(engine, kind, amountTo));
   };
 
   const undo = () => {
-    setHistory((h) => {
-      if (!h.length) return h;
-      const prev = h[h.length - 1];
-      setEngine(prev);
-      return h.slice(0, -1);
-    });
+    if (!engine || history.length === 0) return;
+    setRedoStack([...redoStack, engine]);
+    setEngine(history[history.length - 1]);
+    setHistory(history.slice(0, -1));
+  };
+
+  // Inverse of undo: replay the next undone frame. Only meaningful while the
+  // redo stack holds frames (i.e. after Undo, before any new action).
+  const redo = () => {
+    if (!engine || redoStack.length === 0) return;
+    setHistory([...history, engine]);
+    setEngine(redoStack[redoStack.length - 1]);
+    setRedoStack(redoStack.slice(0, -1));
   };
 
   // Each street deals new board cards - closing preflop deals the flop, the
@@ -1331,6 +1365,8 @@ const CreateHandHistory: React.FC<Props> = ({
                 onAction={act}
                 onUndo={undo}
                 canUndo={history.length > 0}
+                onRedo={redo}
+                canRedo={redoStack.length > 0}
               />
             </>
           )}
@@ -1453,6 +1489,7 @@ const CreateHandHistory: React.FC<Props> = ({
             type="button"
             onClick={() => {
               setEngine(null);
+              setRedoStack([]);
               setPhase("setup");
             }}
             className="mt-3 text-xs text-emerald-200/80 underline underline-offset-2 hover:text-white"
