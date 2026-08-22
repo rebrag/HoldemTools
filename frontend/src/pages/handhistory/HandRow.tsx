@@ -52,6 +52,12 @@ const HandRow: React.FC<HandRowProps> = ({
       replayHref={
         row.replayable ? bestReplayUrl(row.key, row.server?.shareToken) : null
       }
+      editHref={
+        // Always the owner key route (never the share URL): editing needs the
+        // signed-in by-id load. The dev fixture isn't persisted, so it has
+        // nothing to edit.
+        row.replayable && !row.synthetic ? `/hand-history/edit/${row.key}` : null
+      }
       shareToken={row.server?.shareToken ?? null}
       solutionHref={solutionHref}
       shareId={

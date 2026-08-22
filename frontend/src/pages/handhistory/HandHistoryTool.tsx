@@ -23,6 +23,7 @@ import {
   type HandFilterState,
 } from "./handFilters";
 import { useLocalStorageState } from "@/hooks/useLocalStorageState";
+import { usePlayers } from "@/hooks/usePlayers";
 import { summaryFromRawText, stripReplay } from "./create/replay";
 import { TEST_HAND_ID, buildTestHandText, SHOW_TEST_HAND } from "./create/testHand";
 import type {
@@ -99,6 +100,18 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   );
   const [showFilters, setShowFilters] = useState(false);
   const filtering = isFilteringHands(filters);
+
+  // A persisted player filter can outlive the player (deleted on the Players
+  // page). Once the roster has loaded, drop the dangling id - otherwise the
+  // filter silently blanks the list with no chip to explain why (the select
+  // can't even display the selection any more).
+  const { byId: knownPlayers, loading: playersLoading } = usePlayers();
+  useEffect(() => {
+    if (playersLoading || !filters.playerId) return;
+    if (!knownPlayers.has(filters.playerId)) {
+      setFilters((prev) => ({ ...prev, playerId: "", playerSawFlop: false }));
+    }
+  }, [playersLoading, knownPlayers, filters.playerId, setFilters]);
 
   // Which saved hands have a solved board, for the "view solution" button.
   const solutionByHandId = useHandSolutions(Boolean(user));
