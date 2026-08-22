@@ -20,6 +20,7 @@ const EquityCalc = lazy(routeImports["/equity"]);
 const BankrollTracker = lazy(routeImports["/bankroll"]);
 const HandHistoryTool = lazy(routeImports["/hand-history"]);
 const CreateHandHistory = lazy(routeImports["/hand-history/create"]);
+const PlayersPage = lazy(routeImports["/hand-history/players"]);
 const HandReplay = lazy(routeImports["/hand-history/replay"]);
 const Course = lazy(routeImports["/course"]);
 const CourseSection = lazy(routeImports["/course/section"]);
@@ -131,6 +132,10 @@ function App() {
             <Route
               path="/hand-history/advanced"
               element={<Navigate to="/hand-history/create" replace />}
+            />
+            <Route
+              path="/hand-history/players"
+              element={<PlayersPage user={effectiveUser} />}
             />
             <Route
               path="/hand-history/replay/:key"

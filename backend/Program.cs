@@ -103,6 +103,12 @@ builder.Services.AddSingleton(sp =>
     return new QueueClient(conn, queueName);
 });
 
+// === Player photo blob storage ===
+// Behind an interface so PlayersController stays constructible in the
+// EF-InMemory test suite without Azure configuration.
+builder.Services.AddSingleton<PokerRangeAPI2.Services.IPlayerPhotoStore,
+    PokerRangeAPI2.Services.AdlsPlayerPhotoStore>();
+
 // === EF Core: AppDbContext ===
 builder.Services.AddDbContext<AppDbContext>(options =>
 {

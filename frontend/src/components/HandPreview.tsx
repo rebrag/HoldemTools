@@ -7,7 +7,9 @@
 // fall back to the first text line.
 import React, { useMemo } from "react";
 import PlayingCard from "@/components/PlayingCard";
+import PlayerAvatar from "@/components/PlayerAvatar";
 import { CardBack } from "@/components/PokerTable";
+import { usePlayers } from "@/hooks/usePlayers";
 import { summaryFromRawText, stripReplay } from "@/pages/handhistory/create/replay";
 
 const CARD_W = 26;
@@ -56,6 +58,10 @@ const HandPreview: React.FC<{
   onBoardClick?: () => void;
 }> = ({ rawText, tone = "light", onBoardClick }) => {
   const summary = useMemo(() => summaryFromRawText(rawText), [rawText]);
+  // Consumed here rather than passed as a prop so the memo contract stays
+  // rawText+tone: the roster loading re-renders rows once via the shared
+  // store, not through a new prop identity on every parent render.
+  const { byId: playersById } = usePlayers();
 
   const dark = tone === "dark";
   const muted = dark ? "text-slate-400" : "text-gray-500";
@@ -70,28 +76,43 @@ const HandPreview: React.FC<{
   const hero = players.find((p) => p.isHero) ?? null;
   const opponents = players.filter((p) => !p.isHero);
 
-  const PlayerBlock: React.FC<{ cards: (string | null)[]; label: string; hero?: boolean }> = ({
-    cards,
-    label,
-    hero: isHero,
-  }) => (
+  const PlayerBlock: React.FC<{
+    cards: (string | null)[];
+    label: string;
+    hero?: boolean;
+    playerId?: string;
+  }> = ({ cards, label, hero: isHero, playerId }) => (
     <div className="flex flex-col items-center gap-0.5">
       <CardGroup cards={cards.length ? cards : [null, null]} />
-      <span
-        className={
-          isHero
-            ? "text-[8px] font-semibold uppercase tracking-wide text-emerald-600"
-            : `max-w-[72px] truncate text-[9px] font-medium ${muted}`
-        }
-      >
-        {label}
+      <span className="flex max-w-[80px] items-center gap-1">
+        {/* Tiny identity chip for linked players; sized to the label's
+            line-height so the fan row's rhythm is untouched. */}
+        {playerId && (
+          <PlayerAvatar
+            player={playersById.get(playerId)}
+            name={label}
+            size="xs"
+            className="!h-3.5 !w-3.5"
+          />
+        )}
+        <span
+          className={
+            isHero
+              ? "text-[8px] font-semibold uppercase tracking-wide text-emerald-600"
+              : `min-w-0 truncate text-[9px] font-medium ${muted}`
+          }
+        >
+          {label}
+        </span>
       </span>
     </div>
   );
 
   return (
     <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-      {hero && <PlayerBlock cards={hero.cards} label="Hero" hero />}
+      {hero && (
+        <PlayerBlock cards={hero.cards} label="Hero" hero playerId={hero.playerId} />
+      )}
 
       {board.length > 0 &&
         (onBoardClick ? (
@@ -109,7 +130,7 @@ const HandPreview: React.FC<{
         ))}
 
       {opponents.map((p, i) => (
-        <PlayerBlock key={i} cards={p.cards} label={p.name} />
+        <PlayerBlock key={i} cards={p.cards} label={p.name} playerId={p.playerId} />
       ))}
     </div>
   );

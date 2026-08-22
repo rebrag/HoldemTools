@@ -10,7 +10,9 @@ import BankrollFormModal from "./BankrollFormModal";
 import BankrollStatsGrid from "./BankrollStatsGrid";
 import SessionHistoryTable from "./SessionHistoryTable";
 import BreakdownTable, { type BreakdownTableMode } from "./BreakdownTable";
-import FilterPanel from "./FilterPanel";
+import SessionFilterPanel from "@/components/filters/SessionFilterPanel";
+import HoursRangeFields from "@/components/filters/HoursRangeFields";
+import { parseDateBound } from "@/components/filters/dateBounds";
 import type { LocalHand } from "./SessionHandHistories";
 import { authedFetch } from "@/lib/api";
 import { buildCumulativePoints, toLocalInputValue } from "./utils";
@@ -511,15 +513,6 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
 
   const filteredSessions = useMemo(() => {
     if (!sessions.length) return [];
-
-    const parseDateBound = (dateStr: string, endOfDay: boolean): number | null => {
-      if (!dateStr || dateStr.length < 10) return null; // ignore partial input
-      const full = endOfDay
-        ? `${dateStr}T23:59:59.999`
-        : `${dateStr}T00:00:00`;
-      const t = new Date(full).getTime();
-      return Number.isNaN(t) ? null : t;
-    };
 
     const parseHours = (val: string): number | null => {
       if (!val.trim()) return null;
@@ -1224,17 +1217,25 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
 
         {/* filter panel */}
         {showFilters && (
-          <FilterPanel
+          <SessionFilterPanel
             filters={filters}
             setFilters={setFilters}
             knownLocations={knownLocations}
             knownGames={knownGames}
             filteredCount={filteredCount}
-            totalSessions={totalSessions}
+            totalCount={totalSessions}
+            countNoun="sessions"
             isFiltering={isFiltering}
             onReset={resetFilters}
             onThisYear={setThisYear}
             onHide={() => setShowFilters(false)}
+            extraRows={
+              <HoursRangeFields
+                minHours={filters.minHours}
+                maxHours={filters.maxHours}
+                onChange={(patch) => setFilters((prev) => ({ ...prev, ...patch }))}
+              />
+            }
           />
         )}
 

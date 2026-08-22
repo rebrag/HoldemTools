@@ -19,6 +19,8 @@ namespace PokerRangeAPI2.Data
 
         public DbSet<HiddenSolution> HiddenSolutions { get; set; } = default!;
 
+        public DbSet<Player> Players { get; set; } = default!;
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -96,6 +98,22 @@ namespace PokerRangeAPI2.Data
                 // Resolves an index entry back to its job: the library overlay
                 // looks boards up by their manifest coordinates.
                 entity.HasIndex(e => new { e.ResultStacks, e.ResultNodeName, e.Board });
+            });
+
+            modelBuilder.Entity<Player>(entity =>
+            {
+                // Every indexable string bounded (SQL Server can't index nvarchar(max)).
+                entity.Property(e => e.UserId).HasMaxLength(128);
+                entity.Property(e => e.Name).HasMaxLength(100);
+                entity.Property(e => e.Notes).HasMaxLength(4000);
+                entity.Property(e => e.PhotoPath).HasMaxLength(512);
+                entity.Property(e => e.PhotoContentType).HasMaxLength(64);
+
+                // The only query shape is "all my players".
+                entity.HasIndex(e => e.UserId);
+
+                // Deliberately NO unique index on (UserId, Name): duplicate names
+                // are a feature - identity is the row, never the name.
             });
 
             modelBuilder.Entity<HiddenSolution>(entity =>

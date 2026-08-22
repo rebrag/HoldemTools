@@ -14,6 +14,8 @@ import { useNavigate } from "react-router-dom";
 import type { User } from "firebase/auth";
 import PokerTable from "@/components/PokerTable";
 import CopyButton from "@/components/CopyButton";
+import PlayerAvatar from "@/components/PlayerAvatar";
+import { usePlayers } from "@/hooks/usePlayers";
 import { authedFetch } from "@/lib/api";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import { useSavedTableLayout } from "@/hooks/useSavedTableLayout";
@@ -99,6 +101,9 @@ function applyDefaults(base: AdvancedHandState, d: HandDefaults): AdvancedHandSt
         ? {
             ...s,
             name: ds.name,
+            // The player link travels with the name it snapshots, so a regular
+            // opponent stays identified hand after hand.
+            playerId: ds.playerId,
             stack: ds.stack,
             occupied: ds.occupied ?? true,
             sittingOut: ds.sittingOut,
@@ -471,6 +476,11 @@ const CreateHandHistory: React.FC<Props> = ({
           ...s,
           occupied: row.occupied,
           name: row.name,
+          // Quick setup edits plain text: renaming a seat there breaks the
+          // player link (the text no longer denotes that identity), while an
+          // untouched name keeps it.
+          playerId:
+            row.occupied && row.name.trim() === s.name.trim() ? s.playerId : undefined,
           stack: row.stack,
           holeCards: row.occupied ? s.holeCards : s.holeCards.map(() => null),
         };
@@ -1003,7 +1013,26 @@ const CreateHandHistory: React.FC<Props> = ({
     !!engine.winners &&
     (engine.numBoards === 1 || !!engine.winners2);
 
-  const tableSeats = buildTableSeats({ state, engine, labels, unitMode });
+  // GGPoker-style seat avatars for linked players. `byId` is referentially
+  // stable across unrelated renders (see usePlayers), so this only rebuilds
+  // when seats or the roster actually change.
+  const { byId: playersById } = usePlayers();
+  const playerAvatars = useMemo(
+    () =>
+      state.seats.map((s) =>
+        s.playerId ? (
+          <PlayerAvatar
+            player={playersById.get(s.playerId)}
+            name={s.name}
+            size="md"
+            className="ring-white/40 shadow-md"
+          />
+        ) : undefined
+      ),
+    [state.seats, playersById]
+  );
+
+  const tableSeats = buildTableSeats({ state, engine, labels, unitMode, playerAvatars });
   // While placing, highlight the seats a tap can target: occupied seats for a
   // button move, every other seat for a player move.
   const displayedSeats = placement

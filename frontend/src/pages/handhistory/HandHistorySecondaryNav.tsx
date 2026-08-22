@@ -4,6 +4,8 @@ import { motion } from "framer-motion";
 interface Props {
   /** Go to the visual hand recorder ("Create HH"). */
   onCreate: () => void;
+  /** Go to the player roster page. Omitted (signed out) hides the button. */
+  onPlayers?: () => void;
 }
 
 /**
@@ -14,7 +16,7 @@ interface Props {
  * (felt gradient + fanned cards + suit watermark) — no image asset, so it
  * stays lightweight and theme-consistent with AuroraBackground.
  */
-const HandHistorySecondaryNav: React.FC<Props> = ({ onCreate }) => {
+const HandHistorySecondaryNav: React.FC<Props> = ({ onCreate, onPlayers }) => {
   return (
     <div className="sticky top-12 z-30 overflow-hidden border-b border-emerald-400/30 shadow-lg shadow-emerald-950/30">
       {/* ── Coded poker banner background ────────────────────────────── */}
@@ -32,6 +34,16 @@ const HandHistorySecondaryNav: React.FC<Props> = ({ onCreate }) => {
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
+          {onPlayers && (
+            <motion.button
+              type="button"
+              onClick={onPlayers}
+              whileTap={{ scale: 0.96 }}
+              className="inline-flex items-center rounded-full border border-emerald-300/40 bg-white/10 px-3.5 py-1.5 text-sm font-semibold text-emerald-100 shadow-md shadow-emerald-950/30 transition-colors hover:bg-white/20 hover:text-white"
+            >
+              Players
+            </motion.button>
+          )}
           <motion.button
             type="button"
             onClick={onCreate}

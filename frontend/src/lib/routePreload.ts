@@ -17,6 +17,7 @@ export const routeImports = {
   "/bankroll": () => import("@/pages/bankroll/BankrollTracker"),
   "/hand-history": () => import("@/pages/handhistory/HandHistoryTool"),
   "/hand-history/create": () => import("@/pages/handhistory/create/CreateHandHistory"),
+  "/hand-history/players": () => import("@/pages/handhistory/players/PlayersPage"),
   "/hand-history/replay": () => import("@/pages/handhistory/HandReplay"),
   "/course": () => import("@/pages/course/Course"),
   "/course/section": () => import("@/pages/course/CourseSection"),
