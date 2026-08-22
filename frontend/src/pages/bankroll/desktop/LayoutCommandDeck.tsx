@@ -7,7 +7,8 @@ import LoadingIndicator from "@/components/LoadingIndicator";
 import BankrollChartShadcn from "../BankrollChartShadcn";
 import BreakdownTable, { type BreakdownTableMode } from "../BreakdownTable";
 import SessionHistoryTable from "../SessionHistoryTable";
-import FilterPanel from "../FilterPanel";
+import SessionFilterPanel from "@/components/filters/SessionFilterPanel";
+import HoursRangeFields from "@/components/filters/HoursRangeFields";
 import {
   type DesktopLayoutProps,
   GlassCard,
@@ -180,18 +181,27 @@ const LayoutCommandDeck: React.FC<DesktopLayoutProps> = (props) => {
         </div>
 
         {showFilters && (
-          <FilterPanel
+          <SessionFilterPanel
             theme="dark"
             filters={filters}
             setFilters={setFilters}
             knownLocations={knownLocations}
             knownGames={knownGames}
             filteredCount={filteredCount}
-            totalSessions={totalSessions}
+            totalCount={totalSessions}
+            countNoun="sessions"
             isFiltering={isFiltering}
             onReset={onResetFilters}
             onThisYear={onThisYear}
             onHide={() => setShowFilters(false)}
+            extraRows={
+              <HoursRangeFields
+                theme="dark"
+                minHours={filters.minHours}
+                maxHours={filters.maxHours}
+                onChange={(patch) => setFilters((prev) => ({ ...prev, ...patch }))}
+              />
+            }
           />
         )}
 

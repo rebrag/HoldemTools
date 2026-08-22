@@ -54,6 +54,10 @@ export interface PokerTableSeat {
   /** extra node rendered below the badges (e.g. an equity readout).
    *  Must not contain interactive elements: the seat root is a <button>. */
   extra?: React.ReactNode;
+  /** Player avatar rendered as a circle overlapping the name badge's top-left
+   *  corner (GGPoker-style). No layout shift when absent. Must not contain
+   *  interactive elements: the seat root is a <button>. */
+  avatar?: React.ReactNode;
 }
 
 export interface PokerTableProps {
@@ -350,7 +354,14 @@ const PokerTable: React.FC<PokerTableProps> = ({
                   </div>
                 )}
 
-                <div className={`flex flex-col items-center gap-0.5 ${dimClass}`}>
+                <div className={`relative flex flex-col items-center gap-0.5 ${dimClass}`}>
+                  {seat.avatar && (
+                    /* Overlaps the badge's top-left corner so it reads as the
+                       player's face on the name plate without moving anything. */
+                    <span className="pointer-events-none absolute -left-3 -top-2.5 z-10">
+                      {seat.avatar}
+                    </span>
+                  )}
                   <span
                     className={`max-w-[88px] truncate rounded-md px-1.5 py-[1px] text-[10px] font-semibold shadow-md ${
                       seat.isEmpty

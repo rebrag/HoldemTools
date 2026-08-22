@@ -13,7 +13,15 @@ import { parseReplay } from "./replay";
 
 export interface HandDefaults extends InitialStateOverrides {
   tableSize?: number;
-  seats?: { name: string; stack: string; sittingOut?: boolean; occupied?: boolean }[];
+  seats?: {
+    name: string;
+    /** Durable player link, carried hand-to-hand like the name it snapshots.
+     *  Only the lossless payload path supplies it (the text never carries it). */
+    playerId?: string;
+    stack: string;
+    sittingOut?: boolean;
+    occupied?: boolean;
+  }[];
 }
 
 // Build defaults straight from a previous hand's full state (the lossless path).
@@ -33,6 +41,7 @@ export function defaultsFromState(state: AdvancedHandState): HandDefaults {
     tableSize: state.seats.length,
     seats: state.seats.map((s) => ({
       name: s.name,
+      playerId: s.playerId,
       stack: cleanNum(s.stack),
       sittingOut: s.sittingOut,
       occupied: s.occupied,

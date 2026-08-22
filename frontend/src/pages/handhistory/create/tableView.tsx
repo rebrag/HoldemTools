@@ -27,8 +27,11 @@ export function buildTableSeats(args: {
   /** Replayer-only: per-seat readout node (e.g. equity / pot-odds badge) placed
    *  in the seat's `extra` slot. Indexed by seat. The recorder never passes this. */
   seatExtras?: (React.ReactNode | undefined)[];
+  /** Per-seat player avatar (linked players only), indexed by seat. The
+   *  anonymous shared replay route never passes this. */
+  playerAvatars?: (React.ReactNode | undefined)[];
 }): PokerTableSeat[] {
-  const { state, engine, labels, unitMode, concealSeats, seatExtras } = args;
+  const { state, engine, labels, unitMode, concealSeats, seatExtras, playerAvatars } = args;
 
   // Forced-bet preview shown during setup (before the engine exists). Derived
   // from the same position labels as buildEngine's blind assignment, so the
@@ -105,6 +108,8 @@ export function buildTableSeats(args: {
       isEmpty: empty,
       // Replayer readout (equity / pot odds); undefined on the recorder.
       extra: empty || sittingOut ? undefined : seatExtras?.[i],
+      // Identity stays visible even sitting out; only an empty chair has none.
+      avatar: empty ? undefined : playerAvatars?.[i],
     };
   });
 }

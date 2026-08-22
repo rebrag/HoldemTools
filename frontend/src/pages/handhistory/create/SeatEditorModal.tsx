@@ -13,6 +13,7 @@ import React, { useEffect, useId, useState } from "react";
 import PlayingCard from "@/components/PlayingCard";
 import RankSuitKeypad from "@/components/RankSuitKeypad";
 import ResponsiveDrawer from "@/components/ResponsiveDrawer";
+import PlayerCombobox from "./PlayerCombobox";
 import type { HoleCards, Seat } from "./types";
 
 export interface SeatEditResult {
@@ -95,7 +96,11 @@ const SeatEditorModal: React.FC<Props> = ({
   onMove,
 }) => {
   const titleId = useId();
+  const nameInputId = useId();
   const [name, setName] = useState(seat.name);
+  // Durable player link; the combobox clears it whenever the name text is
+  // edited, so name and playerId can never silently disagree.
+  const [playerId, setPlayerId] = useState(seat.playerId);
   const [stack, setStack] = useState(seat.stack);
   const [hole, setHole] = useState<HoleCards>(seat.holeCards);
   const [makeButton, setMakeButton] = useState(isButton);
@@ -114,6 +119,7 @@ const SeatEditorModal: React.FC<Props> = ({
   useEffect(() => {
     if (!open) return;
     setName(seat.name);
+    setPlayerId(seat.playerId);
     setStack(seat.stack);
     setHole(seat.holeCards);
     setMakeButton(isButton);
@@ -153,6 +159,7 @@ const SeatEditorModal: React.FC<Props> = ({
       seat: {
         occupied: seat.occupied || filled,
         name: name.trim(),
+        playerId,
         stack: stack.trim(),
         // A sitting-out seat isn't dealt in — drop its cards so they don't
         // count as used elsewhere.
@@ -196,19 +203,24 @@ const SeatEditorModal: React.FC<Props> = ({
         <div className="flex-1 overflow-y-auto px-5 pb-4">
           {/* ── Who's sitting here ────────────────────────────────────── */}
           <div className="grid grid-cols-[1fr_112px] gap-3">
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-slate-300">
+            <div className="flex flex-col gap-1">
+              {/* htmlFor instead of a wrapping <label>: wrapped, the linked
+                  chip's unlink button would become the label's click target. */}
+              <label htmlFor={nameInputId} className="text-xs font-medium text-slate-300">
                 Name <span className="text-slate-500">(optional)</span>
-              </span>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onFocus={(e) => e.currentTarget.select()}
+              </label>
+              <PlayerCombobox
+                inputId={nameInputId}
+                name={name}
+                playerId={playerId}
+                onChange={(nextName, nextPlayerId) => {
+                  setName(nextName);
+                  setPlayerId(nextPlayerId);
+                }}
                 placeholder={positionLabel}
-                className={fieldCls}
+                fieldClassName={fieldCls}
               />
-            </label>
+            </div>
             <label className="flex flex-col gap-1">
               <span className="text-xs font-medium text-slate-300">Stack</span>
               <input

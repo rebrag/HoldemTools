@@ -13,6 +13,16 @@ import { solutionOpenUrl } from "@/lib/solver/postflopLibrary";
 import HandHistorySecondaryNav from "./HandHistorySecondaryNav";
 import HandRow from "./HandRow";
 import FlyingCards from "./FlyingCards";
+import HandFilterBar from "./HandFilterBar";
+import {
+  HAND_FILTERS_KEY,
+  defaultHandFilters,
+  isFiltering as isFilteringHands,
+  parseHandFiltersOrDefault,
+  rowMatches,
+  type HandFilterState,
+} from "./handFilters";
+import { useLocalStorageState } from "@/hooks/useLocalStorageState";
 import { summaryFromRawText, stripReplay } from "./create/replay";
 import { TEST_HAND_ID, buildTestHandText, SHOW_TEST_HAND } from "./create/testHand";
 import type {
@@ -79,6 +89,16 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   const [sessionsById, setSessionsById] = useState<Map<string, BankrollSession>>(
     new Map()
   );
+
+  // Search/filter state, persisted like bankroll's (tolerant parser: a stale
+  // or malformed blob falls back to defaults field-by-field).
+  const [filters, setFilters] = useLocalStorageState<HandFilterState>(
+    HAND_FILTERS_KEY,
+    defaultHandFilters,
+    parseHandFiltersOrDefault
+  );
+  const [showFilters, setShowFilters] = useState(false);
+  const filtering = isFilteringHands(filters);
 
   // Which saved hands have a solved board, for the "view solution" button.
   const solutionByHandId = useHandSolutions(Boolean(user));
@@ -256,17 +276,46 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     return base;
   }, [user, items, localHands, testRawText]);
 
-  // Start back at the first page when switching between accounts/stores.
+  // Filtering preserves the createdAt-desc order, so the day/session grouping
+  // below keeps working on the filtered subset. The dev test fixture is always
+  // shown (it exists to eyeball the serializer, not to be searched).
+  const filteredRows = useMemo(
+    () =>
+      filtering
+        ? rows.filter((r) => r.synthetic || rowMatches(r, filters, sessionsById))
+        : rows,
+    [rows, filtering, filters, sessionsById]
+  );
+
+  // Session attributes for the shared filter panel's dropdowns.
+  const { knownLocations, knownGames } = useMemo(() => {
+    const locations = new Set<string>();
+    const games = new Set<string>();
+    for (const s of sessionsById.values()) {
+      const loc = s.location?.trim();
+      if (loc) locations.add(loc);
+      const g = s.blinds?.trim();
+      if (g) games.add(g);
+    }
+    return {
+      knownLocations: [...locations].sort(),
+      knownGames: [...games].sort(),
+    };
+  }, [sessionsById]);
+
+  // Start back at the first page when switching between accounts/stores or
+  // when the filter set changes (page N of one result set is meaningless in
+  // another).
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [user]);
+  }, [user, filters]);
 
   // Only the visible page is grouped/rendered; the rest sit behind "Load more".
   const visibleRows = useMemo(
-    () => rows.slice(0, visibleCount),
-    [rows, visibleCount]
+    () => filteredRows.slice(0, visibleCount),
+    [filteredRows, visibleCount]
   );
-  const remaining = rows.length - visibleRows.length;
+  const remaining = filteredRows.length - visibleRows.length;
 
   // Seed the cross-tab cache so the replay tab these rows link to paints
   // without waiting on auth + a round trip.
@@ -338,10 +387,31 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     []
   );
 
+  const resetFilters = () => setFilters(defaultHandFilters);
+
+  const setThisYear = () => {
+    const year = new Date().getFullYear();
+    setFilters((prev) => ({
+      ...prev,
+      fromDate: `${year}-01-01`,
+      toDate: `${year}-12-31`,
+    }));
+  };
+
+  // How many independent criteria are active — the badge on the Filters button.
+  const activeFilterCount =
+    (filters.location ? 1 : 0) +
+    (filters.game ? 1 : 0) +
+    (filters.fromDate || filters.toDate ? 1 : 0) +
+    (filters.playerId ? 1 : 0) +
+    (filters.playerId && filters.playerSawFlop ? 1 : 0) +
+    (filters.villainShowed ? 1 : 0);
+
   return (
     <>
       <HandHistorySecondaryNav
         onCreate={() => navigate("/hand-history/create")}
+        onPlayers={user ? () => navigate("/hand-history/players") : undefined}
       />
 
       {/* No top padding on phones: the list is full-bleed there, so any gap
@@ -412,6 +482,94 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
           </button>
         </motion.div>
       ) : (
+        <>
+        {/* Search/filter entry point. Signed-out users have no players and no
+            sessions to filter by, so the affordance is hidden entirely. */}
+        {user && (
+          <div className="mt-3 sm:mt-0">
+            <div className="mb-2 flex justify-end">
+              <motion.button
+                type="button"
+                whileTap={{ scale: 0.96 }}
+                onClick={() => setShowFilters((v) => !v)}
+                aria-expanded={showFilters}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold shadow-sm transition-colors ${
+                  filtering
+                    ? "border-emerald-400 bg-emerald-500 text-white hover:bg-emerald-400"
+                    : "border-emerald-300 bg-white/90 text-emerald-700 hover:bg-emerald-50"
+                }`}
+              >
+                <svg
+                  viewBox="0 0 16 16"
+                  className="h-3 w-3"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.8}
+                  strokeLinecap="round"
+                >
+                  <path d="M2 4h12M4.5 8h7M7 12h2" />
+                </svg>
+                Filters
+                {activeFilterCount > 0 && (
+                  <span
+                    className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold ${
+                      filtering ? "bg-white/25 text-white" : "bg-emerald-100 text-emerald-800"
+                    }`}
+                  >
+                    {activeFilterCount}
+                  </span>
+                )}
+              </motion.button>
+            </div>
+            <AnimatePresence initial={false}>
+              {showFilters && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className="mb-3 overflow-hidden rounded-xl border border-emerald-200 bg-white shadow-sm shadow-emerald-500/10">
+                    <HandFilterBar
+                      filters={filters}
+                      setFilters={setFilters}
+                      knownLocations={knownLocations}
+                      knownGames={knownGames}
+                      filteredCount={filteredRows.length}
+                      totalCount={rows.length}
+                      isFiltering={filtering}
+                      onReset={resetFilters}
+                      onThisYear={setThisYear}
+                      onHide={() => setShowFilters(false)}
+                    />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
+
+        {filteredRows.length === 0 ? (
+          /* Hands exist but none match — distinct from the no-hands-at-all
+             state so it's obvious the filters (not the data) are the cause. */
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ type: "spring", stiffness: 240, damping: 22 }}
+            className="rounded-2xl border border-dashed border-emerald-300/50 bg-white/70 px-6 py-10 text-center backdrop-blur-sm"
+          >
+            <p className="text-sm text-gray-600">
+              No hands match the current filters.
+            </p>
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="mt-3 text-sm font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-600"
+            >
+              Clear filters
+            </button>
+          </motion.div>
+        ) : (
         <>
         {/* Edge-to-edge on phones (the -mx-4 cancels the page gutter) so the
             card fans get the full screen width; a rounded card again from sm.
@@ -484,6 +642,8 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
               </span>
             </motion.button>
           </div>
+        )}
+        </>
         )}
         </>
       )}

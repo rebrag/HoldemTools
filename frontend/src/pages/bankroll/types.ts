@@ -1,5 +1,6 @@
 // src/bankroll/types.ts
 import type { User } from "firebase/auth";
+import type { CommonFilterState } from "@/components/filters/types";
 
 export interface BankrollSession {
   id: string;
@@ -39,11 +40,11 @@ export interface BankrollStats {
 
 export type BreakdownMode = "sessions" | "weekday" | "month" | "year";
 
-export interface FilterState {
-  location: string;
-  game: string;
-  fromDate: string; // YYYY-MM-DD
-  toDate: string; // YYYY-MM-DD
+// The common fields (location/game/dates) live in the shared filter shape so
+// the hand-history list and this page stay one source of truth; see
+// components/filters. Same six string fields as always, so the persisted
+// localStorage blob keeps parsing unchanged.
+export interface FilterState extends CommonFilterState {
   minHours: string;
   maxHours: string;
 }

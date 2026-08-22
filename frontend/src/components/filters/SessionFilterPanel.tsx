@@ -1,26 +1,19 @@
-// src/bankroll/FilterPanel.tsx
-// Session filter controls, shared between the mobile layout (light theme,
-// pixel-identical to the original inline panel) and the desktop variants.
+// src/components/filters/SessionFilterPanel.tsx
+// The session-attribute filter panel, shared by the bankroll tool and the hand
+// history list as ONE source of truth: location, game/stakes, and date range
+// render identically everywhere, and a future change lands on both tools at
+// once. Extracted from pages/bankroll/FilterPanel.tsx with its JSX and theme
+// map intact (bankroll renders pixel-identically); tool-specific controls slot
+// in via `extraFields` (cells inside the responsive grid) and `extraRows`
+// (full-width rows under it, e.g. bankroll's session-length range).
 import React from "react";
-import type { FilterState } from "./types";
+import type { CommonFilterState, FilterTheme } from "./types";
 
-export type FilterPanelTheme = "light" | "dark";
+export type { FilterTheme };
 
-interface Props {
-  filters: FilterState;
-  setFilters: React.Dispatch<React.SetStateAction<FilterState>>;
-  knownLocations: string[];
-  knownGames: string[];
-  filteredCount: number;
-  totalSessions: number;
-  isFiltering: boolean;
-  onReset: () => void;
-  onThisYear: () => void;
-  onHide?: () => void;
-  theme?: FilterPanelTheme;
-}
-
-const THEMES = {
+// Class map per theme (the codebase's tone-prop convention; no `dark:`
+// variants). Exported so extra fields/rows can style themselves to match.
+export const FILTER_THEMES = {
   light: {
     panel: "border-b border-emerald-100 bg-emerald-50/70 px-3 py-2 text-xs space-y-2",
     label: "font-medium text-gray-700",
@@ -53,20 +46,46 @@ const THEMES = {
   },
 } as const;
 
-const FilterPanel: React.FC<Props> = ({
+interface Props<T extends CommonFilterState> {
+  filters: T;
+  setFilters: React.Dispatch<React.SetStateAction<T>>;
+  knownLocations: string[];
+  /** Stakes strings (see CommonFilterState.game note). */
+  knownGames: string[];
+  filteredCount: number;
+  totalCount: number;
+  /** "sessions" | "hands" — the noun in "Showing X / Y …". */
+  countNoun: string;
+  isFiltering: boolean;
+  onReset: () => void;
+  onThisYear: () => void;
+  onHide?: () => void;
+  theme?: FilterTheme;
+  /** Tool-specific cells rendered inside the responsive grid, between the date
+   *  inputs and the Quick range button. */
+  extraFields?: React.ReactNode;
+  /** Tool-specific full-width rows rendered under the grid (e.g. bankroll's
+   *  session-length min–max pair). */
+  extraRows?: React.ReactNode;
+}
+
+function SessionFilterPanel<T extends CommonFilterState>({
   filters,
   setFilters,
   knownLocations,
   knownGames,
   filteredCount,
-  totalSessions,
+  totalCount,
+  countNoun,
   isFiltering,
   onReset,
   onThisYear,
   onHide,
   theme = "light",
-}) => {
-  const t = THEMES[theme];
+  extraFields,
+  extraRows,
+}: Props<T>): React.ReactElement {
+  const t = FILTER_THEMES[theme];
 
   return (
     <div className={t.panel}>
@@ -90,7 +109,7 @@ const FilterPanel: React.FC<Props> = ({
           </select>
         </div>
 
-        {/* Game */}
+        {/* Game (stakes; see CommonFilterState.game) */}
         <div className="flex flex-col gap-1">
           <span className={t.label}>Game</span>
           <select
@@ -135,6 +154,8 @@ const FilterPanel: React.FC<Props> = ({
           />
         </div>
 
+        {extraFields}
+
         {/* Quick range: This year */}
         <div className="flex flex-col gap-1 justify-end">
           <span className={t.label}>Quick range</span>
@@ -144,43 +165,15 @@ const FilterPanel: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Session length row */}
-      <div className="flex flex-col gap-1">
-        <span className={t.label}>Session length (hrs)</span>
-        <div className="flex items-center gap-1">
-          <input
-            type="number"
-            min={0}
-            step={0.25}
-            className={t.hoursInput}
-            placeholder="Min"
-            value={filters.minHours}
-            onChange={(e) =>
-              setFilters((prev) => ({ ...prev, minHours: e.target.value }))
-            }
-          />
-          <span className={t.dash}>–</span>
-          <input
-            type="number"
-            min={0}
-            step={0.25}
-            className={t.hoursInput}
-            placeholder="Max"
-            value={filters.maxHours}
-            onChange={(e) =>
-              setFilters((prev) => ({ ...prev, maxHours: e.target.value }))
-            }
-          />
-        </div>
-      </div>
+      {extraRows}
 
       <div className="flex items-center justify-between gap-2">
         <p className={t.summary}>
           Showing{" "}
           <span className="font-semibold">
-            {filteredCount} / {totalSessions}
+            {filteredCount} / {totalCount}
           </span>{" "}
-          sessions.
+          {countNoun}.
         </p>
         <div className="flex items-center gap-2">
           {isFiltering && (
@@ -197,6 +190,6 @@ const FilterPanel: React.FC<Props> = ({
       </div>
     </div>
   );
-};
+}
 
-export default FilterPanel;
+export default SessionFilterPanel;

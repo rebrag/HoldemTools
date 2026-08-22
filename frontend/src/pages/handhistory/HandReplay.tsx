@@ -27,6 +27,8 @@ import { isCoarsePointer } from "@/lib/pointer";
 import { solutionOpenUrl } from "@/lib/solver/postflopLibrary";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import useHandSolutions from "@/hooks/useHandSolutions";
+import PlayerAvatar from "@/components/PlayerAvatar";
+import { usePlayers } from "@/hooks/usePlayers";
 import useNoOverscroll from "@/hooks/useNoOverscroll";
 import { positionLabelsForSeats } from "./create/positions";
 import { buildTableSeats, potView, TableCenter } from "./create/tableView";
@@ -174,6 +176,12 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
   // doesn't contain this hand. Device-local / test hands have a non-numeric
   // key and never match.
   const solutionByHandId = useHandSolutions(Boolean(user));
+
+  // Player roster for seat avatars. Owner-only by construction: the anonymous
+  // shared route never gets avatars (and photo reads are [Authorize] anyway),
+  // so a shared viewer sees plain seats with the name snapshots.
+  const { byId: playersById } = usePlayers();
+  const showAvatars = !shared && !!user;
   const handId = shared
     ? load.status === "ready"
       ? load.sharedHandId ?? NaN
@@ -322,6 +330,20 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
     return undefined;
   });
 
+  // Seat avatars for linked players (owner viewing only; see showAvatars).
+  const playerAvatars = showAvatars
+    ? data.state.seats.map((s) =>
+        s.playerId ? (
+          <PlayerAvatar
+            player={playersById.get(s.playerId)}
+            name={s.name}
+            size="md"
+            className="ring-white/40 shadow-md"
+          />
+        ) : undefined
+      )
+    : undefined;
+
   const tap = reduce ? undefined : { scale: 0.9 };
 
   const goFirst = () => {
@@ -416,7 +438,7 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
       <div className="w-full py-2">
         <PokerTable
           size={data.state.tableSize}
-          seats={buildTableSeats({ state: data.state, engine: frame, labels, unitMode, concealSeats, seatExtras })}
+          seats={buildTableSeats({ state: data.state, engine: frame, labels, unitMode, concealSeats, seatExtras, playerAvatars })}
           maxWidthClassName="max-w-2xl"
           potAmount={pot?.amount}
           potLabel={pot?.label}

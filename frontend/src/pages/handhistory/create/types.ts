@@ -26,6 +26,13 @@ export function evalGameId(game: string): EvalGame | null {
 export interface Seat {
   occupied: boolean;
   name: string; // optional custom label ("David sunglasses kid"); falls back to position
+  /** Durable link to a Players row (server Guid, picked in the seat editor).
+   *  `name` stays the display snapshot even when set; editing the name text
+   *  clears the link, because the text no longer denotes that identity.
+   *  Optional and additive: old replay payloads predate it, and free-text-only
+   *  seats (signed out / legacy) omit it. Dangling ids after a player is
+   *  deleted are normal — filters skip them, avatars fall back to initials. */
+  playerId?: string;
   stack: string; // kept as string for input ergonomics; parsed when needed
   holeCards: HoleCards;
   /** Seated but not dealt in: shown at the table, excluded from the hand

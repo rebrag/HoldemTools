@@ -243,6 +243,20 @@ export interface PreviewPlayer {
   cards: (string | null)[];
   name: string;
   isHero: boolean;
+  /** Durable player link (Seat.playerId) for the tiny list avatars. */
+  playerId?: string;
+}
+
+/** Per-seat identity/action facts for client-side hand search. Dealt-in seats
+ *  only, in engine order. */
+export interface SeatFact {
+  playerId?: string;
+  name: string; // display name (custom name or position label)
+  isHero: boolean;
+  /** The hand reached the flop with this player still in (didn't fold preflop). */
+  sawFlop: boolean;
+  /** At least one of this seat's hole cards was recorded. */
+  showedCards: boolean;
 }
 
 export interface HandSummary {
@@ -261,6 +275,12 @@ export interface HandSummary {
   flopSpr: number | null;
   /** Players still in the hand when the flop was dealt; null when no flop. */
   playersAtFlop: number | null;
+  /** Per-seat search facts (see SeatFact). */
+  seatFacts: SeatFact[];
+  /** ANY non-hero seat with >=1 recorded hole card — the user-facing "villain
+   *  showed cards" filter semantic (same population as `players`' non-hero
+   *  entries, whatever way the cards became known). */
+  villainShowedAnyCard: boolean;
 }
 
 // Fold the recorded actions into a single final engine (no per-action frames —
@@ -300,16 +320,35 @@ export function buildHandSummary(data: ReplayData): HandSummary {
   }
 
   const heroIdx = e.heroIndex;
+  const linkOf = (seat: number) => data.state.seats[seat]?.playerId;
   const players: PreviewPlayer[] = [];
   if (heroIdx != null) {
     const h = e.players[heroIdx];
-    players.push({ cards: h.hole, name: h.name, isHero: true });
+    players.push({ cards: h.hole, name: h.name, isHero: true, playerId: linkOf(h.seat) });
   }
   e.players
     .map((p, i) => ({ p, i }))
     .filter(({ p, i }) => i !== heroIdx && p.hole.some((c) => !!c))
     .sort((a, b) => b.p.totalCommitted - a.p.totalCommitted)
-    .forEach(({ p }) => players.push({ cards: p.hole, name: p.name, isHero: false }));
+    .forEach(({ p }) =>
+      players.push({ cards: p.hole, name: p.name, isHero: false, playerId: linkOf(p.seat) })
+    );
+
+  // Search facts, one per dealt-in seat. A player "saw the flop" when the hand
+  // reached it with them still in (foldedStreet 0 = folded preflop; null =
+  // never folded). Computed here so the whole search index rides the one
+  // engine fold this function already pays for.
+  const handSawFlop = e.reached >= 1;
+  const seatFacts: SeatFact[] = e.players.map((p, i) => ({
+    playerId: linkOf(p.seat),
+    name: p.name,
+    isHero: i === heroIdx,
+    sawFlop: handSawFlop && (p.foldedStreet == null || p.foldedStreet >= 1),
+    showedCards: p.hole.some((c) => !!c),
+  }));
+  const villainShowedAnyCard = e.players.some(
+    (p, i) => i !== heroIdx && p.hole.some((c) => !!c)
+  );
 
   // Effective stack for SPR: hero-centric when the hero saw the flop
   // (min of hero vs the largest opponent stack — the most hero can play for);
@@ -340,6 +379,8 @@ export function buildHandSummary(data: ReplayData): HandSummary {
     potAtFlop,
     flopSpr,
     playersAtFlop,
+    seatFacts,
+    villainShowedAnyCard,
   };
 }
 
