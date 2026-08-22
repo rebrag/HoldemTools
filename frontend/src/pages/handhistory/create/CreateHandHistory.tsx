@@ -52,7 +52,11 @@ import { uploadGameTree } from "@/lib/solver/uploadGameTree";
 import { fetchSolveJob } from "@/lib/solver/solveJobs";
 import { extractHandSolve, type HandSolveExtract } from "./solveBridge";
 import { parseGameString } from "./parseGameString";
-import { parseHandDefaults, type HandDefaults } from "./parseHandDefaults";
+import {
+  defaultsFromResult,
+  parseHandDefaults,
+  type HandDefaults,
+} from "./parseHandDefaults";
 import type { HandHistory } from "../types";
 import {
   blankSeat,
@@ -119,6 +123,9 @@ function applyDefaults(base: AdvancedHandState, d: HandDefaults): AdvancedHandSt
     });
   }
   next.seats = seats;
+  // Results-path defaults carry the next hand's button (one seat clockwise
+  // from the previous hand's); plain setup defaults leave it where it was.
+  if (d.buttonSeat != null) next.buttonSeat = d.buttonSeat;
   next.buttonSeat = Math.min(next.buttonSeat, size - 1);
   next.heroSeat = Math.min(next.heroSeat, size - 1);
   // Empties are now carried forward, so the button/hero can land on a seat that
@@ -672,6 +679,22 @@ const CreateHandHistory: React.FC<Props> = ({
         setPhase("action");
         setPlacement(null);
         return;
+      }
+    }
+    // "Record another" right after a resolved hand: the next hand starts from
+    // this one's RESULTS — stacks adjusted for wins/losses, busted players
+    // sitting out, button moved one seat on — same as reopening the recorder.
+    if (
+      !embedded &&
+      engine &&
+      engine.done &&
+      engine.winners &&
+      (engine.numBoards === 1 || engine.winners2)
+    ) {
+      try {
+        rememberedRef.current = defaultsFromResult(state, engine);
+      } catch {
+        // keep whatever was remembered before
       }
     }
     // Restart the hand, but keep the remembered setup (blinds/game/seats) from
@@ -1308,6 +1331,13 @@ const CreateHandHistory: React.FC<Props> = ({
       <PokerTable
         size={state.tableSize}
         seats={displayedSeats}
+        /* Setup must fit a phone viewport WITH the form below it — cap the
+           table's width by the height left over so nothing scrolls. */
+        className={
+          phase === "setup"
+            ? "mx-auto max-w-[clamp(15rem,calc((100dvh-26rem)*1.4),42rem)] lg:max-w-none"
+            : undefined
+        }
         onSeatClick={(i) => (placement ? handlePlacementTarget(i) : setEditingSeat(i))}
         onDealerBadgeClick={
           phase === "setup"
@@ -1319,6 +1349,7 @@ const CreateHandHistory: React.FC<Props> = ({
         maxWidthClassName="max-w-2xl"
         potAmount={pot?.amount}
         potLabel={pot?.label}
+        sidePotLabels={pot?.sidePots}
         potWinnerSeatIndex={pot?.winnerSeatIndex}
         center={
           <TableCenter
@@ -1350,7 +1381,18 @@ const CreateHandHistory: React.FC<Props> = ({
         <>
           {!engine.done && (
             <>
-              <div className="mt-3 flex justify-end">
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEngine(null);
+                    setRedoStack([]);
+                    setPhase("setup");
+                  }}
+                  className="rounded-full border border-emerald-300/40 bg-slate-900/70 px-3 py-1 text-[11px] font-medium text-emerald-100 transition hover:bg-slate-800 active:scale-95"
+                >
+                  ← Back to setup
+                </button>
                 <button
                   type="button"
                   onClick={() => setUnitMode((u) => (u === "bb" ? "chips" : "bb"))}
@@ -1485,23 +1527,28 @@ const CreateHandHistory: React.FC<Props> = ({
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={() => {
-              setEngine(null);
-              setRedoStack([]);
-              setPhase("setup");
-            }}
-            className="mt-3 text-xs text-emerald-200/80 underline underline-offset-2 hover:text-white"
-          >
-            ← Back to setup
-          </button>
+          {/* While the hand is live this lives in the pill row above the
+              action panel; once it resolves (panel gone) it returns here as
+              the escape hatch. */}
+          {engine.done && (
+            <button
+              type="button"
+              onClick={() => {
+                setEngine(null);
+                setRedoStack([]);
+                setPhase("setup");
+              }}
+              className="mt-3 text-xs text-emerald-200/80 underline underline-offset-2 hover:text-white"
+            >
+              ← Back to setup
+            </button>
+          )}
         </>
       )}
 
       {/* ───────── Setup phase: config form ───────── */}
       {phase === "setup" && (
-        <div className="rounded-2xl border border-emerald-300/40 bg-white/95 p-4 shadow-lg shadow-emerald-500/20 backdrop-blur-sm">
+        <div className="rounded-2xl border border-emerald-300/40 bg-white/95 p-3 shadow-lg shadow-emerald-500/20 backdrop-blur-sm sm:p-4">
           {/* Wraps rather than squashing: on a narrow phone the two action
               pills take the first line and the text links drop below. */}
           <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
@@ -1625,7 +1672,10 @@ const CreateHandHistory: React.FC<Props> = ({
             />
           </label>
 
-          <p className="mt-3 text-[11px] text-gray-500">
+          {/* Hidden on phones: the setup (table + this form) must fit one
+              mobile viewport without scrolling, and this hint is the one block
+              that doesn't earn its rows there. */}
+          <p className="mt-3 hidden text-[11px] text-gray-500 sm:block">
             Tap each seat to set its name, stack, and hole cards. Mark the dealer
             button, your own seat (hero), or straddles (up to a triple straddle —
             each defaults to double the last). Use the “+ 2nd board” chip

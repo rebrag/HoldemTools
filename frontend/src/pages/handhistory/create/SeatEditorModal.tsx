@@ -51,10 +51,11 @@ interface Props {
 }
 
 const fieldCls =
-  "w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-slate-500 transition-colors focus:outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/40";
+  "w-full rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white placeholder:text-slate-500 transition-colors focus:outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/40";
 
 /** One row of the grouped toggle list: label left, checkbox right, the whole
- *  row tappable. Dimmed (not hidden) while sitting out, so the layout holds. */
+ *  row tappable. Dimmed (not hidden) while sitting out, so the layout holds.
+ *  Kept compact — the whole sheet must fit a phone viewport without scrolling. */
 const ToggleRow: React.FC<{
   label: React.ReactNode;
   checked: boolean;
@@ -62,17 +63,17 @@ const ToggleRow: React.FC<{
   onChange: (checked: boolean) => void;
 }> = ({ label, checked, disabled, onChange }) => (
   <label
-    className={`flex cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2.5 transition-colors ${
+    className={`flex cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-1 transition-colors ${
       disabled ? "cursor-default opacity-40" : "hover:bg-white/5"
     }`}
   >
-    <span className="text-sm text-slate-200">{label}</span>
+    <span className="text-xs text-slate-200">{label}</span>
     <input
       type="checkbox"
       checked={checked}
       disabled={disabled}
       onChange={(e) => onChange(e.target.checked)}
-      className="h-4 w-4 shrink-0 accent-emerald-500"
+      className="h-3.5 w-3.5 shrink-0 accent-emerald-500"
     />
   </label>
 );
@@ -150,11 +151,13 @@ const SeatEditorModal: React.FC<Props> = ({
     });
   };
 
-  const save = () => {
+  // `out` overrides the sitting-out state so the toggle can commit immediately
+  // (its setState hasn't landed yet when it fires).
+  const saveWith = (out: boolean) => {
     // Don't resurrect a deliberately-empty seat on a no-op save (e.g. tapping the
     // backdrop): it only becomes occupied once something is entered.
     const filled =
-      name.trim() !== "" || stack.trim() !== "" || hole.some((c) => !!c) || sittingOut;
+      name.trim() !== "" || stack.trim() !== "" || hole.some((c) => !!c) || out;
     onSave({
       seat: {
         occupied: seat.occupied || filled,
@@ -163,22 +166,23 @@ const SeatEditorModal: React.FC<Props> = ({
         stack: stack.trim(),
         // A sitting-out seat isn't dealt in — drop its cards so they don't
         // count as used elsewhere.
-        holeCards: sittingOut ? pad([]) : pad(hole.filter((c): c is string => !!c)),
-        sittingOut,
+        holeCards: out ? pad([]) : pad(hole.filter((c): c is string => !!c)),
+        sittingOut: out,
         // Preserve "unset" (undefined) unless the user toggled the checkbox, so
         // the hero/non-hero default is derived at replay time.
-        hideUntilShowdown: sittingOut
+        hideUntilShowdown: out
           ? undefined
           : hideTouched
             ? hideCards
             : seat.hideUntilShowdown,
       },
-      makeButton: !sittingOut && makeButton,
-      makeHero: !sittingOut && makeHero,
-      makeStraddle: !sittingOut && canStraddle && makeStraddle,
+      makeButton: !out && makeButton,
+      makeHero: !out && makeHero,
+      makeStraddle: !out && canStraddle && makeStraddle,
       straddleAmount: straddleAmt.trim() || straddleAmount,
     });
   };
+  const save = () => saveWith(sittingOut);
 
   return (
     <ResponsiveDrawer
@@ -193,14 +197,14 @@ const SeatEditorModal: React.FC<Props> = ({
     >
       <>
         {/* ── Header: the seat being edited is the headline ─────────────── */}
-        <div className="px-5 pt-2 sm:pt-5 pb-3">
-          <h2 id={titleId} className="text-lg font-bold tracking-tight text-white">
+        <div className="px-5 pt-2 sm:pt-4 pb-1.5">
+          <h2 id={titleId} className="text-base font-bold tracking-tight text-white">
             {positionLabel}
             <span className="ml-2 text-sm font-medium text-slate-400">seat</span>
           </h2>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 pb-4">
+        <div className="flex-1 overflow-y-auto px-5 pb-3">
           {/* ── Who's sitting here ────────────────────────────────────── */}
           <div className="grid grid-cols-[1fr_112px] gap-3">
             <div className="flex flex-col gap-1">
@@ -236,7 +240,7 @@ const SeatEditorModal: React.FC<Props> = ({
           </div>
 
           {/* ── Table roles, grouped in one contained list ────────────── */}
-          <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-1">
+          <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-0.5">
             <ToggleRow
               label="Dealer button here"
               checked={!sittingOut && makeButton}
@@ -266,7 +270,7 @@ const SeatEditorModal: React.FC<Props> = ({
                   onChange={setMakeStraddle}
                 />
                 {!sittingOut && makeStraddle && (
-                  <div className="flex items-center justify-between gap-3 px-3 pb-2.5 pt-0.5">
+                  <div className="flex items-center justify-between gap-3 px-3 pb-1.5 pt-0.5">
                     <span className="text-xs text-slate-400">
                       {["Straddle", "Double straddle", "Triple straddle"][straddleOrder] ??
                         "Straddle"}{" "}
@@ -308,6 +312,9 @@ const SeatEditorModal: React.FC<Props> = ({
                     setMakeButton(false);
                     setMakeHero(false);
                     setMakeStraddle(false);
+                    // Sitting a player out is the whole edit — commit and
+                    // close the drawer right away (saveSeat closes it).
+                    saveWith(true);
                   }
                 }}
               />
@@ -316,8 +323,8 @@ const SeatEditorModal: React.FC<Props> = ({
 
           {/* ── Hole cards (a sitting-out seat isn't dealt any) ───────── */}
           {!sittingOut && (
-            <div className="mt-4">
-              <div className="mb-1.5 flex items-center justify-between">
+            <div className="mt-3">
+              <div className="mb-1 flex items-center justify-between">
                 <span className="text-xs font-medium text-slate-300">Hole cards</span>
                 {selected.length > 0 && (
                   <button
@@ -329,7 +336,7 @@ const SeatEditorModal: React.FC<Props> = ({
                   </button>
                 )}
               </div>
-              <div className="mb-2 flex flex-wrap gap-2">
+              <div className="mb-1.5 flex flex-wrap gap-2">
                 {Array.from({ length: capacity }, (_, i) => hole[i] ?? null).map((c, i) =>
                   c ? (
                     <button
@@ -339,12 +346,12 @@ const SeatEditorModal: React.FC<Props> = ({
                       aria-label={`Remove ${c}`}
                       className="rounded-lg transition-transform hover:-translate-y-[1px] active:scale-95"
                     >
-                      <PlayingCard code={c} size="md" width={40} />
+                      <PlayingCard code={c} size="md" width={36} />
                     </button>
                   ) : (
                     <div
                       key={i}
-                      className={`flex aspect-[3/4] w-10 items-center justify-center rounded-lg border border-dashed text-[10px] transition-colors ${
+                      className={`flex aspect-[3/4] w-9 items-center justify-center rounded-lg border border-dashed text-[10px] transition-colors ${
                         // The slot the keypad fills next, so it's obvious where
                         // the tapped card will land.
                         i === selected.length
@@ -360,28 +367,29 @@ const SeatEditorModal: React.FC<Props> = ({
               <RankSuitKeypad
                 used={gridUsed}
                 onPick={handlePick}
+                compact
                 targetLabel={
                   selected.length < capacity ? name.trim() || positionLabel : undefined
                 }
-                className="rounded-xl border border-slate-700 bg-slate-900 p-2.5"
+                className="rounded-xl border border-slate-700 bg-slate-900 p-2"
               />
             </div>
           )}
 
           {/* ── Setup-phase structural actions ────────────────────────── */}
           {allowStructural && seat.occupied && (
-            <div className="mt-4 flex items-center gap-2 border-t border-white/10 pt-3">
+            <div className="mt-3 flex items-center gap-2 border-t border-white/10 pt-2">
               <button
                 type="button"
                 onClick={() => onMove?.()}
-                className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-slate-200 transition-colors hover:bg-white/10 hover:text-white"
+                className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:bg-white/10 hover:text-white"
               >
                 ↔ Move player
               </button>
               <button
                 type="button"
                 onClick={() => onEmpty?.()}
-                className="flex-1 rounded-lg border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-400/20 hover:text-rose-200"
+                className="flex-1 rounded-lg border border-rose-400/20 bg-rose-400/10 px-3 py-1.5 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-400/20 hover:text-rose-200"
               >
                 ✕ Empty seat
               </button>
@@ -390,18 +398,18 @@ const SeatEditorModal: React.FC<Props> = ({
         </div>
 
         {/* ── Pinned footer ───────────────────────────────────────────── */}
-        <div className="flex gap-2 border-t border-hairline px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="flex gap-2 border-t border-hairline px-5 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 cursor-pointer rounded-xl border border-hairline bg-white/5 py-2.5 text-sm font-medium text-slate-100 transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+            className="flex-1 cursor-pointer rounded-xl border border-hairline bg-white/5 py-2 text-sm font-medium text-slate-100 transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
           >
             Cancel
           </button>
           <button
             type="button"
             onClick={save}
-            className="flex-1 cursor-pointer rounded-xl bg-accent py-2.5 text-sm font-semibold text-on-accent transition-all hover:shadow-glow focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+            className="flex-1 cursor-pointer rounded-xl bg-accent py-2 text-sm font-semibold text-on-accent transition-all hover:shadow-glow focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
           >
             Done
           </button>

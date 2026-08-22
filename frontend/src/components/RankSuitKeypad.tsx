@@ -21,6 +21,9 @@ interface RankSuitKeypadProps {
   onPick: (code: string) => void;
   /** What the next card fills, e.g. "Seat 2" / "Board" — undefined = nothing left. */
   targetLabel?: string;
+  /** Shorter buttons and tighter gaps, for hosts that must fit a phone
+   *  viewport without scrolling (the seat editor sheet). */
+  compact?: boolean;
   className?: string;
 }
 
@@ -28,6 +31,7 @@ const RankSuitKeypad: React.FC<RankSuitKeypadProps> = ({
   used,
   onPick,
   targetLabel,
+  compact = false,
   className,
 }) => {
   const [rank, setRank] = useState<string | null>(null);
@@ -60,7 +64,9 @@ const RankSuitKeypad: React.FC<RankSuitKeypadProps> = ({
   return (
     <div className={className}>
       {/* Context line: what we're filling + progress of the current tap */}
-      <div className="mb-2 flex items-center justify-center gap-1.5 text-[11px] font-semibold">
+      <div
+        className={`${compact ? "mb-1" : "mb-2"} flex items-center justify-center gap-1.5 text-[11px] font-semibold`}
+      >
         {disabled ? (
           <span className="text-slate-500">All cards set — tap a card to remove it</span>
         ) : (
@@ -79,7 +85,7 @@ const RankSuitKeypad: React.FC<RankSuitKeypadProps> = ({
       </div>
 
       {/* Ranks — two thumb-friendly rows (7 + 6) */}
-      <div className="mb-2 grid grid-cols-7 gap-1.5">
+      <div className={`grid grid-cols-7 ${compact ? "mb-1.5 gap-1" : "mb-2 gap-1.5"}`}>
         {RANKS.map((r) => {
           const off = disabled || rankUnavailable(r);
           const on = rank === r;
@@ -89,7 +95,7 @@ const RankSuitKeypad: React.FC<RankSuitKeypadProps> = ({
               type="button"
               disabled={off}
               onClick={() => setRank((cur) => (cur === r ? null : r))}
-              className={`rounded-md py-2.5 text-sm font-bold tabular-nums transition ${
+              className={`rounded-md ${compact ? "py-1.5" : "py-2.5"} text-sm font-bold tabular-nums transition ${
                 on
                   ? "bg-emerald-500 text-emerald-950 shadow-glow"
                   : "bg-slate-800 text-slate-200 hover:bg-slate-700 active:scale-95"
@@ -103,7 +109,7 @@ const RankSuitKeypad: React.FC<RankSuitKeypadProps> = ({
       </div>
 
       {/* Suits — four large targets */}
-      <div className="grid grid-cols-4 gap-2">
+      <div className={`grid grid-cols-4 ${compact ? "gap-1.5" : "gap-2"}`}>
         {SUITS.map(({ s, glyph, color }) => {
           const off = disabled || suitUnavailable(s);
           const on = suit === s;
@@ -113,7 +119,9 @@ const RankSuitKeypad: React.FC<RankSuitKeypadProps> = ({
               type="button"
               disabled={off}
               onClick={() => setSuit((cur) => (cur === s ? null : s))}
-              className={`rounded-lg bg-slate-800 py-2.5 text-2xl font-bold leading-none transition hover:bg-slate-700 active:scale-95 ${color} ${
+              className={`rounded-lg bg-slate-800 ${
+                compact ? "py-1.5 text-xl" : "py-2.5 text-2xl"
+              } font-bold leading-none transition hover:bg-slate-700 active:scale-95 ${color} ${
                 on ? "ring-2 ring-emerald-400" : ""
               } ${off ? "opacity-30" : ""}`}
               aria-label={`suit ${glyph}`}

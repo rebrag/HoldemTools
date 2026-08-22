@@ -38,6 +38,12 @@ interface Props {
 
 const SLOT_LABELS = ["Flop", "Flop", "Flop", "Turn", "River"];
 
+// Positional board: slot i is always the same street card. Removing a card
+// leaves a gap in place (the other cards do NOT shift left); the keypad fills
+// the earliest gap first.
+const padSlots = (b: (string | null)[]): (string | null)[] =>
+  Array.from({ length: 5 }, (_, i) => b[i] ?? null);
+
 const BoardEditorModal: React.FC<Props> = ({
   open,
   board,
@@ -49,49 +55,52 @@ const BoardEditorModal: React.FC<Props> = ({
 }) => {
   // Both boards stay mounted, so the heading id has to be per-instance.
   const titleId = useId();
-  const [cards, setCards] = useState<string[]>(() =>
-    board.filter((c): c is string => !!c)
-  );
+  const [slots, setSlots] = useState<(string | null)[]>(() => padSlots(board));
 
   // Re-seed from the live board each time the sheet opens. The component stays
   // mounted for its exit animation, so the initializer only ever runs once.
   useEffect(() => {
-    if (open) setCards(board.filter((c): c is string => !!c));
+    if (open) setSlots(padSlots(board));
     // `board` is intentionally not a dependency: re-syncing while the sheet is
     // open would fight the user's own edits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const gridUsed = new Set<string>([...otherUsed, ...cards]);
-  // The next empty slot is what the keypad fills, so a board with a gap earlier
-  // than the street being asked about gets caught up first.
-  const target = cards.length < 5 ? SLOT_LABELS[cards.length] : undefined;
+  const filled = slots.filter((c): c is string => !!c);
+  const gridUsed = new Set<string>([...otherUsed, ...filled]);
+  // The earliest empty slot is what the keypad fills, so a board with a gap
+  // earlier than the street being asked about gets caught up first.
+  const nextIdx = slots.findIndex((c) => !c);
+  const target = nextIdx >= 0 ? SLOT_LABELS[nextIdx] : undefined;
 
   const handlePick = (code: string) => {
-    setCards((prev) => {
-      if (prev.includes(code)) return prev.filter((c) => c !== code);
+    setSlots((prev) => {
+      const at = prev.indexOf(code);
+      // Taking a card back clears ITS slot; everything else stays in place.
+      if (at >= 0) return prev.map((c, i) => (i === at ? null : c));
       if (otherUsed.has(code)) return prev;
-      if (prev.length >= 5) return prev;
-      return [...prev, code];
+      const empty = prev.findIndex((c) => !c);
+      if (empty < 0) return prev;
+      return prev.map((c, i) => (i === empty ? code : c));
     });
   };
 
   const save = () => {
-    const padded: (string | null)[] = Array.from({ length: 5 }, (_, i) => cards[i] ?? null);
-    onSave(padded);
+    onSave([...slots]);
   };
 
   // Auto-opened sheets commit themselves the moment the requested street is
-  // complete. The pause lets the picked card render in its slot first, and the
-  // cleanup cancels the commit if the user takes a card back within it.
+  // complete (its slots — the first N — are all filled). The pause lets the
+  // picked card render in its slot first, and the cleanup cancels the commit
+  // if the user takes a card back within it.
   useEffect(() => {
     if (!open || autoCloseAt == null) return;
-    if (cards.length < autoCloseAt) return;
+    if (!slots.slice(0, autoCloseAt).every((c) => !!c)) return;
     const id = window.setTimeout(save, 350);
     return () => window.clearTimeout(id);
-    // `save` is re-created per render; `cards` is the input that matters.
+    // `save` is re-created per render; `slots` is the input that matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, autoCloseAt, cards]);
+  }, [open, autoCloseAt, slots]);
 
   return (
     <ResponsiveDrawer
@@ -111,10 +120,10 @@ const BoardEditorModal: React.FC<Props> = ({
             <h2 id={titleId} className="text-lg font-bold tracking-tight text-white">
               {title}
             </h2>
-            {cards.length > 0 && (
+            {filled.length > 0 && (
               <button
                 type="button"
-                onClick={() => setCards([])}
+                onClick={() => setSlots(padSlots([]))}
                 className="text-[11px] text-slate-400 underline underline-offset-2 transition-colors hover:text-slate-200"
               >
                 Clear
@@ -130,15 +139,15 @@ const BoardEditorModal: React.FC<Props> = ({
         <div className="flex-1 overflow-y-auto px-5 pb-3">
           <div className="mb-3 flex gap-2">
             {SLOT_LABELS.map((label, i) =>
-              cards[i] ? (
+              slots[i] ? (
                 <button
                   key={i}
                   type="button"
-                  onClick={() => handlePick(cards[i])}
-                  aria-label={`Remove ${cards[i]}`}
+                  onClick={() => handlePick(slots[i]!)}
+                  aria-label={`Remove ${slots[i]}`}
                   className="rounded-lg transition-transform hover:-translate-y-[1px] active:scale-95"
                 >
-                  <PlayingCard code={cards[i]} size="md" width={38} />
+                  <PlayingCard code={slots[i]!} size="md" width={38} />
                 </button>
               ) : (
                 <div
@@ -146,7 +155,7 @@ const BoardEditorModal: React.FC<Props> = ({
                   className={`flex aspect-[3/4] w-[38px] flex-col items-center justify-center rounded-lg border border-dashed text-[8px] transition-colors ${
                     // The slot the keypad is about to fill, so an auto-opened
                     // sheet shows at a glance which card it is asking for.
-                    i === cards.length
+                    i === nextIdx
                       ? "border-emerald-400 bg-emerald-400/10 text-emerald-300"
                       : "border-white/20 bg-white/5 text-slate-500"
                   }`}

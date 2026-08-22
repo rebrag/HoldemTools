@@ -442,6 +442,7 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
           maxWidthClassName="max-w-2xl"
           potAmount={pot?.amount}
           potLabel={pot?.label}
+          sidePotLabels={pot?.sidePots}
           potWinnerSeatIndex={pot?.winnerSeatIndex}
           center={
             <TableCenter

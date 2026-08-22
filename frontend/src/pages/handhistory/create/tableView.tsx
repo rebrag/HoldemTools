@@ -6,7 +6,14 @@
 import React from "react";
 import BoardRow from "@/components/BoardRow";
 import { type PokerTableSeat } from "@/components/PokerTable";
-import { displayedPot, fmtUnit, revealedBoardCount, STREET_NAMES, type Engine } from "./engine";
+import {
+  displayedPot,
+  fmtUnit,
+  potBreakdown,
+  revealedBoardCount,
+  STREET_NAMES,
+  type Engine,
+} from "./engine";
 import { straddlesOf, type AdvancedHandState } from "./types";
 
 // Compact numeric label for preview badges: "0.5", "1", "2.5" (no trailing zeros).
@@ -117,25 +124,43 @@ export function buildTableSeats(args: {
 /**
  * Pot presentation for <PokerTable>: the displayed amount (current-street bets
  * are excluded until the street ends — see displayedPot), a "<Street> · Pot <n>"
- * label, and, once the hand is won by a single seat, that seat index so the pot
- * chips slide toward it. Returns null during setup (no engine).
+ * label, side-pot labels when an all-in has split the pot, and, once the hand
+ * is won by a single seat, that seat index so the pot chips slide toward it.
+ * Returns null during setup (no engine).
  */
 export function potView(
   engine: Engine | null,
   unitMode: "bb" | "chips"
-): { amount: number; label: string; winnerSeatIndex: number | null } | null {
+): {
+  amount: number;
+  label: string;
+  sidePots: string[];
+  winnerSeatIndex: number | null;
+} | null {
   if (!engine) return null;
   const amount = displayedPot(engine);
-  const label = `${STREET_NAMES[engine.street]} · Pot ${fmtUnit(amount, engine.bb, unitMode)}${
-    unitMode === "bb" ? " BB" : ""
-  }`;
+  const fmt = (n: number) =>
+    `${fmtUnit(n, engine.bb, unitMode)}${unitMode === "bb" ? " BB" : ""}`;
+  // A short all-in splits the pot into main + side(s); label each layer so
+  // everyone can see what each player is actually playing for.
+  const pots = potBreakdown(engine);
+  const sidePots =
+    pots.length > 1
+      ? pots
+          .slice(1)
+          .map((p, k) => `Side${pots.length > 2 ? ` ${k + 1}` : ""} ${fmt(p.amount)}`)
+      : [];
+  const label =
+    pots.length > 1
+      ? `${STREET_NAMES[engine.street]} · Main ${fmt(pots[0].amount)}`
+      : `${STREET_NAMES[engine.street]} · Pot ${fmt(amount)}`;
   // Slide the pot to the winner only for an unambiguous single-seat, single-board
   // result; splits and run-it-twice stay centered.
   let winnerSeatIndex: number | null = null;
   if (engine.done && engine.numBoards === 1 && engine.winners && engine.winners.length === 1) {
     winnerSeatIndex = engine.players[engine.winners[0]].seat;
   }
-  return { amount, label, winnerSeatIndex };
+  return { amount, label, sidePots, winnerSeatIndex };
 }
 
 // The center slot of the table: pot/street badge (live) or an edit hint (setup),
