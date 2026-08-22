@@ -5,6 +5,7 @@
 import { Hand } from "pokersolver";
 import type { AdvancedHandState } from "./types";
 import { fmtChips, type Engine, type EngineAction } from "./engine";
+import { computeWinnings } from "./winnings";
 import { bestOmahaCards, type EvalGame } from "@/lib/handEval";
 
 // Per engine-player-index equity snapshots (percent) at each street.
@@ -74,18 +75,6 @@ function describeHand(game: string, board: string[], hole: string[]): string {
   } catch {
     return "";
   }
-}
-
-// Split a pot into per-winner amounts with cent precision (odd chip goes first).
-function splitAmounts(total: number, n: number): number[] {
-  const cents = Math.round(total * 100);
-  const base = Math.floor(cents / n);
-  let rem = cents - base * n;
-  return Array.from({ length: n }, () => {
-    const extra = rem > 0 ? 1 : 0;
-    if (rem > 0) rem--;
-    return (base + extra) / 100;
-  });
 }
 
 export function serializeHand(
@@ -218,16 +207,8 @@ export function serializeHand(
     }
   }
 
-  // Winnings
-  const potShare = e.numBoards === 2 ? e.pot / 2 : e.pot;
-  const winnings = new Map<number, number>();
-  const award = (winners: number[] | null) => {
-    if (!winners || !winners.length) return;
-    const amts = splitAmounts(potShare, winners.length);
-    winners.forEach((wi, k) => winnings.set(wi, (winnings.get(wi) ?? 0) + amts[k]));
-  };
-  award(e.winners);
-  if (e.numBoards === 2) award(e.winners2);
+  // Winnings — awarded pot by pot (main + sides), see computeWinnings.
+  const winnings = computeWinnings(state, e);
 
   if (winnings.size) {
     lines.push("");

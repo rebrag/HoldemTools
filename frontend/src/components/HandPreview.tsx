@@ -23,14 +23,16 @@ const CARD_OVERLAP = Math.round(CARD_W * 0.15);
 const Slot: React.FC<{ code: string | null }> = ({ code }) =>
   code ? <PlayingCard code={code} size="sm" width={CARD_W} /> : <CardBack w={CARD_W} />;
 
-// A row of cards, fanned: each card overlaps the previous with a white ring +
-// rising z-index so both faces stay legible while long boards stay narrow.
+// A row of cards, fanned: each card overlaps the previous with a rising
+// z-index so both faces stay legible while long boards stay narrow. The
+// cards' own borders separate them — no extra ring, which read as a stray
+// white outline on the dark list background.
 const CardGroup: React.FC<{ cards: (string | null)[] }> = ({ cards }) => (
   <div className="flex">
     {cards.map((c, i) => (
       <div
         key={i}
-        className={i === 0 ? "" : "rounded-md ring-1 ring-white"}
+        className="relative"
         style={{ zIndex: i, marginLeft: i === 0 ? undefined : -CARD_OVERLAP }}
       >
         <Slot code={c} />

@@ -1,8 +1,9 @@
 // src/pages/handhistory/create/engine.ts
 // Client-side no-limit hold'em betting engine for the hand recorder.
 // Tracks stacks/pot/street/turn order and records action tokens for the text
-// serializer. Simplifications (documented for future work): single main pot
-// (no side pots), and showdown winners are chosen by the user.
+// serializer. The engine itself tracks one running pot total; the main/side
+// pot split is derived on demand from per-player commitments (potBreakdown),
+// and showdown winners are auto-evaluated or chosen by the user.
 import type { AdvancedHandState, HoleCards } from "./types";
 import { straddlesOf } from "./types";
 import { positionLabelsForSeats } from "./positions";
@@ -520,6 +521,46 @@ export function setWinners(prev: Engine, winnerIndices: number[], board: 1 | 2 =
 // Board cards revealed for the current/served street count.
 export function revealedBoardCount(street: number): number {
   return [0, 3, 4, 5][Math.max(0, Math.min(3, street))];
+}
+
+/** One layer of the pot: its chip amount and the players (indices into
+ *  engine.players) eligible to win it. pots[0] is the main pot; later entries
+ *  are side pots created by shorter all-in stacks. */
+export interface EnginePot {
+  amount: number;
+  eligible: number[];
+}
+
+// Split everything collected into the pot so far into main + side pots.
+// Only chips already swept off the streets count (a live street's bets still
+// sit in front of the players — same rule as displayedPot), so a side pot
+// materializes the moment the street that created it completes. Once the hand
+// is done every wager counts. Folded players' chips are dead money: they fill
+// the pot layers by commitment level but never make a player eligible. The
+// ante (a single dead-money total) belongs to the main pot. The amounts sum
+// exactly to displayedPot(e).
+export function potBreakdown(e: Engine): EnginePot[] {
+  const swept = e.players.map((p) =>
+    e.done ? p.totalCommitted : p.totalCommitted - p.committed
+  );
+  const live = e.players.map((p) => !p.folded);
+  const levels = [...new Set(swept.filter((s, i) => live[i] && s > 1e-9))].sort(
+    (a, b) => a - b
+  );
+  if (!levels.length) return [];
+  const pots: EnginePot[] = [];
+  let prev = 0;
+  for (const level of levels) {
+    let amount = 0;
+    for (const s of swept) amount += Math.max(0, Math.min(s, level) - prev);
+    const eligible = e.players
+      .map((_, i) => i)
+      .filter((i) => live[i] && swept[i] >= level - 1e-9);
+    if (amount > 1e-9) pots.push({ amount, eligible });
+    prev = level;
+  }
+  if (e.ante > 0 && pots.length) pots[0].amount += e.ante;
+  return pots;
 }
 
 // The pot as it should be *displayed*: the shared rule lives in

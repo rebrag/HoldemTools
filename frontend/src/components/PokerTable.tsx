@@ -8,6 +8,7 @@ import PokerTableSurface from "@/components/PokerTableSurface";
 import ChipStack from "@/components/ChipStack";
 import MoneyToggle, { type MoneyToggleMoney } from "@/components/MoneyToggle";
 import { seatCoords, type SeatCoord } from "@/lib/pokerGeometry";
+import { usePageVisible } from "@/hooks/usePageVisible";
 
 /** Back of a playing card (unknown / face-down). */
 export const CardBack: React.FC<{ w?: number }> = ({ w = 30 }) => (
@@ -69,6 +70,9 @@ export interface PokerTableProps {
   potAmount?: number;
   /** Text label shown under the pot chips, e.g. "Flop · Pot 22 BB". */
   potLabel?: string;
+  /** Preformatted side-pot labels (e.g. "Side 120") shown as small badges
+   *  under the main pot label when an all-in has split the pot. */
+  sidePotLabels?: string[];
   /** When set, the pot slides partway toward this seat index (winner award). */
   potWinnerSeatIndex?: number | null;
   onSeatClick?: (index: number) => void;
@@ -108,6 +112,7 @@ const PokerTable: React.FC<PokerTableProps> = ({
   center,
   potAmount,
   potLabel,
+  sidePotLabels,
   potWinnerSeatIndex,
   onSeatClick,
   feltStyle,
@@ -121,6 +126,10 @@ const PokerTable: React.FC<PokerTableProps> = ({
   moneyToggle,
 }) => {
   const coords = coordsOverride ?? seatCoords(size);
+  // The to-act glow's pulse stops while the tab is hidden — a live-hand table
+  // can sit open for hours, and `motion-reduce:animate-none` on the element
+  // handles the reduced-motion side without JS.
+  const pageVisible = usePageVisible();
 
   // Pot layer: chips spread horizontally under the board with the label
   // beneath them. The presentation is owned here, not by callers, so every
@@ -203,6 +212,18 @@ const PokerTable: React.FC<PokerTableProps> = ({
                     {potLabel}
                   </span>
                 )}
+                {sidePotLabels && sidePotLabels.length > 0 && (
+                  <div className="mt-0.5 flex flex-wrap justify-center gap-1">
+                    {sidePotLabels.map((l, k) => (
+                      <span
+                        key={k}
+                        className="whitespace-nowrap rounded-full bg-black/50 px-2 py-[1px] text-[10px] font-semibold text-amber-200 shadow ring-1 ring-amber-400/40"
+                      >
+                        {l}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -257,7 +278,7 @@ const PokerTable: React.FC<PokerTableProps> = ({
                 type="button"
                 onClick={clickable ? () => onSeatClick!(i) : undefined}
                 title={seat.title}
-                className={`absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5 rounded-lg transition-transform ${
+                className={`absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5 rounded-lg transition ${
                   // A clickable seat lifts slightly on hover: the seat is a
                   // cluster of badges rather than one surface, so a background
                   // tint would only light part of it.
@@ -272,6 +293,16 @@ const PokerTable: React.FC<PokerTableProps> = ({
                 style={{ left: `${coord.x}%`, top: `${coord.y}%` }}
                 aria-label={`Seat ${seat.label}`}
               >
+                {/* To-act indicator: a pulsing emerald halo around the whole
+                    seat cluster. */}
+                {seat.isActive && (
+                  <span
+                    aria-hidden="true"
+                    className={`pointer-events-none absolute -inset-1.5 rounded-xl ring-2 ring-emerald-300 shadow-[0_0_18px_5px_rgba(52,211,153,0.45)] ${
+                      pageVisible ? "animate-pulse motion-reduce:animate-none" : ""
+                    }`}
+                  />
+                )}
                 {/* Card row also renders (empty) for a card-less button seat,
                     so the D badge keeps an anchor after the player folds. */}
                 {(seat.holeCards || seat.isButton) && (
@@ -356,14 +387,16 @@ const PokerTable: React.FC<PokerTableProps> = ({
 
                 <div className={`relative flex flex-col items-center gap-0.5 ${dimClass}`}>
                   {seat.avatar && (
-                    /* Overlaps the badge's top-left corner so it reads as the
-                       player's face on the name plate without moving anything. */
-                    <span className="pointer-events-none absolute -left-3 -top-2.5 z-10">
+                    /* Peeks out from BEHIND the name+stack card's top-left
+                       corner so it reads as the player's face on the plate
+                       without moving anything. */
+                    <span className="pointer-events-none absolute -left-4 -top-3.5">
                       {seat.avatar}
                     </span>
                   )}
+                  {/* Name + stack on one card. */}
                   <span
-                    className={`max-w-[88px] truncate rounded-md px-1.5 py-[1px] text-[10px] font-semibold shadow-md ${
+                    className={`relative z-10 flex max-w-[88px] flex-col items-center rounded-md px-1.5 py-[1px] shadow-md ${
                       seat.isEmpty
                         ? "border border-dashed border-white/40 bg-black/25 text-white/60"
                         : `ring-1 ${
@@ -375,14 +408,19 @@ const PokerTable: React.FC<PokerTableProps> = ({
                           }`
                     }`}
                   >
-                    {seat.label}
-                  </span>
-
-                  {seat.stackText && (
-                    <span className="-mt-px rounded-b-md bg-black/60 px-1.5 text-[10px] font-semibold text-emerald-100 shadow-sm ring-1 ring-black/40">
-                      {seat.stackText}
+                    <span className="w-full truncate text-center text-[10px] font-semibold leading-tight">
+                      {seat.label}
                     </span>
-                  )}
+                    {seat.stackText && (
+                      <span
+                        className={`w-full truncate text-center text-[9px] font-semibold leading-tight ${
+                          seat.isActive || seat.isHero ? "text-white/90" : "text-emerald-100"
+                        }`}
+                      >
+                        {seat.stackText}
+                      </span>
+                    )}
+                  </span>
 
                   {seat.sittingOut && seat.label.toLowerCase() !== "sitting out" && (
                     <span className="mt-0.5 rounded-full bg-black/50 px-1.5 text-[8px] font-semibold uppercase tracking-wide text-white/60">
