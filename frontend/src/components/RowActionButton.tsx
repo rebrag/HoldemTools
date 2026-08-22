@@ -7,10 +7,11 @@
 import React from "react";
 import { motion, useReducedMotion } from "framer-motion";
 
-export type RowActionTone = "replay" | "solution" | "share" | "copy" | "delete";
+export type RowActionTone = "replay" | "edit" | "solution" | "share" | "copy" | "delete";
 
 const TONES: Record<RowActionTone, string> = {
   replay: "border-emerald-300 bg-emerald-50 text-emerald-600 hover:bg-emerald-100",
+  edit: "border-amber-300 bg-amber-50 text-amber-600 hover:bg-amber-100",
   solution: "border-violet-300 bg-violet-50 text-violet-600 hover:bg-violet-100",
   share: "border-sky-300 bg-sky-50 text-sky-600 hover:bg-sky-100",
   copy: "border-slate-300 bg-slate-50 text-slate-600 hover:bg-slate-100",
@@ -20,6 +21,7 @@ const TONES: Record<RowActionTone, string> = {
 // Same palette translated for dark panels (drawer surfaces).
 const DARK_TONES: Record<RowActionTone, string> = {
   replay: "border-emerald-400/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20",
+  edit: "border-amber-400/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20",
   solution: "border-violet-400/40 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20",
   share: "border-sky-400/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20",
   copy: "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10",

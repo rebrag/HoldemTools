@@ -7,7 +7,7 @@
 // prop; the row owns Copy and Share end to end so every surface gets them
 // without re-implementing clipboard/token plumbing.
 import React, { useMemo, useState } from "react";
-import { Play, Library, Share2, Copy, Check, Trash2 } from "lucide-react";
+import { Play, Pencil, Library, Share2, Copy, Check, Trash2 } from "lucide-react";
 import { useAppNavigate } from "@/components/layout/RouteProgress";
 import { isCoarsePointer } from "@/lib/pointer";
 import RowActionButton, { rowActionClasses } from "@/components/RowActionButton";
@@ -28,6 +28,10 @@ export interface HandSummaryRowProps {
   tone?: "light" | "dark";
   /** Replay route ("Replay hand"). Opens in a new tab. Omit to hide. */
   replayHref?: string | null;
+  /** Edit route: reopens the hand in the recorder at its resolved end, where
+   *  Undo steps back through the recorded actions. Omit to hide (legacy
+   *  payload-less hands can't be edited). */
+  editHref?: string | null;
   /** Solution deep link. Opens in a new tab unless onOpenSolution overrides
    *  (the Solution Library opens the board in place, since the viewer is
    *  already on /solutions). */
@@ -58,6 +62,7 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
   rawText,
   tone = "light",
   replayHref,
+  editHref,
   solutionHref,
   onOpenSolution,
   shareId,
@@ -194,6 +199,18 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
               className={rowActionClasses("replay", tone, false, "sm")}
             >
               <Play className="h-3.5 w-3.5" fill="currentColor" />
+            </a>
+          )}
+          {editHref && (
+            <a
+              key="edit"
+              href={editHref}
+              {...linkProps(editHref)}
+              aria-label="Edit hand"
+              title="Edit hand"
+              className={rowActionClasses("edit", tone, false, "sm")}
+            >
+              <Pencil className="h-3.5 w-3.5" />
             </a>
           )}
           {/* The one exception: the Solution Library is itself on /solutions,

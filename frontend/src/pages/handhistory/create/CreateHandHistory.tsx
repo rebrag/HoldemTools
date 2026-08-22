@@ -33,7 +33,14 @@ import {
   type Engine,
 } from "./engine";
 import { buildTableSeats, potView, TableCenter } from "./tableView";
-import { actionsFromEngine, buildReplayData, encodeReplay, rebuildFrames } from "./replay";
+import {
+  actionsFromEngine,
+  buildReplayData,
+  encodeReplay,
+  parseReplay,
+  rebuildFrames,
+} from "./replay";
+import { forgetCachedHandText } from "@/lib/handTextCache";
 import { serializeHand, type EquityInfo, type StreetEquity } from "./serialize";
 import { useShowdownEquity, type EquityRequest } from "./useShowdownEquity";
 import { evalWinners, exactEquity } from "@/lib/handEval";
@@ -123,6 +130,16 @@ function applyDefaults(base: AdvancedHandState, d: HandDefaults): AdvancedHandSt
   return next;
 }
 
+/** A saved hand being edited in place (see the edit mode notes on the
+ *  component). `serverId` is null for a device-local (signed-out) hand, in
+ *  which case `key` is its localId. */
+export interface EditTarget {
+  key: string;
+  serverId: number | null;
+  sessionId: string | null;
+  rawText: string;
+}
+
 interface Props {
   user: User | null;
   // Embedded mode: when provided, the finished hand's serialized text is handed
@@ -134,6 +151,27 @@ interface Props {
   // Free-form game string (e.g. a bankroll session's "2/5 NL") used to seed the
   // setup's blinds/ante/game. Unrecognized tokens are ignored.
   defaultGameString?: string;
+  // Edit mode: the recorder opens at the END of this saved hand (engine and
+  // undo stack rebuilt from its replay payload), so Undo steps back through
+  // the recorded actions and anything can be adjusted. Saving PUTs the same
+  // hand instead of creating a new one; nothing persists until then.
+  edit?: EditTarget;
+}
+
+// Reconstruct the recorder's full live state from a saved hand's payload: the
+// setup verbatim, the engine at the resolved end (recorded winners applied,
+// mirroring reconstructFrames), and the same undo stack a live recording of
+// those actions would have left. Null when the text has no payload.
+function buildEditInit(
+  rawText: string
+): { state: AdvancedHandState; engine: Engine; history: Engine[] } | null {
+  const data = parseReplay(rawText);
+  if (!data) return null;
+  const frames = rebuildFrames(data.state, data.actions);
+  let last = frames[frames.length - 1];
+  if (data.winners) last = setWinners(last, data.winners, 1);
+  if (data.state.numBoards === 2 && data.winners2) last = setWinners(last, data.winners2, 2);
+  return { state: data.state, engine: last, history: frames.slice(0, -1) };
 }
 
 const TABLE_SIZES = [9, 8, 7, 6, 5, 4, 3, 2];
@@ -174,15 +212,23 @@ const CreateHandHistory: React.FC<Props> = ({
   onComplete,
   onClose,
   defaultGameString,
+  edit,
 }) => {
   const navigate = useNavigate();
   const embedded = !!onComplete;
+  // Edit mode: reconstruct once at mount. A payload-less hand (the route
+  // wrapper guards against this) degrades to a normal blank recorder.
+  const editInitRef = useRef<ReturnType<typeof buildEditInit> | undefined>(undefined);
+  if (editInitRef.current === undefined) {
+    editInitRef.current = edit ? buildEditInit(edit.rawText) : null;
+  }
+  const editing = !!edit && !!editInitRef.current;
   // Both phases size the table to the viewport, so the rubber-band only ever
   // reveals backdrop and makes the felt feel unanchored.
   useNoOverscroll();
   // Signed-out saves go to the device-local store (migrated on sign-in). We also
   // read localHands to seed defaults from the most recent hand when signed out.
-  const { addLocal, localHands } = useLocalHandHistories();
+  const { addLocal, updateLocal, localHands } = useLocalHandHistories();
   const setupDefaults = useMemo(
     () => (defaultGameString ? parseGameString(defaultGameString) : undefined),
     [defaultGameString]
@@ -193,10 +239,14 @@ const CreateHandHistory: React.FC<Props> = ({
   // hand") but doesn't overwrite the restored draft.
   const draftRef = useRef<AdvancedHandState | null | undefined>(undefined);
   if (draftRef.current === undefined) {
-    draftRef.current = embedded ? null : loadSetupDraft();
+    // Edit mode never reads the draft: the saved hand IS the starting state.
+    draftRef.current = embedded || edit ? null : loadSetupDraft();
   }
   const [state, setState] = useState<AdvancedHandState>(
-    () => draftRef.current ?? createInitialState(DEFAULT_TABLE_SIZE, setupDefaults)
+    () =>
+      editInitRef.current?.state ??
+      draftRef.current ??
+      createInitialState(DEFAULT_TABLE_SIZE, setupDefaults)
   );
   const [editingSeat, setEditingSeat] = useState<number | null>(null);
   // Last seat the editor showed, so the permanently-mounted drawer keeps valid
@@ -210,7 +260,9 @@ const CreateHandHistory: React.FC<Props> = ({
   // commits itself when the user reaches it. Null for manual opens, which keep
   // the explicit Done button as the only way to finish.
   const [boardAutoClose, setBoardAutoClose] = useState<number | null>(null);
-  const [phase, setPhase] = useState<"setup" | "action">("setup");
+  const [phase, setPhase] = useState<"setup" | "action">(
+    editInitRef.current ? "action" : "setup"
+  );
   const [placement, setPlacement] = useState<Placement>(null);
   const [quickSetupOpen, setQuickSetupOpen] = useState(false);
   // Bumped on every seat rotation; the button's glyph is transformed to
@@ -218,8 +270,12 @@ const CreateHandHistory: React.FC<Props> = ({
   // CSS transition plays that out as a spin.
   const [rotateSpin, setRotateSpin] = useState(0);
 
-  const [engine, setEngine] = useState<Engine | null>(null);
-  const [history, setHistory] = useState<Engine[]>([]);
+  const [engine, setEngine] = useState<Engine | null>(
+    () => editInitRef.current?.engine ?? null
+  );
+  const [history, setHistory] = useState<Engine[]>(
+    () => editInitRef.current?.history ?? []
+  );
   const [winnerSel, setWinnerSel] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -273,7 +329,7 @@ const CreateHandHistory: React.FC<Props> = ({
   // Defaults seeding (standalone mode): copy the most recent saved hand's setup
   // once, unless the user has already touched the form or hit Clear all.
   const seededRef = useRef(false);
-  const touchedRef = useRef(draftRef.current != null);
+  const touchedRef = useRef(draftRef.current != null || !!edit);
   const clearedRef = useRef(false);
   const rememberedRef = useRef<HandDefaults | null>(null);
   // Quick-save table layout (single localStorage slot, standalone + embedded).
@@ -581,6 +637,21 @@ const CreateHandHistory: React.FC<Props> = ({
   };
 
   const reset = () => {
+    // Edit mode: Reset restores the ORIGINAL saved hand, not a blank table -
+    // it is the "undo everything I just changed" affordance.
+    if (editing && edit) {
+      const init = buildEditInit(edit.rawText);
+      if (init) {
+        setState(init.state);
+        setEngine(init.engine);
+        setHistory(init.history);
+        setWinnerSel([]);
+        setSaveError(null);
+        setPhase("action");
+        setPlacement(null);
+        return;
+      }
+    }
     // Restart the hand, but keep the remembered setup (blinds/game/seats) from
     // the most recent saved hand where we have it, so the table isn't wiped.
     const base = createInitialState(state.tableSize, setupDefaults);
@@ -658,7 +729,7 @@ const CreateHandHistory: React.FC<Props> = ({
   // Runs once; skipped if the user has already touched the form or hit Clear all.
   // Embedded mode keeps using defaultGameString.
   useEffect(() => {
-    if (embedded || seededRef.current) return;
+    if (embedded || editing || seededRef.current) return;
     let cancelled = false;
     void (async () => {
       const candidates: { rawText: string; createdAt: string }[] = [...localHands];
@@ -697,7 +768,9 @@ const CreateHandHistory: React.FC<Props> = ({
     [setupDefaults]
   );
   useEffect(() => {
-    if (embedded || phase !== "setup") return;
+    // Edit mode's "Back to setup" must not leak the edited hand into the
+    // next fresh recording's draft.
+    if (embedded || editing || phase !== "setup") return;
     try {
       if (JSON.stringify(state) === JSON.stringify(pristineSetup)) {
         window.localStorage.removeItem(DRAFT_KEY);
@@ -784,6 +857,32 @@ const CreateHandHistory: React.FC<Props> = ({
       onClose?.();
       return;
     }
+    // Edit mode: update the SAME hand in place (id, session link, share token
+    // and created date all survive), then drop its stale cached text.
+    if (editing && edit) {
+      if (edit.serverId == null) {
+        updateLocal(edit.key, toSave);
+        forgetCachedHandText(edit.key);
+        navigate("/hand-history");
+        return;
+      }
+      setSaving(true);
+      setSaveError(null);
+      try {
+        const res = await authedFetch(`/api/handhistory/${edit.serverId}`, {
+          method: "PUT",
+          body: JSON.stringify({ rawText: toSave, sessionId: edit.sessionId }),
+        });
+        if (!res.ok) throw new Error(`Save failed (${res.status})`);
+        forgetCachedHandText(edit.key);
+        navigate("/hand-history");
+      } catch (e: unknown) {
+        setSaveError(e instanceof Error ? e.message : "Save failed.");
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
     // Signed out: save to the device-local store instead of the server. It's
     // synchronous, so we skip the saving/error state and route to the list.
     if (!user) {
@@ -851,7 +950,9 @@ const CreateHandHistory: React.FC<Props> = ({
   // offer to upload a game tree for solving. Computed synchronously so the
   // auto-save effect below can defer navigation in the same commit.
   const solveExtract = useMemo(() => {
-    if (embedded || !user || !POSTFLOP_ENABLED) return null;
+    // Edit mode never re-offers a solve: the hand starts complete, and the
+    // offer belongs to freshly recorded hands.
+    if (embedded || editing || !user || !POSTFLOP_ENABLED) return null;
     if (!engine || !engine.done) return null;
     const ex = extractHandSolve({
       engine,
@@ -866,7 +967,9 @@ const CreateHandHistory: React.FC<Props> = ({
   // equity has been computed, save it automatically. The ref guards re-firing.
   // Skipped in embedded mode, where the user confirms with an explicit button.
   useEffect(() => {
-    if (embedded) return;
+    // Edit mode starts already complete, so auto-save would fire before the
+    // user touched anything - saving is explicit there ("Save changes").
+    if (embedded || editing) return;
     const isComplete =
       !!engine &&
       engine.done &&
@@ -1054,6 +1157,24 @@ const CreateHandHistory: React.FC<Props> = ({
         embedded ? "" : "min-h-[calc(100dvh-3rem)]"
       }`}
     >
+      {/* Edit mode banner: the recorder looks identical to a fresh recording,
+          so say plainly which mode this is and that nothing persists early. */}
+      {editing && (
+        <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-amber-300/50 bg-amber-50/95 px-3 py-1.5 text-xs text-amber-900">
+          <span className="min-w-0 truncate">
+            <span className="font-semibold">✏️ Editing a saved hand</span>
+            <span className="text-amber-800/80"> · use Undo to step back through it; nothing changes until you save</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => navigate("/hand-history")}
+            className="shrink-0 text-amber-800 underline underline-offset-2 transition-colors hover:text-amber-950"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
       {/* One-list entry of every seat's name and stack. Mounted permanently so
           the drawer's exit animation plays (see ResponsiveDrawer). */}
       <QuickSetupDrawer
@@ -1279,21 +1400,50 @@ const CreateHandHistory: React.FC<Props> = ({
                   {saveError}
                 </div>
               )}
-              <div className="mt-3 flex items-center justify-between gap-3">
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                {editing ? (
+                  // The resolved end hides the action panel, so editing needs
+                  // its own way back into the hand: one Undo re-opens the
+                  // final action (and with it the panel's own Undo chain).
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={undo}
+                      disabled={history.length === 0 || saving}
+                      className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-3.5 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 active:scale-95 disabled:opacity-40"
+                    >
+                      ↩ Undo last action
+                    </button>
+                    <button
+                      type="button"
+                      onClick={reset}
+                      className="text-xs text-gray-500 underline underline-offset-2 hover:text-gray-700"
+                    >
+                      Restore original
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={reset}
+                    className="text-xs text-gray-500 underline underline-offset-2 hover:text-gray-700"
+                  >
+                    Record another
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={reset}
-                  className="text-xs text-gray-500 underline underline-offset-2 hover:text-gray-700"
-                >
-                  Record another
-                </button>
-                <button
-                  type="button"
-                  disabled={saving}
+                  disabled={saving || (editing && equityComputing)}
                   onClick={() => void saveHand()}
                   className="inline-flex items-center rounded-full bg-emerald-600 px-5 py-1.5 text-sm font-semibold text-white shadow-md shadow-emerald-500/40 transition hover:bg-emerald-500 disabled:opacity-60"
                 >
-                  {embedded ? "Add to session" : saving ? "Saving…" : "Save hand history"}
+                  {embedded
+                    ? "Add to session"
+                    : saving
+                      ? "Saving…"
+                      : editing
+                        ? "Save changes"
+                        : "Save hand history"}
                 </button>
               </div>
             </div>
