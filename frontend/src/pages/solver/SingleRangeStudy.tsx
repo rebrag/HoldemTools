@@ -5,7 +5,7 @@
 // views/SingleRangeDesktopView).
 import React from "react";
 import LoadingOverlay from "@/components/LoadingOverlay";
-import PokerTable, { type PokerTableSeat } from "@/components/PokerTable";
+import PokerTable, { type PokerTableSeatData } from "@/components/PokerTable";
 import { HandCellData } from "@/lib/solver/utils";
 import type { ComboDetail } from "@/lib/solver/comboDetail";
 import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
@@ -23,7 +23,7 @@ import { useSeatNavigation, type SeatNavTarget } from "./seatNavigation";
 import { boardCardWidth, solverPotLabel, type MoneyDisplay } from "./boardDisplay";
 
 interface SingleRangeStudyProps {
-  tableSeats: PokerTableSeat[];
+  tableSeats: PokerTableSeatData[];
   seatCount: number;
   /** Chips actually in the pot (excludes bets still in front of players). */
   pot?: number;
@@ -234,7 +234,7 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
               maxWidthClassName="max-w-none"
               aspectClassName="aspect-[7/5]"
               potAmount={pot != null ? Math.max(0, pot) : undefined}
-              potLabel={pot != null ? solverPotLabel(pot, board, money) : undefined}
+              potLabel={pot != null ? solverPotLabel(pot, money) : undefined}
               center={
                 board && board.length > 0 ? (
                   <SolverTableCenter board={board} cardWidth={boardCardWidth(tableW)} />

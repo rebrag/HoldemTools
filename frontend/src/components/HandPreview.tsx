@@ -13,10 +13,9 @@ import { usePlayers } from "@/hooks/usePlayers";
 import { summaryFromRawText, stripReplay } from "@/pages/handhistory/create/replay";
 
 const CARD_W = 26;
-// Cards in the fan overlap, but the face's rank+suit sits centred, so the
-// overlap has to stay clear of it - anything past ~a fifth of the card width
-// starts eating the glyphs it exists to keep legible.
-const CARD_OVERLAP = Math.round(CARD_W * 0.15);
+// Cards in the fan overlap tightly to keep long rows (boards, PLO hands)
+// narrow in the list; the centred rank+suit stays just clear of the tuck.
+const CARD_OVERLAP = Math.round(CARD_W * 0.3);
 
 // One card slot: a known code renders face-up; null renders a face-down back
 // (unknown/unrecorded card).

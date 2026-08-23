@@ -36,6 +36,8 @@ export interface PokerTableSurfaceProps {
    * (the parent must have a definite height, e.g. `absolute inset-0`).
    */
   fill?: boolean;
+  /** Ref to the inner content box, e.g. for measuring the rendered table. */
+  innerRef?: React.Ref<HTMLDivElement>;
   children?: React.ReactNode;
 }
 
@@ -47,10 +49,11 @@ const PokerTableSurface: React.FC<PokerTableSurfaceProps> = ({
   className,
   innerClassName,
   fill = false,
+  innerRef,
   children,
 }) => (
   <div className={`relative ${fill ? "h-full" : ""} ${className ?? ""}`}>
-    <div className={innerClassName ?? "relative h-full w-full"}>
+    <div ref={innerRef} className={innerClassName ?? "relative h-full w-full"}>
       {/* soft cast shadow beneath the table.
           `filter: blur` is one of the most expensive things to composite on
           mobile GPUs, so keep it light on phones and full-strength on ≥sm. */}

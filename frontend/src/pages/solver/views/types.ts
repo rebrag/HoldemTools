@@ -8,7 +8,7 @@ import type { ComboDetail } from "@/lib/solver/comboDetail";
 import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
 import type { MatrixDisplayMode } from "@/lib/solver/matrixDisplayMode";
 import type { NodeStats } from "@/lib/solver/nodeStats";
-import type { PokerTableSeat } from "@/components/PokerTable";
+import type { PokerTableSeatData } from "@/components/PokerTable";
 import type { SeatNavTarget } from "../seatNavigation";
 import type { MoneyDisplay } from "../boardDisplay";
 
@@ -31,7 +31,7 @@ export interface SolverRangeBaseProps {
   seatNames?: Record<string, string>;
   /** Complete replacement for the derived table seats (hand-history solves
    *  render the hand's real table: every player, names, stacks, cards). */
-  tableSeatsOverride?: PokerTableSeat[];
+  tableSeatsOverride?: PokerTableSeatData[];
   /** Chips/bb display toggle (hand-history solves only). */
   money?: MoneyDisplay;
   /** Inclusive pot (all chips wagered, current bets included) - pot-odds math. */

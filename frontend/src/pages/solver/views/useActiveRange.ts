@@ -5,14 +5,14 @@ import {
   type HandCellData,
   type JsonData,
 } from "@/lib/solver/utils";
-import type { PokerTableSeat } from "@/components/PokerTable";
+import type { PokerTableSeatData } from "@/components/PokerTable";
 import { fmtMoney, type MoneyOpts } from "../boardDisplay";
 
 export interface ActiveRange {
   activeFile?: string;
   activeData?: JsonData;
   activeGrid: HandCellData[];
-  tableSeats: PokerTableSeat[];
+  tableSeats: PokerTableSeatData[];
 }
 
 /**
@@ -53,7 +53,7 @@ export function useActiveRange(args: {
     [activeData]
   );
 
-  const tableSeats: PokerTableSeat[] = positions.map((pos, i) => {
+  const tableSeats: PokerTableSeatData[] = positions.map((pos, i) => {
     const file = files[i];
     const data = file ? plateData[file] : undefined;
     const alive = alivePlayers[pos] ?? true;

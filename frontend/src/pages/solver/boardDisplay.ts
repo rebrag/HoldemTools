@@ -11,15 +11,6 @@
 export const fmtBB = (n: number, decimals = 1) =>
   Math.abs(n % 1) > 1e-9 ? n.toFixed(decimals) : n.toFixed(0);
 
-/** Street implied by how many community cards are out. */
-export const streetNameForBoard = (board?: string[]): string => {
-  const n = board?.length ?? 0;
-  if (n === 0) return "Preflop";
-  if (n <= 3) return "Flop";
-  if (n === 4) return "Turn";
-  return "River";
-};
-
 /** How money is displayed in the postflop viewer.
  *
  *  Every amount handed to `fmtMoney` is already in the solve's own display
@@ -56,13 +47,9 @@ export const fmtMoney = (amount: number, money?: MoneyOpts | null): string => {
   return !money || money.mode === "bb" ? `${value} bb` : value;
 };
 
-/** "Flop · Pot 12.5 bb" - matches the hand replayer's pot label. */
-export const solverPotLabel = (
-  pot: number,
-  board?: string[],
-  money?: MoneyOpts | null
-): string =>
-  `${streetNameForBoard(board)} · Pot ${fmtMoney(Math.max(0, pot), money)}`;
+/** "Pot 12.5 bb" - matches the hand replayer's pot label. */
+export const solverPotLabel = (pot: number, money?: MoneyOpts | null): string =>
+  `Pot ${fmtMoney(Math.max(0, pot), money)}`;
 
 /**
  * Board card width for a table of `tableWidth` px. The felt is ~82% of the

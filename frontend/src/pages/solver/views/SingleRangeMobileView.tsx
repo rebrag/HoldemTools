@@ -153,7 +153,7 @@ const SingleRangeMobileView = ({
   const tableW = Math.min(availW, Math.floor((dockH * 7) / 5));
 
   const potLabel =
-    actualPot != null ? solverPotLabel(actualPot, board, money) : undefined;
+    actualPot != null ? solverPotLabel(actualPot, money) : undefined;
 
   return (
     <div ref={wrapRef} className="relative flex justify-center py-2 w-full">

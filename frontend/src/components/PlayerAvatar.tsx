@@ -47,7 +47,9 @@ export function initialsOf(name: string): string {
 
 export interface PlayerAvatarProps {
   player: Player | null | undefined;
-  size?: PlayerAvatarSize;
+  /** Named preset, or an exact diameter in px for contexts that scale with
+   *  their container (the poker-table seats). */
+  size?: PlayerAvatarSize | number;
   /** Fallback initials source when the player row is unavailable (dangling id,
    *  signed out): the seat's name snapshot still gives a recognizable chip. */
   name?: string;
@@ -61,7 +63,13 @@ const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
   className = "",
 }) => {
   const photoUrl = usePlayerPhoto(player);
-  const s = SIZES[size];
+  // 0.39 = md's 11px text on a 28px box, kept for the numeric path.
+  const numeric = typeof size === "number";
+  const boxClass = numeric ? "" : SIZES[size].box;
+  const textClass = numeric ? "" : SIZES[size].text;
+  const boxStyle: React.CSSProperties | undefined = numeric
+    ? { width: size, height: size, fontSize: Math.round(size * 0.39) }
+    : undefined;
   const label = player?.name ?? name ?? "";
 
   if (photoUrl) {
@@ -71,7 +79,8 @@ const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
         alt={label}
         title={label}
         draggable={false}
-        className={`${s.box} shrink-0 rounded-full object-cover ring-1 ring-black/10 select-none ${className}`}
+        style={boxStyle}
+        className={`${boxClass} shrink-0 rounded-full object-cover ring-1 ring-black/10 select-none ${className}`}
       />
     );
   }
@@ -82,7 +91,8 @@ const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
       role="img"
       aria-label={label}
       title={label}
-      className={`${s.box} ${s.text} flex shrink-0 items-center justify-center rounded-full font-semibold uppercase leading-none ring-1 ring-black/10 select-none ${fillFor(
+      style={boxStyle}
+      className={`${boxClass} ${textClass} flex shrink-0 items-center justify-center rounded-full font-semibold uppercase leading-none ring-1 ring-black/10 select-none ${fillFor(
         player?.id ?? label
       )} ${className}`}
     >
