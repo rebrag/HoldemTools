@@ -1,14 +1,15 @@
 // src/pages/private/TaiwaneseTab.tsx
 // Taiwanese poker hand-setting advisor: enter your 7 dealt cards and the tool
-// Monte Carlo-scores all 105 top/middle/bottom splits against random
+// Monte Carlo-scores every legal top/middle/bottom split against random
 // opponents, ranking them by expected points.
 import React, { useMemo, useState } from "react";
 import clsx from "clsx";
 import PlayingCard from "@/components/PlayingCard";
 import CardPicker from "@/components/CardPicker";
 import RankSuitKeypad from "@/components/RankSuitKeypad";
-import { ROW_POINT, SCOOP_BONUS } from "@/lib/taiwanese";
+import { buildDeck, sampleN } from "@/lib/cards";
 import { useTaiwaneseSolve } from "./useTaiwaneseSolve";
+import ScoringExplainer from "./ScoringExplainer";
 import { Segmented, Chip, ProgressBar, glassCard } from "./controls";
 import type { TaiwaneseSplitResult } from "./protocol";
 
@@ -47,6 +48,8 @@ const TaiwaneseTab: React.FC = () => {
   const [cards, setCards] = useState<string[]>([]);
   const [opponents, setOpponents] = useState(1);
   const [boards, setBoards] = useState<1 | 2>(2);
+  // Defaults follow the client's home game: double board, no royalties.
+  const [royalties, setRoyalties] = useState(false);
   const [samples, setSamples] = useState(1_000);
   const [showAll, setShowAll] = useState(false);
   const { running, progress, result, error, solve, cancel } = useTaiwaneseSolve();
@@ -62,10 +65,14 @@ const TaiwaneseTab: React.FC = () => {
     if (running) return;
     setCards((cs) => cs.filter((c) => c !== code));
   };
+  const randomize = () => {
+    if (running) return;
+    setCards(sampleN(buildDeck(), 7));
+  };
 
   const onSolve = () => {
     setShowAll(false);
-    solve(cards, opponents, boards, samples);
+    solve(cards, opponents, boards, samples, royalties);
   };
 
   return (
@@ -81,6 +88,14 @@ const TaiwaneseTab: React.FC = () => {
                 <p className="text-xs text-emerald-100/60">
                   {full ? "Ready to solve" : `Choose card ${cards.length + 1} of 7`}
                 </p>
+                <button
+                  type="button"
+                  onClick={randomize}
+                  disabled={running}
+                  className="text-xs text-emerald-100/60 underline decoration-emerald-100/30 transition-colors hover:text-emerald-100 disabled:opacity-30 disabled:pointer-events-none"
+                >
+                  Random
+                </button>
                 <button
                   type="button"
                   onClick={() => setCards([])}
@@ -188,6 +203,20 @@ const TaiwaneseTab: React.FC = () => {
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-2">
+                Royalties
+              </p>
+              <Segmented
+                value={royalties ? "on" : "off"}
+                options={[
+                  { value: "off", label: "Off (house)" },
+                  { value: "on", label: "On (PokerNews)" },
+                ]}
+                onChange={(v) => setRoyalties(v === "on")}
+                disabled={running}
+              />
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-2">
                 Samples
               </p>
               <div className="flex gap-1.5">
@@ -227,7 +256,8 @@ const TaiwaneseTab: React.FC = () => {
           <p className="font-mono text-sm text-emerald-100/90">
             {result.samples.toLocaleString("en-US")} scenarios vs {result.opponents}{" "}
             {result.opponents === 1 ? "opponent" : "opponents"},{" "}
-            {result.boards === 1 ? "single board" : "double board"}. EV is net points per deal.
+            {result.boards === 1 ? "single board" : "double board"}, royalties{" "}
+            {result.royalties ? "on" : "off"}. EV is net points per deal.
           </p>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {result.splits.slice(0, 10).map((s, i) => (
@@ -263,12 +293,15 @@ const TaiwaneseTab: React.FC = () => {
             </div>
           )}
           <p className="mt-4 text-xs text-emerald-100/50">
-            Opponent model: each opponent is dealt 7 random cards and sets them with a fixed
-            heuristic (best Omaha material to the bottom). Scoring: {ROW_POINT} pts per row won,{" "}
-            {SCOOP_BONUS}-pt scoop bonus for winning every row on every board.
+            Only splits that satisfy the setting rule (bottom strongest, top weakest, judged
+            on the hole cards) are ranked. Opponent model: each opponent is dealt 7 random
+            cards and sets them legally with a fixed heuristic (best Omaha material to the
+            bottom). Points follow the scoring shown below.
           </p>
         </div>
       )}
+
+      <ScoringExplainer royalties={royalties} boards={boards} />
     </div>
   );
 };

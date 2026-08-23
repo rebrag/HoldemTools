@@ -57,7 +57,10 @@ export interface TaiwaneseParams {
   heroCards: string[];
   opponents: number; // 1..5
   boards: 1 | 2;
-  /** Monte Carlo scenarios; each scenario scores all 105 splits. */
+  /** true = PokerNews rules (royalty chart, scoop 3); false = the client's
+   *  house rules (no royalties, scoop 8). */
+  royalties: boolean;
+  /** Monte Carlo scenarios; each scenario scores every legal split. */
   samples: number;
   seed: number;
   reportEvery: number;
@@ -77,7 +80,8 @@ export interface TaiwaneseResult {
   samples: number;
   opponents: number;
   boards: 1 | 2;
-  /** All 105 splits, sorted by evPoints descending. */
+  royalties: boolean;
+  /** Every legal split, sorted by evPoints descending. */
   splits: TaiwaneseSplitResult[];
 }
 

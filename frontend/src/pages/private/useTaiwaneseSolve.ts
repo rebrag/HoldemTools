@@ -25,7 +25,13 @@ export function useTaiwaneseSolve() {
     setRunning(false);
   };
 
-  const solve = (heroCards: string[], opponents: number, boards: 1 | 2, samples: number) => {
+  const solve = (
+    heroCards: string[],
+    opponents: number,
+    boards: 1 | 2,
+    samples: number,
+    royalties: boolean
+  ) => {
     stop();
     setRunning(true);
     setProgress(0);
@@ -58,7 +64,7 @@ export function useTaiwaneseSolve() {
     const seed = (Math.floor(Math.random() * 0x7fffffff) ^ Date.now()) >>> 0;
     w.postMessage({
       type: "start",
-      payload: { heroCards, opponents, boards, samples, seed, reportEvery: REPORT_EVERY },
+      payload: { heroCards, opponents, boards, royalties, samples, seed, reportEvery: REPORT_EVERY },
     });
   };
 

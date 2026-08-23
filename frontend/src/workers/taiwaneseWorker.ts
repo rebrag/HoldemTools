@@ -2,17 +2,18 @@
 // A Vite module worker. No DOM APIs here.
 // Taiwanese poker hand-setting advisor for the /private page. Common random
 // numbers: every sampled scenario (opponent hands + boards) is scored against
-// ALL 105 hero splits, so the split EVs are directly comparable and converge
-// with far fewer samples than independent runs would need. Cancellation is by
+// every LEGAL hero split, so the split EVs are directly comparable and
+// converge with far fewer samples than independent runs would need. Scoring
+// and the setting rule live in lib/taiwanese. Cancellation is by
 // worker.terminate() from the host.
 import { evaluateCards } from "phe";
 import { bestOmaha } from "../lib/handEval";
 import {
   PAIRS,
   QUADS,
-  enumerateSplits,
   heuristicSplit,
-  scorePairwise,
+  legalSplits,
+  scoreDealHero,
   splitCards,
   type RowScores,
 } from "../lib/taiwanese";
@@ -43,11 +44,14 @@ self.onmessage = (ev: MessageEvent<TaiwaneseIn>) => {
 };
 
 function run(p: TaiwaneseParams) {
-  const { heroCards, opponents, boards, samples, seed, reportEvery } = p;
+  const { heroCards, opponents, boards, royalties, samples, seed, reportEvery } = p;
   if (heroCards.length !== 7) throw new Error("heroCards must have exactly 7 cards");
   seedLCG(seed);
 
-  const splits = enumerateSplits();
+  // Only splits that satisfy the setting rule (bottom strongest, top weakest,
+  // judged pre-board) are ranked; the same rule constrains opponents inside
+  // heuristicSplit.
+  const splits = legalSplits(heroCards);
   const heroSet = new Set(heroCards);
   const avail: string[] = [];
   for (const r of RANKS) for (const s of SUITS) {
@@ -112,14 +116,12 @@ function run(p: TaiwaneseParams) {
 
     for (let si = 0; si < splits.length; si++) {
       const sp = splits[si];
-      const heroRows: RowScores[] = boardList.map((_, b) => ({
+      const heroBoards: RowScores[] = boardList.map((_, b) => ({
         top: topScores[b][sp.top],
         middle: midScores[b][sp.middleIdx],
         bottom: botScores[b][sp.bottomIdx],
       }));
-      let pts = 0;
-      for (const rows of oppRows) pts += scorePairwise(heroRows, rows);
-      ev[si] += pts;
+      ev[si] += scoreDealHero(heroBoards, oppRows, royalties);
     }
 
     if ((it + 1) % reportEvery === 0) post({ type: "progress", done: it + 1, total: samples });
@@ -129,5 +131,5 @@ function run(p: TaiwaneseParams) {
     .map((sp, si) => ({ ...splitCards(sp, heroCards), evPoints: ev[si] / samples }))
     .sort((a, b) => b.evPoints - a.evPoints);
 
-  post({ type: "done", result: { samples, opponents, boards, splits: results } });
+  post({ type: "done", result: { samples, opponents, boards, royalties, splits: results } });
 }
