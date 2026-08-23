@@ -22,6 +22,7 @@ export const routeImports = {
   "/hand-history/replay": () => import("@/pages/handhistory/HandReplay"),
   "/course": () => import("@/pages/course/Course"),
   "/course/section": () => import("@/pages/course/CourseSection"),
+  "/private": () => import("@/pages/private/PrivatePage"),
 } as const;
 
 export type RoutePath = keyof typeof routeImports;
