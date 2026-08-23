@@ -78,7 +78,7 @@ import PostflopLibrary from "./PostflopLibrary";
 import PostflopCardPicker from "./PostflopCardPicker";
 import { Library } from "lucide-react";
 import { fmtMoney, type MoneyDisplay } from "./boardDisplay";
-import type { PokerTableSeat } from "@/components/PokerTable";
+import type { PokerTableSeatData } from "@/components/PokerTable";
 
 // Toggle experimental postflop pipeline (upload + polling).
 // Off unless VITE_POSTFLOP_ENABLED=true (frontend/.env locally; Vercel env var in prod).
@@ -1482,7 +1482,7 @@ const Solver = ({ user }: SolverProps) => {
   /* Hand-history solves carry the full table (seat_meta): render every player
    * from the hand - real names, stacks, folded state, and known hole cards -
    * instead of the sim-derived seats. */
-  const hhTableSeats = useMemo<PokerTableSeat[] | undefined>(() => {
+  const hhTableSeats = useMemo<PokerTableSeatData[] | undefined>(() => {
     const view = pf.view;
     if (!view?.seatMeta?.length) return undefined;
     const scale = view.chipScale;

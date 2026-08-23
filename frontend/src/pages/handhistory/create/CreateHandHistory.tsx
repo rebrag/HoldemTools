@@ -14,7 +14,6 @@ import { useNavigate } from "react-router-dom";
 import type { User } from "firebase/auth";
 import PokerTable from "@/components/PokerTable";
 import CopyButton from "@/components/CopyButton";
-import PlayerAvatar from "@/components/PlayerAvatar";
 import { usePlayers } from "@/hooks/usePlayers";
 import { authedFetch } from "@/lib/api";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
@@ -1175,24 +1174,19 @@ const CreateHandHistory: React.FC<Props> = ({
 
   // GGPoker-style seat avatars for linked players. `byId` is referentially
   // stable across unrelated renders (see usePlayers), so this only rebuilds
-  // when seats or the roster actually change.
+  // when seats or the roster actually change. Rows are passed as data (the
+  // seat renders the avatar itself, sized to the table); `null` keeps the
+  // avatar visible as initials while a linked player's row is still loading.
   const { byId: playersById } = usePlayers();
-  const playerAvatars = useMemo(
+  const avatarPlayers = useMemo(
     () =>
       state.seats.map((s) =>
-        s.playerId ? (
-          <PlayerAvatar
-            player={playersById.get(s.playerId)}
-            name={s.name}
-            size="md"
-            className="ring-white/40 shadow-md"
-          />
-        ) : undefined
+        s.playerId ? playersById.get(s.playerId) ?? null : undefined
       ),
     [state.seats, playersById]
   );
 
-  const tableSeats = buildTableSeats({ state, engine, labels, unitMode, playerAvatars });
+  const tableSeats = buildTableSeats({ state, engine, labels, unitMode, avatarPlayers });
   // While placing, highlight the seats a tap can target: occupied seats for a
   // button move, every other seat for a player move.
   const displayedSeats = placement
@@ -1349,13 +1343,14 @@ const CreateHandHistory: React.FC<Props> = ({
         maxWidthClassName="max-w-2xl"
         potAmount={pot?.amount}
         potLabel={pot?.label}
-        sidePotLabels={pot?.sidePots}
+        sidePots={pot?.sidePots}
         potWinnerSeatIndex={pot?.winnerSeatIndex}
-        center={
+        center={({ cardWidth }) => (
           <TableCenter
             state={state}
             engine={engine}
             editable
+            boardCardWidth={cardWidth}
             onEditBoard={() => {
               setBoardAutoClose(null);
               setEditingBoard(true);
@@ -1364,7 +1359,7 @@ const CreateHandHistory: React.FC<Props> = ({
             onAddBoard={() => update({ numBoards: 2 })}
             onRemoveBoard={() => update({ numBoards: 1 })}
           />
-        }
+        )}
       />
       </div>
 

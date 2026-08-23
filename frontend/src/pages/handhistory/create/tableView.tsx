@@ -5,13 +5,13 @@
 // to keep them in lock-step.
 import React from "react";
 import BoardRow from "@/components/BoardRow";
-import { type PokerTableSeat } from "@/components/PokerTable";
+import { type PokerTableSeatData } from "@/components/PokerTable";
+import type { Player } from "@/lib/playersApi";
 import {
   displayedPot,
   fmtUnit,
   potBreakdown,
   revealedBoardCount,
-  STREET_NAMES,
   type Engine,
 } from "./engine";
 import { straddlesOf, type AdvancedHandState } from "./types";
@@ -34,11 +34,13 @@ export function buildTableSeats(args: {
   /** Replayer-only: per-seat readout node (e.g. equity / pot-odds badge) placed
    *  in the seat's `extra` slot. Indexed by seat. The recorder never passes this. */
   seatExtras?: (React.ReactNode | undefined)[];
-  /** Per-seat player avatar (linked players only), indexed by seat. The
-   *  anonymous shared replay route never passes this. */
-  playerAvatars?: (React.ReactNode | undefined)[];
-}): PokerTableSeat[] {
-  const { state, engine, labels, unitMode, concealSeats, seatExtras, playerAvatars } = args;
+  /** Per-seat linked-player rows (avatar identity), indexed by seat.
+   *  undefined = no linked player (no avatar); null = linked player whose
+   *  roster row hasn't resolved (initials from the seat label). The anonymous
+   *  shared replay route never passes this. */
+  avatarPlayers?: (Player | null | undefined)[];
+}): PokerTableSeatData[] {
+  const { state, engine, labels, unitMode, concealSeats, seatExtras, avatarPlayers } = args;
 
   // Forced-bet preview shown during setup (before the engine exists). Derived
   // from the same position labels as buildEngine's blind assignment, so the
@@ -65,7 +67,7 @@ export function buildTableSeats(args: {
     });
   }
 
-  return Array.from({ length: state.tableSize }, (_, i): PokerTableSeat => {
+  return Array.from({ length: state.tableSize }, (_, i): PokerTableSeatData => {
     const seat = state.seats[i];
     const empty = !seat.occupied;
     const sittingOut = !empty && !!seat.sittingOut;
@@ -116,7 +118,7 @@ export function buildTableSeats(args: {
       // Replayer readout (equity / pot odds); undefined on the recorder.
       extra: empty || sittingOut ? undefined : seatExtras?.[i],
       // Identity stays visible even sitting out; only an empty chair has none.
-      avatar: empty ? undefined : playerAvatars?.[i],
+      avatarPlayer: empty ? undefined : avatarPlayers?.[i],
     };
   });
 }
@@ -134,26 +136,28 @@ export function potView(
 ): {
   amount: number;
   label: string;
-  sidePots: string[];
+  sidePots: { amount: number; label: string }[];
   winnerSeatIndex: number | null;
 } | null {
   if (!engine) return null;
-  const amount = displayedPot(engine);
   const fmt = (n: number) =>
     `${fmtUnit(n, engine.bb, unitMode)}${unitMode === "bb" ? " BB" : ""}`;
-  // A short all-in splits the pot into main + side(s); label each layer so
-  // everyone can see what each player is actually playing for.
+  // A short all-in splits the pot into main + side(s); each layer gets its
+  // own chip stack + label so everyone can see what each player is actually
+  // playing for.
   const pots = potBreakdown(engine);
   const sidePots =
     pots.length > 1
-      ? pots
-          .slice(1)
-          .map((p, k) => `Side${pots.length > 2 ? ` ${k + 1}` : ""} ${fmt(p.amount)}`)
+      ? pots.slice(1).map((p, k) => ({
+          amount: p.amount,
+          label: `Side${pots.length > 2 ? ` ${k + 1}` : ""} ${fmt(p.amount)}`,
+        }))
       : [];
+  // With a split, the main stack shows only the main pot's chips (the side
+  // stacks carry the rest); otherwise the usual displayed pot.
+  const amount = pots.length > 1 ? pots[0].amount : displayedPot(engine);
   const label =
-    pots.length > 1
-      ? `${STREET_NAMES[engine.street]} · Main ${fmt(pots[0].amount)}`
-      : `${STREET_NAMES[engine.street]} · Pot ${fmt(amount)}`;
+    pots.length > 1 ? `Main ${fmt(pots[0].amount)}` : `Pot ${fmt(amount)}`;
   // Slide the pot to the winner only for an unambiguous single-seat, single-board
   // result; splits and run-it-twice stay centered.
   let winnerSeatIndex: number | null = null;
@@ -171,6 +175,9 @@ export const TableCenter: React.FC<{
   state: AdvancedHandState;
   engine: Engine | null;
   editable?: boolean;
+  /** Board card width in px, pre-scaled by the table (PokerTable's `center`
+   *  render-prop supplies the scale). */
+  boardCardWidth?: number;
   onEditBoard?: () => void;
   onEditBoard2?: () => void;
   onAddBoard?: () => void;
@@ -179,6 +186,7 @@ export const TableCenter: React.FC<{
   state,
   engine,
   editable = false,
+  boardCardWidth,
   onEditBoard,
   onEditBoard2,
   onAddBoard,
@@ -204,6 +212,7 @@ export const TableCenter: React.FC<{
         board={state.board}
         revealCount={revealCount}
         live={!!engine}
+        cardWidth={boardCardWidth}
         onEdit={editable ? onEditBoard : undefined}
         ariaLabel="Edit board"
       />
@@ -213,6 +222,7 @@ export const TableCenter: React.FC<{
             board={state.board2}
             revealCount={revealCount}
             live={!!engine}
+            cardWidth={boardCardWidth}
             onEdit={editable ? onEditBoard2 : undefined}
             ariaLabel="Edit board 2"
           />

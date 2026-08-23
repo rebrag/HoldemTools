@@ -15,7 +15,7 @@
 //     it did. Earliest rather than latest also means the first seat's card
 //     always reaches the root, which is what stands in for a reset control.
 import { useMemo } from "react";
-import type { PokerTableSeat } from "@/components/PokerTable";
+import type { PokerTableSeatData } from "@/components/PokerTable";
 import type { JsonData } from "@/lib/solver/utils";
 import { passiveAction, plateActions } from "@/lib/solver/utils";
 
@@ -117,9 +117,9 @@ export function resolveSeatNav({
  * renders exactly as it did before this existed.
  */
 export function useSeatNavigation(
-  seats: PokerTableSeat[],
+  seats: PokerTableSeatData[],
   seatNav?: (pos: string) => SeatNavTarget | null
-): { seats: PokerTableSeat[]; onSeatClick?: (index: number) => void } {
+): { seats: PokerTableSeatData[]; onSeatClick?: (index: number) => void } {
   return useMemo(() => {
     if (!seatNav) return { seats };
     const targets = seats.map((s) => seatNav(String(s.key)));
