@@ -2,17 +2,16 @@
 // A Vite module worker. No DOM APIs here.
 // Taiwanese poker hand-setting advisor for the /private page. Common random
 // numbers: every sampled scenario (opponent hands + boards) is scored against
-// every LEGAL hero split, so the split EVs are directly comparable and
-// converge with far fewer samples than independent runs would need. Scoring
-// and the setting rule live in lib/taiwanese. Cancellation is by
-// worker.terminate() from the host.
+// ALL 105 hero splits, so the split EVs are directly comparable and converge
+// with far fewer samples than independent runs would need. Scoring lives in
+// lib/taiwanese. Cancellation is by worker.terminate() from the host.
 import { evaluateCards } from "phe";
 import { bestOmaha } from "../lib/handEval";
 import {
   PAIRS,
   QUADS,
+  enumerateSplits,
   heuristicSplit,
-  legalSplits,
   scoreDealHero,
   splitCards,
   type RowScores,
@@ -48,10 +47,7 @@ function run(p: TaiwaneseParams) {
   if (heroCards.length !== 7) throw new Error("heroCards must have exactly 7 cards");
   seedLCG(seed);
 
-  // Only splits that satisfy the setting rule (bottom strongest, top weakest,
-  // judged pre-board) are ranked; the same rule constrains opponents inside
-  // heuristicSplit.
-  const splits = legalSplits(heroCards);
+  const splits = enumerateSplits();
   const heroSet = new Set(heroCards);
   const avail: string[] = [];
   for (const r of RANKS) for (const s of SUITS) {

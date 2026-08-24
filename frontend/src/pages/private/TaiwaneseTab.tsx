@@ -293,10 +293,9 @@ const TaiwaneseTab: React.FC = () => {
             </div>
           )}
           <p className="mt-4 text-xs text-emerald-100/50">
-            Only splits that satisfy the setting rule (bottom strongest, top weakest, judged
-            on the hole cards) are ranked. Opponent model: each opponent is dealt 7 random
-            cards and sets them legally with a fixed heuristic (best Omaha material to the
-            bottom). Points follow the scoring shown below.
+            Any card may be set in any row. Opponent model: each opponent is dealt 7 random
+            cards and sets them with a fixed heuristic (best Omaha material to the bottom).
+            Points follow the scoring shown below.
           </p>
         </div>
       )}

@@ -28,8 +28,8 @@ const ScoringExplainer: React.FC<ScoringExplainerProps> = ({ royalties, boards }
         </span>
         <p className="mt-1 text-sm text-emerald-100/70">
           {royalties
-            ? "PokerNews rules: rows pay 1 / 2 / 3 to the outright best hand, royalties for strong hands, and a scoop bonus."
-            : "House rules: rows pay 1 / 2 / 3 to the outright best hand, no royalties, and a scoop bonus."}{" "}
+            ? "PokerNews rules: the best hand in each row collects 1 / 2 / 3 plus royalties from every player, and a 3-point scoop from everyone."
+            : "House rules: every pair of players settles separately, rows pay 1 / 2 / 3, no royalties, and an 8-point scoop per opponent swept."}{" "}
           Every number below is read straight from the scoring code with the settings picked
           above, so it always matches what the solver paid.
         </p>
@@ -131,18 +131,22 @@ const ScoringExplainer: React.FC<ScoringExplainerProps> = ({ royalties, boards }
           </p>
         )}
         <p>
-          Setting rule: bottom must be the strongest hand and top the weakest, judged on the
-          hole cards at setting time (category, then high cards) since the board is not yet
-          dealt. The advisor only ranks splits that satisfy it.
+          Any card may be set in any row; there is no setting restriction.
         </p>
-        <p>
-          The scoop needs every row on every board outright: 3 rows on a single board, all 6
-          on the double board. Ties break it.
-        </p>
-        <p>
-          Points are settled with every opponent separately. Tied winners split the pot; the
-          odd-chip suit tiebreaker from the rules sheet is averaged away in the EV numbers.
-        </p>
+        {royalties ? (
+          <p>
+            The scoop needs every row on every board outright against the whole table: 3
+            rows on a single board, all 6 on the double board. Ties break it. Tied winners
+            split the pot; the odd-chip suit tiebreaker from the rules sheet is averaged
+            away in the EV numbers.
+          </p>
+        ) : (
+          <p>
+            The scoop is settled per opponent: sweep every row on every board against that
+            one player outright and collect it from them alone. A tie in any row blocks the
+            scoop against that player only.
+          </p>
+        )}
       </div>
     </details>
   );

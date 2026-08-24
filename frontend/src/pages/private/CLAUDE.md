@@ -11,6 +11,7 @@ All compute is client side, in workers, with no backend involved.
 | `TaiwaneseTab.tsx` | Taiwanese hand-setting advisor |
 | `ScoringExplainer.tsx` | On-page readout of how Taiwanese scoring is configured |
 | `taiwaneseScoring.ts` | Derives that readout from the scoring code |
+| `ScoringVerifier.tsx` | Score checker: enter a real deal, see per-player points from the same code |
 | `protocol.ts` | Worker message types, shared with `src/workers/` |
 | `useRankingsSim.ts`, `useTaiwaneseSolve.ts` | One worker per run, terminated on cancel, re-run and unmount |
 
@@ -26,29 +27,31 @@ Two published sources the client designated as official (fetched 2026-08-23):
 
 plus the client's home-game specifics, relayed from his friend (2026-08-23).
 
-Common ground, always in force: row wins pay top 1 / middle 2 / bottom 3, per board; the
-**outright best hand in each row collects from every other player** (second best collects
-nothing, this is not pairwise); ties split and pay nothing; the scoop needs every row on
-every board outright (3 rows single board, all 6 on the double board).
+Common ground, always in force: row wins pay top 1 / middle 2 / bottom 3, per board, and
+**any card may be set in any row** (an earlier pre-board setting rule was removed at the
+client's request; a real home-game deal shows an ace set on top over a weaker middle).
 
-The **royalties toggle** switches between two coherent rule sets:
+The **royalties toggle** switches between two rule sets that differ in settlement shape,
+not just the bonus chart:
 
-- **Off = house rules** (the default; it is the client's actual game): no royalties,
-  scoop pays **8**. This reproduces the home game's stated maxima vs one opponent:
-  6 + 8 = 14 single board, 12 + 8 = 20 double.
-- **On = PokerNews rules**: royalty chart added to the winner's collect, scoop pays **3**.
+- **Off = house rules** (the default; it is the client's actual game): **every pair of
+  players settles separately**. Per board per row the better hand takes the row's points
+  from the other; sweeping every row on every board against one specific opponent takes an
+  8-point scoop from that opponent. No royalties. Vs one opponent this gives the stated
+  maxima: 6 + 8 = 14 single board, 12 + 8 = 20 double.
+- **On = PokerNews rules**: the **outright best hand in each row collects from every other
+  player** (second best collects nothing), royalty chart added to the winner's collect,
+  ties split and pay nothing, and a scoop (every row on every board outright, vs the whole
+  table) pays **3** from everyone. Where PokerNews and Infogram contradict each other, the
+  client chose the PokerNews reading: losers pay the winner's royalty in full even when
+  their own hand would qualify (Infogram's example waives it).
 
-Decisions the client made where sources disagree or are silent:
-
-- **Losers pay royalties in full** (PokerNews reading, only relevant with royalties on)
-  even when their own hand qualifies for the same royalty. The Infogram worked example
-  waives it in that case; flagged on the page.
-- **Setting rule enforced pre-board** (PokerNews's foul wording): bottom must be strongest,
-  top weakest, judged on hole cards via `preBoardKey` (category, then ranks, ace high),
-  because the board is unknown at setting time. Infogram has no foul rule. The advisor and
-  the opponent model both restrict to `legalSplits`.
-- **Double board** is the home game's standard format (not in the published sources):
-  rows pay per board, one scoop bonus requiring all six rows.
+The pairwise house shape is not guesswork: it was reverse-engineered from, and verified
+against, a real scored 4-player double-board deal from the client's game (2026-08-24).
+That deal is the `ScoringVerifier` example fixture, with its expected scoresheet in the
+comment above it; house scoring must reproduce those numbers exactly.
+Winner-take-all scoring provably cannot (two players who tie a row net 0 pairwise but
+would both pay under winner-take-all).
 
 ## Rule: the page explains the rules by reading them, not by restating them
 
@@ -67,8 +70,12 @@ else to remember.
 **When you change how scoring works:**
 
 - Change it in `src/lib/taiwanese.ts` only.
-  `scoreDealHero` is the single place points are decided, and the advisor worker and the
-  explainer both go through it.
+  `scoreDealAll` is the single place points are decided; the advisor worker (via the
+  `scoreDealHero` wrapper), the explainer, and the score checker all go through it.
+- After any scoring change, open the score checker on the page: its preloaded example must
+  still reproduce the real scoresheet in house mode. If it stops matching, the change broke
+  the house rules (or the client's rules genuinely changed, in which case update the
+  fixture and its expected numbers together).
 - Never hardcode a points value into JSX, a comment, or a string anywhere in this folder.
   If you catch yourself typing a number that scoring produces, add a probe to
   `scoringLines()` instead and print that.

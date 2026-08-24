@@ -10,6 +10,7 @@ import LoadingIndicator from "@/components/LoadingIndicator";
 import { useCurrentTier } from "@/context/TierContext";
 import RankingsTab from "./RankingsTab";
 import TaiwaneseTab from "./TaiwaneseTab";
+import ScoringVerifier from "./ScoringVerifier";
 import { Segmented } from "./controls";
 
 interface PrivatePageProps {
@@ -95,6 +96,9 @@ const PrivatePage: React.FC<PrivatePageProps> = ({ user }) => {
         />
       </div>
       {tab === "rankings" ? <RankingsTab /> : <TaiwaneseTab />}
+      <div className="mt-4">
+        <ScoringVerifier />
+      </div>
     </div>
   );
 };

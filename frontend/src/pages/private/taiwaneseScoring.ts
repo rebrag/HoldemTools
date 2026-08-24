@@ -105,7 +105,9 @@ export function scoringLines(royalties: boolean, boards: 1 | 2): ScoringLine[] {
       [[row(HIGH2, HIGH2, FULL)], [row(HIGH2, HIGH2, HIGH2)]],
       royalties
     ),
-    note: "only the outright best hand in a row is paid: beating the third player earns nothing, and you still pay the winner",
+    note: royalties
+      ? "only the outright best hand in a row is paid: beating the third player earns nothing, and you still pay the winner"
+      : "every pair settles separately: you pay the player who beat you and collect the same from the one you beat",
   });
   return lines;
 }

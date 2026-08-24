@@ -67,23 +67,26 @@ export function splitCards(
   };
 }
 
-// Scoring: rows always pay top 1 / middle 2 / bottom 3, and the outright
-// best hand in each row collects from EVERY other player (second best
-// collects nothing); ties split the collected pot and pay nothing. Two rule
-// sets sit on top of that, chosen by the royalties flag:
-//   royalties ON  - pokernews.com/poker-rules/taiwanese-poker.htm: the row
-//                   winner also collects a royalty for hand strength, and a
-//                   scoop pays 3.
-//   royalties OFF - the client's home game (confirmed by his friend,
-//                   2026-08-23): no royalties, and a scoop pays 8.
-// A scoop means winning every row on every board outright: 3 rows on a
-// single board, all 6 on the house double board. That reproduces the home
-// game's stated maxima against one opponent: 6 + 8 = 14 on one board,
-// 12 + 8 = 20 on two.
-// Where the two published sources contradict each other, the client chose
-// the PokerNews reading: losing players pay the winner's royalty in full,
-// even when their own hand would qualify for the same royalty (the Infogram
-// worked example waives it in that case).
+// Scoring: rows always pay top 1 / middle 2 / bottom 3. The royalties flag
+// picks between two rule sets that differ in more than the bonus chart:
+//   royalties OFF - the client's home game, verified against a real scored
+//                   4-player deal from that game (2026-08-24): every PAIR of
+//                   players settles separately. Per board per row, the better
+//                   hand takes that row's points from the other (ties take
+//                   nothing), and winning every row on every board against
+//                   one specific opponent outright takes an 8-point scoop
+//                   from that opponent. No royalties. Vs one opponent this
+//                   gives the stated maxima: 6 + 8 = 14 single board,
+//                   12 + 8 = 20 double.
+//   royalties ON  - pokernews.com/poker-rules/taiwanese-poker.htm: the
+//                   outright best hand in each row collects from EVERY other
+//                   player (second best collects nothing), plus a royalty for
+//                   hand strength; ties split the collected pot and pay
+//                   nothing; a scoop (every row on every board outright, vs
+//                   the whole table) pays 3 from everyone. Where PokerNews
+//                   and the Infogram sheet contradict each other, the client
+//                   chose the PokerNews reading: losers pay the winner's
+//                   royalty in full even when their own hand would qualify.
 export const ROW_POINTS = { top: 1, middle: 2, bottom: 3 } as const;
 export const SCOOP_POKERNEWS = 3;
 export const SCOOP_HOUSE = 8;
@@ -110,53 +113,95 @@ export interface RowScores {
 
 const ROWS: readonly RowName[] = ["top", "middle", "bottom"];
 
+/** Per-player net points for one deal, split by where they came from. */
+export interface DealBreakdown {
+  top: number;
+  middle: number;
+  bottom: number;
+  scoop: number;
+  total: number;
+}
+
 /**
- * Hero's net points for a whole deal against the whole table; negative means
- * hero pays. `hero` holds rows per board; `opps[i]` holds opponent i's rows
- * per board. This is the single place points are decided: the advisor, the
- * explainer panel, and any future scoring UI must all go through it.
+ * Score a whole deal for every player. `players[p][b]` holds player p's rows
+ * on board b. This is the single place points are decided: the advisor, the
+ * explainer panel, and the score checker must all go through it.
  */
+export function scoreDealAll(players: RowScores[][], royalties: boolean): DealBreakdown[] {
+  const n = players.length;
+  const nBoards = players[0].length;
+  const out: DealBreakdown[] = players.map(() => ({
+    top: 0, middle: 0, bottom: 0, scoop: 0, total: 0,
+  }));
+  if (royalties) {
+    // PokerNews: the outright best hand per row collects base + royalty from
+    // every other player; ties split the collected pot and pay nothing.
+    const outright = new Int32Array(n);
+    for (let b = 0; b < nBoards; b++) {
+      for (const row of ROWS) {
+        let min = Infinity;
+        for (let i = 0; i < n; i++) if (players[i][b][row] < min) min = players[i][b][row];
+        let winCount = 0;
+        for (let i = 0; i < n; i++) if (players[i][b][row] === min) winCount++;
+        const pay = ROW_POINTS[row] + ROYALTY_TABLE[row][handRank(min)];
+        for (let i = 0; i < n; i++) {
+          if (players[i][b][row] === min) {
+            out[i][row] += (pay * (n - winCount)) / winCount;
+            if (winCount === 1) outright[i]++;
+          } else {
+            out[i][row] -= pay;
+          }
+        }
+      }
+    }
+    // The scoop needs every row on every board outright, vs the whole table.
+    const need = 3 * nBoards;
+    for (let i = 0; i < n; i++) {
+      if (outright[i] !== need) continue;
+      out[i].scoop += SCOOP_POKERNEWS * (n - 1);
+      for (let j = 0; j < n; j++) if (j !== i) out[j].scoop -= SCOOP_POKERNEWS;
+    }
+  } else {
+    // House: every pair of players settles separately, and the scoop is per
+    // opponent: sweep every row on every board against that one player.
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        let iAll = true;
+        let jAll = true;
+        for (let b = 0; b < nBoards; b++) {
+          for (const row of ROWS) {
+            const si = players[i][b][row];
+            const sj = players[j][b][row];
+            if (si < sj) {
+              out[i][row] += ROW_POINTS[row];
+              out[j][row] -= ROW_POINTS[row];
+              jAll = false;
+            } else if (sj < si) {
+              out[j][row] += ROW_POINTS[row];
+              out[i][row] -= ROW_POINTS[row];
+              iAll = false;
+            } else {
+              iAll = false;
+              jAll = false;
+            }
+          }
+        }
+        if (iAll) { out[i].scoop += SCOOP_HOUSE; out[j].scoop -= SCOOP_HOUSE; }
+        else if (jAll) { out[j].scoop += SCOOP_HOUSE; out[i].scoop -= SCOOP_HOUSE; }
+      }
+    }
+  }
+  for (const o of out) o.total = o.top + o.middle + o.bottom + o.scoop;
+  return out;
+}
+
+/** Hero's net points for a deal; negative means hero pays. */
 export function scoreDealHero(
   hero: RowScores[],
   opps: RowScores[][],
   royalties: boolean
 ): number {
-  const nOpp = opps.length;
-  const nBoards = hero.length;
-  const scoop = royalties ? SCOOP_POKERNEWS : SCOOP_HOUSE;
-  let net = 0;
-  let heroOutright = 0;
-  // Rows each opponent won outright, to detect an opponent scooping hero.
-  const oppOutright = new Int32Array(nOpp);
-  for (let b = 0; b < nBoards; b++) {
-    for (const row of ROWS) {
-      const h = hero[b][row];
-      let min = h;
-      for (let i = 0; i < nOpp; i++) if (opps[i][b][row] < min) min = opps[i][b][row];
-      let winCount = h === min ? 1 : 0;
-      let soleOpp = -1;
-      for (let i = 0; i < nOpp; i++) {
-        if (opps[i][b][row] === min) { winCount++; soleOpp = i; }
-      }
-      const pay = ROW_POINTS[row] + (royalties ? ROYALTY_TABLE[row][handRank(min)] : 0);
-      if (h === min) {
-        // Winner(s) collect from every loser and split; ties pay nothing.
-        net += (pay * (nOpp + 1 - winCount)) / winCount;
-        if (winCount === 1) heroOutright++;
-      } else {
-        net -= pay;
-        if (winCount === 1) oppOutright[soleOpp]++;
-      }
-    }
-  }
-  // The scoop needs every row on every board: 3 rows single, all 6 double.
-  const need = 3 * nBoards;
-  if (heroOutright === need) {
-    net += scoop * nOpp;
-  } else {
-    for (let i = 0; i < nOpp; i++) if (oppOutright[i] === need) net -= scoop;
-  }
-  return net;
+  return scoreDealAll([hero, ...opps], royalties)[0].total;
 }
 
 // ---------- opponent model ----------
@@ -197,70 +242,19 @@ function middleStrength(vals: number[]): number {
 
 const SPLITS = enumerateSplits();
 
-// ---------- foul rule (client's decision, from the PokerNews wording) ----------
-
-/**
- * Pre-board strength of a row's hole cards, comparable across row sizes, for
- * the "bottom must be strongest, top weakest" setting rule. Category first
- * (quads > trips > two pair > pair > high card), then ranks high-to-low, ace
- * high. Encoded so a plain numeric compare orders hands; a shorter hand that
- * ties a longer one's prefix counts as weaker, so a bare high card can always
- * sit under a two-card hand led by the same rank. The board is unknown at
- * setting time, so hole cards are the only thing a pre-board rule CAN
- * measure; this is a modeling choice, documented on the page.
- */
-export function preBoardKey(cards: string[]): number {
-  const counts = new Map<number, number>();
-  for (const c of cards) {
-    const v = VAL[c[0].toUpperCase()];
-    counts.set(v, (counts.get(v) ?? 0) + 1);
-  }
-  const groups = [...counts.entries()]
-    .map(([v, c]) => [c, v] as const)
-    .sort((a, b) => b[0] - a[0] || b[1] - a[1]);
-  const cat =
-    groups[0][0] === 4 ? 4
-    : groups[0][0] === 3 ? 3
-    : groups[0][0] === 2 ? (groups[1] && groups[1][0] === 2 ? 2 : 1)
-    : 0;
-  const r = [0, 0, 0, 0];
-  groups.forEach(([, v], i) => { if (i < 4) r[i] = v; });
-  return cat * 50625 + r[0] * 3375 + r[1] * 225 + r[2] * 15 + r[3]; // base 15
-}
-
-/** Legal per the setting rule: bottom >= middle >= top in pre-board strength. */
-export function isLegalSplit(split: Split, cards7: string[]): boolean {
-  const parts = splitCards(split, cards7);
-  const b = preBoardKey(parts.bottom);
-  const m = preBoardKey(parts.middle);
-  const t = preBoardKey(parts.top);
-  return b >= m && m >= t;
-}
-
-/**
- * The splits a player may set. Falls back to all 105 if the rule would leave
- * nothing, which no 7-card hand is known to do; the fallback just guarantees
- * the advisor can never go empty.
- */
-export function legalSplits(cards7: string[]): Split[] {
-  const legal = SPLITS.filter((s) => isLegalSplit(s, cards7));
-  return legal.length > 0 ? legal : SPLITS.slice();
-}
-
 /**
  * Opponent model: opponents are dealt random 7 cards and set them with this
  * fixed, board-independent heuristic (strong pairs/suits/connectors to the
- * bottom, then the middle, best spare card on top), restricted to legal
- * splits. Hero EVs from the advisor are relative to this model, not to
- * optimally-playing opponents.
+ * bottom, then the middle, best spare card on top). Any card may go in any
+ * row; the client's home game has no setting restriction. Hero EVs from the
+ * advisor are relative to this model, not to optimally-playing opponents.
  */
 export function heuristicSplit(cards7: string[]): Split {
   const vals = cards7.map((c) => VAL[c[0].toUpperCase()]);
   const suits = cards7.map((c) => c[1].toLowerCase());
-  const candidates = legalSplits(cards7);
-  let best = candidates[0];
+  let best = SPLITS[0];
   let bestScore = Number.NEGATIVE_INFINITY;
-  for (const split of candidates) {
+  for (const split of SPLITS) {
     const bVals = split.bottom.map((i) => vals[i]);
     const bSuits = split.bottom.map((i) => suits[i]);
     const mVals = [vals[split.middle[0]], vals[split.middle[1]]];
