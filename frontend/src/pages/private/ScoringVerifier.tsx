@@ -21,10 +21,10 @@ import { Segmented, Chip, glassCard } from "./controls";
 //   P4 [0, 0, +18, +8].
 // Player slot order: [top, middle x2, bottom x4].
 const EXAMPLE_PLAYERS: string[][] = [
-  ["Qd", "7c", "7h", "4c", "2s", "9d", "Th"],
-  ["Ah", "Kd", "Td", "6h", "Jh", "8s", "5c"],
-  ["Ks", "Qc", "Qh", "8c", "7s", "2d", "3d"],
-  ["Kh", "9c", "6d", "As", "8h", "2c", "3h"],
+  ["Qh", "7c", "7h", "4c", "2c", "9d", "Tc"],
+  ["Ah", "Kc", "Td", "6h", "Jh", "8c", "5c"],
+  ["Ks", "Qc", "Qd", "8s", "7s", "2d", "3d"],
+  ["Kh", "9c", "6d", "As", "8h", "2s", "3h"],
 ];
 const EXAMPLE_BOARDS: string[][] = [
   ["8d", "Ts", "Ad", "9s", "5s"],
