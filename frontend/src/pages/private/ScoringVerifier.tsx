@@ -12,6 +12,7 @@ import CardPicker from "@/components/CardPicker";
 import RankSuitKeypad from "@/components/RankSuitKeypad";
 import { bestOmaha } from "@/lib/handEval";
 import { scoreDealAll, type RowScores } from "@/lib/taiwanese";
+import BreakdownTable from "./BreakdownTable";
 import { Segmented, Chip, glassCard } from "./controls";
 
 // A real deal from the client's home game (2026-08-24), reconstructed from
@@ -36,10 +37,6 @@ const emptyPlayer = (): Card[] => new Array<Card>(7).fill(null);
 const emptyBoard = (): Card[] => new Array<Card>(5).fill(null);
 
 const SLOT_LABEL = ["Top", "Middle", "Middle", "Bottom", "Bottom", "Bottom", "Bottom"];
-
-const fmt = (n: number) => (n > 0 ? `+${n}` : String(n));
-const cell = (n: number) =>
-  n > 0 ? "text-emerald-300" : n < 0 ? "text-red-400" : "text-emerald-100/60";
 
 const ScoringVerifier: React.FC = () => {
   const [players, setPlayers] = useState<Card[][]>(EXAMPLE_PLAYERS.map((p) => [...p]));
@@ -294,35 +291,8 @@ const ScoringVerifier: React.FC = () => {
         </>
       ) : (
         breakdown && (
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full max-w-md text-sm border-collapse">
-              <thead>
-                <tr className="text-emerald-100/50">
-                  <th className="text-left font-medium py-1.5 pr-4">Player</th>
-                  <th className="text-right font-medium py-1.5 px-2">Top</th>
-                  <th className="text-right font-medium py-1.5 px-2">Middle</th>
-                  <th className="text-right font-medium py-1.5 px-2">Bottom</th>
-                  <th className="text-right font-medium py-1.5 px-2">Scoop</th>
-                  <th className="text-right font-medium py-1.5 pl-2">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {breakdown.map((d, g) => (
-                  <tr key={g} className="border-t border-white/10">
-                    <td className="py-1.5 pr-4 text-emerald-100/90">Player {g + 1}</td>
-                    <td className={`py-1.5 px-2 text-right font-mono tabular-nums ${cell(d.top)}`}>{fmt(d.top)}</td>
-                    <td className={`py-1.5 px-2 text-right font-mono tabular-nums ${cell(d.middle)}`}>{fmt(d.middle)}</td>
-                    <td className={`py-1.5 px-2 text-right font-mono tabular-nums ${cell(d.bottom)}`}>{fmt(d.bottom)}</td>
-                    <td className={`py-1.5 px-2 text-right font-mono tabular-nums ${cell(d.scoop)}`}>
-                      {d.scoop === 0 ? "-" : fmt(d.scoop)}
-                    </td>
-                    <td className={`py-1.5 pl-2 text-right font-mono tabular-nums font-semibold ${cell(d.total)}`}>
-                      {fmt(d.total)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="mt-4">
+            <BreakdownTable breakdown={breakdown} />
           </div>
         )
       )}

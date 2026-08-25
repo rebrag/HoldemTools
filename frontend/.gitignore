@@ -39,3 +39,6 @@ src/bulkImportBankroll.mjs
 # Authed E2E lane: session snapshot holds a live Firebase refresh token
 /e2e/.auth/
 /test-results-authed/
+
+# Taiwanese precompute: esbuild bundle cache
+/scripts/.cache/

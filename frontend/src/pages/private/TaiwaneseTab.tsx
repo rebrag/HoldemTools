@@ -9,40 +9,20 @@ import CardPicker from "@/components/CardPicker";
 import RankSuitKeypad from "@/components/RankSuitKeypad";
 import { buildDeck, sampleN } from "@/lib/cards";
 import { useTaiwaneseSolve } from "./useTaiwaneseSolve";
+import { useSelfPlayLibrary, cachedLibrary, LIBRARY_ENTRIES } from "./useSelfPlayLibrary";
 import ScoringExplainer from "./ScoringExplainer";
+import SplitRows from "./SplitRows";
 import { Segmented, Chip, ProgressBar, glassCard } from "./controls";
-import type { TaiwaneseSplitResult } from "./protocol";
 
 const SAMPLE_PRESETS = [
-  { label: "500", value: 500 },
-  { label: "1k", value: 1_000 },
   { label: "2k", value: 2_000 },
   { label: "5k", value: 5_000 },
+  { label: "20k", value: 20_000 },
+  { label: "50k", value: 50_000 },
 ];
 
 const fmtEv = (ev: number) => `${ev >= 0 ? "+" : ""}${ev.toFixed(2)} pts`;
-
-function SplitRows({ split, cardWidth }: { split: TaiwaneseSplitResult; cardWidth: number }) {
-  const rows: { label: string; cards: string[] }[] = [
-    { label: "Top", cards: split.top },
-    { label: "Middle", cards: split.middle },
-    { label: "Bottom", cards: split.bottom },
-  ];
-  return (
-    <div className="space-y-1">
-      {rows.map((r) => (
-        <div key={r.label} className="flex items-center gap-2">
-          <span className="w-14 shrink-0 text-xs text-emerald-100/60">{r.label}</span>
-          <span className="flex gap-1">
-            {r.cards.map((c) => (
-              <PlayingCard key={c} code={c} width={cardWidth} />
-            ))}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
+const fmtErr = (se?: number) => (se == null ? "" : ` ±${se.toFixed(2)}`);
 
 const TaiwaneseTab: React.FC = () => {
   const [cards, setCards] = useState<string[]>([]);
@@ -50,9 +30,18 @@ const TaiwaneseTab: React.FC = () => {
   const [boards, setBoards] = useState<1 | 2>(2);
   // Defaults follow the client's home game: double board, no royalties.
   const [royalties, setRoyalties] = useState(false);
-  const [samples, setSamples] = useState(1_000);
+  const [samples, setSamples] = useState(20_000);
+  // Self-play by default: it is the equilibrium model, and the fixed rule of
+  // thumb only exists as a fast preview.
+  const [selfPlay, setSelfPlay] = useState(true);
+  // Human-like mixed play by default: opponents sample among their near-best
+  // splits weighted by EV gap, which mimics real tables better than everyone
+  // finding the exact best split every hand.
+  const [mixing, setMixing] = useState<"pure" | "mixed">("mixed");
+  const [solvedModel, setSolvedModel] = useState<"heuristic" | "selfplay">("selfplay");
   const [showAll, setShowAll] = useState(false);
   const { running, progress, result, error, solve, cancel } = useTaiwaneseSolve();
+  const lib = useSelfPlayLibrary();
 
   const used = useMemo(() => new Set(cards), [cards]);
   const full = cards.length === 7;
@@ -70,10 +59,27 @@ const TaiwaneseTab: React.FC = () => {
     setCards(sampleN(buildDeck(), 7));
   };
 
-  const onSolve = () => {
+  const onSolve = async () => {
     setShowAll(false);
-    solve(cards, opponents, boards, samples, royalties);
+    if (selfPlay) {
+      const library = await lib.ensure(opponents, boards, royalties);
+      if (!library) return; // error is shown by the hook
+      setSolvedModel("selfplay");
+      solve(cards, opponents, boards, samples, royalties, library.entries, mixing);
+    } else {
+      setSolvedModel("heuristic");
+      solve(cards, opponents, boards, samples, royalties);
+    }
   };
+
+  const onCancel = () => {
+    lib.cancel();
+    cancel();
+  };
+
+  const busy = running || lib.building;
+  const solvedLibrary = solvedModel === "selfplay" ? cachedLibrary(opponents, boards, royalties) : null;
+  const libStats = solvedLibrary?.stats ?? null;
 
   return (
     <div className="space-y-4">
@@ -91,7 +97,7 @@ const TaiwaneseTab: React.FC = () => {
                 <button
                   type="button"
                   onClick={randomize}
-                  disabled={running}
+                  disabled={busy}
                   className="text-xs text-emerald-100/60 underline decoration-emerald-100/30 transition-colors hover:text-emerald-100 disabled:opacity-30 disabled:pointer-events-none"
                 >
                   Random
@@ -182,7 +188,7 @@ const TaiwaneseTab: React.FC = () => {
                     label={String(n)}
                     active={opponents === n}
                     onClick={() => setOpponents(n)}
-                    disabled={running}
+                    disabled={busy}
                   />
                 ))}
               </div>
@@ -198,7 +204,7 @@ const TaiwaneseTab: React.FC = () => {
                   { value: "2", label: "Double" },
                 ]}
                 onChange={(v) => setBoards(Number(v) as 1 | 2)}
-                disabled={running}
+                disabled={busy}
               />
             </div>
             <div>
@@ -212,7 +218,7 @@ const TaiwaneseTab: React.FC = () => {
                   { value: "on", label: "On (PokerNews)" },
                 ]}
                 onChange={(v) => setRoyalties(v === "on")}
-                disabled={running}
+                disabled={busy}
               />
             </div>
             <div>
@@ -226,28 +232,71 @@ const TaiwaneseTab: React.FC = () => {
                     label={pr.label}
                     active={samples === pr.value}
                     onClick={() => setSamples(pr.value)}
-                    disabled={running}
+                    disabled={busy}
                   />
                 ))}
               </div>
             </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-2">
+                Opponent model
+              </p>
+              <Segmented
+                value={selfPlay ? "selfplay" : "heuristic"}
+                options={[
+                  { value: "selfplay", label: "Self-play" },
+                  { value: "heuristic", label: "Heuristic (fast)" },
+                ]}
+                onChange={(v) => setSelfPlay(v === "selfplay")}
+                disabled={busy}
+              />
+              <p className="mt-1.5 text-xs text-emerald-100/60 max-w-lg">
+                {selfPlay
+                  ? "Opponents set the split that is best against the field, found by iterated best response. The first solve per settings loads a precomputed policy or builds one (under a minute), then it is cached."
+                  : "Opponents set their hands with a fixed rule of thumb."}
+              </p>
+            </div>
+            {selfPlay && (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-2">
+                  Opponent play
+                </p>
+                <Segmented
+                  value={mixing}
+                  options={[
+                    { value: "mixed", label: "Human mix" },
+                    { value: "pure", label: "Best split" },
+                  ]}
+                  onChange={setMixing}
+                  disabled={busy}
+                />
+                <p className="mt-1.5 text-xs text-emerald-100/60 max-w-lg">
+                  {mixing === "mixed"
+                    ? "Opponents sample among their near-best splits, weighted by how little EV each gives up - closer to a real table."
+                    : "Every opponent always finds their exact best split."}
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={running ? cancel : onSolve}
-              disabled={!running && !full}
+              onClick={busy ? onCancel : onSolve}
+              disabled={!busy && !full}
               className="rounded-lg bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-900 transition-colors hover:bg-emerald-300 active:scale-95 disabled:opacity-40 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
             >
-              {running ? "Cancel" : "Solve"}
+              {busy ? "Cancel" : "Solve"}
             </button>
             <div className="flex-1 max-w-xs">
-              <ProgressBar progress={progress} visible={running} />
+              <ProgressBar progress={lib.building ? lib.progress : progress} visible={busy} />
             </div>
+            {lib.building && (
+              <p className="text-xs text-emerald-100/60">Building opponent policy...</p>
+            )}
           </div>
 
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {(error || lib.error) && <p className="text-sm text-red-400">{error ?? lib.error}</p>}
         </div>
       </div>
 
@@ -257,8 +306,55 @@ const TaiwaneseTab: React.FC = () => {
             {result.samples.toLocaleString("en-US")} scenarios vs {result.opponents}{" "}
             {result.opponents === 1 ? "opponent" : "opponents"},{" "}
             {result.boards === 1 ? "single board" : "double board"}, royalties{" "}
-            {result.royalties ? "on" : "off"}. EV is net points per deal.
+            {result.royalties ? "on" : "off"},{" "}
+            {solvedModel === "selfplay" ? "self-play opponents" : "heuristic opponents"}. EV is
+            net points per deal.
           </p>
+          {libStats && libStats.length > 0 && (
+            <div className="mt-2">
+              <p className="font-mono text-xs text-emerald-100/60">
+                Opponent policy: {libStats.length} rounds of best response over an
+                opponent pool of{" "}
+                {(solvedLibrary?.entries.length ?? LIBRARY_ENTRIES).toLocaleString("en-US")}{" "}
+                hands. Each round's gain is what re-optimizing bought over the round before
+                it, so a gain heading to zero means the policy has stopped improving.
+              </p>
+              <table className="mt-1.5 text-xs font-mono border-collapse">
+                <thead>
+                  <tr className="text-emerald-100/40">
+                    <th className="text-left font-medium pr-4 py-0.5">Round</th>
+                    <th className="text-right font-medium px-3 py-0.5">Gain over previous</th>
+                    <th className="text-right font-medium pl-3 py-0.5">Same split</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {libStats.map((s) => (
+                    <tr key={s.level} className="text-emerald-100/70">
+                      <td className="pr-4 py-0.5">{s.level}</td>
+                      <td className="text-right px-3 py-0.5 tabular-nums">
+                        {Math.max(0, s.prevPolicyEvLoss).toFixed(2)} pts/deal
+                      </td>
+                      <td className="text-right pl-3 py-0.5 tabular-nums">
+                        {s.agreePrevPct.toFixed(0)}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {solvedLibrary && solvedLibrary.opponents !== result.opponents && (
+                <p className="mt-1.5 font-mono text-xs text-emerald-100/50">
+                  {result.royalties
+                    ? `Policy trained vs ${solvedLibrary.opponents} opponents and reused here: ` +
+                      "under royalties the best row wins collect from the whole table, so the " +
+                      "best split does shift a little with table size. An approximation."
+                    : `Policy trained vs ${solvedLibrary.opponents} ` +
+                      `${solvedLibrary.opponents === 1 ? "opponent" : "opponents"} and reused ` +
+                      "here, exactly: house rules settle each pair separately, so EV scales " +
+                      "linearly with table size and the best split is the same at any size."}
+                </p>
+              )}
+            </div>
+          )}
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {result.splits.slice(0, 10).map((s, i) => (
               <div
@@ -271,6 +367,7 @@ const TaiwaneseTab: React.FC = () => {
                 </div>
                 <span className="shrink-0 rounded-full bg-emerald-400/15 border border-emerald-400/40 px-2.5 py-1 text-xs font-semibold text-emerald-300">
                   {fmtEv(s.evPoints)}
+                  <span className="font-normal text-emerald-100/50">{fmtErr(s.evStdErr)}</span>
                 </span>
               </div>
             ))}

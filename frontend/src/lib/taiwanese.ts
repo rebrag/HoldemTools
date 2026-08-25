@@ -122,21 +122,35 @@ export interface DealBreakdown {
   total: number;
 }
 
+// Scratch for scoreDealAll's hot path (solver workers call it millions of
+// times per run); real tables never exceed 6 players.
+const outrightScratch = new Int32Array(8);
+
 /**
  * Score a whole deal for every player. `players[p][b]` holds player p's rows
  * on board b. This is the single place points are decided: the advisor, the
- * explainer panel, and the score checker must all go through it.
+ * explainer panel, and the score checker must all go through it. Pass `out`
+ * (same length as `players`) to reuse result objects across calls.
  */
-export function scoreDealAll(players: RowScores[][], royalties: boolean): DealBreakdown[] {
+export function scoreDealAll(
+  players: RowScores[][],
+  royalties: boolean,
+  out?: DealBreakdown[]
+): DealBreakdown[] {
   const n = players.length;
   const nBoards = players[0].length;
-  const out: DealBreakdown[] = players.map(() => ({
-    top: 0, middle: 0, bottom: 0, scoop: 0, total: 0,
-  }));
+  let res: DealBreakdown[];
+  if (out && out.length === n) {
+    res = out;
+    for (const d of res) { d.top = 0; d.middle = 0; d.bottom = 0; d.scoop = 0; d.total = 0; }
+  } else {
+    res = players.map(() => ({ top: 0, middle: 0, bottom: 0, scoop: 0, total: 0 }));
+  }
   if (royalties) {
     // PokerNews: the outright best hand per row collects base + royalty from
     // every other player; ties split the collected pot and pay nothing.
-    const outright = new Int32Array(n);
+    const outright = n <= 8 ? outrightScratch : new Int32Array(n);
+    outright.fill(0);
     for (let b = 0; b < nBoards; b++) {
       for (const row of ROWS) {
         let min = Infinity;
@@ -146,10 +160,10 @@ export function scoreDealAll(players: RowScores[][], royalties: boolean): DealBr
         const pay = ROW_POINTS[row] + ROYALTY_TABLE[row][handRank(min)];
         for (let i = 0; i < n; i++) {
           if (players[i][b][row] === min) {
-            out[i][row] += (pay * (n - winCount)) / winCount;
+            res[i][row] += (pay * (n - winCount)) / winCount;
             if (winCount === 1) outright[i]++;
           } else {
-            out[i][row] -= pay;
+            res[i][row] -= pay;
           }
         }
       }
@@ -158,8 +172,8 @@ export function scoreDealAll(players: RowScores[][], royalties: boolean): DealBr
     const need = 3 * nBoards;
     for (let i = 0; i < n; i++) {
       if (outright[i] !== need) continue;
-      out[i].scoop += SCOOP_POKERNEWS * (n - 1);
-      for (let j = 0; j < n; j++) if (j !== i) out[j].scoop -= SCOOP_POKERNEWS;
+      res[i].scoop += SCOOP_POKERNEWS * (n - 1);
+      for (let j = 0; j < n; j++) if (j !== i) res[j].scoop -= SCOOP_POKERNEWS;
     }
   } else {
     // House: every pair of players settles separately, and the scoop is per
@@ -173,12 +187,12 @@ export function scoreDealAll(players: RowScores[][], royalties: boolean): DealBr
             const si = players[i][b][row];
             const sj = players[j][b][row];
             if (si < sj) {
-              out[i][row] += ROW_POINTS[row];
-              out[j][row] -= ROW_POINTS[row];
+              res[i][row] += ROW_POINTS[row];
+              res[j][row] -= ROW_POINTS[row];
               jAll = false;
             } else if (sj < si) {
-              out[j][row] += ROW_POINTS[row];
-              out[i][row] -= ROW_POINTS[row];
+              res[j][row] += ROW_POINTS[row];
+              res[i][row] -= ROW_POINTS[row];
               iAll = false;
             } else {
               iAll = false;
@@ -186,13 +200,13 @@ export function scoreDealAll(players: RowScores[][], royalties: boolean): DealBr
             }
           }
         }
-        if (iAll) { out[i].scoop += SCOOP_HOUSE; out[j].scoop -= SCOOP_HOUSE; }
-        else if (jAll) { out[j].scoop += SCOOP_HOUSE; out[i].scoop -= SCOOP_HOUSE; }
+        if (iAll) { res[i].scoop += SCOOP_HOUSE; res[j].scoop -= SCOOP_HOUSE; }
+        else if (jAll) { res[j].scoop += SCOOP_HOUSE; res[i].scoop -= SCOOP_HOUSE; }
       }
     }
   }
-  for (const o of out) o.total = o.top + o.middle + o.bottom + o.scoop;
-  return out;
+  for (const o of res) o.total = o.top + o.middle + o.bottom + o.scoop;
+  return res;
 }
 
 /** Hero's net points for a deal; negative means hero pays. */

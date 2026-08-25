@@ -10,6 +10,7 @@ import LoadingIndicator from "@/components/LoadingIndicator";
 import { useCurrentTier } from "@/context/TierContext";
 import RankingsTab from "./RankingsTab";
 import TaiwaneseTab from "./TaiwaneseTab";
+import AdvancedTab from "./AdvancedTab";
 import ScoringVerifier from "./ScoringVerifier";
 import { Segmented } from "./controls";
 
@@ -17,7 +18,7 @@ interface PrivatePageProps {
   user: User | null;
 }
 
-type Tab = "rankings" | "taiwanese";
+type Tab = "rankings" | "taiwanese" | "advanced";
 
 const PrivatePage: React.FC<PrivatePageProps> = ({ user }) => {
   const [tab, setTab] = useState<Tab>("rankings");
@@ -91,11 +92,12 @@ const PrivatePage: React.FC<PrivatePageProps> = ({ user }) => {
           options={[
             { value: "rankings", label: "Hand Rankings" },
             { value: "taiwanese", label: "Taiwanese Advisor" },
+            { value: "advanced", label: "Taiwanese Advanced" },
           ]}
           onChange={setTab}
         />
       </div>
-      {tab === "rankings" ? <RankingsTab /> : <TaiwaneseTab />}
+      {tab === "rankings" ? <RankingsTab /> : tab === "taiwanese" ? <TaiwaneseTab /> : <AdvancedTab />}
       <div className="mt-4">
         <ScoringVerifier />
       </div>

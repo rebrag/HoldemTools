@@ -8,7 +8,10 @@ All compute is client side, in workers, with no backend involved.
 |---|---|
 | `PrivatePage.tsx` | Tier gate and the tab switcher |
 | `RankingsTab.tsx` | Top X% hand rankings: hold'em, Badugi, Badugi with 1-3 draws |
-| `TaiwaneseTab.tsx` | Taiwanese hand-setting advisor |
+| `TaiwaneseTab.tsx` | Taiwanese hand-setting advisor (one hand) |
+| `AdvancedTab.tsx` | Full-table dealer: every player sets their best pre-board split, board resolves, click a player for their ranking |
+| `useAdvancedSolves.ts` | Runs the advisor worker once per player, sequentially |
+| `SplitRows.tsx`, `BreakdownTable.tsx` | Shared split and scoresheet renderers |
 | `ScoringExplainer.tsx` | On-page readout of how Taiwanese scoring is configured |
 | `taiwaneseScoring.ts` | Derives that readout from the scoring code |
 | `ScoringVerifier.tsx` | Score checker: enter a real deal, see per-player points from the same code |
@@ -87,6 +90,109 @@ else to remember.
   Update it only when the agreed rules change.
   Never edit it to silence a failing check, since that check failing is the page doing its
   job.
+
+## EV semantics (both advisor tabs)
+
+Splits are committed PRE-BOARD: each split's EV is its average net points over random
+unseen boards and random opponent hands, so the ranking answers "what should I set before
+seeing anything", never a hindsight pick.
+
+Two opponent models, chosen by the "Opponent model" toggle (self-play is the default):
+
+- **Heuristic (fast)**: opponents set their hands with `heuristicSplit`, a fixed
+  board-independent rule. EVs are best-response-to-that-model numbers and average about
+  +1 per opponent over random hands rather than zero (measured; hero playing the same
+  heuristic averages zero, half the hands negative).
+- **Self-play**: policy iteration toward the setting equilibrium, in the worker's
+  `build-library` op. It samples a fixed set of hands, solves each one's best-response
+  split against the previous round's policy (round 1 responds to the heuristic), and the
+  solved library becomes the opponent policy: solves then draw opponents' hands AND splits
+  from it (rejection sampling keeps hands card-disjoint). Setting is a ONE-SHOT
+  simultaneous decision, so iterated best response reaches the same fixed point CFR would
+  without CFR's per-infoset machinery; a policy that is a best response to itself is the
+  equilibrium. Convergence evidence ships with the library: `prevPolicyEvLoss` = points
+  per deal that re-optimizing gains over the previous round's choices (an upper bound -
+  argmax noise inflates it; ~0.4 at current settings means effectively converged). Do NOT
+  judge convergence by exact-split agreement: many splits are near-exact EV ties, so the
+  argmax flips freely among them. The library is cached per
+  (opponents, boards, royalties) for the session; building takes under a minute.
+
+Under self-play opponents, weak random hands price NEGATIVE as they should; under the
+heuristic they mostly price positive (the optimizer's edge over the fixed rule).
+
+Accuracy knobs, and what each one actually controls (all measured, 1 opponent / double
+board). The library build and the per-hand solve both fan out over a worker pool, so
+these are affordable:
+
+- `samples` (UI "Samples") - run-to-run jitter in the displayed EV only, scaling as
+  1/sqrt(n). Measured SD of the top split's EV: 0.16 at 1k, 0.10 at 5k, about 0.04 at 20k
+  (the default). Each solve also reports a per-split standard error, computed from pooled
+  sums of squares, and the UI prints it as "±". The RANKING is far steadier than the
+  number: across 10 repeat solves the #1 split never changed.
+- `ENTRIES` in `useSelfPlayLibrary.ts` (1500) - the pool of distinct opponent hands.
+  Opponents are drawn from it, so it sets how finely the opponent hand distribution is
+  approximated. This is an accuracy CEILING, not jitter: a fixed library offsets every
+  solve the same way, so more samples cannot lift it.
+- `LEVELS` (3) - policy-iteration rounds, the knob that makes opponents genuinely
+  stronger rather than merely measured more precisely. Judge it by the per-round gain the
+  UI now tabulates: 1.26 -> 0.42 -> 0.22 pts/deal. Stop when the next round's gain is
+  below the precision you care about. It will never hit exactly 0, because argmax over
+  noisy estimates always looks better than the truth.
+- `INNER_SAMPLES` (300) - scenarios per hand inside a build round. Only has to be good
+  enough to pick each hand's best split; it also sets the noise floor under the per-round
+  gain above.
+
+Build cost is ENTRIES * LEVELS * INNER_SAMPLES scenarios (1.35M at these settings, about
+80s over 6 workers, cached per settings for the session). A solve at 20k samples is ~1.2s.
+Changing opponent count, board count, or royalties is a different cache key and rebuilds.
+
+Best-response iteration can cycle in principle (rock-paper-scissors dynamics); it looks
+stable here, but that is an observation, not a proof. If it ever oscillates, average the
+policies across rounds (fictitious play) instead of replacing them.
+
+### Opponent play styles (the "Opponent play" toggle)
+
+Library entries store the TOP_K (10) best splits per hand with their EV gaps, not just
+the winner. "Best split" (pure) always plays alts[0]. "Human mix" samples among them
+weighted exp(-gap / MIX_TEMPERATURE) - a quantal-response model of real players, who land
+somewhere among the near-best options rather than on the exact argmax. Near-ties barely
+weaken the field, so rankings hardly move, but EVs read slightly higher vs mixed (softer)
+opponents - measured +0.41 vs +0.15 on the same hand. Build rounds always use mixed play
+(smoothed best-response iteration converges more stably than pure argmax chasing).
+Constants live in `lib/taiwaneseSolver.ts`.
+
+### Precomputed libraries
+
+`npm run precompute:taiwanese` (in frontend/) builds the libraries overnight and writes
+compact JSONs to `public/taiwanese-libs/`; `--quick` is a 2-minute smoke test whose
+output should NOT be committed (weak libraries silently cap accuracy - delete them or
+run the full job before deploying). `useSelfPlayLibrary.ensure` fetches these before
+falling back to an in-browser build, so shipping the files makes self-play instant for
+users. The script bundles the same solver core the browser worker uses (esbuild +
+worker_threads); there is exactly one implementation.
+
+What gets built: house libraries per board count only, because pairwise scoring makes EV
+exactly linear in opponent count (same argmax for any table size - this is why the house
+cache key ignores N). PokerNews libraries are built at 3 opponents and reused for other
+counts (approximation; winner-take-all genuinely depends on N). Whenever a library is
+reused at a different table size the results panel says so, and says which of the two
+cases it is; keep that disclosure honest if the sizing changes.
+Full-run sizing favors INNER samples first (measured argmax stability on an unchanged
+field: 55% @150, 67.5% @300, 77.5% @1200), then pool size, then rounds.
+
+The libraries in `public/taiwanese-libs/` are the run of 2026-08-25: 348M scenarios,
+3h20m wall clock on 15 threads. House 10,000 hands x 3,000 samples x 5 rounds (1.1MB
+each, 360KB gzipped); PokerNews 4,000 x 1,500 x 4 (0.44MB, 150KB gzipped). Per-round
+gains, house double board: 1.19, 0.30, 0.10, 0.11, 0.15 pts/deal. The rise after round 3
+is NOT divergence and not a reason to add rounds: the metric is an argmax over noisy
+per-hand estimates, so it carries an upward bias that does not shrink with more hands,
+and ~0.1 is the floor at these settings. Read that as converged by round 3, with rounds
+4-5 as confirmation. PokerNews (fewer hands, fewer samples, and a genuinely N-dependent
+game) floors higher: 2.80, 0.79, 0.45, 0.41.
+
+It is emphatically NOT a solve of all 133.8M seven-card hands, nor of the ~6.0M
+suit-isomorphic classes: the library is a Monte Carlo SAMPLE that represents the opponent
+field in expectation, so its size is a precision knob, not a coverage requirement.
 
 The same principle covers the rest of the page.
 `RankingsTab.tsx` prints opponent counts, draw counts and made-hand frequencies that come
