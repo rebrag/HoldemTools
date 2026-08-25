@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DecisionMatrix from "@/pages/solver/DecisionMatrix";
 import ActionSummary from "@/pages/solver/ActionSummary";
 import HandBreakdown from "@/pages/solver/HandBreakdown";
@@ -347,6 +347,27 @@ const buildConfig = (b: BuilderState): { config: object; pioAccuracyPct: number 
   };
 };
 
+/* ---------- job pipeline (executed by the compare watcher) ---------- */
+
+interface CompareJob {
+  id: string;
+  mode: "compare" | "publish";
+  board: string | null;
+  status: "Queued" | "Claimed" | "Running" | "Uploading" | "Done" | "Failed";
+  error: string | null;
+  resultStacks: string | null;
+  resultNodeName: string | null;
+  createdAtUtc: string;
+  completedAtUtc: string | null;
+}
+
+const TERMINAL_STATUSES = ["Done", "Failed"];
+
+const solutionsUrl = (job: CompareJob): string =>
+  `/solutions?open=${encodeURIComponent(
+    `${job.resultStacks}|${job.resultNodeName}|${job.board}`
+  )}`;
+
 /* ---------- page ---------- */
 
 type SortKey = "evDiff" | "l1" | "reach" | "hand";
@@ -375,7 +396,19 @@ const SolverCompare = () => {
   const [builderOpen, setBuilderOpen] = useState(true);
   const [solving, setSolving] = useState(false);
   const [runLog, setRunLog] = useState<string | null>(null);
+  const [jobs, setJobs] = useState<CompareJob[]>([]);
+  const [activeJob, setActiveJob] = useState<CompareJob | null>(null);
+  const [publishedJob, setPublishedJob] = useState<CompareJob | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const cancelledRef = useRef(false);
+  useEffect(() => {
+    // Reset on mount: StrictMode's dev double-mount runs the cleanup once,
+    // and a latched ref would silently kill every poll loop.
+    cancelledRef.current = false;
+    return () => {
+      cancelledRef.current = true;
+    };
+  }, []);
 
   const setB = <K extends keyof BuilderState>(key: K, value: BuilderState[K]) =>
     setBuilder((cur) => ({ ...cur, [key]: value }));
@@ -402,38 +435,88 @@ const SolverCompare = () => {
     [acceptDoc]
   );
 
-  const solveAndCompare = useCallback(async () => {
-    setError(null);
-    setRunLog(null);
-    let payload: { config: object; pioAccuracyPct: number };
+  const refreshJobs = useCallback(async () => {
     try {
-      payload = buildConfig(builder);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      return;
+      const resp = await authedFetch("/api/enginecompare");
+      if (resp.ok) setJobs((await resp.json()) as CompareJob[]);
+    } catch {
+      /* signed out or offline; the list just stays empty */
     }
-    setSolving(true);
-    try {
-      const resp = await authedFetch("/api/engine/compare", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      if (resp.status === 404) {
-        throw new Error(
-          "The compare endpoint is dev-only (local API with Engine:LocalSolutionsDir set). " +
-            "On this host, generate a JSON with engine_compare.py and drop it below."
-        );
+  }, []);
+  useEffect(() => {
+    void refreshJobs();
+  }, [refreshJobs]);
+
+  const loadJobResult = useCallback(
+    async (job: CompareJob) => {
+      setError(null);
+      try {
+        const resp = await authedFetch(`/api/enginecompare/${job.id}/result`);
+        if (!resp.ok) throw new Error(await resp.text());
+        acceptDoc((await resp.json()) as CompareDoc);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
       }
-      if (!resp.ok) throw new Error(await resp.text());
-      const body = (await resp.json()) as { log: string; comparison: CompareDoc };
-      setRunLog(body.log);
-      acceptDoc(body.comparison);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSolving(false);
-    }
-  }, [builder, acceptDoc]);
+    },
+    [acceptDoc]
+  );
+
+  /** Queue a job for the compare watcher and poll it to completion. */
+  const submitJob = useCallback(
+    async (mode: "compare" | "publish") => {
+      setError(null);
+      setRunLog(null);
+      let payload: { config: object; pioAccuracyPct: number };
+      try {
+        payload = buildConfig(builder);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        return;
+      }
+      setSolving(true);
+      setPublishedJob(null);
+      try {
+        const createResp = await authedFetch("/api/enginecompare", {
+          method: "POST",
+          body: JSON.stringify({ ...payload, mode }),
+        });
+        if (createResp.status === 403) {
+          throw new Error("Publishing to the solutions library is admin-only.");
+        }
+        if (!createResp.ok) throw new Error(await createResp.text());
+        let job = (await createResp.json()) as CompareJob;
+        setActiveJob(job);
+        void refreshJobs();
+
+        // Poll until the watcher finishes. Stops on unmount; the job keeps
+        // running server-side and stays in the Recent runs list.
+        const deadline = Date.now() + 20 * 60 * 1000;
+        while (!TERMINAL_STATUSES.includes(job.status)) {
+          if (cancelledRef.current || Date.now() > deadline) return;
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          const poll = await authedFetch(`/api/enginecompare/${job.id}`);
+          if (!poll.ok) throw new Error(await poll.text());
+          job = (await poll.json()) as CompareJob;
+          setActiveJob(job);
+        }
+        void refreshJobs();
+        if (job.status === "Failed") {
+          throw new Error(job.error ?? "The compare watcher reported a failure.");
+        }
+        if (mode === "compare") {
+          await loadJobResult(job);
+        } else {
+          setPublishedJob(job);
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setSolving(false);
+        setActiveJob(null);
+      }
+    },
+    [builder, refreshJobs, loadJobResult]
+  );
 
   const downloadConfig = useCallback(() => {
     try {
@@ -702,19 +785,76 @@ const SolverCompare = () => {
               </button>
               <button
                 type="button"
-                onClick={solveAndCompare}
+                onClick={() => void submitJob("publish")}
+                disabled={solving}
+                title="htsolver only: publish the solve to the Solutions library (admin)"
+                className="rounded-lg border border-emerald-700 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:border-emerald-500 disabled:opacity-50"
+              >
+                Solve & Publish
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitJob("compare")}
                 disabled={solving}
                 className="rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
               >
-                {solving ? "Solving both solvers..." : "Solve & Compare"}
+                {solving ? "Working..." : "Solve & Compare"}
               </button>
             </div>
           </div>
           {solving && (
             <p className="mt-2 text-xs text-slate-500">
-              htsolver solves in well under a second; building and solving the identical tree
-              in Pio usually takes a minute or two. This page waits for both.
+              Queued for the compare watcher (the machine with both solvers).
+              {activeJob ? ` Status: ${activeJob.status}.` : ""} htsolver takes under a
+              second; Pio usually takes a minute or two. Leaving this page keeps the job
+              running - it stays in Recent runs.
             </p>
+          )}
+          {publishedJob && (
+            <p className="mt-2 text-xs text-emerald-300">
+              Published to the solutions library:{" "}
+              <a className="underline" href={solutionsUrl(publishedJob)}>
+                open {publishedJob.board} in /solutions
+              </a>
+            </p>
+          )}
+
+          {/* Recent runs */}
+          {jobs.length > 0 && (
+            <div className="mt-4 border-t border-slate-800 pt-3">
+              <div className="text-xs font-medium text-slate-400">Recent runs</div>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {jobs.slice(0, 12).map((job) => (
+                  <button
+                    key={job.id}
+                    type="button"
+                    disabled={job.status !== "Done"}
+                    title={
+                      job.status === "Failed"
+                        ? job.error ?? "failed"
+                        : job.mode === "publish"
+                          ? "Published solve - opens /solutions"
+                          : "Load this comparison"
+                    }
+                    onClick={() => {
+                      if (job.status !== "Done") return;
+                      if (job.mode === "publish") window.location.href = solutionsUrl(job);
+                      else void loadJobResult(job);
+                    }}
+                    className={`rounded-lg border px-2 py-1 text-[11px] ${
+                      job.status === "Done"
+                        ? "border-slate-600 text-slate-200 hover:border-emerald-500"
+                        : job.status === "Failed"
+                          ? "border-red-900 text-red-400"
+                          : "border-slate-700 text-slate-500"
+                    }`}
+                  >
+                    {job.board ?? "?"} · {job.mode === "publish" ? "publish" : "compare"} ·{" "}
+                    {job.status}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       )}

@@ -1,0 +1,187 @@
+// Controllers/EngineCompareController.cs
+using System;
+using System.Linq;
+using System.Security.Claims;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+using Azure.Storage.Blobs;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using PokerRangeAPI2.Data;
+using PokerRangeAPI2.Models;
+
+namespace PokerRangeAPI2.Controllers
+{
+    /// <summary>
+    /// User-facing endpoints for htsolver jobs. A job is executed by the
+    /// compare watcher (watcher/engine_compare_watcher.py) on the machine
+    /// that has both solvers; the frontend /compare page submits and polls
+    /// here, which works against the deployed API from anywhere.
+    /// </summary>
+    [ApiController]
+    [Route("api/enginecompare")]
+    [Authorize]
+    public class EngineCompareController : ControllerBase
+    {
+        private const int MaxConfigBytes = 32 * 1024;
+
+        private readonly AppDbContext _db;
+        private readonly IConfiguration _config;
+
+        public EngineCompareController(AppDbContext db, IConfiguration config)
+        {
+            _db = db;
+            _config = config;
+        }
+
+        public class CreateDto
+        {
+            public JsonObject Config { get; set; } = new();
+            public double PioAccuracyPct { get; set; } = 0.02;
+            public string Mode { get; set; } = EngineCompareJobMode.Compare;
+        }
+
+        public class JobDto
+        {
+            public Guid Id { get; set; }
+            public string Mode { get; set; } = "";
+            public string? Board { get; set; }
+            public string Status { get; set; } = "";
+            public string? Error { get; set; }
+            public string? ResultStacks { get; set; }
+            public string? ResultNodeName { get; set; }
+            public DateTimeOffset CreatedAtUtc { get; set; }
+            public DateTimeOffset? CompletedAtUtc { get; set; }
+
+            public static JobDto From(EngineCompareJob job) => new()
+            {
+                Id = job.Id,
+                Mode = job.Mode,
+                Board = job.Board,
+                Status = job.Status,
+                Error = job.Error,
+                ResultStacks = job.ResultStacks,
+                ResultNodeName = job.ResultNodeName,
+                CreatedAtUtc = job.CreatedAtUtc,
+                CompletedAtUtc = job.CompletedAtUtc,
+            };
+        }
+
+        // POST api/enginecompare - queue a job. Publish mode (writes into the
+        // shared solutions library) is admin-only while htsolver earns trust.
+        [HttpPost]
+        public async Task<ActionResult<JobDto>> Create([FromBody] CreateDto request)
+        {
+            var uid = this.CurrentUid();
+            if (string.IsNullOrWhiteSpace(uid)) return Unauthorized();
+
+            if (request.Mode != EngineCompareJobMode.Compare &&
+                request.Mode != EngineCompareJobMode.Publish)
+            {
+                return BadRequest("mode must be \"compare\" or \"publish\"");
+            }
+            if (request.Mode == EngineCompareJobMode.Publish && !IsAdmin())
+                return Forbid();
+            if (request.PioAccuracyPct <= 0 || request.PioAccuracyPct > 10)
+                return BadRequest("pioAccuracyPct must be in (0, 10]");
+
+            var configJson = request.Config.ToJsonString();
+            if (configJson.Length > MaxConfigBytes)
+                return BadRequest($"config too large (max {MaxConfigBytes} bytes)");
+            var boardText = request.Config["board"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(boardText))
+                return BadRequest("config.board is required");
+            var board = string.Concat(Regex.Matches(boardText, "[2-9TJQKA][hdcs]",
+                RegexOptions.IgnoreCase).Select(m => m.Value));
+            if (board.Length != 10)
+                return BadRequest("config.board must have exactly 5 cards (rivers only)");
+
+            var job = new EngineCompareJob
+            {
+                Id = Guid.NewGuid(),
+                UserId = uid, // from the token, never the body
+                Mode = request.Mode,
+                ConfigJson = configJson,
+                Board = board,
+                PioAccuracyPct = request.PioAccuracyPct,
+                Status = EngineCompareJobStatus.Queued,
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+            };
+            _db.EngineCompareJobs.Add(job);
+            await _db.SaveChangesAsync();
+            return Ok(JobDto.From(job));
+        }
+
+        // GET api/enginecompare - the caller's recent jobs, newest first.
+        [HttpGet]
+        public async Task<ActionResult<JobDto[]>> List([FromQuery] int limit = 30)
+        {
+            var uid = this.CurrentUid();
+            if (string.IsNullOrWhiteSpace(uid)) return Unauthorized();
+            limit = Math.Clamp(limit, 1, 100);
+            var jobs = await _db.EngineCompareJobs
+                .Where(j => j.UserId == uid)
+                .OrderByDescending(j => j.CreatedAtUtc)
+                .Take(limit)
+                .ToListAsync();
+            return Ok(jobs.Select(JobDto.From).ToArray());
+        }
+
+        // GET api/enginecompare/{id} - poll one job. Non-owner gets 404.
+        [HttpGet("{id:guid}")]
+        public async Task<ActionResult<JobDto>> Get(Guid id)
+        {
+            var uid = this.CurrentUid();
+            if (string.IsNullOrWhiteSpace(uid)) return Unauthorized();
+            var job = await _db.EngineCompareJobs
+                .FirstOrDefaultAsync(j => j.Id == id && j.UserId == uid);
+            if (job == null) return NotFound();
+            return Ok(JobDto.From(job));
+        }
+
+        // GET api/enginecompare/{id}/result - the comparison JSON. Stored
+        // gzipped in ADLS by the watcher; served as-is with Content-Encoding
+        // (same shape as the street-bundle endpoint).
+        [HttpGet("{id:guid}/result")]
+        public async Task<IActionResult> Result(Guid id)
+        {
+            var uid = this.CurrentUid();
+            if (string.IsNullOrWhiteSpace(uid)) return Unauthorized();
+            var job = await _db.EngineCompareJobs
+                .FirstOrDefaultAsync(j => j.Id == id && j.UserId == uid);
+            if (job == null) return NotFound();
+            if (job.Status != EngineCompareJobStatus.Done || string.IsNullOrEmpty(job.ResultBlobPath))
+                return NotFound("Job has no result (not done, failed, or publish-mode).");
+
+            var connectionString = _config["AzureStorage:ConnectionString"];
+            var containerName = _config["AzureStorage:ContainerName"] ?? "onlinerangedata";
+            if (string.IsNullOrWhiteSpace(connectionString))
+                return Problem("AzureStorage:ConnectionString is missing from configuration.");
+            var blob = new BlobServiceClient(connectionString)
+                .GetBlobContainerClient(containerName)
+                .GetBlobClient(job.ResultBlobPath);
+            if (!await blob.ExistsAsync())
+                return NotFound($"Result blob missing: {job.ResultBlobPath}");
+            var bytes = await blob.DownloadContentAsync();
+            Response.Headers.ContentEncoding = "gzip";
+            Response.Headers.CacheControl = "private, max-age=86400"; // results are immutable
+            return File(bytes.Value.Content.ToArray(), "application/json");
+        }
+
+        private bool IsAdmin()
+        {
+            // The default JWT inbound claim map renames "email" to
+            // ClaimTypes.Email, so check both shapes.
+            var email = User.FindFirst("email")?.Value
+                ?? User.FindFirst(ClaimTypes.Email)?.Value;
+            var uid = this.CurrentUid();
+            var adminEmails = _config.GetSection("Admin:Emails").Get<string[]>() ?? Array.Empty<string>();
+            var adminUids = _config.GetSection("Admin:Uids").Get<string[]>() ?? Array.Empty<string>();
+            return (email != null && adminEmails.Contains(email, StringComparer.OrdinalIgnoreCase))
+                || (uid != null && adminUids.Contains(uid, StringComparer.Ordinal));
+        }
+    }
+}
