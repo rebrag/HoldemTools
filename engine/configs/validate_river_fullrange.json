@@ -1,0 +1,39 @@
+{
+  // Pio validation spot (first passed 2026-08-25 against a Pio solve of the
+  // same tree; the .cfr's board is what matters, not its filename).
+  // Pio tree: bets 50% / 100% / allin; facing a bet: fold / call / allin;
+  // 100% ranges both seats. To validate:
+  //   ./build/engine.exe solve configs/validate_river_fullrange.json
+  //   cd ../watcher
+  //   python engine_compare.py --artifact ../engine/out/validate_river_fullrange.hta --cfr <solved.cfr>
+  // Full-range symmetric spots have huge indifference regions, so expect the
+  // per-hand diagnostics to differ while the cross-exploitability gate passes.
+  "schema": 1,
+  "game": "nlhe",
+  "board": "9c 5d Jc 7s 9h",
+  "pot": 100,
+  "chip_scale": 100,
+  "players": [
+    { "seat": "OOP", "stack": 400, "range": "@file:ranges/full.txt" },
+    { "seat": "IP",  "stack": 400, "range": "@file:ranges/full.txt" }
+  ],
+  "bet_sizing": {
+    // 400% pot = the 400-chip effective stack -> clamps to all-in (b400),
+    // mirroring Pio's explicit allin option; the lone oversized raise
+    // clamps to the all-in jam the same way.
+    "river": { "bets": [50, 100, 400], "raises": [1000], "allin_threshold": 0.9, "max_raises": 2 }
+  },
+  "algorithm": { "update": "dcfr" },
+  "qre": { "mode": "nash" },
+  // Pio-style accuracy stop: per-player "exploitable for" as % of the pot
+  // (0.02 is PioViewer's default). target_nashconv (chips, both seats
+  // summed) is also available.
+  "budget": { "iterations": 50000, "target_exploitable_pct": 0.02, "checkpoint_every": 1000 },
+  "memory_limit_gb": 12,
+  "output": {
+    "path": "out/validate_river_fullrange.hta",
+    "strategy_quantize_u8": false,
+    "ev_float32": true,
+    "rollups_169": false
+  }
+}

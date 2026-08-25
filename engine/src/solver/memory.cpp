@@ -1,0 +1,86 @@
+#include "solver/memory.hpp"
+
+#include <sstream>
+
+#include "solver/cfr.hpp"
+
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <psapi.h>
+#else
+#include <sys/resource.h>
+#endif
+
+namespace engine {
+
+namespace {
+std::string human(std::size_t bytes) {
+  std::ostringstream out;
+  const double mb = static_cast<double>(bytes) / (1024.0 * 1024.0);
+  if (mb >= 1024.0) {
+    out.precision(2);
+    out << std::fixed << mb / 1024.0 << " GB";
+  } else {
+    out.precision(1);
+    out << std::fixed << mb << " MB";
+  }
+  return out.str();
+}
+}  // namespace
+
+std::string MemoryEstimate::to_string() const {
+  std::ostringstream out;
+  out << "estimated solver memory: " << human(total())
+      << " (regrets+strategy " << human(regret_strategy_bytes)
+      << ", tree " << human(tree_bytes)
+      << ", workspace " << human(workspace_bytes) << ")";
+  return out.str();
+}
+
+MemoryEstimate estimate_memory(const Game& game) {
+  MemoryEstimate est;
+  est.regret_strategy_bytes = CfrSolver::state_bytes(game);
+  est.tree_bytes = game.tree().size() * sizeof(Node);
+
+  const PublicTree& tree = game.tree();
+  std::vector<int> depth(tree.size(), 0);
+  int max_depth = 0;
+  for (NodeId id = 1; id < tree.size(); ++id) {
+    depth[id] = depth[tree[id].parent] + 1;
+    if (depth[id] > max_depth) max_depth = depth[id];
+  }
+  std::size_t max_hands = 0;
+  std::size_t max_actions = 1;
+  for (int s = 0; s < game.num_seats(); ++s) {
+    max_hands = std::max(max_hands, static_cast<std::size_t>(game.num_hands(s)));
+  }
+  for (const Node& n : tree.nodes) {
+    max_actions = std::max(max_actions, static_cast<std::size_t>(n.num_children));
+  }
+  // Per level: sigma (hands*actions), value + child (hands each), one saved
+  // reach per seat (hands each). Mirrors CfrSolver's scratch pool.
+  const std::size_t per_level =
+      max_hands * max_actions + (2 + game.num_seats()) * max_hands;
+  est.workspace_bytes = static_cast<std::size_t>(max_depth + 2) * per_level * sizeof(float);
+  return est;
+}
+
+std::size_t peak_rss_bytes() {
+#if defined(_WIN32)
+  PROCESS_MEMORY_COUNTERS counters;
+  if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters))) {
+    return counters.PeakWorkingSetSize;
+  }
+  return 0;
+#else
+  struct rusage usage;
+  if (getrusage(RUSAGE_SELF, &usage) == 0) {
+    return static_cast<std::size_t>(usage.ru_maxrss) * 1024;  // ru_maxrss is KB on Linux
+  }
+  return 0;
+#endif
+}
+
+}  // namespace engine

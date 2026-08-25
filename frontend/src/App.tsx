@@ -26,6 +26,8 @@ const HandReplay = lazy(routeImports["/hand-history/replay"]);
 const Course = lazy(routeImports["/course"]);
 const CourseSection = lazy(routeImports["/course/section"]);
 const PrivatePage = lazy(routeImports["/private"]);
+// Hidden solver-verification page: no NavBar entry, reachable only by URL.
+const SolverCompare = lazy(routeImports["/compare"]);
 import { DEV_AUTH_BYPASS, useDevAuthUser } from "@/lib/devAuth";
 import "./index.css";
 
@@ -154,6 +156,7 @@ function App() {
             <Route path="/course" element={<Course user={effectiveUser} />} />
             <Route path="/course/:sectionId" element={<CourseSection user={effectiveUser} />} />
             <Route path="/private" element={<PrivatePage user={effectiveUser} />} />
+            <Route path="/compare" element={<SolverCompare />} />
           </Route>
         </Routes>
       </div>

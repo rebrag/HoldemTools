@@ -109,6 +109,11 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<PokerRangeAPI2.Services.IPlayerPhotoStore,
     PokerRangeAPI2.Services.AdlsPlayerPhotoStore>();
 
+// === Engine local solutions (dev only) ===
+// No-op unless Engine:LocalSolutionsDir is configured; never set it on a
+// deployed instance. See Services/EngineArtifacts/EngineLocalSolutions.cs.
+builder.Services.AddSingleton<PokerRangeAPI2.Services.EngineArtifacts.EngineLocalSolutions>();
+
 // === EF Core: AppDbContext ===
 builder.Services.AddDbContext<AppDbContext>(options =>
 {

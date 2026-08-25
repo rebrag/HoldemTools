@@ -1,0 +1,58 @@
+{
+  // Documented reference config for a heads-up NLHE river solve.
+  // Comments are allowed in config files (stripped at parse time).
+  "schema": 1,
+  "game": "nlhe",
+
+  // 5 cards, rank (23456789TJQKA) + suit (cdhs). River-only in this pass.
+  "board": "Qs Jh 2h 8d 6c",
+
+  // Chips already in the middle at the root, and the chips-per-display-unit
+  // scale (100 = classic "100 chips per big blind" Pio convention).
+  "pot": 5000,
+  "chip_scale": 100,
+
+  // Seat 0 is OOP and acts first. Seat labels are display-only but flow into
+  // the exported manifest (seats/stacks_map), so use real position names.
+  // Ranges: comma-separated class[:weight] tokens (AA, AKs, T9o, explicit
+  // combos like AhKd), or "@file:name.txt".
+  "players": [
+    { "seat": "BB",  "stack": 20000, "range": "AA,KK,QQ,JJ,TT,99,88,AQs,AQo,AJs,KQs,QTs,JTs,T9s,98s,87s:0.5" },
+    { "seat": "BTN", "stack": 20000, "range": "AA:0.5,KK,QQ,JJ,99,AQs,AQo:0.5,KJs,QJs,JTs,T8s,97s,86s,76s" }
+  ],
+
+  // Percent-of-pot sizes. Raises are percent of the pot after a hypothetical
+  // call, added on top of the call (Pio's raise convention). A size at or
+  // beyond allin_threshold * effective stack becomes all-in.
+  "bet_sizing": {
+    "river": { "bets": [33, 75, 150], "raises": [100], "allin_threshold": 0.9, "max_raises": 3 }
+  },
+
+  // rm | cfr_plus | dcfr. DCFR defaults: alpha 1.5, beta 0, gamma 1
+  // (linear averaging).
+  "algorithm": { "update": "dcfr" },
+
+  // Only "nash" is implemented in this pass; per-player lambda and
+  // annealing schedules land with the QRE milestone (M7).
+  "qre": { "mode": "nash" },
+
+  // Identity partition, no collusion. Team play lands in a later pass.
+  "agents": { "partition": [[0], [1]], "payoff_weights": null, "collusion": { "mode": "none", "p": null } },
+
+  // Two accuracy stops, checked at every checkpoint:
+  //   target_exploitable_pct - Pio's convention: per-player "exploitable
+  //     for" as a percent of the pot (PioViewer's default is 0.02).
+  //   target_nashconv - both seats' best-response gains summed, in chips.
+  "budget": { "iterations": 2000, "target_exploitable_pct": 0.2, "checkpoint_every": 200 },
+
+  "memory_limit_gb": 12,
+
+  "output": {
+    "path": "out/example_river_hu.hta",
+    "strategy_quantize_u8": true,
+    "ev_float32": true,
+    "rollups_169": true
+  },
+
+  "threads": 0
+}

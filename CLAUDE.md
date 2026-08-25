@@ -13,6 +13,7 @@ history preserved** under the `frontend/` and `backend/` subfolders.
 | `frontend/` | React + TypeScript + Vite + Tailwind | `rebrag/GTOLite` | Frontend web app |
 | `backend/` | .NET 8 Web API + EF Core + SQL Server | `rebrag/HoldemToolsAPI` | Backend API (namespace `PokerRangeAPI2`, assembly `GTOLiteAPI`) |
 | `watcher/` | Python + pywinauto + PioSOLVER | `rebrag/GTOLite-Helper-Script` (archived; snapshot copy, history stays there) | Postflop solve pipeline: runs on Josh's PC, solves uploaded gametrees with Pio, uploads solution blobs to ADLS |
+| `engine/` | C++20 + CMake + Ninja | (new in this monorepo) | Headless CFR/QRE solver CLI: config in, binary `.hta` artifact out. See `engine/CLAUDE.md` |
 
 Each subfolder keeps its own `README.md`, and `frontend/` keeps its own `CLAUDE.md` with
 frontend-specific conventions.
@@ -36,10 +37,36 @@ The watcher is operational tooling only: never deployed, never imported by front
   reference pattern: `backend` Model + `AppDbContext` DbSet + EF migration + Controller,
   and `frontend/src/pages/<tool>/` + a route in `App.tsx` + a button in `NavBar.tsx`.
 
+## The solver engine (`engine/`)
+
+The engine is a **headless, platform-agnostic C++ CLI** with **zero cloud and zero Firebase dependencies** - it reads a JSON config, writes a local binary artifact (`.hta`, spec in `engine/docs/artifact-format.md`), and exits.
+Never add an Azure SDK, Firebase SDK, or GUI dependency to it.
+
+The stack boundary around it:
+
+- The engine writes local artifacts only.
+- An **uploader** (a later pass: a small step in the .NET API or an extension of `watcher/`) moves artifact blobs to **ADLS Gen2** (`solves/{solve_id}/solution.bin`) and indexes metadata + the node byte-offset table in **Azure SQL**.
+- The .NET API validates the caller's **Firebase ID token**, checks ownership in Azure SQL, and mints a short-lived **user delegation SAS** for the single blob; the browser then Range-GETs ADLS directly.
+  Bulk float arrays never stream through the API and never go into SQL.
+- **Firebase is auth-only** in this whole feature: no Firestore reads/writes, no Firebase Storage, no Admin SDK.
+  All data goes the Azure route.
+
+Current local-only path (the ADLS/SAS pieces above are not wired yet, deliberately):
+`engine solve` -> `.hta` -> C# reader (`backend/Services/EngineArtifacts/`) -> `POST /api/engine/import` exports schema-4 JSON under `Engine:LocalSolutionsDir` -> `FilesController` serves it ahead of ADLS (dev-gated; never set that config key on a deployed instance) -> the existing `/solutions` viewer renders it unchanged.
+
+**Building the engine on Windows: always `engine/build.ps1`** (it bootstraps vcvars64 via VsDevCmd, then CMake+Ninja).
+Never call cl, cmake, or ninja directly - they are not on the ambient PATH.
+
+Validation: Kuhn + Leduc convergence tests run in CI (`.github/workflows/engine-ci.yml`); the PioSolver comparison harness is `watcher/engine_compare.py`, a manual dev tool that needs Pio on Josh's box.
+
+Out of scope, recorded so it is not built speculatively: GPU code, hand abstraction/bucketing, TMECor (coordination without card visibility), any cloud SDK inside the engine.
+QRE, multiway solving, and collusion modes are scheduled follow-ups whose config schema already exists - see `engine/CLAUDE.md`.
+
 ## Commands
 
 - Frontend: `cd frontend && npm run dev` (dev) | `npm run build` (build/type-check)
-- Backend: `cd backend && dotnet run` | migrations: `dotnet ef migrations add <Name>` then `dotnet ef database update` (requires the .NET SDK, not just the runtime)
+- Backend: `cd backend && dotnet run` | migrations: `dotnet ef migrations add <Name>` then `dotnet ef database update` (requires the .NET SDK, not just the runtime); tests: `dotnet test backend/HoldemToolsAPI.sln` (also run by `.github/workflows/backend-ci.yml`)
+- Engine: `cd engine && ./build.ps1 -Test` (Windows; see the build rule above)
 
 ## Frontend environment variables
 

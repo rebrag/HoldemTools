@@ -1,0 +1,30 @@
+{
+  // Generates the fixture artifact committed at
+  // backend/Tests/Fixtures/engine/tiny_river.hta and its dump-json golden.
+  // Regenerate both (from engine/) after any artifact format change:
+  //   ./build.ps1
+  //   ./build/engine.exe solve configs/fixtures/tiny_river.json
+  //   ./build/engine.exe dump-json out/tiny_river.hta > ../backend/Tests/Fixtures/engine/tiny_river.golden.json
+  //   cp out/tiny_river.hta ../backend/Tests/Fixtures/engine/tiny_river.hta
+  // (dump-json writes UTF-8 without BOM; keep it that way for the C# test.)
+  "schema": 1,
+  "game": "nlhe",
+  "board": "Ah Kd 7c 4s 2d",
+  "pot": 100,
+  "chip_scale": 100,
+  "players": [
+    { "seat": "OOP", "stack": 300, "range": "AA,KQs" },
+    { "seat": "IP",  "stack": 300, "range": "KK,AQs" }
+  ],
+  "bet_sizing": {
+    "river": { "bets": [50], "raises": [100], "allin_threshold": 0.9, "max_raises": 1 }
+  },
+  "algorithm": { "update": "dcfr" },
+  "budget": { "iterations": 500, "checkpoint_every": 100 },
+  "output": {
+    "path": "out/tiny_river.hta",
+    "strategy_quantize_u8": true,
+    "ev_float32": true,
+    "rollups_169": true
+  }
+}

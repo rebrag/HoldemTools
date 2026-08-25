@@ -26,11 +26,17 @@ namespace PokerRangeAPI2.Controllers
         private readonly string _containerName;
         private readonly IMemoryCache _cache;
         private readonly AppDbContext _db;
+        // Dev-only: when Engine:LocalSolutionsDir is set (never in prod),
+        // engine-exported solutions are served from the local directory ahead
+        // of ADLS so /solutions renders them with zero frontend changes.
+        private readonly PokerRangeAPI2.Services.EngineArtifacts.EngineLocalSolutions _engineLocal;
 
-        public FilesController(IConfiguration configuration, IMemoryCache cache, AppDbContext db)
+        public FilesController(IConfiguration configuration, IMemoryCache cache, AppDbContext db,
+            PokerRangeAPI2.Services.EngineArtifacts.EngineLocalSolutions engineLocal)
         {
             _cache = cache;
             _db = db;
+            _engineLocal = engineLocal;
 
             // 1) Read configuration (user-secrets / env vars / appsettings.*.json)
             string? connectionString = configuration["AzureStorage:ConnectionString"];
@@ -123,6 +129,10 @@ namespace PokerRangeAPI2.Controllers
             // nodeId can be "r:0", "r:0:1", or already "r.0.1".
             var nodeSuffix = (nodeId ?? "root").Replace(":", ".");
 
+            var localDoc = _engineLocal.TryReadText(
+                $"piosolutions/{stacks}/{node}/{board}/{nodeSuffix}.json");
+            if (localDoc != null) return Ok(localDoc);
+
             var container = _blobServiceClient.GetBlobContainerClient(_containerName);
 
             // v2: piosolutions/{stacks}/{node}/{board}/{suffix}.json
@@ -156,6 +166,13 @@ namespace PokerRangeAPI2.Controllers
         {
             string blobPath = $"piosolutions/{stacks}/{node}/{board}/manifest.json";
 
+            var localManifest = _engineLocal.TryReadText(blobPath);
+            if (localManifest != null)
+            {
+                Response.Headers.CacheControl = "no-cache";
+                return Ok(localManifest);
+            }
+
             BlobClient blob = _blobServiceClient
                 .GetBlobContainerClient(_containerName)
                 .GetBlobClient(blobPath);
@@ -186,6 +203,14 @@ namespace PokerRangeAPI2.Controllers
         {
             var seedSuffix = (seed ?? "r.0").Replace(":", ".");
             string blobPath = $"piosolutions/{stacks}/{node}/{board}/streets/{seedSuffix}.json.gz";
+
+            var localBundle = _engineLocal.TryReadBytes(blobPath);
+            if (localBundle != null)
+            {
+                Response.Headers.ContentEncoding = "gzip";
+                Response.Headers.CacheControl = "no-cache";  // dev loop: re-import must show up
+                return File(localBundle, "application/json");
+            }
 
             BlobClient blob = _blobServiceClient
                 .GetBlobContainerClient(_containerName)
@@ -228,16 +253,31 @@ namespace PokerRangeAPI2.Controllers
                     .GetBlobContainerClient(_containerName)
                     .GetBlobClient("piosolutions-index.json");
 
-                if (!await indexBlob.ExistsAsync())
+                if (await indexBlob.ExistsAsync())
+                {
+                    BlobDownloadResult result = await indexBlob.DownloadContentAsync();
+                    json = result.Content.ToString();
+                }
+                else if (!_engineLocal.Enabled)
+                {
                     return NotFound("piosolutions-index.json not found. No postflop solutions indexed yet.");
+                }
 
-                BlobDownloadResult result = await indexBlob.DownloadContentAsync();
-                json = result.Content.ToString();
-
-                _cache.Set(cacheKey, json, new MemoryCacheEntryOptions
+                _cache.Set(cacheKey, json ?? "", new MemoryCacheEntryOptions
                 {
                     AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(10)
                 });
+            }
+
+            if (_engineLocal.Enabled)
+            {
+                // Merge locally exported engine solves into the shared index
+                // (uncached: the dev loop re-imports and expects to see it).
+                json = _engineLocal.MergeIndex(string.IsNullOrEmpty(json) ? null : json);
+            }
+            else if (string.IsNullOrEmpty(json))
+            {
+                return NotFound("piosolutions-index.json not found. No postflop solutions indexed yet.");
             }
 
             var library = await PostflopLibraryOverlay.ApplyAsync(_db, uid, json);
