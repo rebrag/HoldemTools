@@ -1,0 +1,41 @@
+name: Engine CI
+
+on:
+  push:
+    branches: [main]
+    paths: ["engine/**", ".github/workflows/engine-ci.yml"]
+  pull_request:
+    paths: ["engine/**", ".github/workflows/engine-ci.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: engine-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache FetchContent downloads
+        uses: actions/cache@v4
+        with:
+          path: .deps-cache
+          key: engine-deps-${{ hashFiles('engine/CMakeLists.txt') }}
+      - name: Configure
+        run: >
+          cmake -B engine/build -S engine
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DFETCHCONTENT_BASE_DIR=${{ github.workspace }}/.deps-cache
+      - name: Build
+        run: cmake --build engine/build -j
+      - name: Test (Kuhn + Leduc convergence, terminal eval, artifact round-trip)
+        run: ctest --test-dir engine/build --output-on-failure
+
+  windows-msvc:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test via build.ps1
+        shell: pwsh
+        run: engine/build.ps1 -Test

@@ -1,0 +1,9 @@
+{
+  // Kuhn poker sanity config. The tree is built-in; board/players/sizing do
+  // not apply to toy games.
+  "schema": 1,
+  "game": "kuhn",
+  "algorithm": { "update": "dcfr" },
+  "budget": { "iterations": 20000, "checkpoint_every": 5000 },
+  "output": { "path": "out/kuhn.hta", "rollups_169": false }
+}

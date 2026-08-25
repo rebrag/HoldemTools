@@ -111,3 +111,12 @@ In blob mode only **today's UTC** `gametrees/yyyy/MM/dd/` folder is watched and 
 ```bash
 python watch_adls_and_run_pio_headless.py
 ```
+
+## Engine validation harness (`engine_compare.py`)
+
+Manual developer tool - never part of the watcher loop and never CI (Pio only runs on this machine).
+It compares a solve from the new C++ engine (`engine/`) against a PioSolver solve of the same spot.
+The primary pass/fail gate is cross-exploitability (the engine's strategy is loaded into Pio via `set_strategy` + `lock_node` and Pio's evaluator reports its exploitability); per-hand L1 on action frequencies and per-hand EV differences are diagnostics, since two correct solvers may pick different equilibria.
+`--json-out compare.json` additionally writes the full per-hand comparison for the frontend's hidden `/compare` page (side-by-side grids + per-combo table).
+It reuses the vendored `pyosolver.py` UPI client to query a live Pio process (`show_hand_order` / `show_strategy` / `calc_ev` / `calc_results`), and refuses QRE artifacts - only Nash-mode solves are comparable to Pio.
+Usage and workflow: see "Validation ladder" in `engine/README.md`.

@@ -19,6 +19,16 @@
         "ASPNETCORE_ENVIRONMENT": "Development"
       }
     },
+    "http-engine": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": false,
+      "applicationUrl": "http://localhost:5192",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "Engine__LocalSolutionsDir": "../engine/out/solutions"
+      }
+    },
     "http-emulator": {
       "commandName": "Project",
       "dotnetRunMessages": true,

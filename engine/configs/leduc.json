@@ -1,0 +1,9 @@
+{
+  // Leduc hold'em sanity config. The tree is built-in; board/players/sizing
+  // do not apply to toy games.
+  "schema": 1,
+  "game": "leduc",
+  "algorithm": { "update": "dcfr" },
+  "budget": { "iterations": 10000, "checkpoint_every": 1000 },
+  "output": { "path": "out/leduc.hta", "rollups_169": false }
+}
