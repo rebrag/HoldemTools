@@ -118,5 +118,12 @@ Manual developer tool - never part of the watcher loop and never CI (Pio only ru
 It compares a solve from the new C++ engine (`engine/`) against a PioSolver solve of the same spot.
 The primary pass/fail gate is cross-exploitability (the engine's strategy is loaded into Pio via `set_strategy` + `lock_node` and Pio's evaluator reports its exploitability); per-hand L1 on action frequencies and per-hand EV differences are diagnostics, since two correct solvers may pick different equilibria.
 `--json-out compare.json` additionally writes the full per-hand comparison for the frontend's hidden `/compare` page (side-by-side grids + per-combo table).
+
+## Compare watcher (`engine_compare_watcher.py`)
+
+The queue-driven sibling of the harness: claims `EngineCompareJob`s from `POST /api/enginecompare/claim` (same `X-Watcher-Key` + heartbeat protocol as the solve queue) and executes them on this machine.
+`compare` jobs solve with htsolver AND Pio (`engine_compare.py --solve-pio`) and upload the comparison JSON to ADLS `enginecompare/{id}.json.gz`; `publish` jobs solve with htsolver only and POST the artifact to the API, which publishes schema-4 bundles into the solutions library.
+Run it alongside the main watcher (`python engine_compare_watcher.py`, same `.env`; set `ENGINE_EXE` if the engine binary is not at `../engine/build/engine.exe`).
+Only one instance - it spawns Pio processes.
 It reuses the vendored `pyosolver.py` UPI client to query a live Pio process (`show_hand_order` / `show_strategy` / `calc_ev` / `calc_results`), and refuses QRE artifacts - only Nash-mode solves are comparable to Pio.
 Usage and workflow: see "Validation ladder" in `engine/README.md`.

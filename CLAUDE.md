@@ -57,7 +57,13 @@ Current local-only path (the ADLS/SAS pieces above are not wired yet, deliberate
 **Building the engine on Windows: always `engine/build.ps1`** (it bootstraps vcvars64 via VsDevCmd, then CMake+Ninja).
 Never call cl, cmake, or ninja directly - they are not on the ambient PATH.
 
-Validation: Kuhn + Leduc convergence tests run in CI (`.github/workflows/engine-ci.yml`); the PioSolver comparison harness is `watcher/engine_compare.py`, a manual dev tool that needs Pio on Josh's box.
+Validation: Kuhn + Leduc convergence tests run in CI (`.github/workflows/engine-ci.yml`); the PioSolver comparison harness is `watcher/engine_compare.py` (needs Pio on Josh's box).
+
+The **compare-job pipeline** makes both solvers reachable from the frontend anywhere:
+`/compare` -> `POST /api/enginecompare` (EngineCompareJob row, mirror of the SolveJobs queue) -> `watcher/engine_compare_watcher.py` on Josh's PC claims it (X-Watcher-Key), solves with htsolver, and either
+(a) `compare` mode: also solves the identical tree in Pio (`--solve-pio`) and uploads the per-hand comparison to ADLS `enginecompare/{id}.json.gz`, which the API proxies back to `/compare`; or
+(b) `publish` mode (admin-only): POSTs the artifact to `/api/enginecompare/{id}/publish-artifact`, where the API converts it to schema-4 bundles, uploads them under `piosolutions/`, and upserts `enginesolutions-index.json` - a separate index blob merged into `piosolutionsIndex` at read time so the Pio watcher stays the sole writer of `piosolutions-index.json`.
+Publish mode is the transition path to dropping PioSolver: once htsolver is trusted, solve jobs flow through it and the frontend needs no changes.
 
 Out of scope, recorded so it is not built speculatively: GPU code, hand abstraction/bucketing, TMECor (coordination without card visibility), any cloud SDK inside the engine.
 QRE, multiway solving, and collusion modes are scheduled follow-ups whose config schema already exists - see `engine/CLAUDE.md`.

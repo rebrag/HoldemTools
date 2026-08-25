@@ -21,6 +21,8 @@ namespace PokerRangeAPI2.Data
 
         public DbSet<Player> Players { get; set; } = default!;
 
+        public DbSet<EngineCompareJob> EngineCompareJobs { get; set; } = default!;
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -98,6 +100,25 @@ namespace PokerRangeAPI2.Data
                 // Resolves an index entry back to its job: the library overlay
                 // looks boards up by their manifest coordinates.
                 entity.HasIndex(e => new { e.ResultStacks, e.ResultNodeName, e.Board });
+            });
+
+            modelBuilder.Entity<EngineCompareJob>(entity =>
+            {
+                // Every indexable string bounded (SQL Server can't index
+                // nvarchar(max)); ConfigJson and Error are wide, never indexed.
+                entity.Property(e => e.UserId).HasMaxLength(128);
+                entity.Property(e => e.Mode).HasMaxLength(16);
+                entity.Property(e => e.Board).HasMaxLength(12);
+                entity.Property(e => e.Status).HasMaxLength(16);
+                entity.Property(e => e.Error).HasMaxLength(2000);
+                entity.Property(e => e.WatcherId).HasMaxLength(64);
+                entity.Property(e => e.ResultBlobPath).HasMaxLength(512);
+                entity.Property(e => e.ResultStacks).HasMaxLength(200);
+                entity.Property(e => e.ResultNodeName).HasMaxLength(200);
+
+                entity.HasIndex(e => e.UserId);
+                // Drives the claim ordering (Queued, oldest first).
+                entity.HasIndex(e => new { e.Status, e.CreatedAtUtc });
             });
 
             modelBuilder.Entity<Player>(entity =>

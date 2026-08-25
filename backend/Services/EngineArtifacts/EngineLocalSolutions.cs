@@ -53,22 +53,32 @@ public sealed class EngineLocalSolutions
     {
         var localJson = TryReadText("piosolutions-index.json");
         if (localJson == null) return blobIndexJson ?? """{"schema":2,"entries":[]}""";
-        if (blobIndexJson == null) return localJson;
+        return MergeIndexJson(blobIndexJson, localJson);
+    }
 
-        var merged = JsonNode.Parse(blobIndexJson)!.AsObject();
-        var local = JsonNode.Parse(localJson)!.AsObject();
+    /// <summary>
+    /// Pure JSON merge of two solutions indexes: overlay entries win on the
+    /// (stacks, node_name, board) key. Also used to fold the engine solutions
+    /// index blob into the shared piosolutions index at read time.
+    /// </summary>
+    public static string MergeIndexJson(string? baseJson, string overlayJson)
+    {
+        if (baseJson == null) return overlayJson;
+
+        var merged = JsonNode.Parse(baseJson)!.AsObject();
+        var overlay = JsonNode.Parse(overlayJson)!.AsObject();
         var entries = merged["entries"]?.AsArray() ?? new JsonArray();
 
         static string Key(JsonObject e) =>
             $"{e["stacks"]}|{e["node_name"]}|{e["board"]}";
 
-        var localKeys = local["entries"]!.AsArray()
+        var overlayKeys = overlay["entries"]!.AsArray()
             .Select(e => Key(e!.AsObject())).ToHashSet();
         for (var i = entries.Count - 1; i >= 0; i--)
         {
-            if (localKeys.Contains(Key(entries[i]!.AsObject()))) entries.RemoveAt(i);
+            if (overlayKeys.Contains(Key(entries[i]!.AsObject()))) entries.RemoveAt(i);
         }
-        foreach (var entry in local["entries"]!.AsArray().ToArray())
+        foreach (var entry in overlay["entries"]!.AsArray().ToArray())
         {
             entry!.Parent!.AsArray().Remove(entry);
             entries.Add(entry);

@@ -269,13 +269,36 @@ namespace PokerRangeAPI2.Controllers
                 });
             }
 
+            // Fold in htsolver-published solves (enginesolutions-index.json,
+            // written by the publish endpoint - kept separate from the Pio
+            // watcher's index so the two writers never race). Same 10s cache.
+            const string engineCacheKey = "enginesolutions:index";
+            if (!_cache.TryGetValue(engineCacheKey, out string? engineJson))
+            {
+                var engineBlob = _blobServiceClient
+                    .GetBlobContainerClient(_containerName)
+                    .GetBlobClient("enginesolutions-index.json");
+                engineJson = await engineBlob.ExistsAsync()
+                    ? (await engineBlob.DownloadContentAsync()).Value.Content.ToString()
+                    : "";
+                _cache.Set(engineCacheKey, engineJson, new MemoryCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(10)
+                });
+            }
+            if (!string.IsNullOrEmpty(engineJson))
+            {
+                json = PokerRangeAPI2.Services.EngineArtifacts.EngineLocalSolutions
+                    .MergeIndexJson(string.IsNullOrEmpty(json) ? null : json, engineJson);
+            }
+
             if (_engineLocal.Enabled)
             {
                 // Merge locally exported engine solves into the shared index
                 // (uncached: the dev loop re-imports and expects to see it).
                 json = _engineLocal.MergeIndex(string.IsNullOrEmpty(json) ? null : json);
             }
-            else if (string.IsNullOrEmpty(json))
+            if (string.IsNullOrEmpty(json))
             {
                 return NotFound("piosolutions-index.json not found. No postflop solutions indexed yet.");
             }
