@@ -168,10 +168,21 @@ public class EngineCompareJobsTests
     {
         using var db = NewDb();
         var config = SpotConfig();
-        config["board"] = "9c 5d Jc"; // not a river
+        config["board"] = "9c 5d"; // 2 cards: not flop, turn, or river
         var result = await UserController(db, "uid-1").Create(
             new EngineCompareController.CreateDto { Config = config });
         Assert.IsType<BadRequestObjectResult>(result.Result);
+
+        // Flop boards queue fine for compare mode...
+        config["board"] = "9c 5d Jc";
+        var flop = await UserController(db, "uid-1").Create(
+            new EngineCompareController.CreateDto { Config = config });
+        Assert.IsType<OkObjectResult>(flop.Result);
+
+        // ...but publish mode stays river-only.
+        var publish = await UserController(db, "uid-1", AdminEmail).Create(
+            new EngineCompareController.CreateDto { Config = config, Mode = "publish" });
+        Assert.IsType<BadRequestObjectResult>(publish.Result);
     }
 
     [Fact]

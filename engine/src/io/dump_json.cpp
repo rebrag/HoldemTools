@@ -84,12 +84,39 @@ json node_data_to_json(const ArtifactReader& reader, const ArtifactNodeData& dat
 }  // namespace
 
 json dump_artifact_json(ArtifactStore& store, const std::string& path,
-                        std::optional<std::uint32_t> only_node) {
+                        std::optional<std::uint32_t> only_node,
+                        std::optional<int> runouts) {
   ArtifactReader reader(store, path);
   const bool nlhe = reader.metadata().value("hand_universe", "") == "nlhe_combos_1326";
+  const auto& records = reader.nodes();
+
+  // Top-down include set: betting children always follow; chance-node
+  // fan-out capped at `runouts` evenly spaced cards. Records are appended
+  // children-after-parents, so one forward pass settles every node.
+  std::vector<bool> include(records.size(), !runouts.has_value());
+  if (runouts) {
+    include[0] = true;
+    for (std::size_t i = 0; i < records.size(); ++i) {
+      if (!include[i]) continue;
+      const ArtifactNodeRecord& record = records[i];
+      if (record.first_child != 0xFFFFFFFFu && record.num_children > 0) {
+        const std::uint32_t first = record.first_child;
+        const std::uint16_t count = record.num_children;
+        if (record.kind == 1 && count > *runouts) {  // chance node
+          const double step = static_cast<double>(count) / *runouts;
+          for (int k = 0; k < *runouts; ++k) {
+            include[first + static_cast<std::uint32_t>(k * step)] = true;
+          }
+        } else {
+          for (std::uint16_t c = 0; c < count; ++c) include[first + c] = true;
+        }
+      }
+    }
+  }
 
   json out;
   out["metadata"] = reader.metadata();
+  if (runouts) out["metadata"]["dump_runouts"] = *runouts;
   json dicts = json::array();
   for (const auto& dict : reader.hand_dicts()) {
     json hands = json::array();
@@ -99,8 +126,9 @@ json dump_artifact_json(ArtifactStore& store, const std::string& path,
   out["hand_dicts"] = std::move(dicts);
 
   json nodes = json::object();
-  for (const ArtifactNodeRecord& record : reader.nodes()) {
+  for (const ArtifactNodeRecord& record : records) {
     if (only_node && record.node_id != *only_node) continue;
+    if (!include[record.node_id]) continue;
     json j = node_to_json(record, nlhe);
     if (record.kind == 0) {
       j["data"] = node_data_to_json(reader, reader.read_node(record.node_id), nlhe);

@@ -37,6 +37,10 @@ CliArgs parse_args(int argc, const char* const* argv) {
     const std::string flag = argv[i];
     if (flag == "--node" && i + 1 < argc && args.subcommand == "dump-json") {
       args.node = static_cast<std::uint32_t>(std::strtoul(argv[++i], nullptr, 10));
+    } else if (flag == "--runouts" && i + 1 < argc && args.subcommand == "dump-json") {
+      args.runouts = static_cast<int>(std::strtol(argv[++i], nullptr, 10));
+    } else if (flag == "--meta-only" && args.subcommand == "dump-json") {
+      args.meta_only = true;
     } else {
       args.error = "unexpected argument '" + flag + "'";
       return args;

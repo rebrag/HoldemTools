@@ -25,6 +25,7 @@ struct Node {
   std::uint32_t decision_index = kNoIndex;  // dense index over decision nodes
   std::uint32_t terminal_index = kNoIndex;  // dense index over terminal nodes
   Chips pot = 0;                      // total chips in the middle (incl. dead money)
+  std::uint64_t board_mask = 0;       // cards known publicly at this node (root board + dealt)
   std::array<Chips, kMaxSeats> commit{};  // per-seat chips committed after the root (side-pot input)
   std::uint16_t folded_mask = 0;      // bit s set = seat s has folded
   std::uint16_t fold_winner = kNoSeat;  // Fold terminals: seat that takes the pot (2p); multiway uses folded_mask

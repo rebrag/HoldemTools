@@ -67,13 +67,20 @@ interface CompareDoc {
     };
     pio: { ev_oop: number | null; ev_ip: number | null; exploitable: number | null };
     cross_check: {
+      gate?: "cross_exploitability" | "root_ev";
       ht_exploitable_per_pio: number | null;
       ht_ev_per_pio: (number | null)[];
+      root_ev_diff?: number | null;
       threshold: number;
       pass: boolean;
     };
     mean_l1: number;
     mean_ev_diff: number;
+    sampled?: boolean;
+    runouts?: number | null;
+    decision_nodes?: number;
+    compared_nodes?: number;
+    detail_nodes?: number;
   };
   nodes: CompareNode[];
 }
@@ -239,14 +246,24 @@ const buildEvDisplay = (
 
 /* ---------- tree builder ---------- */
 
+interface StreetInputs {
+  ipBets: string;
+  ipRaises: string;
+  oopBets: string;
+  oopDonks: string;
+  oopRaises: string;
+}
+
 interface BuilderState {
   board: string;
   pot: string;
   stacks: string;
   oopRange: string;
   ipRange: string;
-  bets: string;
-  raises: string;
+  flop: StreetInputs;
+  turn: StreetInputs;
+  river: StreetInputs;
+  preflopAggressor: "none" | "ip" | "oop";
   addAllin: boolean;
   allinThresholdPct: string; // of effective stack
   maxRaises: string;
@@ -255,14 +272,24 @@ interface BuilderState {
   maxIterations: string;
 }
 
+const DEFAULT_STREET: StreetInputs = {
+  ipBets: "50",
+  ipRaises: "100",
+  oopBets: "50",
+  oopDonks: "",
+  oopRaises: "100",
+};
+
 const DEFAULT_BUILDER: BuilderState = {
   board: "9c 5d Jc 7s 9h",
   pot: "100",
   stacks: "400",
   oopRange: "100%",
   ipRange: "100%",
-  bets: "50 100",
-  raises: "100",
+  flop: { ...DEFAULT_STREET },
+  turn: { ...DEFAULT_STREET },
+  river: { ...DEFAULT_STREET, ipBets: "50 100", oopBets: "50 100" },
+  preflopAggressor: "none",
   addAllin: true,
   allinThresholdPct: "90",
   maxRaises: "3",
@@ -290,8 +317,10 @@ const expandRange = (text: string): string =>
  *  message on invalid input. */
 const buildConfig = (b: BuilderState): { config: object; pioAccuracyPct: number } => {
   const board = parseBoard(b.board);
-  if (board.length !== 5) throw new Error("Board needs exactly 5 cards (rivers only for now).");
-  if (new Set(board).size !== 5) throw new Error("Board has duplicate cards.");
+  if (board.length < 3 || board.length > 5) {
+    throw new Error("Board needs 3 (flop solve), 4 (turn), or 5 (river) cards.");
+  }
+  if (new Set(board).size !== board.length) throw new Error("Board has duplicate cards.");
   const pot = Number(b.pot);
   const stacks = Number(b.stacks);
   if (!(pot > 0)) throw new Error("Starting pot must be positive.");
@@ -302,14 +331,31 @@ const buildConfig = (b: BuilderState): { config: object; pioAccuracyPct: number 
       if (!(v > 0)) throw new Error(`Bad size "${x}" - sizes are % of pot.`);
       return v;
     });
-  const bets = nums(b.bets);
-  const raises = nums(b.raises);
-  if (b.addAllin) {
-    // An oversized entry clamps to the effective stack = an explicit all-in.
-    bets.push(10000);
-    raises.push(10000);
-  }
-  if (bets.length === 0) throw new Error("Give at least one bet size (or Add allin).");
+
+  const allinThreshold = Math.min(1.5, Math.max(0.1, Number(b.allinThresholdPct) / 100 || 0.9));
+  const maxRaises = Math.max(0, Math.min(20, Number(b.maxRaises) || 3));
+  const streetSizing = (s: StreetInputs) => {
+    // "Add allin": an oversized entry clamps to the effective stack. Donks
+    // only get one when some donk size is configured (an empty donk list
+    // deliberately means "no leading into the aggressor").
+    const withAllin = (sizes: number[], always: boolean) =>
+      b.addAllin && (always || sizes.length > 0) ? [...sizes, 10000] : sizes;
+    return {
+      ip: { bets: withAllin(nums(s.ipBets), true), raises: withAllin(nums(s.ipRaises), true) },
+      oop: {
+        bets: withAllin(nums(s.oopBets), true),
+        donks: withAllin(nums(s.oopDonks), false),
+        raises: withAllin(nums(s.oopRaises), true),
+      },
+      allin_threshold: allinThreshold,
+      max_raises: maxRaises,
+    };
+  };
+
+  const betSizing: Record<string, unknown> = { river: streetSizing(b.river) };
+  if (board.length <= 4) betSizing.turn = streetSizing(b.turn);
+  if (board.length === 3) betSizing.flop = streetSizing(b.flop);
+
   const accuracy = Number(b.accuracy);
   if (!(accuracy > 0)) throw new Error("Accuracy must be positive.");
   const accuracyPct = b.accuracyMode === "pct" ? accuracy : (accuracy / pot) * 100;
@@ -326,14 +372,8 @@ const buildConfig = (b: BuilderState): { config: object; pioAccuracyPct: number 
         { seat: "OOP", stack: stacks, range: expandRange(b.oopRange) },
         { seat: "IP", stack: stacks, range: expandRange(b.ipRange) },
       ],
-      bet_sizing: {
-        river: {
-          bets,
-          raises,
-          allin_threshold: Math.min(1.5, Math.max(0.1, Number(b.allinThresholdPct) / 100 || 0.9)),
-          max_raises: Math.max(0, Math.min(20, Number(b.maxRaises) || 3)),
-        },
-      },
+      bet_sizing: betSizing,
+      preflop_aggressor: b.preflopAggressor,
       algorithm: { update: "dcfr" },
       qre: { mode: "nash" },
       budget: {
@@ -682,22 +722,62 @@ const SolverCompare = () => {
                 onChange={(e) => setB("ipRange", e.target.value)}
               />
             </Field>
-            <Field label="River bet sizes (% of pot)">
-              <input
+            <Field label="Preflop aggressor (gates OOP donk sizes)">
+              <select
                 className={inputCls}
-                value={builder.bets}
-                onChange={(e) => setB("bets", e.target.value)}
-                placeholder="50 100"
-              />
+                value={builder.preflopAggressor}
+                onChange={(e) =>
+                  setB("preflopAggressor", e.target.value as BuilderState["preflopAggressor"])
+                }
+              >
+                <option value="none">none</option>
+                <option value="ip">IP</option>
+                <option value="oop">OOP</option>
+              </select>
             </Field>
-            <Field label="Raise sizes (% of pot after call)">
-              <input
-                className={inputCls}
-                value={builder.raises}
-                onChange={(e) => setB("raises", e.target.value)}
-                placeholder="100"
-              />
-            </Field>
+          </div>
+
+          {/* Per-street sizing, PioViewer-style. Sections follow the board:
+              3 cards shows flop+turn+river, 4 shows turn+river, 5 river only. */}
+          <div className="mt-3 space-y-2">
+            {(
+              [
+                ["flop", "Flop", 3],
+                ["turn", "Turn", 4],
+                ["river", "River", 5],
+              ] as const
+            ).map(([key, name, minLen]) => {
+              const boardLen = parseBoard(builder.board).length;
+              if (boardLen > minLen) return null;
+              const street = builder[key];
+              const setStreet = (field: keyof StreetInputs, value: string) =>
+                setB(key, { ...street, [field]: value });
+              return (
+                <div key={key} className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
+                  <div className="text-xs font-semibold text-slate-300">{name}</div>
+                  <div className="mt-1.5 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                    {(
+                      [
+                        ["ipBets", "IP bet sizes %"],
+                        ["ipRaises", "IP raise sizes %"],
+                        ["oopBets", "OOP bet sizes %"],
+                        ["oopDonks", "OOP donk sizes %"],
+                        ["oopRaises", "OOP raise sizes %"],
+                      ] as const
+                    ).map(([field, label]) => (
+                      <Field key={field} label={label}>
+                        <input
+                          className={inputCls}
+                          value={street[field]}
+                          onChange={(e) => setStreet(field, e.target.value)}
+                          placeholder={field === "oopDonks" ? "(empty = no donks)" : "50 100"}
+                        />
+                      </Field>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           <div className="mt-3 flex flex-wrap items-end gap-x-6 gap-y-3">
@@ -902,10 +982,19 @@ const SolverCompare = () => {
               className={`ml-auto rounded-full px-3 py-1 text-xs font-semibold ${
                 cross.pass ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"
               }`}
-              title="Pio's own evaluator rating the htsolver strategy's exploitability"
+              title={
+                cross.gate === "root_ev"
+                  ? "Sampled tree: gate is root-EV agreement (cross-exploitability needs a full strategy upload)"
+                  : "Pio's own evaluator rating the htsolver strategy's exploitability"
+              }
             >
-              cross-check {cross.pass ? "PASS" : "FAIL"} ·{" "}
-              {cross.ht_exploitable_per_pio ?? "?"} chips exploitable per Pio
+              {cross.gate === "root_ev"
+                ? `root-EV gate ${cross.pass ? "PASS" : "FAIL"} · Δ ${
+                    cross.root_ev_diff ?? "?"
+                  } chips (sampled ${doc.summary.runouts ?? "?"} runouts)`
+                : `cross-check ${cross.pass ? "PASS" : "FAIL"} · ${
+                    cross.ht_exploitable_per_pio ?? "?"
+                  } chips exploitable per Pio`}
             </span>
           </div>
 
@@ -947,6 +1036,14 @@ const SolverCompare = () => {
                 mean L1 {doc.summary.mean_l1.toFixed(3)} · mean |ΔEV|{" "}
                 {doc.summary.mean_ev_diff.toFixed(2)}
               </div>
+              {doc.summary.compared_nodes != null &&
+                doc.summary.detail_nodes != null &&
+                doc.summary.detail_nodes < doc.summary.compared_nodes && (
+                  <div className="text-slate-500">
+                    detail: {doc.summary.detail_nodes} most-reached of{" "}
+                    {doc.summary.compared_nodes} compared nodes
+                  </div>
+                )}
             </div>
           </div>
 

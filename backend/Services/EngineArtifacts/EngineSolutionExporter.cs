@@ -38,6 +38,10 @@ public sealed class EngineSolutionExporter
                 "Only 2-seat artifacts can be exported: the /solutions viewer is OOP/IP.");
         if (meta.HandUniverse != "nlhe_combos_1326")
             throw new InvalidOperationException("Only NLHE artifacts can be exported.");
+        if (string.Concat(meta.Board.Split(' ', StringSplitOptions.RemoveEmptyEntries)).Length != 10)
+            throw new InvalidOperationException(
+                "Publishing is river-only for now: the viewer bundle exporter does not walk " +
+                "multistreet artifacts yet (see engine/docs/roadmap.md M6.6).");
         if (!reader.HandDicts[0].SequenceEqual(reader.HandDicts[1]))
             throw new InvalidOperationException("Seat hand dictionaries are expected to match.");
 

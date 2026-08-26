@@ -308,7 +308,13 @@ class PYOSolver(object):
         if trigger_word:
             found_tw = False
             while True:
-                lines.append(self.process.stdout.readline())
+                line = self.process.stdout.readline()
+                # EOF with a dead process would otherwise spin forever here.
+                if line == "" and self.process.poll() is not None:
+                    raise RuntimeError(
+                        f"PioSOLVER exited (code {self.process.poll()}) during "
+                        f"'{command_with_args}'")
+                lines.append(line)
                 if trigger_word in lines[-1]:
                     found_tw = True
                 if found_tw and end_string in lines[-1]:
@@ -316,7 +322,12 @@ class PYOSolver(object):
 
         else:
             while True:
-                lines.append(self.process.stdout.readline())
+                line = self.process.stdout.readline()
+                if line == "" and self.process.poll() is not None:
+                    raise RuntimeError(
+                        f"PioSOLVER exited (code {self.process.poll()}) during "
+                        f"'{command_with_args}'")
+                lines.append(line)
                 if end_string in lines[-1]:
                     break
 
@@ -336,6 +347,10 @@ class PYOSolver(object):
         if trigger_word:
             while True:
                 line = self.process.stdout.readline()
+                if line == "" and self.process.poll() is not None:
+                    raise RuntimeError(
+                        f"PioSOLVER exited (code {self.process.poll()}) while waiting "
+                        f"for '{trigger_word}'")
                 if self.debug:
                     print(f"Found line: {line}", end="")
                 lines.append(line)
@@ -346,6 +361,10 @@ class PYOSolver(object):
         else:
             while True:
                 line = self.process.stdout.readline()
+                if line == "" and self.process.poll() is not None:
+                    raise RuntimeError(
+                        f"PioSOLVER exited (code {self.process.poll()}) while waiting "
+                        f"for END")
                 if self.debug:
                     print(f"Found line: {line}", end="")
                 lines.append(line)

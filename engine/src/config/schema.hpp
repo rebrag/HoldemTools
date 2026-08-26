@@ -25,11 +25,16 @@ struct PlayerConfig {
 struct SolveConfig {
   int schema = 1;
   std::string game = "nlhe";  // nlhe | kuhn | leduc
-  std::string board;          // e.g. "Qs Jh 2h 8d 6c" (nlhe: 5 cards this pass)
+  std::string board;          // 3 cards = flop solve, 4 = turn, 5 = river
   Chips pot = 0;
   double chip_scale = 100.0;  // chips per display-money unit
   std::vector<PlayerConfig> players;
+  StreetSizing flop_sizing;
+  StreetSizing turn_sizing;
   StreetSizing river_sizing;
+  // Aggressor on the street before the root (preflop for flop solves);
+  // gates whether OOP's first-in sizes come from donks or bets.
+  Aggressor preflop_aggressor = Aggressor::None;
 
   UpdateConfig update;  // algorithm.update / dcfr params
 

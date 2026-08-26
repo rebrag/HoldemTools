@@ -65,6 +65,8 @@ GPU code, hand abstraction/bucketing, TMECor / coordination-without-card-visibil
 
 ## Milestone state
 
+The durable roadmap (goal product, milestone status, next steps) is `docs/roadmap.md` - keep it updated when milestones move.
+
 M0-M6 delivered (Kuhn, Leduc + CI, HU NLHE river Nash, artifact + C# reader, Pio harness, render path).
 The M5 acceptance gate passed 2026-08-25 on a real full-range river spot (`configs/validate_river_fullrange.json`): Pio's own evaluator rated the engine strategy exploitable for 0.0 chips.
 The harness's primary gate is cross-exploitability (engine strategy loaded into Pio via set_strategy), NOT per-hand L1 - per-hand strategies legitimately differ between equilibria; keep it that way.

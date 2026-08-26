@@ -9,6 +9,7 @@
 #include "game/toy/kuhn.hpp"
 #include "game/toy/leduc.hpp"
 #include "io/artifact_format.hpp"
+#include "io/artifact_reader.hpp"
 #include "io/artifact_writer.hpp"
 #include "io/dump_json.hpp"
 #include "solver/agents.hpp"
@@ -23,7 +24,7 @@ using namespace engine;
 std::unique_ptr<Game> make_game(const SolveConfig& config) {
   if (config.game == "kuhn") return std::make_unique<toy::KuhnGame>();
   if (config.game == "leduc") return std::make_unique<toy::LeducGame>();
-  return std::make_unique<NlheRiverGame>(config);
+  return std::make_unique<NlhePostflopGame>(config);
 }
 
 int check_memory(const Game& game, const SolveConfig& config, bool print_always) {
@@ -118,7 +119,13 @@ int main(int argc, char** argv) {
     }
     if (args.subcommand == "dump-json") {
       LocalStore store;
-      std::cout << dump_artifact_json(store, args.input_path, args.node).dump(2) << "\n";
+      if (args.meta_only) {
+        ArtifactReader reader(store, args.input_path);
+        std::cout << reader.metadata().dump(2) << "\n";
+        return 0;
+      }
+      std::cout << dump_artifact_json(store, args.input_path, args.node, args.runouts).dump(2)
+                << "\n";
       return 0;
     }
     const SolveConfig config = load_config(args.input_path);
