@@ -103,6 +103,7 @@ add_executable(engine_tests
   tests/test_memory.cpp
   tests/test_artifact_roundtrip.cpp
   tests/test_parallel.cpp
+  tests/test_recalc.cpp
 )
 target_link_libraries(engine_tests PRIVATE engine_core doctest::doctest)
 add_test(NAME engine_tests COMMAND engine_tests)

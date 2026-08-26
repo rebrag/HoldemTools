@@ -20,6 +20,10 @@ struct SolveStats {
   double wall_time_s = 0.0;
   double setup_time_s = 0.0;  // tree build + showdown tables, before iterating
   int threads = 1;
+  // Subtree traversals the recalc schedule skipped. Observability: a solve
+  // where this stays 0 on a multistreet tree means the schedule never
+  // engaged (bad epsilons, or a spot that never settles).
+  std::uint64_t recalc_skips = 0;
   std::size_t peak_rss_bytes = 0;
 };
 

@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -57,7 +58,8 @@ class CfrSolver {
   // touch disjoint regret ranges, and every cross-child accumulation still
   // happens serially in child order after the join. Same config, same
   // thread count or not, same numbers.
-  CfrSolver(const Game& game, UpdateConfig update, int threads = 1);
+  CfrSolver(const Game& game, UpdateConfig update, int threads = 1,
+            RecalcConfig recalc = {});
 
   // Run `iterations` full iterations (one traversal per seat each) and leave
   // the solver readable: any deferred DCFR discount is settled before this
@@ -81,6 +83,19 @@ class CfrSolver {
   ThreadPool& pool() const { return *pool_; }
   // Fan-out budget handed to the root of a traversal; 1 disables splitting.
   int split_budget() const { return split_budget_; }
+
+  // Subtree traversals the recalc schedule skipped (0 when disabled).
+  // Observability, and what keeps the recalc tests non-vacuous.
+  std::uint64_t recalc_skips() const {
+    return recalc_skips_.load(std::memory_order_relaxed);
+  }
+
+  // Feed the schedule the measured per-player exploitability (chips) from
+  // the caller's latest best-response checkpoint. Until the first call the
+  // budget is zero and nothing is ever skipped, so a caller that never
+  // checkpoints gets plain CFR. Deterministic: best response itself is
+  // bit-identical at any thread count.
+  void set_recalc_budget(double exploitable_chips);
 
   // Estimated bytes for regrets + strategy sums under this layout.
   static std::size_t state_bytes(const Game& game);
@@ -107,10 +122,10 @@ class CfrSolver {
   };
 
   void iterate();
-  // Scale one decision node's regrets and strategy sums by the outstanding
-  // discount and mark it paid.
-  void pay_discount(std::uint32_t decision_index);
-  // Settle the outstanding discount everywhere it has not already been paid.
+  // Apply every discount owed for iterations (stamp, upto] to one decision
+  // node's regrets and strategy sums, and stamp it paid through `upto`.
+  void pay_discount(std::uint32_t decision_index, std::uint32_t upto);
+  // Settle discounts everywhere they have not already been paid.
   void flush_discounts();
   Arena* acquire_arena();
   void release_arena(Arena* arena);
@@ -129,24 +144,26 @@ class CfrSolver {
   // Applying it as its own sweep over every regret and strategy entry costs
   // 13% of an iteration on a turn tree and 18% on a flop tree - pure memory
   // traffic over data nothing else is touching at that moment. Instead the
-  // factors owed for iteration t are recorded here, and each decision node
-  // pays them on its first visit in iteration t+1, when its rows are already
-  // in cache for regret matching.
+  // factors owed for each iteration are recorded here, and a decision node
+  // pays everything it owes on its next visit, when its rows are already in
+  // cache for regret matching.
   //
-  // This is the eager sweep exactly, not an approximation. Every node is
-  // visited on every traversal, so at most one discount is ever outstanding;
-  // the payment still lands before any read of that node in the next
-  // iteration; and run() settles the remainder, so the numbers a caller sees
-  // are bit-for-bit what the per-iteration sweep produced.
-  struct PendingDiscount {
-    bool active = false;
+  // The recalc schedule means a node can miss SEVERAL iterations' discounts,
+  // so the history is per iteration (entry t = factors owed after iteration
+  // t; (1,1,1) when the rule has none - multiplying by exactly 1.0f is a
+  // bit-exact no-op). Catch-up compounds the missed factors into one product
+  // per sign before the memory pass; that is valid because a node's regret
+  // signs cannot change while it is not being visited, and it keeps the pass
+  // O(row) regardless of how many iterations were missed. With recalc off a
+  // node never misses more than one, the product is a single factor, and the
+  // result is bit-for-bit the old eager sweep.
+  struct DiscountFactors {
     float pos = 1.0f;
     float neg = 1.0f;
     float strat = 1.0f;
   };
-  PendingDiscount pending_;
-  std::uint32_t pending_iter_ = 0;              // iteration the discount is owed for
-  std::vector<std::uint32_t> discount_stamp_;   // by decision_index: last iteration paid
+  std::vector<DiscountFactors> discount_history_;  // index = iteration, entry 0 unused
+  std::vector<std::uint32_t> discount_stamp_;      // by decision_index: paid through
 
   // Returns counterfactual values for `seat`'s hands at `node`. `split` is
   // the remaining fan-out budget: a node with C children hands each child
@@ -161,6 +178,45 @@ class CfrSolver {
   std::mutex arena_mu_;
   std::vector<std::unique_ptr<Arena>> arenas_;
   std::vector<Arena*> free_arenas_;
+
+  // ---- chance-child recalc schedule (see RecalcConfig) -------------------
+  // One slot per chance-node child, per traversing seat: the child's cached
+  // value vector (post blocked-hand zeroing, so a skip folds it in with a
+  // single unconditional accumulate), a snapshot of the opponent reach that
+  // produced it (the returned values depend on nothing else above the node),
+  // and the doubling revisit period. Slots for one chance node are
+  // contiguous at recalc_base_[node] + child.
+  struct RecalcSlot {
+    std::vector<float> value[2];
+    std::vector<float> reach_snap[2];
+    float movement[2] = {0.0f, 0.0f};  // value drift measured at the last revisit
+    float snap_l1[2] = {0.0f, 0.0f};
+    std::uint32_t next_due[2] = {0, 0};
+    std::uint16_t period[2] = {1, 1};
+    bool valid[2] = {false, false};
+  };
+  // Revisit the child now, or fold in its cache? Deterministic: every input
+  // is a traversal value that is itself bit-identical at any thread count.
+  bool recalc_should_skip(const RecalcSlot& slot, int seat,
+                          const std::vector<float>& opp_reach) const;
+  // After a full traversal of the child: update period from value movement,
+  // then cache the (already blocked-hand-zeroed) values and the reach.
+  void recalc_store(RecalcSlot& slot, int seat, const std::vector<float>& child_vals,
+                    const std::vector<float>& opp_reach);
+
+  RecalcConfig recalc_config_;
+  bool recalc_on_ = false;                    // enabled AND a 2-seat game
+  std::vector<std::uint32_t> recalc_base_;    // by NodeId: first child's slot, or kNoIndex
+  std::vector<RecalcSlot> recalc_;
+  // aggressiveness * exploitable * Z / num_subtrees, refreshed by
+  // set_recalc_budget. Z (the profile normalizer) converts the caller's
+  // chips into the raw counterfactual-value scale the movements live in.
+  // The controller state below is what makes stalls self-correcting.
+  float recalc_threshold_ = 0.0f;
+  double recalc_aggress_ = 0.0;      // set to margin at construction
+  double recalc_last_e_ = 0.0;       // exploitability at the previous budget call
+  std::uint64_t recalc_last_t_ = 0;  // iteration of the previous budget call
+  std::atomic<std::uint64_t> recalc_skips_{0};
 };
 
 }  // namespace engine

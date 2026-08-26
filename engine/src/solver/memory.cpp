@@ -40,15 +40,31 @@ std::string MemoryEstimate::to_string() const {
       << " (regrets+strategy " << human(regret_strategy_bytes)
       << ", tree " << human(tree_bytes)
       << ", showdown " << human(showdown_bytes)
+      << ", recalc " << human(recalc_bytes)
       << ", workspace ceiling " << human(workspace_bytes) << ")";
   return out.str();
 }
 
-MemoryEstimate estimate_memory(const Game& game, int threads) {
+MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc) {
   MemoryEstimate est;
   est.regret_strategy_bytes = CfrSolver::state_bytes(game);
   est.tree_bytes = game.tree().size() * sizeof(Node);
   est.showdown_bytes = game.auxiliary_bytes();
+
+  if (recalc && game.num_seats() == 2) {
+    // One slot per chance-node child, per seat: cached value vector + reach
+    // snapshot, both hand-universe wide.
+    std::size_t chance_children = 0;
+    for (const Node& n : game.tree().nodes) {
+      if (n.kind == NodeKind::Chance) chance_children += n.num_children;
+    }
+    std::size_t hands = 0;
+    for (int s = 0; s < game.num_seats(); ++s) {
+      hands = std::max(hands, static_cast<std::size_t>(game.num_hands(s)));
+    }
+    est.recalc_bytes = chance_children * 2 /*seats*/ * 2 /*value+snapshot*/ * hands *
+                       sizeof(float);
+  }
 
   const PublicTree& tree = game.tree();
   std::vector<int> depth(tree.size(), 0);

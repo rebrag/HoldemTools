@@ -23,8 +23,10 @@ TEST_CASE("memory estimate matches the sizing rule") {
   CHECK(estimate.regret_strategy_bytes == 192 + kStamps);
   CHECK(estimate.tree_bytes == game.tree().size() * sizeof(Node));
   CHECK(estimate.workspace_bytes > 0);
+  CHECK(estimate.recalc_bytes == 0);  // Kuhn has no chance nodes
   CHECK(estimate.total() == estimate.regret_strategy_bytes + estimate.tree_bytes +
-                                estimate.showdown_bytes + estimate.workspace_bytes);
+                                estimate.showdown_bytes + estimate.recalc_bytes +
+                                estimate.workspace_bytes);
 }
 
 TEST_CASE("peak RSS is reported") {

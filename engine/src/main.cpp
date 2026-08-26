@@ -30,7 +30,8 @@ std::unique_ptr<Game> make_game(const SolveConfig& config) {
 }
 
 int check_memory(const Game& game, const SolveConfig& config, bool print_always) {
-  const MemoryEstimate estimate = estimate_memory(game, config.threads);
+  const MemoryEstimate estimate =
+      estimate_memory(game, config.threads, config.recalc.enabled);
   if (print_always) std::cout << estimate.to_string() << "\n";
   const double limit_bytes = config.memory_limit_gb * 1024.0 * 1024.0 * 1024.0;
   if (static_cast<double>(estimate.total()) > limit_bytes) {
@@ -51,7 +52,8 @@ int run_solve(const SolveConfig& config, bool dry_run) {
       std::chrono::duration<double>(std::chrono::steady_clock::now() - setup_start).count();
 
   if (dry_run) {
-    const MemoryEstimate estimate = estimate_memory(*game, config.threads);
+    const MemoryEstimate estimate =
+        estimate_memory(*game, config.threads, config.recalc.enabled);
     std::cout << estimate.to_string() << "\n";
     std::cout << "tree: " << game->tree().size() << " nodes ("
               << game->tree().num_decision_nodes << " decision, "
@@ -63,7 +65,7 @@ int run_solve(const SolveConfig& config, bool dry_run) {
 
   std::cout << "setup " << setup_s << " s (tree + showdown tables) on " << threads
             << " thread" << (threads == 1 ? "" : "s") << "\n";
-  CfrSolver solver(*game, config.update, config.threads);
+  CfrSolver solver(*game, config.update, config.threads, config.recalc);
   const auto start = std::chrono::steady_clock::now();
   double nashconv = 0.0;
   BrResult br;
@@ -79,6 +81,9 @@ int run_solve(const SolveConfig& config, bool dry_run) {
     // "exploitable" follows Pio's convention: the per-player average gain
     // from best-responding = NashConv / num_seats for 2 players.
     const double exploitable = nashconv / game->num_seats();
+    // Feed the recalc schedule its annealing budget: subtrees may be frozen
+    // only while their movement is small against CURRENT exploitability.
+    solver.set_recalc_budget(exploitable);
     std::cout << "iter " << done << "  nashconv " << nashconv
               << "  exploitable " << exploitable;
     if (pot > 0.0) std::cout << " (" << 100.0 * exploitable / pot << "% of pot)";
@@ -106,6 +111,7 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   stats.wall_time_s = wall_s;
   stats.setup_time_s = setup_s;
   stats.threads = threads;
+  stats.recalc_skips = solver.recalc_skips();
   stats.peak_rss_bytes = peak_rss_bytes();
 
   LocalStore store;
