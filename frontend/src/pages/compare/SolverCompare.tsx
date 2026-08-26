@@ -16,9 +16,17 @@ import { HAND_ORDER } from "@/lib/solver/handOrder";
 import { authedFetch } from "@/lib/api";
 import type { MoneyOpts } from "@/pages/solver/boardDisplay";
 import ResponsiveDrawer from "@/components/ResponsiveDrawer";
-import TreeBuilderPanel, { inputCls } from "./TreeBuilderPanel";
-import { buildEngineConfig, cloneBuilder, DEFAULT_BUILDER, type BuilderState } from "./builderState";
-import { parseBoardCards } from "./treeConfigText";
+import TreeBuilding, { inputCls } from "@/components/TreeBuilding";
+import {
+  applyViewToBuilder,
+  buildEngineConfig,
+  builderToView,
+  cloneBuilder,
+  DEFAULT_BUILDER,
+  type BuilderState,
+} from "./builderState";
+import { parseBoardCards, pioClipboardCodec } from "./treeConfigText";
+import { pioRangeCodec } from "@/lib/solver/rangeTokens";
 import PipelineTimingPanel, {
   secs,
   type ClientMarks,
@@ -679,7 +687,19 @@ const SolverCompare = () => {
           </div>
 
           <div className="flex-1 overflow-y-auto px-4 py-3">
-            <TreeBuilderPanel value={builder} onChange={setBuilder} disabled={solving} />
+            <TreeBuilding
+              value={builderToView(builder)}
+              onChange={(v) => setBuilder((cur) => applyViewToBuilder(cur, v))}
+              disabled={solving}
+              boardMaxCards={5}
+              boardVariant="inline"
+              showNoThreeBet
+              showMaxRaises
+              showPreflopAggressor
+              showClearAllSizes
+              clipboard={pioClipboardCodec}
+              rangeCodec={pioRangeCodec}
+            />
 
             {/* Solve settings - ours, not PioViewer's tree builder. */}
             <div className="mt-3 flex flex-wrap items-start gap-x-8 gap-y-3 border-t border-slate-800 pt-3">

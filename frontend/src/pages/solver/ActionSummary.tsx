@@ -69,7 +69,9 @@ const ActionSummary: React.FC<ActionSummaryProps> = ({
     const shares: Record<string, number> = {};
     for (const a of aggregates) shares[a.action] = a.combos / total;
     return buildSegmentSlots(shares, sizeRef);
-  }, [aggregates]);
+    // sizeRef belongs here: it decides how a bet label is read, so switching
+    // between money and big blinds re-colours the bar.
+  }, [aggregates, sizeRef]);
 
   const isLoading = (loading ?? false) || aggregates.length === 0;
 

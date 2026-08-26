@@ -4,6 +4,7 @@
 // config. The state is deliberately shaped like PioViewer's tree-building
 // screen (see treeConfigText.ts) plus the few knobs that are ours alone:
 // solve accuracy, the iteration cap, and the pre-root aggressor.
+import type { TreeBuildingView } from "@/components/treeBuildingView";
 import {
   cloneSeat,
   fullRangeWeights,
@@ -58,6 +59,21 @@ export const DEFAULT_BUILDER: BuilderState = {
   maxIterations: "20000",
   betStructureOnly: false,
 };
+
+/* ---------- shared tree-building panel adapters ----------
+ * BuilderState is a structural SUPERSET of TreeBuildingView, so these are a
+ * widening and a merge - not a conversion. Nothing is copied, reformatted or
+ * trimmed, which is why serializeTreeConfigText cannot tell that the panel is
+ * now shared (see e2e/tree-config-text.spec.ts for the byte-level proof). */
+
+export const builderToView = (b: BuilderState): TreeBuildingView => b;
+
+/** Merge, never reconstruct: accuracyMode / accuracy / maxIterations belong to
+ *  /compare's own solve settings and never enter the shared panel. */
+export const applyViewToBuilder = (
+  prev: BuilderState,
+  v: TreeBuildingView
+): BuilderState => ({ ...prev, ...v });
 
 export const cloneBuilder = (b: BuilderState): BuilderState => ({
   ...b,

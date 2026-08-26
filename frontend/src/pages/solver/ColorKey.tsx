@@ -1,6 +1,6 @@
 // src/components/ColorKey.tsx
 import React from "react";
-import { HandCellData, getColorForAction, orderActionKeys } from "@/lib/solver/utils";
+import { HandCellData, buildActionPalette, orderActionKeys } from "@/lib/solver/utils";
 import { motion } from "framer-motion";
 
 interface ColorKeyProps {
@@ -63,8 +63,10 @@ const ColorKey: React.FC<ColorKeyProps> = ({
     }, new Set<string>())
   );
 
-  // Same ordering the matrix cells use, so legend bars and segments correspond.
+  // Same ordering AND the same palette the matrix cells use, so legend bars and
+  // segments correspond in position and in colour.
   const ordered = orderActionKeys(uniqueActions);
+  const palette = buildActionPalette(ordered, sizeRef);
 
   const shadeColor = (hex: string, percent: number) => {
     const num = parseInt(hex.slice(1), 16);
@@ -80,7 +82,7 @@ const ColorKey: React.FC<ColorKeyProps> = ({
   return (
     <div className="flex gap-0.5 mb-0.5 w-full">
       {ordered.map((action) => {
-        const base = getColorForAction(action, sizeRef);
+        const base = palette[action];
         const hover = shadeColor(base, -30);
 
         return (

@@ -23,6 +23,10 @@ namespace PokerRangeAPI2.Data
 
         public DbSet<EngineCompareJob> EngineCompareJobs { get; set; } = default!;
 
+        public DbSet<RangeFolder> RangeFolders { get; set; } = default!;
+
+        public DbSet<SavedRange> SavedRanges { get; set; } = default!;
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -136,6 +140,49 @@ namespace PokerRangeAPI2.Data
 
                 // Deliberately NO unique index on (UserId, Name): duplicate names
                 // are a feature - identity is the row, never the name.
+            });
+
+            modelBuilder.Entity<RangeFolder>(entity =>
+            {
+                // Every indexable string bounded (SQL Server can't index nvarchar(max)).
+                entity.Property(e => e.UserId).HasMaxLength(128);
+                entity.Property(e => e.Name).HasMaxLength(100);
+
+                // The only query shape is "the whole library for this user".
+                entity.HasIndex(e => e.UserId);
+
+                // Self-reference, and deliberately Restrict rather than Cascade:
+                // SQL Server refuses a cascade on a self-referencing FK (it sees
+                // multiple cascade paths) and the migration would fail on deploy
+                // rather than locally. The controller deletes a folder's subtree
+                // explicitly, which is also where the "and its ranges" half of
+                // that decision has to live anyway.
+                entity.HasOne<RangeFolder>()
+                    .WithMany()
+                    .HasForeignKey(e => e.ParentId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<SavedRange>(entity =>
+            {
+                entity.Property(e => e.UserId).HasMaxLength(128);
+                entity.Property(e => e.Name).HasMaxLength(100);
+                // 169 classes at worst ~7 chars each; bounded well clear of that
+                // and never indexed.
+                entity.Property(e => e.Weights).HasMaxLength(4000);
+
+                entity.HasIndex(e => e.UserId);
+
+                // Restrict for the same reason as above: the controller moves a
+                // deleted folder's ranges explicitly rather than letting the
+                // database decide whether they die with it. They do not - a
+                // deleted folder's ranges fall back to the library root, because
+                // losing a painted range to a mis-clicked folder delete is a far
+                // worse outcome than an untidy root.
+                entity.HasOne<RangeFolder>()
+                    .WithMany()
+                    .HasForeignKey(e => e.FolderId)
+                    .OnDelete(DeleteBehavior.Restrict);
             });
 
             modelBuilder.Entity<HiddenSolution>(entity =>

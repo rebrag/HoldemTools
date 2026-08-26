@@ -5,7 +5,7 @@ import { SUITS } from "@/lib/cards";
 import {
   type HandCellData,
   actionCategory,
-  getColorForAction,
+  buildActionPalette,
   orderActionKeys,
 } from "./utils";
 
@@ -89,9 +89,11 @@ export const buildSegmentSlots = (
   weights: Record<string, number>,
   sizeRef = 1
 ): SlotSegment[] => {
-  const ordered = orderActionKeys(
-    Object.keys(weights).filter((a) => a !== "Position")
-  );
+  const present = Object.keys(weights).filter((a) => a !== "Position");
+  const ordered = orderActionKeys(present);
+  /* One palette for the whole node, so bet sizes that appear together stay
+     tellable apart and every view showing this node agrees. */
+  const palette = buildActionPalette(ordered, sizeRef);
   const bySlot: Partial<Record<SegmentSlot, { width: number; color: string }>> = {};
   let betIdx = 0;
   let otherIdx = 0;
@@ -105,7 +107,7 @@ export const buildSegmentSlots = (
     const prev = bySlot[slot];
     bySlot[slot] = {
       width: (prev?.width ?? 0) + (weights[action] || 0) * 100,
-      color: prev?.color ?? getColorForAction(action, sizeRef),
+      color: prev?.color ?? palette[action],
     };
   }
   return SEGMENT_SLOTS.map((slot) => ({
@@ -129,11 +131,13 @@ export const computeActionAggregates = (
       totals.set(action, (totals.get(action) ?? 0) + (weight || 0) * handCombos);
     }
   }
-  return orderActionKeys([...totals.keys()]).map((action) => {
+  const ordered = orderActionKeys([...totals.keys()]);
+  const palette = buildActionPalette(ordered, sizeRef);
+  return ordered.map((action) => {
     const combos = totals.get(action) ?? 0;
     return {
       action,
-      color: getColorForAction(action, sizeRef),
+      color: palette[action],
       combos,
       pctOfRange: (combos / TOTAL_COMBOS) * 100,
     };

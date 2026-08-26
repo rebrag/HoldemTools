@@ -35,163 +35,76 @@
 //   - The unsuffixed `#...Config.` lines are OOP; `#...ConfigIP.` are IP.
 //     OOP's whole group comes first.
 
-const RANKS = "AKQJT98765432";
+/* The box/seat types are ALIASES of the shared tree-building view model, not
+ * copies of it. That is what makes /compare's adapter into TreeBuilding a
+ * widening rather than a conversion, so this serializer cannot observe that
+ * the shared component exists and the PioViewer round trip holds by
+ * construction. Size strings stay exactly what the user typed: percent-of-pot
+ * numbers separated by spaces or commas, or "a" for all-in. */
+export type {
+  TreeStreetView as StreetBoxes,
+  TreeSeatView as SeatBoxes,
+  TreeStreet as StreetKey,
+} from "@/components/treeBuildingView";
 
-/** One street's boxes for one seat. Size strings are whatever the user typed:
- *  percent-of-pot numbers separated by spaces or commas, or "a" for all-in. */
-export interface StreetBoxes {
-  bet: string;
-  raise: string;
-  /** OOP only: lead into the previous street's aggressor. */
-  donk: string;
-  addAllin: boolean;
-  /** IP only: never make the third aggressive action of a street. */
-  noThreeBet: boolean;
-}
+import {
+  parseRangeTokens,
+  serializeRangeTokens,
+} from "@/lib/solver/rangeTokens";
+import {
+  TREE_STREETS,
+  emptySeatView,
+  emptyStreetView,
+  parseBoardCards,
+  type TreeBuildingView,
+  type TreeClipboardCodec,
+  type TreeSeatView,
+  type TreeStreet,
+  type TreeStreetView,
+} from "@/components/treeBuildingView";
 
-export interface SeatBoxes {
-  flop: StreetBoxes;
-  turn: StreetBoxes;
-  river: StreetBoxes;
-}
+/* Local aliases so the rest of this file keeps reading in its own vocabulary
+ * (a re-export does not bring the name into scope). */
+type StreetBoxes = TreeStreetView;
+type SeatBoxes = TreeSeatView;
+type StreetKey = TreeStreet;
 
-export type StreetKey = keyof SeatBoxes;
-export const STREET_KEYS: StreetKey[] = ["flop", "turn", "river"];
+export const STREET_KEYS: TreeStreet[] = TREE_STREETS;
 
-/** Everything the clipboard format carries. */
-export interface TreeConfigText {
-  oopRange: Record<string, number>;
-  ipRange: Record<string, number>;
-  board: string;
-  pot: string;
-  effectiveStacks: string;
-  allinThresholdPct: string;
-  addAllinCapPct: string;
-  oop: SeatBoxes;
-  ip: SeatBoxes;
-}
+/** Everything the clipboard format carries: the shared view model minus the
+ *  three knobs that are ours and have no PioViewer key. */
+export type TreeConfigText = Omit<
+  TreeBuildingView,
+  "maxRaises" | "preflopAggressor" | "betStructureOnly"
+>;
 
-export const emptyStreet = (): StreetBoxes => ({
-  bet: "",
-  raise: "",
-  donk: "",
-  addAllin: false,
-  noThreeBet: false,
-});
+export const emptyStreet = (): TreeStreetView => emptyStreetView();
 
-export const emptySeat = (): SeatBoxes => ({
-  flop: emptyStreet(),
-  turn: emptyStreet(),
-  river: emptyStreet(),
-});
+export const emptySeat = (): TreeSeatView => emptySeatView();
 
-export const cloneSeat = (seat: SeatBoxes): SeatBoxes => ({
+export const cloneSeat = (seat: TreeSeatView): TreeSeatView => ({
   flop: { ...seat.flop },
   turn: { ...seat.turn },
   river: { ...seat.river },
 });
 
-/* ---------- ranges ---------- */
-
-/** 0.5 -> "0.5", 1 -> "1", 0.25 -> "0.25" (no trailing zeros). */
-const formatWeight = (w: number): string => String(Math.round(w * 10000) / 10000);
-
-const token = (hand: string, w: number): string =>
-  w >= 1 ? hand : `${hand}:${formatWeight(w)}`;
-
-/**
- * Weights (0..1 per 169-class key) -> Pio's range string.
- *
- * Emission order matches PioViewer's own: every pair from AA down to 22,
- * then the non-pairs by descending high card and then descending kicker.
- * Order is not semantically load-bearing for Pio, but matching it byte for
- * byte is what makes a copy/paste round trip diff-clean.
- */
-export const serializeRangeTokens = (weights: Record<string, number>): string => {
-  const out: string[] = [];
-  const at = (hand: string) => {
-    const w = weights[hand] ?? 0;
-    return w > 0 ? Math.min(1, w) : 0;
-  };
-
-  for (const rank of RANKS) {
-    const pair = rank + rank;
-    const w = at(pair);
-    if (w > 0) out.push(token(pair, w));
-  }
-  for (let i = 0; i < RANKS.length; i++) {
-    for (let j = i + 1; j < RANKS.length; j++) {
-      const base = RANKS[i] + RANKS[j];
-      const ws = at(`${base}s`);
-      const wo = at(`${base}o`);
-      if (ws > 0 && ws === wo) {
-        out.push(token(base, ws));
-        continue;
-      }
-      if (ws > 0) out.push(token(`${base}s`, ws));
-      if (wo > 0) out.push(token(`${base}o`, wo));
-    }
-  }
-  return out.join(",");
-};
-
-const isRank = (c: string) => RANKS.includes(c);
-
-/** Inverse of serializeRangeTokens. A rankless token like "T4" expands to
- *  both T4s and T4o; unrecognized tokens are skipped rather than throwing,
- *  so one stray entry cannot lose the whole pasted range. */
-export const parseRangeTokens = (text: string): Record<string, number> => {
-  const out: Record<string, number> = {};
-  for (const raw of text.split(/[,\s]+/)) {
-    const part = raw.trim();
-    if (!part) continue;
-    const [handRaw, weightRaw] = part.split(":");
-    const hand = handRaw.trim();
-    if (hand.length < 2) continue;
-    const hi = hand[0].toUpperCase();
-    const lo = hand[1].toUpperCase();
-    if (!isRank(hi) || !isRank(lo)) continue;
-    const w = weightRaw === undefined ? 1 : Number(weightRaw);
-    if (!Number.isFinite(w) || w <= 0) continue;
-    const weight = Math.min(1, w);
-
-    if (hi === lo) {
-      out[hi + lo] = weight;
-      continue;
-    }
-    // Pio always writes the higher rank first; normalize in case a
-    // hand-typed range does not.
-    const [a, b] = RANKS.indexOf(hi) <= RANKS.indexOf(lo) ? [hi, lo] : [lo, hi];
-    const suffix = hand[2]?.toLowerCase();
-    if (suffix === "s") out[`${a}${b}s`] = weight;
-    else if (suffix === "o") out[`${a}${b}o`] = weight;
-    else {
-      out[`${a}${b}s`] = weight;
-      out[`${a}${b}o`] = weight;
-    }
-  }
-  return out;
-};
-
-/** Every 169-class key at full weight - the "100%" starting range. */
-export const fullRangeWeights = (): Record<string, number> => {
-  const out: Record<string, number> = {};
-  for (let i = 0; i < RANKS.length; i++) {
-    out[RANKS[i] + RANKS[i]] = 1;
-    for (let j = i + 1; j < RANKS.length; j++) {
-      out[`${RANKS[i]}${RANKS[j]}s`] = 1;
-      out[`${RANKS[i]}${RANKS[j]}o`] = 1;
-    }
-  }
-  return out;
-};
+/* ---------- ranges ----------
+ * Moved to lib/solver/rangeTokens.ts, and re-exported here so this module
+ * still reads as "the PioViewer text format, both directions". The range
+ * codec had to leave this file because the range picker needs it too, and a
+ * component cannot import from a page. */
+export {
+  fullRangeWeights,
+  parseRangeTokens,
+  pioRangeCodec,
+  serializeRangeTokens,
+} from "@/lib/solver/rangeTokens";
 
 /* ---------- board ---------- */
 
-export const parseBoardCards = (board: string): string[] =>
-  (board.match(/[2-9TJQKA][hdcs]/gi) ?? []).map(
-    (c) => c[0].toUpperCase() + c[1].toLowerCase()
-  );
+/* Single implementation, shared with the tree-building panel, so the
+ * serializer and the UI can never disagree about what a board string means. */
+export { parseBoardCards } from "@/components/treeBuildingView";
 
 /* ---------- serialize ---------- */
 
@@ -320,3 +233,16 @@ export const parseTreeConfigText = (text: string): ParsedTreeConfigText => {
   }
   return result;
 };
+
+/**
+ * The clipboard half of this module, packaged for the shared tree-building
+ * panel. The panel takes it as a prop rather than importing it, because
+ * src/components must not depend on src/pages - and passing it doubles as the
+ * feature flag, since a screen that cannot round-trip through PioViewer simply
+ * has no codec to hand over.
+ */
+export const pioClipboardCodec: TreeClipboardCodec = {
+  serialize: serializeTreeConfigText,
+  parse: parseTreeConfigText,
+};
+

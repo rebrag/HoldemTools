@@ -77,19 +77,7 @@ export type Action = "ALLIN" | "Min" | "Call" | "Fold" | "UNKNOWN";
 
 export const ALL_ACTIONS: Action[] = ["ALLIN", "UNKNOWN", "Min", "Call", "Fold"];
 
-export const actionColorMapping: Record<string, string> = {
-  ALLIN: "#7d1f1e",
-  Min: "#F03c3c",
-  Call: "#5ab964",
-  Fold: "#3d7cb8",
-  // Unknown actions default to:
-};
-
-export const ALL_COLORS: string[] = [
-  "#7d1f1e", // ALLIN
-  "#C14c39", // UNKNOWN
-  "#F03c3c", // Min
-  "#5ab964", // Call
-  "#3d7cb8"  // Fold
-];
+/* The action->colour maps that used to live here were a second, unreferenced
+ * copy of the palette. lib/solver/utils.ts is the single source; anything that
+ * needs a colour calls buildActionPalette or getColorForAction. */
 

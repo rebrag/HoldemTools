@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
-  getColorForAction,
+  buildActionPalette,
   plateActions,
   stringToColor,
 } from "@/lib/solver/utils";
@@ -181,6 +181,11 @@ const Line: React.FC<LineProps> = ({
           const bet = playerBets[pos] ?? 0;
           const stack = data ? (data.bb ?? 0) - bet : null;
           const options = seatActions(data);
+          /* One palette per seat card, from that seat's whole option list, so
+             the dots match the matrix segments for the same node instead of
+             each colour resolving in isolation. Preflop labels are already in
+             big blinds or percent of pot, so no sizeRef is needed. */
+          const palette = buildActionPalette(options);
           const card = seatCardClick(pos, alive);
 
           return (
@@ -223,8 +228,7 @@ const Line: React.FC<LineProps> = ({
                   </span>
                 ) : (
                   options.map((action) => {
-                    const color =
-                      getColorForAction(action) || stringToColor(action);
+                    const color = palette[action] || stringToColor(action);
                     /* Highlight the seat's taken action once the action has
                      * moved past them (their card no longer being active). */
                     const taken = !isActive && takenBySeat[pos] === action;

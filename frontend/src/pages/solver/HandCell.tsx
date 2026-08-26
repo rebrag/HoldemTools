@@ -3,7 +3,7 @@ import React, { useEffect, useState, useMemo } from "react";
 import {
   HandCellData,
   actionCategory,
-  getColorForAction,
+  buildActionPalette,
   orderActionKeys,
 } from "@/lib/solver/utils";
 import "./App.css";
@@ -102,6 +102,9 @@ const HandCell: React.FC<HandCellProps> = ({
    * always-mounted slots above (so CSS width transitions stay seamless). */
   const segments = useMemo(() => {
     const ordered = orderActionKeys(Object.keys(data.actions));
+    /* One palette per node, so two close bet sizes stay tellable apart and the
+       cell agrees with the legend above it. */
+    const palette = buildActionPalette(ordered, sizeRef);
 
     // Assign each present action to its stable slot.
     const bySlot: Partial<Record<SlotName, { width: number; color: string }>> = {};
@@ -124,7 +127,7 @@ const HandCell: React.FC<HandCellProps> = ({
       const prev = bySlot[slot]; // overflow bets/others merge into the last slot
       bySlot[slot] = {
         width: (prev?.width ?? 0) + width,
-        color: prev?.color ?? getColorForAction(action, sizeRef),
+        color: prev?.color ?? palette[action],
       };
     }
 
@@ -142,11 +145,15 @@ const HandCell: React.FC<HandCellProps> = ({
   /* The selected cell replaces its hairline with a ring. Two stacked insets:
    * white reads on the dark bars, the dark outer edge keeps it visible on the
    * light green / amber ones. */
+  /* Hairline alphas are lower than they were against the old near-white cell:
+   * the same light grey that read as a faint rule on white reads as a bright
+   * grid on the dark ground. The pair line stays the heavier of the two so the
+   * diagonal is still legible. */
   const borderStyle = selected
     ? "inset 0 0 0 2px rgba(255,255,255,0.95), inset 0 0 0 3.5px rgba(0,0,0,0.6)"
     : isPair
-    ? "inset 0 0 0 0.7px rgba(203, 213, 224, 0.3)" // darker + thicker
-    : "inset 0 0 0 0.3px rgba(203, 213, 224, 0.6)";
+    ? "inset 0 0 0 0.7px rgba(203, 213, 224, 0.22)"
+    : "inset 0 0 0 0.3px rgba(203, 213, 224, 0.28)";
 
   /* ───────── label font size ───────── */
   const computedFontSize = matrixWidth
@@ -162,7 +169,14 @@ const HandCell: React.FC<HandCellProps> = ({
       data-height={Math.round(heightPct)}
       data-selected={selected ? "1" : "0"}
       aria-selected={selected}
-      className={`relative group w-full h-full bg-slate-50 aspect-square select-none overflow-hidden ${
+      /* The cell's UNFILLED ground, visible above the bar wherever the hand's
+         reach at this node is under 100%. It reads as "no range here", so it
+         has to be quiet: a desaturated slate close to the page's own slate-950
+         backdrop. It cannot be confused with any decision colour, because every
+         one of those is saturated - green, blue, the orange-to-red bet ramp and
+         the near-maroon all-in. It was bg-slate-50, a near-white block sitting
+         in a near-black page. */
+      className={`relative group w-full h-full bg-slate-800 aspect-square select-none overflow-hidden ${
         onSelect ? "cursor-pointer" : ""
       }`}
       onClick={() => onSelect?.()}
