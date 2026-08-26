@@ -6,3 +6,6 @@ __pycache__/
 registry.json
 OutputJsons/
 play
+# Per-machine benchmark output (watcher/bench_boards.py); the durable summary
+# lives in engine/docs/roadmap.md.
+bench_*.json

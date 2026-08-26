@@ -45,6 +45,50 @@ DEFAULT_PIO_DIR = os.environ.get("PIO_DIR", r"C:\PioSOLVER")
 DEFAULT_PIO_EXE = os.environ.get("PIO_EXE", "PioSOLVER2-edge.exe")
 
 
+def _memory_counters(pid: int):
+    """(current, peak) working set of another process in bytes, or (None, None)
+    off Windows / once the process has exited.
+
+    Deliberately the SAME OS counter the engine writes into its artifact
+    metadata (GetProcessMemoryInfo), so the two solvers' memory numbers are
+    one measurement of one thing rather than two solvers' opinions of their
+    own footprint.
+    """
+    if os.name != "nt":
+        return None, None
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    PROCESS_QUERY_INFORMATION, PROCESS_VM_READ = 0x0400, 0x0010
+    handle = ctypes.windll.kernel32.OpenProcess(
+        PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, pid)
+    if not handle:
+        return None, None
+    try:
+        counters = PROCESS_MEMORY_COUNTERS()
+        counters.cb = ctypes.sizeof(counters)
+        if not ctypes.windll.psapi.GetProcessMemoryInfo(
+                handle, ctypes.byref(counters), counters.cb):
+            return None, None
+        return int(counters.WorkingSetSize), int(counters.PeakWorkingSetSize)
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+
 def normalize_combo(combo: str) -> Tuple[str, str]:
     """Order-insensitive key for a 4-char combo string like 'AsKh'."""
     a, b = combo[0:2], combo[2:4]
@@ -151,15 +195,23 @@ def showdown_lines(nodes: Dict[str, dict]) -> List[List[int]]:
 
 
 def solve_in_pio(solver, dump: dict, meta: dict, accuracy_chips: float,
-                 dump_cfr) -> None:
+                 dump_cfr) -> dict:
     """Build the engine's exact tree in Pio via UPI and solve it to
     `accuracy_chips` ("exploitable for", per player). The tree is validated
-    node-for-node against the engine's before solving."""
+    node-for-node against the engine's before solving.
+
+    Returns the wall-clock split, so the report can put Pio's solve time next
+    to the engine's. Tree building is timed separately from `go`: the engine
+    reports its own setup and solve times apart for the same reason, and
+    lumping them together would flatter whichever solver builds faster."""
     board = "".join(meta["board"].split())
     pot = int(meta["pot"])
     eff = int(meta["effective_stack"])
     print(f"solve-pio: building {board} pot={pot} eff={eff} "
           f"accuracy={accuracy_chips:g} chips")
+    pid = solver.process.pid
+    baseline_bytes, _ = _memory_counters(pid)
+    build_start = time.perf_counter()
     solver._run("set_board", board)
     solver._run("set_pot", "0", "0", str(pot))
     solver._run("set_eff_stack", str(eff))
@@ -198,11 +250,23 @@ def solve_in_pio(solver, dump: dict, meta: dict, accuracy_chips: float,
             f"  only in engine: {sorted(engine_nodes - pio_nodes)[:10]}")
     print(f"solve-pio: tree verified ({len(pio_nodes)} betting nodes), solving...")
 
+    build_s = time.perf_counter() - build_start
+
     solver.set_accuracy(accuracy_chips)
+    solve_start = time.perf_counter()
     solver.go(quiet=True)
+    solve_s = time.perf_counter() - solve_start
+    # Read the peak BEFORE the cross-check uploads a strategy into Pio: this
+    # is meant to be the cost of building and solving the tree, not of the
+    # harness poking at it afterwards.
+    _, peak_bytes = _memory_counters(pid)
+    print(f"solve-pio: solved in {solve_s:.2f} s (tree build {build_s:.2f} s)"
+          + (f", peak {peak_bytes / (1024 ** 2):.0f} MB" if peak_bytes else ""))
     if dump_cfr:
         solver.dump_tree(os.path.abspath(dump_cfr), "full")
         print(f"solve-pio: dumped {dump_cfr}")
+    return {"solve_s": round(solve_s, 3), "setup_s": round(build_s, 3),
+            "peak_bytes": peak_bytes, "baseline_bytes": baseline_bytes}
 
 
 def main() -> int:
@@ -284,12 +348,16 @@ def main() -> int:
 
     # PIO_LOG=<path> logs the full UPI dialogue for debugging hangs.
     solver = PYOSolver(args.pio_dir, args.pio_exe, log_file=os.environ.get("PIO_LOG"))
+    pio_timing = {"solve_s": None, "setup_s": None,
+                  "peak_bytes": None, "baseline_bytes": None}
     try:
         if args.solve_pio:
-            solve_in_pio(solver, dump, meta,
-                         accuracy_chips=max(args.pio_accuracy_pct / 100.0 * pot, 1e-4),
-                         dump_cfr=args.dump_cfr)
+            pio_timing = solve_in_pio(
+                solver, dump, meta,
+                accuracy_chips=max(args.pio_accuracy_pct / 100.0 * pot, 1e-4),
+                dump_cfr=args.dump_cfr)
         else:
+            # A pre-solved .cfr carries no timing - it was solved elsewhere.
             solver.load_tree(os.path.abspath(args.cfr))
         pio_order = solver.show_hand_order()
         pio_index = {normalize_combo(h): i for i, h in enumerate(pio_order)}
@@ -309,6 +377,7 @@ def main() -> int:
         colon_ids = engine_colon_ids(dump["nodes"])
 
         offenders: List[dict] = []
+        gfreq_failures: List[str] = []
         weighted_l1_sum = 0.0
         weighted_ev_sum = 0.0
         weight_total = 0.0
@@ -359,10 +428,17 @@ def main() -> int:
             # How often this node is actually reached (Pio's global line
             # frequency). Without it the diagnostics drown in noise from
             # never-taken lines.
+            #
+            # A failure here used to be swallowed into 0.0, which is the same
+            # value a genuinely unreachable node has. When UPI hiccuped and
+            # every node came back 0, the run died downstream with "nothing
+            # compared (tree mismatch everywhere?)" - a wrong and very
+            # expensive diagnosis. Count them instead and say so.
             try:
                 global_freq = solver.calc_global_freq(pio_id)
-            except Exception:
+            except Exception as e:
                 global_freq = 0.0
+                gfreq_failures.append(f"{pio_id}: {type(e).__name__}: {e}")
             nodes_compared += 1
 
             # Per-action EVs: the actor's calc_ev at each child (the watcher's
@@ -495,9 +571,31 @@ def main() -> int:
         except Exception:
             pass
 
-    if weight_total <= 0 or nodes_compared == 0:
-        print("FAIL: nothing compared (tree mismatch everywhere?)")
+    if gfreq_failures:
+        print(f"WARNING: calc_global_freq failed on {len(gfreq_failures)} of "
+              f"{nodes_compared} nodes; those nodes carry zero diagnostic weight. "
+              f"First: {gfreq_failures[0]}")
+
+    # No nodes at all IS a failure - the two trees did not line up anywhere.
+    if nodes_compared == 0:
+        print("FAIL: no nodes compared - the trees do not line up at all")
         return 1
+
+    # Zero total weight is NOT a failure. Weight is Pio's global line frequency
+    # times the smaller of the two reaches, and it exists only to normalize the
+    # per-hand DIAGNOSTICS. On some boards Pio's global frequencies underflow to
+    # zero (seen on 5c 5h 5s 2c 8d, where the root itself reports 0.0 and one
+    # line reports -5e-12), which makes the diagnostics uninformative and
+    # nothing more. Treating it as FAIL conflated "we learned nothing about
+    # per-hand agreement" with "the solvers disagree", and the cross-check below
+    # - the only real correctness statement - still runs and still decides.
+    diagnostics_weighted = weight_total > 0
+    if not diagnostics_weighted:
+        print(f"NOTE: compared {nodes_compared} nodes, but Pio's global line "
+              f"frequencies are all zero here, so the per-hand diagnostics have no "
+              f"weight to normalize against and are skipped. This is a diagnostic "
+              f"gap, not a disagreement - the cross-exploitability gate below is "
+              f"unaffected and is what decides.")
 
     # --- Primary gate. ----------------------------------------------------
     # Full mode: engine-profile exploitability as measured by Pio.
@@ -527,11 +625,35 @@ def main() -> int:
     # These can legitimately exceed their thresholds even between two exact
     # equilibria (equilibrium multiplicity + indifference), so they warn
     # rather than gate whenever the cross-check passes.
-    mean_l1 = weighted_l1_sum / weight_total
-    mean_ev = weighted_ev_sum / weight_total
+    mean_l1 = weighted_l1_sum / weight_total if diagnostics_weighted else 0.0
+    mean_ev = weighted_ev_sum / weight_total if diagnostics_weighted else 0.0
     ev_threshold = max(pot * args.ev_threshold_frac, 1e-4)
-    print(f"reach-weighted mean L1:        {mean_l1:.5f}  (diagnostic threshold {args.l1_threshold})")
-    print(f"reach-weighted mean |EV diff|: {mean_ev:.3f} chips  (diagnostic threshold {ev_threshold:.3f})")
+    if diagnostics_weighted:
+        print(f"reach-weighted mean L1:        {mean_l1:.5f}  (diagnostic threshold {args.l1_threshold})")
+        print(f"reach-weighted mean |EV diff|: {mean_ev:.3f} chips  (diagnostic threshold {ev_threshold:.3f})")
+    else:
+        print("reach-weighted per-hand diagnostics: unavailable (no line weight)")
+
+    ht_solve_s = meta.get("wall_time_s")
+    pio_solve_s = pio_timing.get("solve_s")
+    if ht_solve_s is not None:
+        line = (f"solve time: htsolver {ht_solve_s:.2f} s on "
+                f"{meta.get('threads', '?')} thread(s), {meta['iterations']} iters")
+        if pio_solve_s is not None:
+            ratio = (pio_solve_s / ht_solve_s) if ht_solve_s > 0 else float("inf")
+            line += f"  |  pio {pio_solve_s:.2f} s  ->  {ratio:.1f}x"
+        else:
+            line += "  |  pio n/a (pre-solved .cfr)"
+        print(line)
+
+    ht_peak = meta.get("peak_rss_bytes")
+    pio_peak = pio_timing.get("peak_bytes")
+    if ht_peak or pio_peak:
+        mb = lambda b: "n/a" if not b else f"{b / (1024 ** 2):.0f} MB"
+        line = f"peak memory: htsolver {mb(ht_peak)}  |  pio {mb(pio_peak)}"
+        if ht_peak and pio_peak:
+            line += f"  ->  {pio_peak / ht_peak:.1f}x"
+        print(line)
 
     if args.json_out:
         json_nodes = compare_nodes
@@ -584,8 +706,38 @@ def main() -> int:
                             if full_mode
                             else (root_ev_diff is not None and root_ev_diff <= exploit_threshold),
                 },
+                # Wall clock, for comparing the two solvers head to head on
+                # the SAME tree at the SAME accuracy target. Setup is kept
+                # separate from solving on both sides (engine: tree +
+                # showdown tables; Pio: set_range + add_line + build_tree),
+                # and the engine's thread count is carried along because a
+                # solve time without it is not a comparable number.
+                "timing": {
+                    "ht_solve_s": meta.get("wall_time_s"),
+                    "ht_setup_s": meta.get("setup_time_s"),
+                    "ht_threads": meta.get("threads"),
+                    "ht_iterations": meta["iterations"],
+                    "pio_solve_s": pio_timing.get("solve_s"),
+                    "pio_setup_s": pio_timing.get("setup_s"),
+                    "accuracy_chips": round(max(args.pio_accuracy_pct / 100.0 * pot, 1e-4), 4),
+                },
+                # Peak working set of each solver process over building AND
+                # solving the tree - the same OS counter on both sides. Pio's
+                # includes the ~100 MB the process carries at idle, which is
+                # real RAM the machine has to have; `pio_baseline_bytes` is
+                # what that was before any tree work, so the tree's own cost
+                # can be read off if wanted.
+                "memory": {
+                    "ht_peak_bytes": meta.get("peak_rss_bytes"),
+                    "pio_peak_bytes": pio_timing.get("peak_bytes"),
+                    "pio_baseline_bytes": pio_timing.get("baseline_bytes"),
+                },
                 "mean_l1": round(mean_l1, 5),
                 "mean_ev_diff": round(mean_ev, 3),
+                # False when Pio's line frequencies gave the per-hand
+                # diagnostics nothing to normalize against; the two means
+                # above are then placeholders, not measurements.
+                "diagnostics_weighted": diagnostics_weighted,
                 "sampled": not full_mode,
                 "runouts": None if full_mode else args.runouts,
                 "decision_nodes": decision_count,
@@ -598,7 +750,8 @@ def main() -> int:
             json.dump(doc, f, separators=(",", ":"))
         print(f"wrote comparison JSON: {args.json_out}")
 
-    diagnostics_ok = mean_l1 <= args.l1_threshold and mean_ev <= ev_threshold
+    diagnostics_ok = (not diagnostics_weighted) or (
+        mean_l1 <= args.l1_threshold and mean_ev <= ev_threshold)
     if not diagnostics_ok:
         print(f"\nlargest ON-PATH strategy differences (top {args.top} by weight * L1; "
               f"weight = gfreq * min(engine reach, pio reach)):")

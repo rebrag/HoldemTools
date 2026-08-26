@@ -88,6 +88,9 @@ Hand-history uploads also carry an optional `Seats` list (pos, name, flop-time s
 | `run_one.py` | Dev harness: solve a single hardcoded config block. |
 | `test_flop_walk.py` | Smoke-tests the street walk against a local `.cfr`, no ADLS. |
 | `test_pyosolver_load.py` | Smoke-tests UPI startup / cfr load. |
+| `engine_compare.py` | htsolver vs Pio validation harness (see below). |
+| `engine_compare_watcher.py` | Queue-driven runner for `/compare` jobs (see below). |
+| `bench_boards.py` | Sweeps a fixed set of turn and river boards through both solvers and prints the time/memory table. How the chance-node cost was measured. |
 
 ## Prerequisites
 
@@ -122,11 +125,24 @@ Multistreet trees build via `add_line` with one token per action = the actor's h
 Trees past `--full-limit` decision nodes are compared on deterministic sampled runouts with a root-EV gate instead of the (then-meaningless) partial cross-check.
 `--json-out compare.json` additionally writes the full per-hand comparison for the frontend's hidden `/compare` page (side-by-side grids + per-combo table).
 
+Both solvers' wall clock AND peak memory are reported (they land in `summary.timing` and `summary.memory` of the JSON) so the two are directly comparable: same tree, same accuracy target.
+Memory is the peak working set of each solver PROCESS, read with the same OS call the engine uses for its own `peak_rss_bytes`, so it is one measurement of one thing rather than two solvers' opinions of their own footprint.
+Pio's figure includes the tens of MB the process carries at idle - real RAM the machine has to have - and `pio_baseline_bytes` records what that was before any tree work, so the tree's own cost can be read off if wanted.
+Tree building is timed apart from solving on both sides - the engine's own `setup_time_s` covers its tree and showdown tables, Pio's covers `set_range` + `add_line` + `build_tree` - because lumping them together flatters whichever solver builds faster.
+The engine's `threads` count travels with its time, since a solve time without it is not a comparable number.
+A run against a pre-solved `--cfr` reports no Pio time: that tree was solved elsewhere.
+
 ## Compare watcher (`engine_compare_watcher.py`)
 
 The queue-driven sibling of the harness: claims `EngineCompareJob`s from `POST /api/enginecompare/claim` (same `X-Watcher-Key` + heartbeat protocol as the solve queue) and executes them on this machine.
 `compare` jobs solve with htsolver AND Pio (`engine_compare.py --solve-pio`) and upload the comparison JSON to ADLS `enginecompare/{id}.json.gz`; `publish` jobs solve with htsolver only and POST the artifact to the API, which publishes schema-4 bundles into the solutions library.
-Run it alongside the main watcher (`python engine_compare_watcher.py`, same `.env`; set `ENGINE_EXE` if the engine binary is not at `../engine/build/engine.exe`).
+Run it with `python engine_compare_watcher.py` (same `.env`; set `ENGINE_EXE` if the engine binary is not at `../engine/build/engine.exe`).
 Only one instance - it spawns Pio processes.
+
+**This is the only watcher `/compare` needs.**
+It claims from its own queue, runs `engine.exe` itself, and `engine_compare.py` spawns its own PioSOLVER process over UPI; the result upload to ADLS is its own too.
+`watch_adls_and_run_pio_headless.py` serves a different queue entirely (the gametree/SolveJobs pipeline behind `/solutions`, driving PioViewer through pywinauto), and nothing on the compare path goes through it.
+Run both only when you also want the Pio solutions library fed; they share the `.env` and do not interfere.
+The one place they meet is `publish` mode, and even there they stay out of each other's way by writing separate index blobs (`enginesolutions-index.json` vs `piosolutions-index.json`), merged at read time.
 It reuses the vendored `pyosolver.py` UPI client to query a live Pio process (`show_hand_order` / `show_strategy` / `calc_ev` / `calc_results`), and refuses QRE artifacts - only Nash-mode solves are comparable to Pio.
 Usage and workflow: see "Validation ladder" in `engine/README.md`.
