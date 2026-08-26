@@ -80,7 +80,119 @@ NlhePostflopGame::NlhePostflopGame(const SolveConfig& config) {
   params.turn = config.turn_sizing;
   params.river = config.river_sizing;
   tree_ = build_postflop_tree(params);
+  iso_rep_.resize(tree_.size());
+  for (NodeId id = 0; id < tree_.size(); ++id) iso_rep_[id] = id;
+  iso_perm_.assign(tree_.size(), 0);
+  if (config.isomorphism) build_isomorphism();
   build_evaluators(config.threads);
+}
+
+// Group each live chance node's children into suit-equivalence classes and
+// map every member subtree node onto its representative's corresponding
+// node. A permutation is usable at a chance node iff it maps that node's
+// board to itself AND both ranges are invariant under it - the subtree under
+// pi(c) is then the subtree under c with hands relabeled by pi, so only the
+// representative is ever solved and members read its data through iso_rep().
+//
+// Processing nodes in id order matters twice over: a parent chance node has
+// a smaller id than any chance node inside its subtrees, so by the time an
+// inner chance node is visited we already know whether it lives inside a
+// member subtree (and must be skipped - its rep's inner node does the
+// grouping for both); and choosing the lowest card as representative makes
+// every rep child precede its members in child order, which the solver's
+// fold loop relies on.
+void NlhePostflopGame::build_isomorphism() {
+  const std::vector<SuitPerm> perms = all_suit_perms();
+  std::vector<const SuitPerm*> invariant;
+  for (const SuitPerm& p : perms) {
+    if (ranges_invariant(p, universe_, ranges_)) invariant.push_back(&p);
+  }
+  if (invariant.empty()) return;  // e.g. an explicit-combo range - correct fallback
+
+  for (NodeId id = 0; id < tree_.size(); ++id) {
+    if (tree_[id].kind != NodeKind::Chance) continue;
+    if (iso_rep_[id] != id) continue;  // inside a member subtree; rep handles it
+    const Node& node = tree_[id];
+
+    std::vector<const SuitPerm*> usable;
+    for (const SuitPerm* p : invariant) {
+      if (perm_fixes_mask(*p, node.board_mask)) usable.push_back(p);
+    }
+    if (usable.empty()) continue;
+
+    // Children are in ascending card order; the first unclaimed card of each
+    // class is its representative.
+    for (std::uint16_t c = 0; c < node.num_children; ++c) {
+      const NodeId child = node.first_child + c;
+      if (iso_rep_[child] != child) continue;  // already claimed as a member
+      const int card = tree_[child].dealt_card;
+      for (const SuitPerm* p : usable) {
+        const int image = perm_card(*p, static_cast<Card>(card));
+        if (image == card) continue;
+        // Locate the sibling dealing `image` (contiguous, card-ascending).
+        NodeId member = kNoNode;
+        for (std::uint16_t m = c + 1; m < node.num_children; ++m) {
+          if (tree_[node.first_child + m].dealt_card == image) {
+            member = node.first_child + m;
+            break;
+          }
+        }
+        if (member == kNoNode || iso_rep_[member] != member) continue;
+        // Register (or reuse) the hand gather for this permutation.
+        std::uint16_t perm_id = 0xFFFF;
+        const std::vector<std::uint16_t> map = perm_hand_map(*p, universe_);
+        for (std::size_t i = 0; i < perm_maps_.size(); ++i) {
+          if (perm_maps_[i] == map) {
+            perm_id = static_cast<std::uint16_t>(i);
+            break;
+          }
+        }
+        if (perm_id == 0xFFFF) {
+          perm_id = static_cast<std::uint16_t>(perm_maps_.size());
+          perm_maps_.push_back(map);
+        }
+        map_member_subtree(child, member, perm_id, *p);
+        ++iso_collapsed_;
+      }
+    }
+  }
+}
+
+// Walk the representative and member subtrees in lockstep, recording the
+// correspondence. The betting structure is card-independent, so the shapes
+// match exactly; the one wrinkle is INNER chance nodes, whose children are
+// card-indexed and therefore correspond through pi, not through position.
+void NlhePostflopGame::map_member_subtree(NodeId rep, NodeId member, std::uint16_t perm_id,
+                                          const SuitPerm& perm) {
+  const Node& rn = tree_[rep];
+  const Node& mn = tree_[member];
+  if (rn.kind != mn.kind || rn.num_children != mn.num_children || rn.actor != mn.actor) {
+    throw std::runtime_error("suit-isomorphic subtrees differ in shape - tree builder bug");
+  }
+  iso_rep_[member] = rep;
+  iso_perm_[member] = perm_id;
+
+  if (rn.kind == NodeKind::Chance) {
+    for (std::uint16_t c = 0; c < rn.num_children; ++c) {
+      const NodeId rep_child = rn.first_child + c;
+      const int image = perm_card(perm, static_cast<Card>(tree_[rep_child].dealt_card));
+      NodeId member_child = kNoNode;
+      for (std::uint16_t m = 0; m < mn.num_children; ++m) {
+        if (tree_[mn.first_child + m].dealt_card == image) {
+          member_child = mn.first_child + m;
+          break;
+        }
+      }
+      if (member_child == kNoNode) {
+        throw std::runtime_error("suit-isomorphic chance children do not correspond");
+      }
+      map_member_subtree(rep_child, member_child, perm_id, perm);
+    }
+    return;
+  }
+  for (std::uint16_t c = 0; c < rn.num_children; ++c) {
+    map_member_subtree(rn.first_child + c, mn.first_child + c, perm_id, perm);
+  }
 }
 
 void NlhePostflopGame::build_evaluators(int threads) {

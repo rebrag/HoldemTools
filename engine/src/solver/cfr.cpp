@@ -91,8 +91,16 @@ InfosetLayout InfosetLayout::build(const Game& game) {
   layout.node_hands.resize(tree.num_decision_nodes);
   layout.node_actions.resize(tree.num_decision_nodes);
   std::size_t offset = 0;
-  for (const Node& n : tree.nodes) {
+  for (NodeId id = 0; id < tree.size(); ++id) {
+    const Node& n = tree[id];
     if (n.kind != NodeKind::Decision) continue;
+    if (game.iso_rep(id).rep != id) {
+      // Member of a suit-isomorphic subtree: reads redirect to the rep.
+      layout.node_offset[n.decision_index] = kNoOffset;
+      layout.node_hands[n.decision_index] = 0;
+      layout.node_actions[n.decision_index] = n.num_children;
+      continue;
+    }
     const std::uint32_t hands = static_cast<std::uint32_t>(game.num_hands(n.actor));
     layout.node_offset[n.decision_index] = offset;
     layout.node_hands[n.decision_index] = hands;
@@ -143,6 +151,30 @@ CfrSolver::CfrSolver(const Game& game, UpdateConfig update, int threads, RecalcC
   }
   recalc_.resize(slots);
   recalc_aggress_ = static_cast<double>(recalc_config_.margin);
+
+  // Suit-isomorphism fold lists: which member children fold from each rep
+  // child, and through which hand gather.
+  iso_base_.assign(tree.size(), kNoIndex);
+  for (NodeId id = 0; id < tree.size(); ++id) {
+    if (tree[id].kind != NodeKind::Chance) continue;
+    if (game.iso_rep(id).rep != id) continue;  // inside a member subtree
+    const Node& n = tree[id];
+    bool any = false;
+    std::vector<std::vector<const std::vector<std::uint16_t>*>> per_child(n.num_children);
+    for (std::uint16_t c = 0; c < n.num_children; ++c) {
+      const NodeId child = n.first_child + c;
+      const Game::IsoRef ref = game.iso_rep(child);
+      if (ref.rep == child) continue;
+      // rep children precede members in child order (rep = lowest card).
+      const std::uint16_t rep_index = static_cast<std::uint16_t>(ref.rep - n.first_child);
+      per_child[rep_index].push_back(ref.map);
+      any = true;
+    }
+    if (any) {
+      iso_base_[id] = static_cast<std::uint32_t>(iso_members_.size());
+      for (auto& list : per_child) iso_members_.push_back(std::move(list));
+    }
+  }
 }
 
 std::size_t CfrSolver::state_bytes(const Game& game) {
@@ -204,6 +236,8 @@ void CfrSolver::run(std::uint64_t iterations) {
 void CfrSolver::pay_discount(std::uint32_t decision_index, std::uint32_t upto) {
   const std::uint32_t stamp = discount_stamp_[decision_index];
   discount_stamp_[decision_index] = upto;
+  // Iso member nodes own no storage; their rep pays for both.
+  if (layout_.node_hands[decision_index] == 0) return;
   // Compound the missed iterations' factors. Valid because a node's regret
   // signs cannot change while it is not being visited (the factors are all
   // positive), and with recalc off there is only ever one factor, so this is
@@ -412,6 +446,24 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
       for (std::uint32_t h = 0; h < my_hands; ++h) out[h] += w * child_vals[h];
     };
 
+    // Suit isomorphism: a member child is never traversed; its contribution
+    // is its representative's values read through the member's hand gather.
+    // The rep's values are zeroed at the hands blocked by the REP's card,
+    // and the gather maps those positions exactly onto the hands blocked by
+    // the MEMBER's card, so no further zeroing is needed.
+    const std::uint32_t iso_base = iso_base_[id];
+    const auto is_member = [&](int c) {
+      return iso_base != kNoIndex && game_.iso_rep(node.first_child + static_cast<NodeId>(c)).rep !=
+                                         node.first_child + static_cast<NodeId>(c);
+    };
+    const auto fold_members = [&](int c, const std::vector<float>& vals) {
+      if (iso_base == kNoIndex) return;
+      for (const std::vector<std::uint16_t>* map : iso_members_[iso_base + static_cast<std::uint32_t>(c)]) {
+        const std::uint16_t* g = map->data();
+        for (std::uint32_t h = 0; h < my_hands; ++h) out[h] += w * vals[g[h]];
+      }
+    };
+
     // Recalc decisions per child, made serially BEFORE any forking so the
     // schedule is a deterministic function of bit-deterministic state. The
     // caches store post-zeroing vectors, so a skipped child folds in with a
@@ -423,6 +475,7 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
     std::array<bool, 52> skip{};
     if (base != kNoIndex) {
       for (int c = 0; c < children; ++c) {
+        if (is_member(c)) continue;  // members are never traversed at all
         skip[static_cast<std::size_t>(c)] =
             recalc_should_skip(recalc_[base + static_cast<std::uint32_t>(c)], seat, opp_reach);
       }
@@ -444,7 +497,7 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
       std::vector<int> full;
       full.reserve(static_cast<std::size_t>(children));
       for (int c = 0; c < children; ++c) {
-        if (!skip[static_cast<std::size_t>(c)]) full.push_back(c);
+        if (!is_member(c) && !skip[static_cast<std::size_t>(c)]) full.push_back(c);
       }
       pool_->parallel_for(static_cast<int>(full.size()), [&](int i) {
         const int c = full[static_cast<std::size_t>(i)];
@@ -460,11 +513,15 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
         finish_child(c, forked_out[static_cast<std::size_t>(c)]);
       });
       for (int c = 0; c < children; ++c) {
+        if (is_member(c)) continue;
         if (skip[static_cast<std::size_t>(c)]) {
           recalc_skips_.fetch_add(1, std::memory_order_relaxed);
-          accumulate(recalc_[base + static_cast<std::uint32_t>(c)].value[seat]);
+          const std::vector<float>& vals = recalc_[base + static_cast<std::uint32_t>(c)].value[seat];
+          accumulate(vals);
+          fold_members(c, vals);
         } else {
           accumulate(forked_out[static_cast<std::size_t>(c)]);
+          fold_members(c, forked_out[static_cast<std::size_t>(c)]);
         }
       }
       return;
@@ -472,9 +529,12 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
 
     std::vector<float>& child_vals = scratch(arena, depth, kSlotChild);
     for (int c = 0; c < children; ++c) {
+      if (is_member(c)) continue;
       if (skip[static_cast<std::size_t>(c)]) {
         recalc_skips_.fetch_add(1, std::memory_order_relaxed);
-        accumulate(recalc_[base + static_cast<std::uint32_t>(c)].value[seat]);
+        const std::vector<float>& vals = recalc_[base + static_cast<std::uint32_t>(c)].value[seat];
+        accumulate(vals);
+        fold_members(c, vals);
         continue;
       }
       const NodeId child = node.first_child + static_cast<NodeId>(c);
@@ -486,6 +546,7 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
       for (int s = 0; s < seats; ++s) reach[s] = scratch(arena, depth, kSlotSavedBase + s);
       finish_child(c, child_vals);
       accumulate(child_vals);
+      fold_members(c, child_vals);
     }
     return;
   }
@@ -601,30 +662,44 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
   reach[actor] = saved;
 }
 
-void CfrSolver::average_strategy(NodeId id, std::vector<float>& out) const {
+void CfrSolver::strategy_rows(NodeId id, bool current, std::vector<float>& out) const {
+  const Game::IsoRef ref = game_.iso_rep(id);
+  if (ref.rep != id) {
+    // Suit-isomorphic member: the rep's rows, hands relabeled through the
+    // gather. Cold path (export / best response), so the extra pass is fine.
+    std::vector<float> rep_rows;
+    strategy_rows(ref.rep, current, rep_rows);
+    const Node& node = game_.tree()[id];
+    const std::uint16_t actions = node.num_children;
+    const std::uint32_t hands = static_cast<std::uint32_t>(game_.num_hands(node.actor));
+    out.resize(static_cast<std::size_t>(hands) * actions);
+    const std::uint16_t* g = ref.map->data();
+    for (std::uint32_t h = 0; h < hands; ++h) {
+      const float* src = rep_rows.data() + static_cast<std::size_t>(g[h]) * actions;
+      float* dst = out.data() + static_cast<std::size_t>(h) * actions;
+      for (std::uint16_t k = 0; k < actions; ++k) dst[k] = src[k];
+    }
+    return;
+  }
   const Node& node = game_.tree()[id];
   assert(node.kind == NodeKind::Decision);
   const std::uint32_t hands = layout_.node_hands[node.decision_index];
   const std::uint16_t actions = layout_.node_actions[node.decision_index];
   const std::size_t off = layout_.node_offset[node.decision_index];
   out.resize(static_cast<std::size_t>(hands) * actions);
+  const float* values = (current ? regrets_ : strat_sum_).data() + off;
   for (std::uint32_t h = 0; h < hands; ++h) {
-    row_from_action_major(strat_sum_.data() + off, hands, actions, h, /*positive_part=*/false,
+    row_from_action_major(values, hands, actions, h, /*positive_part=*/current,
                           out.data() + static_cast<std::size_t>(h) * actions);
   }
 }
 
+void CfrSolver::average_strategy(NodeId id, std::vector<float>& out) const {
+  strategy_rows(id, /*current=*/false, out);
+}
+
 void CfrSolver::current_strategy(NodeId id, std::vector<float>& out) const {
-  const Node& node = game_.tree()[id];
-  assert(node.kind == NodeKind::Decision);
-  const std::uint32_t hands = layout_.node_hands[node.decision_index];
-  const std::uint16_t actions = layout_.node_actions[node.decision_index];
-  const std::size_t off = layout_.node_offset[node.decision_index];
-  out.resize(static_cast<std::size_t>(hands) * actions);
-  for (std::uint32_t h = 0; h < hands; ++h) {
-    row_from_action_major(regrets_.data() + off, hands, actions, h, /*positive_part=*/true,
-                          out.data() + static_cast<std::size_t>(h) * actions);
-  }
+  strategy_rows(id, /*current=*/true, out);
 }
 
 }  // namespace engine

@@ -37,6 +37,12 @@ struct InfosetLayout {
   std::vector<std::uint16_t> node_actions;
   std::size_t total = 0;
 
+  // Decision nodes inside suit-isomorphic MEMBER subtrees own no storage:
+  // their data is the representative's, read through Game::iso_rep(). They
+  // carry node_hands == 0 and this sentinel offset; nothing may form a
+  // pointer from it.
+  static constexpr std::size_t kNoOffset = static_cast<std::size_t>(-1);
+
   static InfosetLayout build(const Game& game);
 };
 
@@ -71,7 +77,10 @@ class CfrSolver {
   // Average strategy at a decision node: row-major [hand][action] - the
   // transpose of the internal storage, kept because that is what the
   // artifact writer and the best-response pass consume. Rows sum to 1
-  // (uniform when the strategy sum is all zero).
+  // (uniform when the strategy sum is all zero). A suit-isomorphic member
+  // node transparently returns its representative's rows with the hands
+  // relabeled - callers cannot tell the difference, which is the whole
+  // compatibility story for isomorphism.
   void average_strategy(NodeId node, std::vector<float>& out) const;
 
   // Current (regret-matched) strategy, same shape.
@@ -203,6 +212,15 @@ class CfrSolver {
   // then cache the (already blocked-hand-zeroed) values and the reach.
   void recalc_store(RecalcSlot& slot, int seat, const std::vector<float>& child_vals,
                     const std::vector<float>& opp_reach);
+
+  // Suit-isomorphism fold lists: for each chance node (by NodeId, kNoIndex
+  // when it has none), for each of its children, the hand-gather maps of the
+  // member children collapsed into it. A rep child's values are folded once
+  // for itself and once per member through the gather.
+  std::vector<std::uint32_t> iso_base_;
+  std::vector<std::vector<const std::vector<std::uint16_t>*>> iso_members_;
+
+  void strategy_rows(NodeId node, bool current, std::vector<float>& out) const;
 
   RecalcConfig recalc_config_;
   bool recalc_on_ = false;                    // enabled AND a 2-seat game

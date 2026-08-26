@@ -83,6 +83,7 @@ add_library(engine_core STATIC
   src/io/artifact_writer.cpp
   src/io/artifact_reader.cpp
   src/io/dump_json.cpp
+  src/ranges/iso.cpp
   src/util/parallel.cpp
 )
 target_include_directories(engine_core PUBLIC src)
@@ -104,6 +105,7 @@ add_executable(engine_tests
   tests/test_artifact_roundtrip.cpp
   tests/test_parallel.cpp
   tests/test_recalc.cpp
+  tests/test_iso.cpp
 )
 target_link_libraries(engine_tests PRIVATE engine_core doctest::doctest)
 add_test(NAME engine_tests COMMAND engine_tests)

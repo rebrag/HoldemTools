@@ -236,6 +236,7 @@ SolveConfig load_config(const std::string& path_text) {
     if (config.checkpoint_every == 0) config.checkpoint_every = 1000;
   }
 
+  config.isomorphism = j.value("isomorphism", config.isomorphism);
   config.memory_limit_gb = j.value("memory_limit_gb", config.memory_limit_gb);
   if (config.memory_limit_gb <= 0) fail("memory_limit_gb must be positive");
 

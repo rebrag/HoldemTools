@@ -53,10 +53,19 @@ MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc) {
 
   if (recalc && game.num_seats() == 2) {
     // One slot per chance-node child, per seat: cached value vector + reach
-    // snapshot, both hand-universe wide.
+    // snapshot, both hand-universe wide. Suit-isomorphic member subtrees are
+    // never traversed, so neither their chance nodes nor member children
+    // ever populate a cache.
     std::size_t chance_children = 0;
-    for (const Node& n : game.tree().nodes) {
-      if (n.kind == NodeKind::Chance) chance_children += n.num_children;
+    const PublicTree& tree = game.tree();
+    for (NodeId id = 0; id < tree.size(); ++id) {
+      const Node& n = tree[id];
+      if (n.kind != NodeKind::Chance) continue;
+      if (game.iso_rep(id).rep != id) continue;
+      for (std::uint16_t c = 0; c < n.num_children; ++c) {
+        const NodeId child = n.first_child + c;
+        if (game.iso_rep(child).rep == child) ++chance_children;
+      }
     }
     std::size_t hands = 0;
     for (int s = 0; s < game.num_seats(); ++s) {

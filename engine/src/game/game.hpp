@@ -70,6 +70,20 @@ class Game {
   // machinery, mostly. Reported by the memory estimator, which must not
   // drift from what actually gets allocated.
   virtual std::size_t auxiliary_bytes() const { return 0; }
+
+  // Suit-isomorphism redirection. When a node lies inside a runout subtree
+  // that is suit-equivalent to an earlier one, `rep` names the corresponding
+  // node in the representative subtree and `map` is the compact-hand gather
+  // (this node's hand h corresponds to the representative's hand map[h]).
+  // The solver then stores regrets/strategy only for representative
+  // subtrees, and every consumer of average_strategy() sees member nodes'
+  // data through the redirect without knowing it. Identity for games
+  // without isomorphism.
+  struct IsoRef {
+    NodeId rep;
+    const std::vector<std::uint16_t>* map;  // null = identity
+  };
+  virtual IsoRef iso_rep(NodeId node) const { return {node, nullptr}; }
 };
 
 }  // namespace engine
