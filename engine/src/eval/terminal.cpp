@@ -1,6 +1,7 @@
 #include "eval/terminal.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <stdexcept>
 
 #include "eval/hand_eval.hpp"

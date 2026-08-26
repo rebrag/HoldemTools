@@ -15,7 +15,11 @@ param(
     [string]$Config = "RelWithDebInfo",
     [switch]$Test,
     [switch]$Clean,
-    [string]$Simd = ""             # override ENGINE_SIMD (AVX2 default in CMake)
+    [string]$Simd = "",            # override ENGINE_SIMD (AVX2 default in CMake)
+    # Alternate output directory. Windows locks a running .exe, so a long
+    # solve in build/ blocks relinking there; build elsewhere to verify a
+    # change without killing the run.
+    [string]$BuildDir = "build"
 )
 
 # "Continue", not "Stop": native tools (cmake, ninja) write warnings to
@@ -24,7 +28,8 @@ param(
 # Failures are handled explicitly through exit-code checks + throw instead.
 $ErrorActionPreference = "Continue"
 $engineDir = $PSScriptRoot
-$buildDir = Join-Path $engineDir "build"
+$buildDir = if ([System.IO.Path]::IsPathRooted($BuildDir)) { $BuildDir }
+            else { Join-Path $engineDir $BuildDir }
 
 # --- Locate Visual Studio with the C++ toolset ---------------------------
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"

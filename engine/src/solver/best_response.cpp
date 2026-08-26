@@ -1,3 +1,5 @@
+#include <cstdint>
+
 #include "solver/best_response.hpp"
 
 namespace engine {

@@ -1,5 +1,6 @@
 #include "io/artifact_reader.hpp"
 
+#include <cstdint>
 #include <cstring>
 #include <stdexcept>
 

@@ -1,5 +1,6 @@
 #include "io/artifact_store.hpp"
 
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <stdexcept>
