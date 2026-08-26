@@ -15,6 +15,10 @@ import {
 import { HAND_ORDER } from "@/lib/solver/handOrder";
 import { authedFetch } from "@/lib/api";
 import type { MoneyOpts } from "@/pages/solver/boardDisplay";
+import ResponsiveDrawer from "@/components/ResponsiveDrawer";
+import TreeBuilderPanel, { inputCls } from "./TreeBuilderPanel";
+import { buildEngineConfig, cloneBuilder, DEFAULT_BUILDER, type BuilderState } from "./builderState";
+import { parseBoardCards } from "./treeConfigText";
 
 /**
  * Hidden verification page (/compare, no nav entry): htsolver and PioSolver
@@ -76,6 +80,30 @@ interface CompareDoc {
     };
     mean_l1: number;
     mean_ev_diff: number;
+    /** False when Pio's line frequencies gave the per-hand diagnostics
+     *  nothing to normalize against, which happens on boards where its
+     *  global frequencies underflow to zero. The two means above are then
+     *  placeholders, not measurements. Absent in older comparison JSON,
+     *  where they were always real. */
+    diagnostics_weighted?: boolean;
+    /** Wall clock for both solvers on the same tree at the same accuracy
+     *  target (added by engine_compare.py; absent in older comparison JSON). */
+    timing?: {
+      ht_solve_s: number | null;
+      ht_setup_s?: number | null;
+      ht_threads?: number | null;
+      ht_iterations?: number | null;
+      pio_solve_s: number | null;
+      pio_setup_s?: number | null;
+      accuracy_chips?: number | null;
+    };
+    /** Peak working set of each solver PROCESS over building and solving the
+     *  tree - the same OS counter on both sides. Absent in older JSON. */
+    memory?: {
+      ht_peak_bytes: number | null;
+      pio_peak_bytes: number | null;
+      pio_baseline_bytes?: number | null;
+    };
     sampled?: boolean;
     runouts?: number | null;
     decision_nodes?: number;
@@ -86,11 +114,6 @@ interface CompareDoc {
 }
 
 /* ---------- helpers ---------- */
-
-const parseBoard = (board: string): string[] =>
-  (board.match(/[2-9TJQKA][hdcs]/gi) ?? []).map(
-    (c) => c[0].toUpperCase() + c[1].toLowerCase()
-  );
 
 /** Raw harness labels -> readable labels, amounts in chips ("Bet 50",
  *  "Raise to 400") - the harness's unit, matching the bNNN node ids. */
@@ -244,149 +267,6 @@ const buildEvDisplay = (
   return { mode: "ev", stripesByHand, solidByHand: null, evRange };
 };
 
-/* ---------- tree builder ---------- */
-
-interface StreetInputs {
-  ipBets: string;
-  ipRaises: string;
-  oopBets: string;
-  oopDonks: string;
-  oopRaises: string;
-}
-
-interface BuilderState {
-  board: string;
-  pot: string;
-  stacks: string;
-  oopRange: string;
-  ipRange: string;
-  flop: StreetInputs;
-  turn: StreetInputs;
-  river: StreetInputs;
-  preflopAggressor: "none" | "ip" | "oop";
-  addAllin: boolean;
-  allinThresholdPct: string; // of effective stack
-  maxRaises: string;
-  accuracyMode: "pct" | "chips";
-  accuracy: string;
-  maxIterations: string;
-}
-
-const DEFAULT_STREET: StreetInputs = {
-  ipBets: "50",
-  ipRaises: "100",
-  oopBets: "50",
-  oopDonks: "",
-  oopRaises: "100",
-};
-
-const DEFAULT_BUILDER: BuilderState = {
-  board: "9c 5d Jc 7s 9h",
-  pot: "100",
-  stacks: "400",
-  oopRange: "100%",
-  ipRange: "100%",
-  flop: { ...DEFAULT_STREET },
-  turn: { ...DEFAULT_STREET },
-  river: { ...DEFAULT_STREET, ipBets: "50 100", oopBets: "50 100" },
-  preflopAggressor: "none",
-  addAllin: true,
-  allinThresholdPct: "90",
-  maxRaises: "3",
-  accuracyMode: "pct",
-  accuracy: "0.02",
-  maxIterations: "20000",
-};
-
-const FULL_RANGE = (() => {
-  const ranks = "AKQJT98765432";
-  const tokens: string[] = [];
-  for (let i = 0; i < 13; i++) {
-    tokens.push(ranks[i] + ranks[i]);
-    for (let j = i + 1; j < 13; j++) {
-      tokens.push(ranks[i] + ranks[j] + "s", ranks[i] + ranks[j] + "o");
-    }
-  }
-  return tokens.join(",");
-})();
-
-const expandRange = (text: string): string =>
-  text.trim() === "100%" || text.trim() === "" ? FULL_RANGE : text.trim();
-
-/** Build the engine config + accuracy from the form; throws with a readable
- *  message on invalid input. */
-const buildConfig = (b: BuilderState): { config: object; pioAccuracyPct: number } => {
-  const board = parseBoard(b.board);
-  if (board.length < 3 || board.length > 5) {
-    throw new Error("Board needs 3 (flop solve), 4 (turn), or 5 (river) cards.");
-  }
-  if (new Set(board).size !== board.length) throw new Error("Board has duplicate cards.");
-  const pot = Number(b.pot);
-  const stacks = Number(b.stacks);
-  if (!(pot > 0)) throw new Error("Starting pot must be positive.");
-  if (!(stacks >= 0)) throw new Error("Effective stacks cannot be negative.");
-  const nums = (text: string): number[] =>
-    text.split(/[\s,]+/).filter(Boolean).map((x) => {
-      const v = Number(x);
-      if (!(v > 0)) throw new Error(`Bad size "${x}" - sizes are % of pot.`);
-      return v;
-    });
-
-  const allinThreshold = Math.min(1.5, Math.max(0.1, Number(b.allinThresholdPct) / 100 || 0.9));
-  const maxRaises = Math.max(0, Math.min(20, Number(b.maxRaises) || 3));
-  const streetSizing = (s: StreetInputs) => {
-    // "Add allin": an oversized entry clamps to the effective stack. Donks
-    // only get one when some donk size is configured (an empty donk list
-    // deliberately means "no leading into the aggressor").
-    const withAllin = (sizes: number[], always: boolean) =>
-      b.addAllin && (always || sizes.length > 0) ? [...sizes, 10000] : sizes;
-    return {
-      ip: { bets: withAllin(nums(s.ipBets), true), raises: withAllin(nums(s.ipRaises), true) },
-      oop: {
-        bets: withAllin(nums(s.oopBets), true),
-        donks: withAllin(nums(s.oopDonks), false),
-        raises: withAllin(nums(s.oopRaises), true),
-      },
-      allin_threshold: allinThreshold,
-      max_raises: maxRaises,
-    };
-  };
-
-  const betSizing: Record<string, unknown> = { river: streetSizing(b.river) };
-  if (board.length <= 4) betSizing.turn = streetSizing(b.turn);
-  if (board.length === 3) betSizing.flop = streetSizing(b.flop);
-
-  const accuracy = Number(b.accuracy);
-  if (!(accuracy > 0)) throw new Error("Accuracy must be positive.");
-  const accuracyPct = b.accuracyMode === "pct" ? accuracy : (accuracy / pot) * 100;
-
-  return {
-    pioAccuracyPct: accuracyPct,
-    config: {
-      schema: 1,
-      game: "nlhe",
-      board: board.join(" "),
-      pot,
-      chip_scale: 100,
-      players: [
-        { seat: "OOP", stack: stacks, range: expandRange(b.oopRange) },
-        { seat: "IP", stack: stacks, range: expandRange(b.ipRange) },
-      ],
-      bet_sizing: betSizing,
-      preflop_aggressor: b.preflopAggressor,
-      algorithm: { update: "dcfr" },
-      qre: { mode: "nash" },
-      budget: {
-        iterations: Math.max(100, Number(b.maxIterations) || 20000),
-        target_exploitable_pct: accuracyPct,
-        checkpoint_every: 250,
-      },
-      memory_limit_gb: 12,
-      threads: 0,
-    },
-  };
-};
-
 /* ---------- job pipeline (executed by the compare watcher) ---------- */
 
 interface CompareJob {
@@ -413,17 +293,6 @@ const solutionsUrl = (job: CompareJob): string =>
 type SortKey = "evDiff" | "l1" | "reach" | "hand";
 type DisplayMode = "strategy" | "ev";
 
-const inputCls =
-  "rounded-lg border border-slate-700 bg-slate-900/70 px-2 py-1 text-sm text-slate-200 " +
-  "focus:border-emerald-500 focus:outline-none";
-
-const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
-  <label className="flex flex-col gap-1 text-xs text-slate-400">
-    {label}
-    {children}
-  </label>
-);
-
 const SolverCompare = () => {
   const [doc, setDoc] = useState<CompareDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -432,8 +301,8 @@ const SolverCompare = () => {
   const [hoverHand, setHoverHand] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("evDiff");
   const [displayMode, setDisplayMode] = useState<DisplayMode>("strategy");
-  const [builder, setBuilder] = useState<BuilderState>(DEFAULT_BUILDER);
-  const [builderOpen, setBuilderOpen] = useState(true);
+  const [builder, setBuilder] = useState<BuilderState>(() => cloneBuilder(DEFAULT_BUILDER));
+  const [builderOpen, setBuilderOpen] = useState(false);
   const [solving, setSolving] = useState(false);
   const [runLog, setRunLog] = useState<string | null>(null);
   const [jobs, setJobs] = useState<CompareJob[]>([]);
@@ -508,7 +377,7 @@ const SolverCompare = () => {
       setRunLog(null);
       let payload: { config: object; pioAccuracyPct: number };
       try {
-        payload = buildConfig(builder);
+        payload = buildEngineConfig(builder);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
         return;
@@ -560,7 +429,7 @@ const SolverCompare = () => {
 
   const downloadConfig = useCallback(() => {
     try {
-      const { config } = buildConfig(builder);
+      const { config } = buildEngineConfig(builder);
       const blob = new Blob([JSON.stringify(config, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -582,7 +451,7 @@ const SolverCompare = () => {
   );
   const node = doc?.nodes[nodeIndex] ?? null;
   const view = useMemo(() => (node ? buildNodeView(node) : null), [node]);
-  const board = useMemo(() => (doc ? parseBoard(doc.spot.board) : []), [doc]);
+  const board = useMemo(() => (doc ? parseBoardCards(doc.spot.board) : []), [doc]);
 
   const displayData = useMemo(() => {
     if (!view || displayMode !== "ev") return { ht: null, pio: null };
@@ -614,6 +483,16 @@ const SolverCompare = () => {
 
   const shownRows = tableRows.slice(0, 200);
   const chips = (v: number | null | undefined): string => (v == null ? "-" : v.toFixed(2));
+  /** Wall-clock, readable at both ends of the range this page sees (a river
+   *  solve is under a second; a Pio flop solve is minutes). */
+  const megabytes = (v: number | null | undefined): string =>
+    v == null ? "n/a" : v >= 1024 ** 3 ? `${(v / 1024 ** 3).toFixed(2)} GB` : `${Math.round(v / 1024 ** 2)} MB`;
+  const secs = (v: number): string =>
+    v >= 60
+      ? `${Math.floor(v / 60)}m ${Math.round(v % 60)}s`
+      : v >= 10
+        ? `${v.toFixed(1)}s`
+        : `${v.toFixed(2)}s`;
   const pct = (f: number): string => `${Math.round(f * 1000) / 10}`;
 
   const onSelect = useCallback(
@@ -638,6 +517,14 @@ const SolverCompare = () => {
   );
 
   const cross = doc?.summary.cross_check;
+  const timing = doc?.summary.timing;
+  const memory = doc?.summary.memory;
+  /** Pio's cost divided by htsolver's: > 1 means htsolver won. Null whenever
+   *  either side is missing, which is the pre-solved-.cfr case. */
+  const ratioOf = (ht?: number | null, pio?: number | null): number | null =>
+    ht != null && ht > 0 && pio != null ? pio / ht : null;
+  const speedup = ratioOf(timing?.ht_solve_s, timing?.pio_solve_s);
+  const memRatio = ratioOf(memory?.ht_peak_bytes, memory?.pio_peak_bytes);
 
   return (
     <div className="mx-auto max-w-7xl px-3 py-6 text-slate-200">
@@ -649,15 +536,15 @@ const SolverCompare = () => {
         </span>
         <button
           type="button"
-          onClick={() => setBuilderOpen((o) => !o)}
-          className="ml-auto rounded-lg border border-slate-700 px-3 py-1 text-xs text-slate-300 hover:border-slate-500"
+          onClick={() => setBuilderOpen(true)}
+          className="ml-auto rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-emerald-500"
         >
-          {builderOpen ? "Hide tree builder" : "Tree builder"}
+          Tree builder
         </button>
         <button
           type="button"
           onClick={() => fileRef.current?.click()}
-          className="rounded-lg border border-slate-700 px-3 py-1 text-xs text-slate-300 hover:border-slate-500"
+          className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition-colors hover:border-slate-500 hover:bg-slate-800/60"
         >
           Load JSON
         </button>
@@ -674,270 +561,186 @@ const SolverCompare = () => {
         />
       </div>
 
-      {/* ---------- tree builder (PioViewer-style) ---------- */}
-      {builderOpen && (
-        <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Field label="Board (5 cards, rivers only)">
-              <input
-                className={inputCls}
-                value={builder.board}
-                onChange={(e) => setB("board", e.target.value)}
-                placeholder="9c 5d Jc 7s 9h"
-              />
-            </Field>
-            <Field label="Starting pot (chips)">
-              <input
-                className={inputCls}
-                value={builder.pot}
-                onChange={(e) => setB("pot", e.target.value)}
-              />
-            </Field>
-            <Field label="Effective stacks (chips)">
-              <input
-                className={inputCls}
-                value={builder.stacks}
-                onChange={(e) => setB("stacks", e.target.value)}
-              />
-            </Field>
-            <Field label="Max raises per street">
-              <input
-                className={inputCls}
-                value={builder.maxRaises}
-                onChange={(e) => setB("maxRaises", e.target.value)}
-              />
-            </Field>
-            <Field label="OOP range (tokens or 100%)">
-              <input
-                className={inputCls}
-                value={builder.oopRange}
-                onChange={(e) => setB("oopRange", e.target.value)}
-                placeholder="100%  |  AA,KK,AKs:0.5,..."
-              />
-            </Field>
-            <Field label="IP range (tokens or 100%)">
-              <input
-                className={inputCls}
-                value={builder.ipRange}
-                onChange={(e) => setB("ipRange", e.target.value)}
-              />
-            </Field>
-            <Field label="Preflop aggressor (gates OOP donk sizes)">
-              <select
-                className={inputCls}
-                value={builder.preflopAggressor}
-                onChange={(e) =>
-                  setB("preflopAggressor", e.target.value as BuilderState["preflopAggressor"])
-                }
-              >
-                <option value="none">none</option>
-                <option value="ip">IP</option>
-                <option value="oop">OOP</option>
-              </select>
-            </Field>
-          </div>
-
-          {/* Per-street sizing, PioViewer-style. Sections follow the board:
-              3 cards shows flop+turn+river, 4 shows turn+river, 5 river only. */}
-          <div className="mt-3 space-y-2">
-            {(
-              [
-                ["flop", "Flop", 3],
-                ["turn", "Turn", 4],
-                ["river", "River", 5],
-              ] as const
-            ).map(([key, name, minLen]) => {
-              const boardLen = parseBoard(builder.board).length;
-              if (boardLen > minLen) return null;
-              const street = builder[key];
-              const setStreet = (field: keyof StreetInputs, value: string) =>
-                setB(key, { ...street, [field]: value });
-              return (
-                <div key={key} className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
-                  <div className="text-xs font-semibold text-slate-300">{name}</div>
-                  <div className="mt-1.5 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-                    {(
-                      [
-                        ["ipBets", "IP bet sizes %"],
-                        ["ipRaises", "IP raise sizes %"],
-                        ["oopBets", "OOP bet sizes %"],
-                        ["oopDonks", "OOP donk sizes %"],
-                        ["oopRaises", "OOP raise sizes %"],
-                      ] as const
-                    ).map(([field, label]) => (
-                      <Field key={field} label={label}>
-                        <input
-                          className={inputCls}
-                          value={street[field]}
-                          onChange={(e) => setStreet(field, e.target.value)}
-                          placeholder={field === "oopDonks" ? "(empty = no donks)" : "50 100"}
-                        />
-                      </Field>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-end gap-x-6 gap-y-3">
-            <label className="flex items-center gap-2 text-xs text-slate-300">
-              <input
-                type="checkbox"
-                checked={builder.addAllin}
-                onChange={(e) => setB("addAllin", e.target.checked)}
-                className="accent-emerald-500"
-              />
-              Add allin
-            </label>
-            <Field label="All-in threshold (% of effective stack)">
-              <input
-                className={`${inputCls} w-20`}
-                value={builder.allinThresholdPct}
-                onChange={(e) => setB("allinThresholdPct", e.target.value)}
-              />
-            </Field>
-
-            {/* Accuracy settings, PioViewer-style */}
-            <div className="rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2">
-              <div className="text-xs font-medium text-slate-300">
-                Stop calculation if desired accuracy reached
-              </div>
-              <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs text-slate-400">
-                <label className="flex items-center gap-1.5">
-                  <input
-                    type="radio"
-                    name="accuracy-mode"
-                    checked={builder.accuracyMode === "pct"}
-                    onChange={() => setB("accuracyMode", "pct")}
-                    className="accent-emerald-500"
-                  />
-                  <input
-                    className={`${inputCls} w-20`}
-                    value={builder.accuracyMode === "pct" ? builder.accuracy : ""}
-                    onChange={(e) => {
-                      setB("accuracyMode", "pct");
-                      setB("accuracy", e.target.value);
-                    }}
-                  />
-                  % of the pot
-                </label>
-                <label className="flex items-center gap-1.5">
-                  <input
-                    type="radio"
-                    name="accuracy-mode"
-                    checked={builder.accuracyMode === "chips"}
-                    onChange={() => setB("accuracyMode", "chips")}
-                    className="accent-emerald-500"
-                  />
-                  <input
-                    className={`${inputCls} w-20`}
-                    value={builder.accuracyMode === "chips" ? builder.accuracy : ""}
-                    onChange={(e) => {
-                      setB("accuracyMode", "chips");
-                      setB("accuracy", e.target.value);
-                    }}
-                  />
-                  chips
-                </label>
-                <Field label="Max iterations (htsolver)">
-                  <input
-                    className={`${inputCls} w-24`}
-                    value={builder.maxIterations}
-                    onChange={(e) => setB("maxIterations", e.target.value)}
-                  />
-                </Field>
-              </div>
-              <p className="mt-1 text-[10px] text-slate-600">
-                Applied to both solvers: htsolver stops when its self-reported per-player
-                exploitability drops below this; Pio solves to the same accuracy.
-              </p>
-            </div>
-
-            <div className="ml-auto flex items-center gap-2">
-              <button
-                type="button"
-                onClick={downloadConfig}
-                className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:border-slate-500"
-                title="Save the htsolver config to run manually"
-              >
-                Download config
-              </button>
-              <button
-                type="button"
-                onClick={() => void submitJob("publish")}
-                disabled={solving}
-                title="htsolver only: publish the solve to the Solutions library (admin)"
-                className="rounded-lg border border-emerald-700 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:border-emerald-500 disabled:opacity-50"
-              >
-                Solve & Publish
-              </button>
-              <button
-                type="button"
-                onClick={() => void submitJob("compare")}
-                disabled={solving}
-                className="rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
-              >
-                {solving ? "Working..." : "Solve & Compare"}
-              </button>
-            </div>
-          </div>
-          {solving && (
-            <p className="mt-2 text-xs text-slate-500">
-              Queued for the compare watcher (the machine with both solvers).
-              {activeJob ? ` Status: ${activeJob.status}.` : ""} htsolver takes under a
-              second; Pio usually takes a minute or two. Leaving this page keeps the job
-              running - it stays in Recent runs.
-            </p>
-          )}
-          {publishedJob && (
-            <p className="mt-2 text-xs text-emerald-300">
-              Published to the solutions library:{" "}
-              <a className="underline" href={solutionsUrl(publishedJob)}>
-                open {publishedJob.board} in /solutions
-              </a>
-            </p>
-          )}
-
-          {/* Recent runs */}
-          {jobs.length > 0 && (
-            <div className="mt-4 border-t border-slate-800 pt-3">
-              <div className="text-xs font-medium text-slate-400">Recent runs</div>
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {jobs.slice(0, 12).map((job) => (
-                  <button
-                    key={job.id}
-                    type="button"
-                    disabled={job.status !== "Done"}
-                    title={
-                      job.status === "Failed"
-                        ? job.error ?? "failed"
-                        : job.mode === "publish"
-                          ? "Published solve - opens /solutions"
-                          : "Load this comparison"
-                    }
-                    onClick={() => {
-                      if (job.status !== "Done") return;
-                      if (job.mode === "publish") window.location.href = solutionsUrl(job);
-                      else void loadJobResult(job);
-                    }}
-                    className={`rounded-lg border px-2 py-1 text-[11px] ${
-                      job.status === "Done"
-                        ? "border-slate-600 text-slate-200 hover:border-emerald-500"
-                        : job.status === "Failed"
-                          ? "border-red-900 text-red-400"
-                          : "border-slate-700 text-slate-500"
-                    }`}
-                  >
-                    {job.board ?? "?"} · {job.mode === "publish" ? "publish" : "compare"} ·{" "}
-                    {job.status}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+      {/* Recent runs stay on the page: they are how a previous comparison
+          gets re-opened, which belongs next to the results rather than
+          inside the builder. */}
+      {jobs.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-medium text-slate-500">Recent runs</span>
+          {jobs.slice(0, 12).map((job) => (
+            <button
+              key={job.id}
+              type="button"
+              disabled={job.status !== "Done"}
+              title={
+                job.status === "Failed"
+                  ? job.error ?? "failed"
+                  : job.mode === "publish"
+                    ? "Published solve - opens /solutions"
+                    : "Load this comparison"
+              }
+              onClick={() => {
+                if (job.status !== "Done") return;
+                if (job.mode === "publish") window.location.href = solutionsUrl(job);
+                else void loadJobResult(job);
+              }}
+              className={`rounded-md border px-2 py-0.5 text-[11px] transition-colors ${
+                job.status === "Done"
+                  ? "border-slate-600 text-slate-200 hover:border-emerald-500 hover:bg-emerald-500/10"
+                  : job.status === "Failed"
+                    ? "border-red-900 text-red-400"
+                    : "border-slate-700 text-slate-500"
+              }`}
+            >
+              {job.board ?? "?"} · {job.mode === "publish" ? "publish" : "compare"} ·{" "}
+              {job.status}
+            </button>
+          ))}
         </div>
       )}
+
+      {/* A queued job outlives the modal, so its status has to live on the
+          page too - closing the builder must not look like it stopped. */}
+      {solving && !builderOpen && (
+        <p className="mt-3 flex items-center gap-2 rounded-lg bg-slate-800/60 px-3 py-2 text-xs text-slate-300">
+          <span
+            aria-hidden="true"
+            className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-500 border-t-emerald-400"
+          />
+          Solving{activeJob ? ` · ${activeJob.status}` : ""} - this keeps running if you
+          leave the page.
+        </p>
+      )}
+      {publishedJob && (
+        <p className="mt-3 text-xs text-emerald-300">
+          Published to the solutions library:{" "}
+          <a className="underline" href={solutionsUrl(publishedJob)}>
+            open {publishedJob.board} in /solutions
+          </a>
+        </p>
+      )}
+
+      {/* ---------- tree builder (PioViewer-style), in a modal so opening it
+           does not push the comparison down the page ---------- */}
+      <ResponsiveDrawer
+        open={builderOpen}
+        onClose={() => setBuilderOpen(false)}
+        scrollMode="custom"
+        desktopMaxWidthClassName="sm:max-w-5xl"
+        zClassName="z-[70]"
+        ariaLabel="Tree building parameters"
+      >
+        <div className="flex max-h-[90vh] flex-col">
+          <div className="border-b border-slate-800 px-4 py-3">
+            <h2 className="text-sm font-semibold tracking-tight text-white">
+              Tree building parameters
+            </h2>
+            <p className="text-[11px] text-slate-500">
+              Both solvers get this exact tree, node for node.
+            </p>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-4 py-3">
+            <TreeBuilderPanel value={builder} onChange={setBuilder} disabled={solving} />
+
+            {/* Solve settings - ours, not PioViewer's tree builder. */}
+            <div className="mt-3 flex flex-wrap items-start gap-x-8 gap-y-3 border-t border-slate-800 pt-3">
+              <fieldset>
+                <legend className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                  Stop when this accuracy is reached
+                </legend>
+                <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-slate-300">
+                  {(["pct", "chips"] as const).map((mode) => (
+                    <label
+                      key={mode}
+                      className="flex cursor-pointer items-center gap-1.5 transition-colors hover:text-slate-100"
+                    >
+                      <input
+                        type="radio"
+                        name="accuracy-mode"
+                        checked={builder.accuracyMode === mode}
+                        onChange={() => setB("accuracyMode", mode)}
+                        className="accent-emerald-500"
+                      />
+                      <input
+                        className={`${inputCls} w-16 tabular-nums`}
+                        value={builder.accuracyMode === mode ? builder.accuracy : ""}
+                        onChange={(e) => {
+                          setB("accuracyMode", mode);
+                          setB("accuracy", e.target.value);
+                        }}
+                        aria-label={mode === "pct" ? "Accuracy, % of pot" : "Accuracy, chips"}
+                      />
+                      {mode === "pct" ? "% of the pot" : "chips"}
+                    </label>
+                  ))}
+                </div>
+                <p className="mt-1 max-w-md text-[10px] leading-relaxed text-slate-500">
+                  The real target, applied to both solvers - htsolver stops once its
+                  self-reported per-player exploitability drops below it, and Pio solves
+                  the same tree to the same number. It is what makes the two solve times
+                  and memory peaks comparable.
+                </p>
+              </fieldset>
+
+              <label className="flex flex-col gap-1">
+                <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                  Max iterations (safety cap)
+                </span>
+                <input
+                  className={`${inputCls} w-24 tabular-nums`}
+                  value={builder.maxIterations}
+                  onChange={(e) => setB("maxIterations", e.target.value)}
+                />
+                <span className="max-w-[15rem] text-[10px] leading-relaxed text-slate-500">
+                  Not a target - a stop-loss. If a tree never reaches the accuracy above,
+                  this ends the run instead of letting it grind forever.
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-slate-800 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            <button
+              type="button"
+              onClick={downloadConfig}
+              className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition-colors hover:border-slate-500 hover:bg-slate-800/60"
+              title="Save the htsolver config to run manually"
+            >
+              Download config
+            </button>
+            <button
+              type="button"
+              onClick={() => void submitJob("publish")}
+              disabled={solving}
+              title="htsolver only: publish the solve to the Solutions library (admin)"
+              className="rounded-lg border border-emerald-700 px-3 py-1.5 text-xs font-semibold text-emerald-300 transition-colors hover:border-emerald-500 hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Solve & Publish
+            </button>
+            <button
+              type="button"
+              onClick={() => void submitJob("compare")}
+              disabled={solving}
+              className="ml-auto inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {solving && (
+                <span
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white"
+                />
+              )}
+              {solving ? "Working..." : "Solve & Compare"}
+            </button>
+          </div>
+          {solving && (
+            <p className="px-4 pb-3 text-[11px] text-slate-500">
+              Queued for the compare watcher (the machine with both solvers). Closing this
+              does not stop it - the result lands in Recent runs.
+            </p>
+          )}
+        </div>
+      </ResponsiveDrawer>
 
       {error && (
         <p className="mt-3 whitespace-pre-wrap rounded-lg bg-red-500/10 p-3 text-sm text-red-400">
@@ -998,7 +801,112 @@ const SolverCompare = () => {
             </span>
           </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+          {/* What the tree COST each solver: the headline when the point is
+              comparing the two on one tree at one accuracy target. */}
+          {(timing?.ht_solve_s != null || memory?.ht_peak_bytes != null) && (
+            <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900/50 p-3">
+              <div className="grid gap-x-6 gap-y-2 sm:grid-cols-[auto_1fr_1fr_auto]">
+                {(
+                  [
+                    {
+                      key: "time",
+                      label: "Solve time",
+                      ht: timing?.ht_solve_s == null ? null : secs(timing.ht_solve_s),
+                      pio: timing?.pio_solve_s == null ? null : secs(timing.pio_solve_s),
+                      htNote: [
+                        `${timing?.ht_iterations ?? doc.summary.ht.iterations} iters`,
+                        timing?.ht_threads ? `${timing.ht_threads} threads` : null,
+                        // Sub-10ms setup would just read "setup 0.00s".
+                        timing?.ht_setup_s != null && timing.ht_setup_s >= 0.01
+                          ? `setup ${secs(timing.ht_setup_s)}`
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · "),
+                      pioNote:
+                        timing?.pio_solve_s == null
+                          ? "loaded from a pre-solved .cfr"
+                          : timing.pio_setup_s != null
+                            ? `tree build ${secs(timing.pio_setup_s)}`
+                            : "",
+                      ratio: speedup,
+                      win: "faster",
+                      lose: "slower",
+                    },
+                    {
+                      key: "memory",
+                      label: "Peak memory",
+                      ht: memory?.ht_peak_bytes == null ? null : megabytes(memory.ht_peak_bytes),
+                      pio: memory?.pio_peak_bytes == null ? null : megabytes(memory.pio_peak_bytes),
+                      htNote: "whole process, peak working set",
+                      pioNote:
+                        memory?.pio_baseline_bytes != null
+                          ? `${megabytes(memory.pio_baseline_bytes)} of that is idle baseline`
+                          : "whole process, peak working set",
+                      ratio: memRatio,
+                      win: "leaner",
+                      lose: "heavier",
+                    },
+                  ] as const
+                ).map((row) => (
+                  <div key={row.key} className="contents">
+                    <div className="self-center text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                      {row.label}
+                    </div>
+                    <div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-xl font-semibold tabular-nums leading-none tracking-tight text-emerald-400">
+                          {row.ht ?? "n/a"}
+                        </span>
+                        <span className="text-xs text-slate-400">htsolver</span>
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-slate-500">{row.htNote}</div>
+                    </div>
+                    <div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-xl font-semibold tabular-nums leading-none tracking-tight text-sky-400">
+                          {row.pio ?? "n/a"}
+                        </span>
+                        <span className="text-xs text-slate-400">PioSolver</span>
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-slate-500">{row.pioNote}</div>
+                    </div>
+                    <div className="self-center">
+                      {row.ratio != null && (
+                        <span
+                          className={`inline-block rounded-lg px-2.5 py-1 text-center ${
+                            row.ratio >= 1
+                              ? "bg-emerald-500/10 text-emerald-300"
+                              : "bg-amber-500/10 text-amber-300"
+                          }`}
+                        >
+                          <span className="block text-base font-semibold tabular-nums leading-none tracking-tight">
+                            {(row.ratio >= 1 ? row.ratio : 1 / row.ratio) >= 10
+                              ? (row.ratio >= 1 ? row.ratio : 1 / row.ratio).toFixed(0)
+                              : (row.ratio >= 1 ? row.ratio : 1 / row.ratio).toFixed(1)}
+                            x
+                          </span>
+                          <span className="mt-0.5 block text-[10px] opacity-80">
+                            htsolver {row.ratio >= 1 ? row.win : row.lose}
+                          </span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-2 border-t border-slate-800 pt-2 text-[11px] leading-relaxed text-slate-500">
+                Same tree, same accuracy target
+                {timing?.accuracy_chips != null
+                  ? ` (${timing.accuracy_chips} chips exploitable per player)`
+                  : ""}
+                . Time excludes tree building on both sides; memory is the peak working
+                set of each solver process, which does include it.
+              </p>
+            </div>
+          )}
+
+          <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
             <div className="rounded-lg bg-slate-800/60 p-2.5">
               <div className="text-slate-500">Root EV chips (OOP / IP)</div>
               <div className="mt-0.5">
@@ -1033,8 +941,19 @@ const SolverCompare = () => {
             <div className="rounded-lg bg-slate-800/60 p-2.5">
               <div className="text-slate-500">Per-hand diagnostics</div>
               <div className="mt-0.5">
-                mean L1 {doc.summary.mean_l1.toFixed(3)} · mean |ΔEV|{" "}
-                {doc.summary.mean_ev_diff.toFixed(2)}
+                {doc.summary.diagnostics_weighted === false ? (
+                  <span
+                    className="text-slate-500"
+                    title="Pio reported zero global frequency on every line of this board, so there was no weight to normalize the per-hand comparison against. The cross-check badge above is unaffected - it is the correctness statement."
+                  >
+                    unavailable on this board
+                  </span>
+                ) : (
+                  <>
+                    mean L1 {doc.summary.mean_l1.toFixed(3)} · mean |ΔEV|{" "}
+                    {doc.summary.mean_ev_diff.toFixed(2)}
+                  </>
+                )}
               </div>
               {doc.summary.compared_nodes != null &&
                 doc.summary.detail_nodes != null &&
