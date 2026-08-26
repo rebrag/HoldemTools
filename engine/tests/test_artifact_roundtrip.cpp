@@ -85,6 +85,40 @@ void roundtrip(bool strategy_u8, bool ev_float32, float strategy_tol, float ev_t
   // dump-json runs cleanly over the artifact.
   const nlohmann::json dump = dump_artifact_json(store, path, std::nullopt);
   CHECK(dump.at("nodes").size() == game.tree().size());
+  CHECK(dump.contains("hand_dicts"));
+
+  // A strategy-only dump keeps the tree + actor strategies (+ root reaches)
+  // and drops everything the gate-only harness never reads.
+  const nlohmann::json trimmed =
+      dump_artifact_json(store, path, std::nullopt, std::nullopt, /*strategy_only=*/true);
+  CHECK(trimmed.at("metadata").at("dump_fields") == "strategy_only");
+  CHECK(!trimmed.contains("hand_dicts"));
+  CHECK(trimmed.at("nodes").size() == game.tree().size());
+  for (const auto& [key, node] : trimmed.at("nodes").items()) {
+    if (!node.contains("data")) continue;
+    const auto& data = node.at("data");
+    const int actor = data.at("actor").get<int>();
+    const bool is_root = key == "0";
+    for (const auto& seat : data.at("seats")) {
+      const int s = seat.at("seat").get<int>();
+      const auto& hands = seat.at("hands");
+      if (s == actor || is_root) {
+        CHECK(!hands.empty());
+        for (const auto& h : hands) {
+          CHECK(h.contains("reach"));
+          CHECK(!h.contains("ev"));
+          CHECK(!h.contains("action_ev"));
+          if (s == actor) {
+            CHECK(h.at("strategy").size() == data.at("num_actions").get<std::size_t>());
+          } else {
+            CHECK(!h.contains("strategy"));
+          }
+        }
+      } else {
+        CHECK(hands.empty());
+      }
+    }
+  }
   std::filesystem::remove(path);
 }
 

@@ -1,8 +1,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <fstream>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 
 #include "cli/args.hpp"
 #include "config/schema.hpp"
@@ -145,8 +147,19 @@ int main(int argc, char** argv) {
         std::cout << reader.metadata().dump(2) << "\n";
         return 0;
       }
-      std::cout << dump_artifact_json(store, args.input_path, args.node, args.runouts).dump(2)
-                << "\n";
+      const nlohmann::json dump = dump_artifact_json(store, args.input_path, args.node,
+                                                     args.runouts, args.strategy_only);
+      const std::string text = args.compact ? dump.dump() : dump.dump(2);
+      if (args.out_path) {
+        std::ofstream out(*args.out_path, std::ios::binary);
+        if (!out) throw std::runtime_error("cannot open --out path: " + *args.out_path);
+        out << text << "\n";
+        out.close();
+        if (!out) throw std::runtime_error("failed writing --out path: " + *args.out_path);
+        std::cerr << "wrote " << *args.out_path << " (" << text.size() << " bytes)\n";
+      } else {
+        std::cout << text << "\n";
+      }
       return 0;
     }
     const SolveConfig config = load_config(args.input_path);

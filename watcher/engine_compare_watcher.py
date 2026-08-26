@@ -159,7 +159,7 @@ def handle_compare(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) -
     cmd = [sys.executable, "-u", os.path.join(WATCHER_DIR, "engine_compare.py"),
            "--artifact", artifact, "--engine-exe", ENGINE_EXE,
            "--solve-pio", "--pio-accuracy-pct", str(job.get("pioAccuracyPct", 0.02)),
-           "--top", "0", "--json-out", json_out]
+           "--gate-only", "--top", "0", "--json-out", json_out]
     phase_start = time.perf_counter()
     out = subprocess.run(cmd, cwd=WATCHER_DIR, capture_output=True, text=True, timeout=1800)
     timings["compare_total_s"] = round(time.perf_counter() - phase_start, 3)

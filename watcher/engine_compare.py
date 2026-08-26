@@ -26,6 +26,13 @@ frequencies and per-hand EV differences (chips), with the worst-offending
 hands printed when they exceed their thresholds - that is what makes a real
 failure debuggable.
 
+--gate-only skips all of the per-hand diagnostics and keeps only the gate:
+a trimmed --strategy-only engine dump, one UPI call per node (the action
+map for set_strategy), the cross-exploitability check, and a summary-only
+--json-out (nodes: []). This is the compare watcher's fast path; manual
+validation runs should stay in full mode, where per-hand detail is what
+makes a failure debuggable.
+
 A QRE artifact (mode != "nash") is refused: QRE deliberately deviates from
 Nash and must never be validated against Pio.
 """
@@ -113,15 +120,40 @@ def load_engine_meta(args) -> dict:
 def load_engine_dump(args, runouts) -> dict:
     """The per-node dump; `runouts` (None = full) makes the engine emit only
     that many evenly spaced cards per chance node - same sampling rule the
-    old harness applied, now engine-side so big trees never materialize."""
+    old harness applied, now engine-side so big trees never materialize.
+
+    Gate-only runs take the trimmed diet: --strategy-only --compact to a
+    file. A full turn dump is ~680MB of pretty-printed text through a pipe
+    and the gate reads a fraction of it; the trimmed file is ~10x smaller
+    and skips the pipe capture entirely."""
     if args.dump:
         with open(args.dump, "r", encoding="utf8") as f:
-            return json.load(f)
-    cmd = [args.engine_exe, "dump-json", args.artifact]
-    if runouts is not None:
-        cmd += ["--runouts", str(runouts)]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    return json.loads(out.stdout)
+            dump = json.load(f)
+    elif args.gate_only:
+        out_path = args.artifact + ".gate_dump.json"
+        cmd = [args.engine_exe, "dump-json", args.artifact,
+               "--compact", "--strategy-only", "--out", out_path]
+        if runouts is not None:
+            cmd += ["--runouts", str(runouts)]
+        try:
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            with open(out_path, "rb") as f:
+                dump = json.load(f)
+        finally:
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
+    else:
+        cmd = [args.engine_exe, "dump-json", args.artifact]
+        if runouts is not None:
+            cmd += ["--runouts", str(runouts)]
+        out = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        dump = json.loads(out.stdout)
+    if not args.gate_only and dump.get("metadata", {}).get("dump_fields") == "strategy_only":
+        raise SystemExit("this dump is strategy-only (no per-hand EVs); re-dump without "
+                         "--strategy-only or run with --gate-only")
+    return dump
 
 
 CARD_RANKS = "23456789TJQKA"
@@ -293,6 +325,12 @@ def main() -> int:
     parser.add_argument("--ev-threshold-frac", type=float, default=0.004,
                         help="diagnostic: reach-weighted mean |EV diff| as a fraction of the pot")
     parser.add_argument("--top", type=int, default=20, help="worst offenders to print")
+    parser.add_argument("--gate-only", action="store_true",
+                        help="skip all per-hand diagnostics; PASS/FAIL rests on the "
+                             "cross-exploitability gate alone (root-EV in sampled mode). "
+                             "Uses a trimmed --strategy-only engine dump and 1 UPI call "
+                             "per node instead of ~5+actions. The compare watcher's fast "
+                             "path; manual runs default to full diagnostics")
     parser.add_argument("--full-limit", type=int, default=2500,
                         help="max decision nodes for FULL mode (per-node compare of every "
                              "node + cross-exploitability). Bigger trees switch to sampled "
@@ -426,6 +464,25 @@ def main() -> int:
                       f"pio={pio_actions} - tree mismatch, skipping")
                 continue
             row_of = {label: i for i, label in enumerate(pio_actions)}
+            nodes_compared += 1
+
+            # Default rows: uniform. Hands absent from the engine's sparse
+            # arrays carry reach <= 1e-6 under the engine profile, so their
+            # strategy contributes nothing to the profile's exploitability.
+            num_actions = len(engine_labels)
+            rows = [[1.0 / num_actions] * len(pio_order) for _ in range(num_actions)]
+            for hand in data["seats"][actor]["hands"]:
+                idx = pio_index.get(normalize_combo(hand["hand"]))
+                if idx is None:
+                    continue
+                for k in range(num_actions):
+                    rows[row_of[engine_labels[k]]][idx] = hand["strategy"][k]
+            strategy_upload.append((pio_id, rows))
+
+            if args.gate_only:
+                # The gate needs nothing else from this node - every UPI
+                # query below exists only for per-hand diagnostics.
+                continue
 
             pio_strategy = solver.show_strategy(pio_id)
             pio_evs, pio_matchups = solver.calc_ev(position, pio_id)
@@ -451,7 +508,6 @@ def main() -> int:
             except Exception as e:
                 global_freq = 0.0
                 gfreq_failures.append(f"{pio_id}: {type(e).__name__}: {e}")
-            nodes_compared += 1
 
             # Per-action EVs: the actor's calc_ev at each child (the watcher's
             # action_evs convention). Fold terminals may not answer - None row.
@@ -462,19 +518,6 @@ def main() -> int:
                     pio_action_evs.append(child_evs)
                 except Exception:
                     pio_action_evs.append(None)
-
-            # Default rows: uniform. Hands absent from the engine's sparse
-            # arrays carry reach <= 1e-6 under the engine profile, so their
-            # strategy contributes nothing to the profile's exploitability.
-            num_actions = len(engine_labels)
-            rows = [[1.0 / num_actions] * len(pio_order) for _ in range(num_actions)]
-            for hand in data["seats"][actor]["hands"]:
-                idx = pio_index.get(normalize_combo(hand["hand"]))
-                if idx is None:
-                    continue
-                for k in range(num_actions):
-                    rows[row_of[engine_labels[k]]][idx] = hand["strategy"][k]
-            strategy_upload.append((pio_id, rows))
 
             compare_hands: List[dict] = []
             compare_nodes.append({
@@ -608,7 +651,10 @@ def main() -> int:
     # per-hand agreement" with "the solvers disagree", and the cross-check below
     # - the only real correctness statement - still runs and still decides.
     diagnostics_weighted = weight_total > 0
-    if not diagnostics_weighted:
+    if args.gate_only:
+        print("gate-only: per-hand diagnostics skipped; the cross-exploitability "
+              "gate decides alone")
+    elif not diagnostics_weighted:
         print(f"NOTE: compared {nodes_compared} nodes, but Pio's global line "
               f"frequencies are all zero here, so the per-hand diagnostics have no "
               f"weight to normalize against and are skipped. This is a diagnostic "
@@ -649,7 +695,7 @@ def main() -> int:
     if diagnostics_weighted:
         print(f"reach-weighted mean L1:        {mean_l1:.5f}  (diagnostic threshold {args.l1_threshold})")
         print(f"reach-weighted mean |EV diff|: {mean_ev:.3f} chips  (diagnostic threshold {ev_threshold:.3f})")
-    else:
+    elif not args.gate_only:
         print("reach-weighted per-hand diagnostics: unavailable (no line weight)")
 
     ht_solve_s = meta.get("wall_time_s")
@@ -754,12 +800,15 @@ def main() -> int:
                     "pio_peak_bytes": pio_timing.get("peak_bytes"),
                     "pio_baseline_bytes": pio_timing.get("baseline_bytes"),
                 },
-                "mean_l1": round(mean_l1, 5),
-                "mean_ev_diff": round(mean_ev, 3),
+                # None in gate-only mode: the diagnostics never ran, which is
+                # different from "ran and measured zero".
+                "mean_l1": None if args.gate_only else round(mean_l1, 5),
+                "mean_ev_diff": None if args.gate_only else round(mean_ev, 3),
                 # False when Pio's line frequencies gave the per-hand
                 # diagnostics nothing to normalize against; the two means
                 # above are then placeholders, not measurements.
                 "diagnostics_weighted": diagnostics_weighted,
+                "gate_only": args.gate_only,
                 "sampled": not full_mode,
                 "runouts": None if full_mode else args.runouts,
                 "decision_nodes": decision_count,

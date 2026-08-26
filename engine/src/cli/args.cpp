@@ -9,7 +9,12 @@ const char* usage() {
   return "usage:\n"
          "  engine solve <config.json>      solve and write the artifact from output.path\n"
          "  engine dry-run <config.json>    print the memory estimate and exit\n"
-         "  engine dump-json <file.hta> [--node <id>]   dump an artifact as JSON to stdout\n"
+         "  engine dump-json <file.hta> [--node <id>] [--runouts <n>] [--meta-only]\n"
+         "                   [--compact] [--strategy-only] [--out <path>]\n"
+         "                                  dump an artifact as JSON (stdout, or --out file);\n"
+         "                                  --compact skips pretty-printing; --strategy-only\n"
+         "                                  keeps tree + actor strategies (+ root reaches) and\n"
+         "                                  drops per-hand EVs, hand_dicts, and rollups\n"
          "  engine version                  print engine and artifact format versions\n";
 }
 
@@ -42,6 +47,12 @@ CliArgs parse_args(int argc, const char* const* argv) {
       args.runouts = static_cast<int>(std::strtol(argv[++i], nullptr, 10));
     } else if (flag == "--meta-only" && args.subcommand == "dump-json") {
       args.meta_only = true;
+    } else if (flag == "--compact" && args.subcommand == "dump-json") {
+      args.compact = true;
+    } else if (flag == "--strategy-only" && args.subcommand == "dump-json") {
+      args.strategy_only = true;
+    } else if (flag == "--out" && i + 1 < argc && args.subcommand == "dump-json") {
+      args.out_path = argv[++i];
     } else {
       args.error = "unexpected argument '" + flag + "'";
       return args;
