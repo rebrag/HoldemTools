@@ -22,6 +22,15 @@ class LeducGame final : public Game {
   int num_hands(int) const override { return 6; }
   const std::vector<float>& initial_range(int) const override { return range_; }
   bool hand_blocks_card(int, int hand, int card) const override { return hand == card; }
+  const std::vector<std::uint16_t>& hands_blocking_card(int, int card) const override {
+    // A Leduc hand IS its card, so exactly one hand blocks each board card.
+    static const std::vector<std::vector<std::uint16_t>> blocking = [] {
+      std::vector<std::vector<std::uint16_t>> v(6);  // 6-card deck
+      for (int c = 0; c < 6; ++c) v[c] = {static_cast<std::uint16_t>(c)};
+      return v;
+    }();
+    return blocking[static_cast<std::size_t>(card)];
+  }
   // 6 cards minus 2 private ones: each community card has probability 1/4
   // conditional on the private hands; blocked cards are masked via reach.
   double chance_weight(NodeId) const override { return 0.25; }

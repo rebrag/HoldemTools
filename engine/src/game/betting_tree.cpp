@@ -185,7 +185,11 @@ struct Builder {
       Node call = make_node(NodeKind::Terminal, ActionKind::CheckCall, opp_commit);
       children.push_back({call, false, 0});
 
-      if (raises < sizing.max_raises && opp_commit < effective) {
+      // `raises` counts the aggressive actions already made this street, so
+      // this one would be number raises + 1. "Don't 3-bet" bars that seat
+      // from making number 3 or higher.
+      const bool blocked_by_no_3bet = seat.no_3bet && raises >= 2;
+      if (raises < sizing.max_raises && !blocked_by_no_3bet && opp_commit < effective) {
         add_sizes(seat.raises, true);
       }
     }

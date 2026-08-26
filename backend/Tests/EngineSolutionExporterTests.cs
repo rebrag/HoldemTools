@@ -77,7 +77,11 @@ public class EngineSolutionExporterTests
             Assert.Equal("river", bundle.GetProperty("street").GetString());
             var handOrder = bundle.GetProperty("hand_order").EnumerateArray()
                 .Select(h => h.GetString()!).ToArray();
-            Assert.True(handOrder.Length > 1000);  // 1326 minus board-blocked combos
+            // hand_order is the SOLVE's hand universe, not the whole deck of
+            // combos: the engine only carries hands some seat can actually
+            // hold. The fixture's ranges are AA,KQs vs KK,AQs on Ah Kd 7c 4s 2d,
+            // which leaves 12 combos once the board removes Ah and Kd.
+            Assert.Equal(12, handOrder.Length);
             Assert.All(handOrder, h => Assert.Equal(4, h!.Length));
 
             var nodes = bundle.GetProperty("nodes");

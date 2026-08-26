@@ -9,9 +9,14 @@
 
 namespace engine {
 
-// Showdown machinery for one river board over the canonical 1326 combo
-// universe. Terminal showdown evaluation with card removal is the hot path:
-// the 2-player path is the standard sort-by-strength single sweep with
+// Showdown machinery for one river board over a HAND UNIVERSE - the combos
+// the solve actually carries, which for a real range spot is a few hundred
+// rather than all 1326 (see ranges/universe.hpp). Every array here and every
+// pointer argument below is indexed by compact hand, not by canonical combo
+// index.
+//
+// Terminal showdown evaluation with card removal is the hot path: the
+// 2-player path is the standard sort-by-strength single sweep with
 // inclusion-exclusion blocker correction, O(H) per call after an O(H log H)
 // setup per board.
 //
@@ -21,7 +26,11 @@ namespace engine {
 // terminal pass should be built against its outputs when M8 lands.
 class RiverEvaluator {
  public:
-  explicit RiverEvaluator(const std::vector<Card>& board);
+  // `universe` is the hand universe in compact order; pass
+  // canonical_combos() to evaluate over all 1326.
+  RiverEvaluator(const std::vector<Card>& board, const std::vector<Combo>& universe);
+
+  int num_hands() const { return static_cast<int>(combos_.size()); }
 
   bool valid(int combo) const { return valid_[combo] != 0; }
   std::uint32_t strength(int combo) const { return strength_[combo]; }
@@ -45,10 +54,16 @@ class RiverEvaluator {
 
  private:
   std::uint64_t board_mask_ = 0;
+  // Kept per-board rather than shared: the sweep touches these together, and
+  // a local copy beats chasing canonical_combos() through another indirection.
+  std::vector<Combo> combos_;
+  std::vector<std::uint64_t> masks_;
   std::vector<std::uint32_t> strength_;
+  // Valid vs this board. A universe member can still be blocked by a runout
+  // card that was not on the ROOT board the universe was built against.
   std::vector<std::uint8_t> valid_;
-  std::vector<int> sorted_;                       // valid combos, ascending strength
-  std::vector<std::pair<int, int>> groups_;       // tie groups as [begin, end) into sorted_
+  std::vector<int> sorted_;                  // valid hands, ascending strength
+  std::vector<std::pair<int, int>> groups_;  // tie groups as [begin, end) into sorted_
 };
 
 // Side-pot-correct share of the pot for `seat` at a multiway showdown.

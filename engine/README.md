@@ -74,12 +74,13 @@ See the commented `configs/example_river_hu.json`. Summary:
 | `game` | `nlhe` (river-only this pass), `kuhn`, `leduc` |
 | `board`, `pot`, `chip_scale` | 5-card board; root pot in chips; chips per display unit (100 = 1bb) |
 | `players[]` | seat label, stack (chips behind), range string or `@file:` |
-| `bet_sizing.river` | `bets`/`raises` as %-of-pot lists, `allin_threshold`, `max_raises` |
+| `bet_sizing.<street>` | per seat: `bets`/`raises` (and OOP `donks`) as %-of-pot lists, plus `no_3bet` (that seat never makes the street's third aggression); `allin_threshold` and `max_raises` are street-wide |
 | `algorithm` | `rm` \| `cfr_plus` \| `dcfr` (+ `dcfr.alpha/beta/gamma`; default DCFR, linear averaging) |
 | `qre` | `mode: "nash"` (QRE lands in M7; schema reserved) |
 | `agents` | `partition` (identity only this pass), `payoff_weights`, `collusion` (reserved) |
 | `budget` | `iterations`, `target_nashconv` (chips, early stop), `checkpoint_every` |
 | `memory_limit_gb` | fail-fast ceiling for the pre-solve estimate |
 | `output` | artifact path, `strategy_quantize_u8`, `ev_float32` (default true), `rollups_169` |
+| `threads` | workers: `0` = one per hardware thread, negative = leave that many cores free. Results are **bitwise identical at any thread count** - the traversal forks sibling subtrees but folds every child back serially and in order |
 
 Range grammar: comma-separated `token[:weight]`, tokens are classes (`AA`, `AKs`, `T9o`) or explicit combos (`AhKd`); weights in `[0,1]`. `TT+` / `A5s-A2s` shorthand is not supported yet.

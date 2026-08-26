@@ -32,11 +32,127 @@ In progress:
   **Flop-to-river PASSED** 2026-08-26 (`configs/validate_flop_small.json`, 85k decision nodes, 1.7GB, ~10.5 min): tree verified node-for-node against Pio (106 betting nodes), root EV 45.276 vs Pio 45.289 (0.013 chips apart, threshold 0.5).
 
   Per-hand EV agreement after the convention fix below: **turn 0.161 chips**, **flop 0.649 chips** (from 23.9 and 33.4 respectively). The flop residual is larger because that spot targets 0.1% of pot exploitable versus the turn's 0.02% - five times looser convergence - and is measured on sampled runouts. Tighten the budget if a closer number is wanted.
-  Remaining: solver **multithreading over chance branches** is the obvious next perf step for flop-sized trees (a single flop tree is minutes, and full mode needs trees under a few thousand decision nodes); the viewer-facing bundle exporter (publish mode) is still river-only.
+  Remaining: the viewer-facing bundle exporter (publish mode) is still river-only.
+
+- **M6.7 - multithreaded traversal.** Landed 2026-08-26.
+  Sibling subtrees are independent - they write disjoint slices of the flat regret/strategy arrays - so `CfrSolver::traverse_impl` and the best-response walk fork their children onto a shared `ThreadPool` (`src/util/parallel.hpp`) while every cross-child fold-back stays serial and in child order.
+  That last part is the point: results are **bitwise identical at any thread count**, so the PioSolver acceptance gate keeps its meaning and `tests/test_parallel.cpp` can assert exact equality rather than a tolerance.
+  Measured on `configs/validate_turn_fullrange.json` (300 iterations, 9800X3D): 12.55 s at 1 thread, 4.13 s at 4 (3.0x), 1.56 s at 16 (8.0x), with identical NashConv and root EVs at every count.
+  The per-runout showdown evaluators moved from a lazy cache to an eager parallel build in the game's constructor - a lazy map is a data race once the traversal is threaded, and a solve touches all of them on iteration 1 anyway.
 
   Diagnostic weighting is load-bearing here. Per-hand L1/EV are weighted by `gfreq * min(engine reach, pio reach)`: a (node, hand) that either solver never reaches is off-path for that solver, where its strategy is unconstrained by equilibrium and its `calc_ev` is conditioned on a zero-probability event (Pio has been observed returning -381 chips there). Comparing off-path numbers measures which equilibrium was picked, not correctness.
 
   **The multistreet EV-convention bug (found 2026-08-26, fixed).** The artifact's per-hand EV was "pot share minus *future* contributions", treating already-committed chips as sunk. Pio's `calc_ev` subtracts *all* post-root contributions. The two agree at a street root and diverge by exactly the actor's commitment everywhere else - invisible in river-only validation, and worth ~33 chips of apparent per-hand disagreement on a flop tree. Since the viewer's schema-4 bundles carry Pio's numbers for every Pio-solved board, publishing engine EVs under the other convention would have made the same field mean two different things in one library. The engine now uses Pio's convention; `docs/artifact-format.md` states it and says why.
+
+- **M6.8 - compact hand universe + action-major layout.** Landed 2026-08-26. **This is where htsolver overtook PioSolver.**
+
+  Two changes, shipped together because they touch the same structures:
+
+  1. **Compact hand universe** (`src/ranges/universe.hpp`). Every per-hand array used to be 1326 wide regardless of the configured ranges, so a 15%-range solve cost exactly as much as a 100%-range one. The solver now sizes everything by the combos with non-zero weight in at least one starting range after root-board removal - shared across seats, ascending canonical order. Exact, not an abstraction: a combo neither seat can hold has zero reach everywhere and contributes an exact `0.0` to every sum, so dropping it changes no other hand's number.
+  2. **Action-major `InfosetLayout`**, `node_offset + action * hands + hand`. Every hot loop walks hands for a fixed action; hand-major made all of them stride-`actions` scatters. `average_strategy()` / `current_strategy()` still emit hand-major rows, so no consumer changed.
+
+  **Both are bit-for-bit neutral, and that was verified rather than assumed.** Re-solving the committed fixture reproduces the golden's NashConv (`0.00039826105587081884`) and both root EVs to the last digit, and `configs/validate_turn_fullrange.json` at 300 iterations still gives `nashconv 0.232074, ev 45.9951 54.0049` - a 4-action tree with a 48-way chance node. The hand dictionary in that fixture went from ~1176 entries to 12, so the fixture pair was regenerated and `EngineSolutionExporterTests` lost a stale `handOrder.Length > 1000` assertion (`hand_order` is the solve's universe now, not every board-legal combo).
+
+  Measured on the 20-board sweep, realistic (~15%) ranges, same accuracy target, all 20 passing the cross-exploitability gate:
+
+  | family | before | after | memory |
+  |---|---|---|---|
+  | turn (4 cards) | 0.30x (Pio 3.0x faster) | **2.46x faster than Pio** (1.87-2.90x) | 13 MB vs Pio's 48 |
+  | river (5 cards) | ~5x faster | **16.4x faster than Pio** (3.4-20.6x) | 7 MB vs Pio's 39 |
+
+  Per-iteration cost on `9c 5d Jc 7s`: **5.25 ms -> 0.67 ms** with realistic ranges (7.8x). A realistic-range flop tree now estimates **266 MB** where it needed **1.80 GB**, and runs at 37 ms/iteration with a 242 MB peak.
+
+  **The 100%-range case is the honest caveat.** Compaction has almost nothing to remove there, so the only win is the layout flip - and the same sweep at 100% ranges shows exactly that and nothing more: turn median 0.38x -> **0.54x** and river 5.15x -> **7.06x**, both a flat ~1.4x, with per-iteration cost 5.43 -> 3.93 ms. So on 100% ranges the engine is still slower than Pio on turn trees. That case is also the one nobody solves; `bench_boards.py --ranges tight` is the number that describes the product.
+
+- **M6.9 - deferred DCFR discount + branch-free inner loops.** Landed 2026-08-26.
+
+  1. **Deferred discount.** `apply_discounts()` used to sweep every regret and strategy entry after every iteration - pure memory traffic over data nothing else was touching, costing **12.7% of an iteration on a turn tree and 18.5% on a flop tree** (measured as dcfr vs plain rm at fixed iterations). The factors owed for iteration t are now recorded, and each decision node pays them on its first visit in iteration t+1, when its rows are already in cache for regret matching. A `u32` per-node stamp keeps it to once, `run()` settles the remainder so callers read exactly what the eager sweep left, and `iterate()` became private so nothing can read half-discounted state.
+  2. **Blocked-hand lists at chance nodes.** `hand_blocks_card` was asked once per hand per card; the Game interface now also answers the inverse - `hands_blocking_card(seat, card)` - and only ~4% of a universe contains any given card. The fold-back zeroes those few entries in the child's values and then accumulates over every hand unconditionally, which is safe because adding an exact `0.0f` cannot change an accumulator that starts at `+0.0f`, and leaves a contiguous loop the compiler can vectorize.
+  3. **Clamp hoisted** out of the regret/strategy update, splitting it into two branch-free bodies. `r < 0 ? 0 : r` rather than `std::max`, which keeps `-0.0f` as `-0.0f` exactly like the branch did.
+
+  Still bit-for-bit neutral, verified on both tree shapes again: the fixture reproduces the golden's NashConv and EVs to the last digit, and `validate_turn_fullrange` at 300 iterations still gives `nashconv 0.232074, ev 45.9951 54.0049`.
+
+  | tree | after M6.8 | after M6.9 | |
+  |---|---|---|---|
+  | turn, ~15% ranges | 0.706 ms/iter | **0.575** | 1.23x |
+  | turn, 100% ranges | 3.93 ms/iter | **2.70** | 1.45x |
+  | flop, ~15% ranges | 35.2 ms/iter | **25.3** | 1.39x |
+
+  The gain is largest on the biggest trees, which is where the discount sweep was costliest - the arrays stop fitting in cache, so a whole extra streaming pass over them hurts most exactly where it can least be afforded.
+
+  **Head to head after M6.8 + M6.9**, 20-board sweep at realistic (~15%) ranges, same accuracy target, all 20 passing the cross-exploitability gate:
+
+  | family | pio / ht speed | htsolver peak | pio peak |
+  |---|---|---|---|
+  | turn (4 cards) | **3.36x faster than Pio** (2.03-3.66x) | 13 MB | 48 MB |
+  | river (5 cards) | **18.8x faster than Pio** (13.5-22.7x) | 7 MB | 39 MB |
+
+  Where this started: turn 0.30x (Pio 3.0x faster) and river ~5x. The turn family moved by **11x**.
+
+### Two harness bugs found while verifying the above
+
+Both were found by chasing an iteration count that could not have moved if the engine really was bit-neutral. Recorded because each one hid the other.
+
+- **`bench_boards.py` reported stale results.** It treated "the output file exists" as success, so a spot whose compare failed silently re-read the previous sweep's JSON and reported it as fresh. One row of an early sweep carried the numbers of a completely different run. It now deletes the file first and checks the exit code.
+- **`engine_compare.py` turned a diagnostic gap into a false FAIL.** On `5c 5h 5s 2c 8d`, Pio's `calc_global_freq` underflows to `0.0` on every node - including the root, which is reached by definition - and one line reports `-5e-12`. Total diagnostic weight was therefore zero, and the harness gated on it: `FAIL: nothing compared (tree mismatch everywhere?)`. But weight only normalizes the per-hand **diagnostics**; zero weight means "we learned nothing about per-hand agreement", not "the solvers disagree". It now warns, skips the diagnostics, and lets cross-exploitability decide - which passes that board with the engine strategy rated *exactly* as exploitable as Pio's own solve (0.018 vs 0.018). `summary.diagnostics_weighted` carries the distinction into the JSON so `/compare` shows "unavailable on this board" rather than a fabricated `0.000`.
+
+## Where the time goes: the chance-node cliff (measured 2026-08-26)
+
+`watcher/bench_boards.py` swept 10 turn boards and 10 river boards through both solvers - same ranges, pot, stacks and betting structure, same 0.02%-of-pot accuracy target, so the only variable is whether the tree contains a chance node. All 20 passed the cross-exploitability gate.
+
+| family | tree | median pio/ht speed | htsolver peak | pio peak |
+|---|---|---|---|---|
+| river (5 cards) | 21 nodes, 0 chance | **5.15x faster** (2.7-8.9x) | 8 MB | 37 MB |
+| turn (4 cards) | 3237 nodes, 7 chance x 48 | **0.38x - Pio 2.6x faster** (0.18-0.46x) | 53 MB | 63 MB |
+
+**Those numbers are htsolver's best case, because the sweep used 100% ranges.** Range width is not neutral between the two solvers - see "The dense hand universe" below. On the same turn board with a ~15% opening range for both seats, htsolver's cost per iteration does not move at all (5.31 -> 5.30 ms) while Pio drops 29%, so the gap widens from 2.3x to 3.0x and htsolver's memory advantage flips to a small deficit (54 MB vs 48 MB). Re-run with `--ranges tight` for the number that resembles a real spot.
+
+The scaling exponents are the whole story. Fitting time against the number of iterations htsolver needed for that board:
+
+- **htsolver: slope 0.99 on turns, 0.94 on rivers.** Perfectly linear, and its cost per iteration is flat to within 9% across every board in a family (5.24-5.71 ms on turns, 0.15-0.17 ms on rivers). Every iteration walks the entire tree, including all 48 river runouts under every turn line, at full precision, forever.
+- **Pio: slope 0.40 on turns, -0.12 on rivers.** Sublinear in difficulty on a multistreet tree and *flat* on a river tree. That is the signature of a solver that stops revisiting subtrees once they converge - which is exactly what `set_recalc_accuracy` / `set_always_recalc` control, and which pyosolver sets on every connection.
+
+So neither half of the result is a compute win:
+
+- The river 5x is mostly **Pio's floor**, not htsolver out-computing it. Pio's river tree build is 10 ms, but its `go()` sits at 0.64-0.67 s on nine of ten boards regardless of how hard the spot is. htsolver's 0.12-0.24 s is genuinely proportional to work. Do not read "5x faster on rivers" as "5x better solver".
+- The turn 2.6x deficit is **entirely the linear-in-iterations traversal**. The worst board (`Ks Kd 4c 9h`) needed 4700 iterations and cost htsolver 24.7 s; Pio did the same tree in 4.6 s, only 1.9x its own easiest board while htsolver paid 4.6x its own.
+
+### The dense hand universe (measured 2026-08-26)
+
+`Game::num_hands()` returns 1326 unconditionally. Every regret and strategy array, every reach vector and every inner loop is the full combo universe no matter how narrow the configured ranges are. Measured on `9c 5d Jc 7s`, 500 iterations, 100% ranges vs a ~15% opening range for both seats:
+
+| | 100% ranges | ~15% ranges |
+|---|---|---|
+| htsolver ms/iteration | 5.43 | 5.25 (**-3%**) |
+| htsolver peak | 52 MB | 51 MB |
+| Pio solve (same tree, same target) | 2.49 s | 1.77 s (**-29%**) |
+| Pio peak | 63 MB | 48 MB (**-24%**) |
+
+A tight range is roughly 190 live combos per seat against 1176 for a full range after board removal, and htsolver charges for all 1326 either way. Since every spot a user actually solves is a range spot, this is the single largest and least risky win available, and it is a re-indexing rather than an algorithm change.
+
+### Also measured, so nobody re-derives it
+
+- **DCFR is already the right update rule.** Iterations to 0.02% of pot on `9c 5d Jc 7s`: dcfr 1100 (6.07 s), cfr_plus 2000 (10.16 s), plain regret matching did not converge inside 20000 (100 s). There is no free win in swapping the rule.
+- **Best-response checkpoints cost nothing.** 1000 iterations with a BR pass every 100 vs every 1000: 5.229 s vs 5.226 s, 0.06%.
+- **Threading is done.** 8.0x on 16 threads (8 physical cores).
+- **The DCFR discount sweep is ~10%** of an iteration: dcfr 2.699 s vs plain rm 2.445 s over 500 iterations. Real, cheap to fix, not the gap.
+
+### What would close it, in priority order
+
+1. ~~**Compact the hand universe per solve.**~~ **LANDED 2026-08-26** - see "M6.8" above.
+2. ~~**Flip `InfosetLayout` from hand-major to action-major.**~~ **LANDED 2026-08-26** - see "M6.8" above.
+3. ~~**SIMD the elementwise inner loops.**~~ **LANDED 2026-08-26** - see "M6.9" above.
+4. ~~**Fold the DCFR discount into the per-node update.**~~ **LANDED 2026-08-26** - see "M6.9" above. The justification written here originally ("each traversal writes a disjoint set of nodes, so this is exactly equivalent") was **wrong**, and worth recording as a trap: a traversal for seat p *writes* only nodes where `actor == p`, but it *reads* every decision node, because regret matching runs at opponent nodes too. Discounting node N the moment seat 0 finishes with it would change what seat 1 reads there in the same iteration. The deferred-and-stamped scheme in M6.9 is what actually makes it equivalent.
+5. **Stop traversing converged subtrees** - regret-based pruning, or a recalc schedule that revisits runouts whose strategy has stopped moving every K iterations. This is what turns the slope from 1.0 into Pio's 0.4, and it is the only item that **costs the bitwise-determinism invariant**: it would have to be restated as "deterministic given a thread count and a pruning schedule", and `tests/test_parallel.cpp` would need a pruning-off mode to keep asserting exact equality. The Pio gate itself survives - cross-exploitability rates the final strategy, not the path.
+6. **Suit isomorphism over runouts - deprioritised, and honestly so.** On a *specified* turn board the win is modest: `9c 5d Jc 7s` has suit counts c:2 d:1 s:1 h:0, so only the d/s pair is interchangeable and about 11 of 48 runouts collapse, roughly 1.2x. Isomorphism earns its keep at the flop-*selection* level (solve 184 strategically distinct flops, not 1755), which is not what this engine is asked to do. High blast radius - it reaches the artifact contract, the C# reader and the frontend, all of which assume explicit runouts - for the smallest multiplier on the list.
+
+### Sequencing call
+
+Items 1-4 are all pure engineering with no algorithmic risk and they compose: a conservative 3x from the compact universe and 2x from layout + SIMD puts a realistic-range turn spot near 0.9 s against Pio's 1.77 s. That is the "honestly faster" bar, reached without touching the determinism invariant, and it should come **before** M7.
+
+Item 5 is what makes hard boards and flop trees scale, and it is the one to do deliberately and last of the performance work, because it changes what the engine promises about reproducibility.
+
+Re-run `bench_boards.py --ranges tight` after each item; it is the only number that settles the argument.
 
 Next (config schema already carries the keys; do not re-plumb):
 

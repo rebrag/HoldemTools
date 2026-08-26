@@ -83,6 +83,7 @@ add_library(engine_core STATIC
   src/io/artifact_writer.cpp
   src/io/artifact_reader.cpp
   src/io/dump_json.cpp
+  src/util/parallel.cpp
 )
 target_include_directories(engine_core PUBLIC src)
 target_link_libraries(engine_core PUBLIC nlohmann_json::nlohmann_json engine_flags)
@@ -101,6 +102,7 @@ add_executable(engine_tests
   tests/test_terminal.cpp
   tests/test_memory.cpp
   tests/test_artifact_roundtrip.cpp
+  tests/test_parallel.cpp
 )
 target_link_libraries(engine_tests PRIVATE engine_core doctest::doctest)
 add_test(NAME engine_tests COMMAND engine_tests)

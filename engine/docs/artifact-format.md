@@ -48,12 +48,12 @@ One JSON object. Fields (all present unless marked optional):
 - `iterations`, `final_nashconv` (chips), `ev_chips` (per-seat root EVs; they sum to the root pot).
 - `partition` (seat->agent), `payoff_weights` (`null` = identity), `collusion` (`{mode, p}`).
 - `multiway_no_nash_guarantee` - `true` whenever the game has 3+ seats. CFR converges to the coarse correlated equilibrium set there, not necessarily Nash; consumers must not over-trust multiway results.
-- `wall_time_s`, `peak_rss_bytes`.
+- `wall_time_s` (the iterate + best-response loop only), `setup_time_s` (tree build and showdown tables, before the first iteration), `threads` (workers the solve actually ran on - a wall time is not comparable to another solver's without it), `peak_rss_bytes`.
 - `board` (as configured, e.g. `"Qs Jh 2h 8d 6c"`), `chip_scale`, `pot`, `effective_stack` (optional), `seats` (labels, seat 0 = OOP first to act).
 - `node_count`, `decision_node_count`, `hand_universe` (`"nlhe_combos_1326"` or `"toy"`).
 - `sections`:
   - `node_table`: `{offset, length, record_size, count}`.
-  - `hand_dicts`: array of `{seat, offset, length, count}`.
+  - `hand_dicts`: array of `{seat, offset, length, count}`. Each dictionary is the seat's hand universe - one `u16` canonical combo index per solver hand, in ascending canonical order - so **a dictionary position and a solver hand index are the same number**, and the per-node sparse `idx` arrays are positions into it. The universe holds only combos some seat can actually hold (non-zero range after board removal), so a narrow-range solve has a short dictionary; do not assume it covers every board-legal combo.
 
 ## Card and combo encoding
 

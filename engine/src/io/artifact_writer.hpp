@@ -14,7 +14,12 @@ struct SolveStats {
   double nashconv = 0.0;
   double ev_seat0 = 0.0;  // chips, root
   double ev_seat1 = 0.0;
+  // Wall clock for the whole solve loop (CFR + every checkpoint's
+  // best-response), and the worker count it ran on. Both are reported so a
+  // timing comparison against another solver is interpretable.
   double wall_time_s = 0.0;
+  double setup_time_s = 0.0;  // tree build + showdown tables, before iterating
+  int threads = 1;
   std::size_t peak_rss_bytes = 0;
 };
 

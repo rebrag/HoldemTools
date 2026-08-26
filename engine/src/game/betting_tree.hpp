@@ -15,6 +15,11 @@ struct SeatSizing {
   std::vector<double> bets;
   std::vector<double> raises;
   std::vector<double> donks;  // OOP first-in vs. a prior-street aggressor
+  // PioViewer's "Don't 3-bet": this seat never makes the THIRD aggressive
+  // action of a street. It can still open, and it can still raise the
+  // opponent's opening bet - it just cannot re-raise a raise. Per seat, so
+  // it composes with the street-wide max_raises cap rather than replacing it.
+  bool no_3bet = false;
 };
 
 // One street's sizing for both seats. A computed size at or above

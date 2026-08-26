@@ -1,8 +1,12 @@
 #include "solver/memory.hpp"
 
+#include <algorithm>
+#include <cstddef>
 #include <sstream>
+#include <vector>
 
 #include "solver/cfr.hpp"
+#include "util/parallel.hpp"
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -35,14 +39,16 @@ std::string MemoryEstimate::to_string() const {
   out << "estimated solver memory: " << human(total())
       << " (regrets+strategy " << human(regret_strategy_bytes)
       << ", tree " << human(tree_bytes)
-      << ", workspace " << human(workspace_bytes) << ")";
+      << ", showdown " << human(showdown_bytes)
+      << ", workspace ceiling " << human(workspace_bytes) << ")";
   return out.str();
 }
 
-MemoryEstimate estimate_memory(const Game& game) {
+MemoryEstimate estimate_memory(const Game& game, int threads) {
   MemoryEstimate est;
   est.regret_strategy_bytes = CfrSolver::state_bytes(game);
   est.tree_bytes = game.tree().size() * sizeof(Node);
+  est.showdown_bytes = game.auxiliary_bytes();
 
   const PublicTree& tree = game.tree();
   std::vector<int> depth(tree.size(), 0);
@@ -59,11 +65,15 @@ MemoryEstimate estimate_memory(const Game& game) {
   for (const Node& n : tree.nodes) {
     max_actions = std::max(max_actions, static_cast<std::size_t>(n.num_children));
   }
-  // Per level: sigma (hands*actions), value + child (hands each), one saved
-  // reach per seat (hands each). Mirrors CfrSolver's scratch pool.
+  // Per level: sigma (hands*actions), value + child + reach-weight (hands
+  // each), one saved reach per seat (hands each). Mirrors one CfrSolver
+  // scratch arena; a multithreaded solve checks out several at once.
   const std::size_t per_level =
-      max_hands * max_actions + (2 + game.num_seats()) * max_hands;
-  est.workspace_bytes = static_cast<std::size_t>(max_depth + 2) * per_level * sizeof(float);
+      max_hands * max_actions + (3 + game.num_seats()) * max_hands;
+  const std::size_t arena =
+      static_cast<std::size_t>(max_depth + 2) * per_level * sizeof(float);
+  est.workspace_bytes =
+      arena * static_cast<std::size_t>(max_live_arenas(resolve_thread_count(threads)));
   return est;
 }
 

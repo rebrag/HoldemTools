@@ -24,6 +24,10 @@ class KuhnGame final : public Game {
   int num_hands(int) const override { return 3; }
   const std::vector<float>& initial_range(int) const override { return range_; }
   bool hand_blocks_card(int, int, int) const override { return false; }
+  const std::vector<std::uint16_t>& hands_blocking_card(int, int) const override {
+    static const std::vector<std::uint16_t> none;  // Kuhn has no board
+    return none;
+  }
   double chance_weight(NodeId) const override { return 1.0; }
   double total_profile_weight() const override { return 6.0; }  // 3 * 2 deals
 

@@ -228,3 +228,38 @@ TEST_CASE("flop tree nests two chance levels") {
   CHECK(count_kind(tree, NodeKind::Chance) > 49);
   CHECK(tree.num_decision_nodes > 1000);  // 49 x 48 river fan-out
 }
+
+TEST_CASE("don't-3-bet bars a seat's third aggression, and only that seat's") {
+  PostflopTreeParams params = river_params();
+  params.river.max_raises = 3;  // the street cap is not what does the work here
+  params.river.ip.no_3bet = true;
+  const PublicTree tree = build_postflop_tree(params);
+
+  // Check -> IP bet is IP's aggression #1, so the box does not touch it.
+  const Node& ip_after_check = tree[tree[0].first_child];
+  REQUIRE(ip_after_check.num_children == 2);  // check back, bet
+  const Node& ip_open = tree[ip_after_check.first_child + 1];
+  CHECK(ip_open.action_kind == ActionKind::Bet);
+
+  // OOP raises that (#2), so IP's next raise would be #3: fold or call only.
+  REQUIRE(ip_open.num_children == 3);  // fold, call, raise
+  const Node& oop_raise = tree[ip_open.first_child + 2];
+  CHECK(oop_raise.actor == 1);
+  CHECK(oop_raise.num_children == 2);
+
+  // IP raising OOP's opening bet is only #2 - still available.
+  const Node& oop_open = tree[tree[0].first_child + 1];
+  REQUIRE(oop_open.num_children == 3);
+  const Node& ip_raise = tree[oop_open.first_child + 2];
+  CHECK(ip_raise.action_kind == ActionKind::Bet);
+  // ... and OOP, which does not carry the flag, may still make #3.
+  CHECK(ip_raise.num_children == 3);
+
+  // Clearing the flag restores IP's #3, so the cap above is the flag's doing
+  // and not max_raises.
+  params.river.ip.no_3bet = false;
+  const PublicTree open = build_postflop_tree(params);
+  const Node& open_ip_open = open[open[0].first_child];
+  const Node& open_oop_raise = open[open[open_ip_open.first_child + 1].first_child + 2];
+  CHECK(open_oop_raise.num_children == 3);
+}

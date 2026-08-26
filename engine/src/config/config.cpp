@@ -47,12 +47,14 @@ StreetSizing parse_sizing(const json& j) {
       const json& ip = j.at("ip");
       sizing.ip.bets = parse_pcts(ip, "bets", "bet size");
       sizing.ip.raises = parse_pcts(ip, "raises", "raise size");
+      sizing.ip.no_3bet = ip.value("no_3bet", false);
     }
     if (j.contains("oop")) {
       const json& oop = j.at("oop");
       sizing.oop.bets = parse_pcts(oop, "bets", "bet size");
       sizing.oop.donks = parse_pcts(oop, "donks", "donk size");
       sizing.oop.raises = parse_pcts(oop, "raises", "raise size");
+      sizing.oop.no_3bet = oop.value("no_3bet", false);
     }
   } else {
     sizing.oop.bets = sizing.ip.bets = parse_pcts(j, "bets", "bet size");

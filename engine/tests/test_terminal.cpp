@@ -51,7 +51,9 @@ TEST_CASE("7-card evaluator handles wheels, kickers, and board ties") {
 }
 
 TEST_CASE("2p showdown sweep matches the brute-force reference") {
-  const RiverEvaluator eval_river(parse_cards("Qs Jh 2h 8d 6c"));
+  // Over the full canonical universe: this test is about the sweep's
+  // arithmetic, not about compaction.
+  const RiverEvaluator eval_river(parse_cards("Qs Jh 2h 8d 6c"), canonical_combos());
   std::mt19937 rng(42);
   std::uniform_real_distribution<float> dist(0.0f, 1.0f);
 
