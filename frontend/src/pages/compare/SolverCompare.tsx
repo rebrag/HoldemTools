@@ -19,6 +19,12 @@ import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import TreeBuilderPanel, { inputCls } from "./TreeBuilderPanel";
 import { buildEngineConfig, cloneBuilder, DEFAULT_BUILDER, type BuilderState } from "./builderState";
 import { parseBoardCards } from "./treeConfigText";
+import PipelineTimingPanel, {
+  secs,
+  type ClientMarks,
+  type JobTimings,
+  type PipelineRun,
+} from "./PipelineTimingPanel";
 
 /**
  * Hidden verification page (/compare, no nav entry): htsolver and PioSolver
@@ -96,6 +102,14 @@ interface CompareDoc {
       pio_solve_s: number | null;
       pio_setup_s?: number | null;
       accuracy_chips?: number | null;
+      /* Harness phases around the two solves (absent in older JSON); the
+       * pipeline panel reads them from the job row, but a hand-loaded file
+       * carries them here too. */
+      meta_load_s?: number | null;
+      dump_load_s?: number | null;
+      pio_spawn_s?: number | null;
+      compare_loop_s?: number | null;
+      cross_check_s?: number | null;
     };
     /** Peak working set of each solver PROCESS over building and solving the
      *  tree - the same OS counter on both sides. Absent in older JSON. */
@@ -278,7 +292,10 @@ interface CompareJob {
   resultStacks: string | null;
   resultNodeName: string | null;
   createdAtUtc: string;
+  claimedAtUtc: string | null;
   completedAtUtc: string | null;
+  /** Per-stage wall times from the watcher; null for pre-instrumentation jobs. */
+  timings: JobTimings | null;
 }
 
 const TERMINAL_STATUSES = ["Done", "Failed"];
@@ -308,6 +325,9 @@ const SolverCompare = () => {
   const [jobs, setJobs] = useState<CompareJob[]>([]);
   const [activeJob, setActiveJob] = useState<CompareJob | null>(null);
   const [publishedJob, setPublishedJob] = useState<CompareJob | null>(null);
+  // The last run's stage-by-stage wall clock; survives the poll loop's
+  // cleanup so the panel stays up with the results.
+  const [pipeline, setPipeline] = useState<PipelineRun | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const cancelledRef = useRef(false);
   useEffect(() => {
@@ -336,6 +356,7 @@ const SolverCompare = () => {
 
   const loadFile = useCallback(
     (file: File) => {
+      setPipeline(null); // a hand-loaded file has no pipeline run behind it
       file
         .text()
         .then((text) => acceptDoc(JSON.parse(text) as CompareDoc))
@@ -357,12 +378,30 @@ const SolverCompare = () => {
   }, [refreshJobs]);
 
   const loadJobResult = useCallback(
-    async (job: CompareJob) => {
+    async (job: CompareJob, opts: { submitMs?: number; tClickMs?: number } = {}) => {
       setError(null);
       try {
+        const t0 = performance.now();
         const resp = await authedFetch(`/api/enginecompare/${job.id}/result`);
         if (!resp.ok) throw new Error(await resp.text());
-        acceptDoc((await resp.json()) as CompareDoc);
+        const t1 = performance.now();
+        const parsed = (await resp.json()) as CompareDoc;
+        const t2 = performance.now();
+        acceptDoc(parsed);
+        // Two rAFs bracket the commit + paint of the accepted doc: the first
+        // fires before the frame, the second after it was presented. Finite
+        // and event-driven - no idle cost.
+        const t3 = await new Promise<number>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now())))
+        );
+        const marks: ClientMarks = {
+          submitMs: opts.submitMs,
+          fetchHeadersMs: t1 - t0,
+          downloadParseMs: t2 - t1,
+          renderMs: t3 - t2,
+          totalMs: opts.tClickMs == null ? undefined : t3 - opts.tClickMs,
+        };
+        setPipeline({ job, marks });
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
@@ -384,7 +423,9 @@ const SolverCompare = () => {
       }
       setSolving(true);
       setPublishedJob(null);
+      setPipeline(null);
       try {
+        const tClick = performance.now();
         const createResp = await authedFetch("/api/enginecompare", {
           method: "POST",
           body: JSON.stringify({ ...payload, mode }),
@@ -394,6 +435,7 @@ const SolverCompare = () => {
         }
         if (!createResp.ok) throw new Error(await createResp.text());
         let job = (await createResp.json()) as CompareJob;
+        const submitMs = performance.now() - tClick;
         setActiveJob(job);
         void refreshJobs();
 
@@ -413,9 +455,10 @@ const SolverCompare = () => {
           throw new Error(job.error ?? "The compare watcher reported a failure.");
         }
         if (mode === "compare") {
-          await loadJobResult(job);
+          await loadJobResult(job, { submitMs, tClickMs: tClick });
         } else {
           setPublishedJob(job);
+          setPipeline({ job, marks: { submitMs, totalMs: performance.now() - tClick } });
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -483,16 +526,8 @@ const SolverCompare = () => {
 
   const shownRows = tableRows.slice(0, 200);
   const chips = (v: number | null | undefined): string => (v == null ? "-" : v.toFixed(2));
-  /** Wall-clock, readable at both ends of the range this page sees (a river
-   *  solve is under a second; a Pio flop solve is minutes). */
   const megabytes = (v: number | null | undefined): string =>
     v == null ? "n/a" : v >= 1024 ** 3 ? `${(v / 1024 ** 3).toFixed(2)} GB` : `${Math.round(v / 1024 ** 2)} MB`;
-  const secs = (v: number): string =>
-    v >= 60
-      ? `${Math.floor(v / 60)}m ${Math.round(v % 60)}s`
-      : v >= 10
-        ? `${v.toFixed(1)}s`
-        : `${v.toFixed(2)}s`;
   const pct = (f: number): string => `${Math.round(f * 1000) / 10}`;
 
   const onSelect = useCallback(
@@ -618,6 +653,9 @@ const SolverCompare = () => {
             open {publishedJob.board} in /solutions
           </a>
         </p>
+      )}
+      {pipeline && pipeline.job.mode === "publish" && (
+        <PipelineTimingPanel job={pipeline.job} marks={pipeline.marks} />
       )}
 
       {/* ---------- tree builder (PioViewer-style), in a modal so opening it
@@ -904,6 +942,10 @@ const SolverCompare = () => {
                 set of each solver process, which does include it.
               </p>
             </div>
+          )}
+
+          {pipeline && pipeline.job.mode === "compare" && (
+            <PipelineTimingPanel job={pipeline.job} marks={pipeline.marks} />
           )}
 
           <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">

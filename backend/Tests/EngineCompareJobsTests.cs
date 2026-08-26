@@ -66,6 +66,8 @@ public class EngineCompareJobsTests
             Assert.IsType<OkObjectResult>(create.Result).Value);
         Assert.Equal("Queued", job.Status);
         Assert.Equal("9c5dJc7s9h", job.Board);
+        Assert.Null(job.ClaimedAtUtc);
+        Assert.Null(job.Timings); // pre-instrumentation shape: absent, not empty
 
         var watcher = WatcherController(db);
         var claim = Assert.IsType<OkObjectResult>(await watcher.Claim(
@@ -87,12 +89,27 @@ public class EngineCompareJobsTests
                 WatcherId = "w1",
                 Status = "Done",
                 ResultBlobPath = "enginecompare/x.json.gz",
+                Timings = new JsonObject
+                {
+                    ["schema"] = 1,
+                    ["engine_solve_s"] = 1.5,
+                    ["upload_s"] = 0.25,
+                },
             }));
 
         var stored = await db.EngineCompareJobs.SingleAsync();
         Assert.Equal("Done", stored.Status);
         Assert.Equal("enginecompare/x.json.gz", stored.ResultBlobPath);
         Assert.NotNull(stored.CompletedAtUtc);
+        Assert.Contains("engine_solve_s", stored.TimingsJson);
+
+        // The user-facing poll surfaces the claim timestamp and parsed timings.
+        var polled = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>(
+                (await UserController(db, "uid-1").Get(job.Id)).Result).Value);
+        Assert.NotNull(polled.ClaimedAtUtc);
+        Assert.NotNull(polled.Timings);
+        Assert.Equal(1.5, polled.Timings!["engine_solve_s"]!.GetValue<double>());
     }
 
     [Fact]
@@ -119,8 +136,11 @@ public class EngineCompareJobsTests
             {
                 WatcherId = "imposter",
                 Status = "Running",
+                Timings = new JsonObject { ["engine_solve_s"] = 9.9 },
             });
         Assert.IsType<ConflictObjectResult>(result);
+        job = await db.EngineCompareJobs.SingleAsync();
+        Assert.Null(job.TimingsJson); // rejected report must store nothing
     }
 
     [Fact]

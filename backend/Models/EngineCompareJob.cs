@@ -40,6 +40,12 @@ namespace PokerRangeAPI2.Models
 
         // compare mode: ADLS path of the uploaded comparison JSON (gzipped).
         public string? ResultBlobPath { get; set; }
+
+        // Per-stage wall times reported by the watcher (flat JSON dict of
+        // seconds; see the /compare pipeline timing panel). Null for jobs
+        // that predate the instrumentation.
+        public string? TimingsJson { get; set; }
+
         // publish mode: manifest coordinates in the solutions library.
         public string? ResultStacks { get; set; }
         public string? ResultNodeName { get; set; }

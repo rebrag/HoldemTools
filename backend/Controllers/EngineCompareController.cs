@@ -54,7 +54,12 @@ namespace PokerRangeAPI2.Controllers
             public string? ResultStacks { get; set; }
             public string? ResultNodeName { get; set; }
             public DateTimeOffset CreatedAtUtc { get; set; }
+            public DateTimeOffset? ClaimedAtUtc { get; set; }
             public DateTimeOffset? CompletedAtUtc { get; set; }
+
+            // Per-stage wall times from the watcher (flat dict of seconds);
+            // null for jobs that predate the instrumentation.
+            public JsonNode? Timings { get; set; }
 
             public static JobDto From(EngineCompareJob job) => new()
             {
@@ -66,8 +71,17 @@ namespace PokerRangeAPI2.Controllers
                 ResultStacks = job.ResultStacks,
                 ResultNodeName = job.ResultNodeName,
                 CreatedAtUtc = job.CreatedAtUtc,
+                ClaimedAtUtc = job.ClaimedAtUtc,
                 CompletedAtUtc = job.CompletedAtUtc,
+                Timings = ParseTimings(job.TimingsJson),
             };
+
+            private static JsonNode? ParseTimings(string? json)
+            {
+                if (string.IsNullOrEmpty(json)) return null;
+                try { return JsonNode.Parse(json); }
+                catch (System.Text.Json.JsonException) { return null; } // a garbled row must not 500 the poll
+            }
         }
 
         // POST api/enginecompare - queue a job. Publish mode (writes into the

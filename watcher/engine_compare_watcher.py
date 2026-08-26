@@ -68,7 +68,8 @@ def claim() -> Optional[Dict[str, Any]]:
 
 
 def report(job_id: str, status: Optional[str] = None, error: Optional[str] = None,
-           heartbeat: bool = False, result_blob_path: Optional[str] = None) -> bool:
+           heartbeat: bool = False, result_blob_path: Optional[str] = None,
+           timings: Optional[Dict[str, Any]] = None) -> bool:
     body: Dict[str, Any] = {"watcherId": watcher_id(), "heartbeat": heartbeat}
     if status is not None:
         body["status"] = status
@@ -76,6 +77,8 @@ def report(job_id: str, status: Optional[str] = None, error: Optional[str] = Non
         body["error"] = error[:2000]
     if result_blob_path is not None:
         body["resultBlobPath"] = result_blob_path
+    if timings:
+        body["timings"] = timings
     try:
         resp = requests.patch(f"{_base()}/api/enginecompare/{job_id}", json=body,
                               headers=_headers(), timeout=TIMEOUT_SECS)
@@ -143,40 +146,58 @@ def run_engine(config: Dict[str, Any], run_dir: str) -> str:
     return artifact
 
 
-def handle_compare(job: Dict[str, Any], run_dir: str) -> None:
+def handle_compare(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) -> None:
     job_id = job["id"]
     config = json.loads(job["config"])
     # Validation-friendly flags: quantization must not pollute the diff.
     config["output"] = {"strategy_quantize_u8": False, "ev_float32": True, "rollups_169": False}
+    phase_start = time.perf_counter()
     artifact = run_engine(config, run_dir)
+    timings["engine_solve_s"] = round(time.perf_counter() - phase_start, 3)
 
     json_out = os.path.join(run_dir, "compare.json")
     cmd = [sys.executable, "-u", os.path.join(WATCHER_DIR, "engine_compare.py"),
            "--artifact", artifact, "--engine-exe", ENGINE_EXE,
            "--solve-pio", "--pio-accuracy-pct", str(job.get("pioAccuracyPct", 0.02)),
            "--top", "0", "--json-out", json_out]
+    phase_start = time.perf_counter()
     out = subprocess.run(cmd, cwd=WATCHER_DIR, capture_output=True, text=True, timeout=1800)
+    timings["compare_total_s"] = round(time.perf_counter() - phase_start, 3)
     if not os.path.exists(json_out):
         raise RuntimeError(f"engine_compare failed (exit {out.returncode}): "
                            f"{(out.stdout + out.stderr)[-1500:]}")
     for line in out.stdout.splitlines():
         if any(k in line for k in ("exploitability", "PASS", "FAIL")):
             log(f"  {line.strip()}")
+    # Harvest the child's per-phase numbers (pio build/solve, dump, compare
+    # loop) so the whole breakdown rides one job row. Never fail the job on
+    # a harvest problem - the result itself is already good.
+    try:
+        with open(json_out, "r", encoding="utf8") as f:
+            child_timing = json.load(f).get("summary", {}).get("timing", {})
+        timings.update({k: v for k, v in child_timing.items() if v is not None})
+    except Exception as e:
+        log(f"  timing harvest failed (ignored): {e}")
 
     report(job_id, status="Uploading")
+    phase_start = time.perf_counter()
     blob_path = upload_result(job_id, json_out)
-    report(job_id, status="Done", result_blob_path=blob_path)
+    timings["upload_s"] = round(time.perf_counter() - phase_start, 3)
+    report(job_id, status="Done", result_blob_path=blob_path, timings=timings)
     log(f"  done -> {blob_path}")
 
 
-def handle_publish(job: Dict[str, Any], run_dir: str) -> None:
+def handle_publish(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) -> None:
     job_id = job["id"]
     config = json.loads(job["config"])
     # Viewer-quality flags: quantized strategy + 169 rollups.
     config["output"] = {"strategy_quantize_u8": True, "ev_float32": True, "rollups_169": True}
+    phase_start = time.perf_counter()
     artifact = run_engine(config, run_dir)
+    timings["engine_solve_s"] = round(time.perf_counter() - phase_start, 3)
 
     report(job_id, status="Uploading")
+    phase_start = time.perf_counter()
     with open(artifact, "rb") as f:
         resp = requests.post(
             f"{_base()}/api/enginecompare/{job_id}/publish-artifact",
@@ -186,8 +207,10 @@ def handle_publish(job: Dict[str, Any], run_dir: str) -> None:
             timeout=300,
         )
     resp.raise_for_status()
+    # Includes the server-side schema-4 export, not just the transfer.
+    timings["upload_s"] = round(time.perf_counter() - phase_start, 3)
     coords = resp.json()
-    report(job_id, status="Done")
+    report(job_id, status="Done", timings=timings)
     log(f"  published -> {coords.get('stacks')}/{coords.get('nodeName')}/{coords.get('board')}")
 
 
@@ -209,17 +232,19 @@ def main() -> int:
         job_id = job["id"]
         mode = job.get("mode", "compare")
         log(f"claimed {mode} job {job_id} (board={job.get('board')})")
+        timings: Dict[str, Any] = {"schema": 1}
         with tempfile.TemporaryDirectory(prefix="htsolver_job_") as run_dir:
             try:
                 with Heartbeat(job_id):
                     report(job_id, status="Running")
                     if mode == "publish":
-                        handle_publish(job, run_dir)
+                        handle_publish(job, run_dir, timings)
                     else:
-                        handle_compare(job, run_dir)
+                        handle_compare(job, run_dir, timings)
             except Exception as e:
                 log(f"  job {job_id} FAILED: {e}")
-                report(job_id, status="Failed", error=str(e))
+                # Partial timings still ride along - they show which stage died.
+                report(job_id, status="Failed", error=str(e), timings=timings)
 
 
 if __name__ == "__main__":
