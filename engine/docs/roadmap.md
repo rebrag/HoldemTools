@@ -118,6 +118,17 @@ Both were found by chasing an iteration count that could not have moved if the e
 
   A structural consequence worth knowing: the committed fixture pair did NOT need regeneration - river trees have no chance nodes, so both the recalc schedule and the isomorphism are inert there by construction, and the turn validation reference has no usable permutation.
 
+### Standing after M6.10 + M6.11 (full 20-board sweep, all 40 runs passing the Pio gate)
+
+| family, ranges | pio / ht speed (median) | before these two | htsolver peak | pio peak |
+|---|---|---|---|---|
+| turn, ~15% | **3.43x faster** (2.45-4.45x) | 3.36x | 14 MB | 48 MB |
+| river, ~15% | **18.2x faster** (13.0-24.8x) | 18.8x (noise) | 7 MB | 38 MB |
+| turn, 100% | **0.71x** (0.43-0.93x) | 0.54x | 55 MB | 64 MB |
+| river, 100% | **8.1x faster** (4.0-14.6x) | 7.1x | 9 MB | 38 MB |
+
+The sweep's hardest board (`Ks Kd 4c 9h`, which has a usable s<->d permutation) went 17.9 s -> 9.45 s at 100% ranges. Full-range turn boards remain the one family where Pio is still ahead (0.71x median, best board 0.93x - close to parity); per M6.10's negative results, closing that residual is an update-rule question, not further scheduling or collapsing.
+
 ## Where the time goes: the chance-node cliff (measured 2026-08-26)
 
 `watcher/bench_boards.py` swept 10 turn boards and 10 river boards through both solvers - same ranges, pot, stacks and betting structure, same 0.02%-of-pot accuracy target, so the only variable is whether the tree contains a chance node. All 20 passed the cross-exploitability gate.
