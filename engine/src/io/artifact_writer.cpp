@@ -179,20 +179,19 @@ void append_ev(std::vector<std::uint8_t>& out, float value, bool f16) {
 // docs/artifact-format.md. Returns the encoded bytes.
 std::vector<std::uint8_t> encode_node_blob(const Game& game, const Node& node,
                                            const NodeExportData& data,
-                                           const std::vector<std::vector<std::uint32_t>>& dict_pos,
+                                           const std::vector<std::vector<std::uint16_t>>& dicts,
                                            bool strategy_u8, bool ev_f16, bool rollups) {
   const int seats = game.num_seats();
   const int actor = node.actor;
   const std::uint16_t actions = node.num_children;
 
-  // Sparse index per seat: hands with node reach above the epsilon,
-  // recorded as positions into the seat's hand dictionary.
+  // Sparse index per seat: hands with node reach above the epsilon. A solver
+  // hand index IS its position in the seat's dictionary - the dictionary is
+  // the hand universe in hand order - so no remapping is needed.
   std::vector<std::vector<int>> kept(seats);
   for (int s = 0; s < seats; ++s) {
     for (int h = 0; h < game.num_hands(s); ++h) {
-      if (data.reach[s][h] > fmt::kSparseEps && dict_pos[s][h] != kNoIndex) {
-        kept[s].push_back(h);
-      }
+      if (data.reach[s][h] > fmt::kSparseEps) kept[s].push_back(h);
     }
   }
 
@@ -205,7 +204,7 @@ std::vector<std::uint8_t> encode_node_blob(const Game& game, const Node& node,
     fmt::put<std::uint32_t>(blob, static_cast<std::uint32_t>(kept[s].size()));
   }
   for (int s = 0; s < seats; ++s) {
-    for (int h : kept[s]) fmt::put<std::uint32_t>(blob, dict_pos[s][h]);
+    for (int h : kept[s]) fmt::put<std::uint32_t>(blob, static_cast<std::uint32_t>(h));
     for (int h : kept[s]) fmt::put<float>(blob, data.reach[s][h]);
     for (int h : kept[s]) append_ev(blob, data.ev_cond[s][h], ev_f16);
   }
@@ -240,8 +239,9 @@ std::vector<std::uint8_t> encode_node_blob(const Game& game, const Node& node,
                                                 std::vector<double>(actions, 0.0));
     std::vector<int> plain_count(kNumHandClasses, 0);
     for (int h = 0; h < game.num_hands(actor); ++h) {
-      if (dict_pos[actor][h] == kNoIndex) continue;
-      const int cls = combo_class_index(h);
+      // The rollup is by 169 hand class, which is a property of the CANONICAL
+      // combo - so the dictionary entry, not the compact hand index.
+      const int cls = combo_class_index(dicts[actor][static_cast<std::size_t>(h)]);
       const double w = data.reach[actor][h];
       ++plain_count[cls];
       weight[cls] += w;
@@ -296,14 +296,13 @@ void write_artifact(ArtifactStore& store, const std::string& path, const Game& g
     pass.visit(tree.root(), reach);
   }
 
-  // Hand dictionaries and reverse lookup (universe id -> dict position).
+  // Hand dictionaries: entry h is the universe id of solver hand h, so a
+  // dictionary position and a solver hand index are the same number.
   std::vector<std::vector<std::uint16_t>> dicts(game.num_seats());
-  std::vector<std::vector<std::uint32_t>> dict_pos(game.num_seats());
   for (int s = 0; s < game.num_seats(); ++s) {
     dicts[s] = game.hand_dictionary(s);
-    dict_pos[s].assign(game.num_hands(s), kNoIndex);
-    for (std::size_t i = 0; i < dicts[s].size(); ++i) {
-      dict_pos[s][dicts[s][i]] = static_cast<std::uint32_t>(i);
+    if (dicts[s].size() != static_cast<std::size_t>(game.num_hands(s))) {
+      throw std::runtime_error("hand_dictionary must have one entry per hand");
     }
   }
 
@@ -355,7 +354,7 @@ void write_artifact(ArtifactStore& store, const std::string& path, const Game& g
     if (node.kind != NodeKind::Decision) continue;
     pad_to(store, 64);
     const std::uint64_t off = store.tell();
-    const auto blob = encode_node_blob(game, node, pass.exports.at(id), dict_pos,
+    const auto blob = encode_node_blob(game, node, pass.exports.at(id), dicts,
                                        strategy_u8, ev_f16, rollups);
     store.write(blob.data(), blob.size());
     index.push_back({id, off, blob.size()});
@@ -389,6 +388,8 @@ void write_artifact(ArtifactStore& store, const std::string& path, const Game& g
   // surface it. Always false while the engine is 2-player.
   meta["multiway_no_nash_guarantee"] = game.num_seats() > 2;
   meta["wall_time_s"] = stats.wall_time_s;
+  meta["setup_time_s"] = stats.setup_time_s;
+  meta["threads"] = stats.threads;
   meta["peak_rss_bytes"] = stats.peak_rss_bytes;
   meta["board"] = config.board;
   meta["chip_scale"] = config.chip_scale;

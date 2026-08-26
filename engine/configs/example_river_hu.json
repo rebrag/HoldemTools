@@ -54,5 +54,8 @@
     "rollups_169": true
   },
 
+  // 0 = one worker per hardware thread. A negative value leaves that many
+  // cores free (-4 is the useful setting when PioSolver is running on the
+  // same box). Results are bitwise identical at any thread count.
   "threads": 0
 }

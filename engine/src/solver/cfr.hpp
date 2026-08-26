@@ -1,18 +1,35 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <mutex>
 #include <vector>
 
 #include "game/game.hpp"
 #include "solver/updates.hpp"
+#include "util/parallel.hpp"
 
 namespace engine {
 
 // Flat storage layout for cumulative regrets and cumulative strategy.
 // For decision node d (dense decision_index) with H actor hands and A
-// actions, values live at node_offset[d] + hand * A + action. Both arrays
+// actions, values live at node_offset[d] + action * H + hand. Both arrays
 // share this layout. This is the hot data; keep it flat f32 - CFR is
 // memory-latency-bound and pointer-chasing here would dominate runtime.
+//
+// ACTION-MAJOR, not hand-major, and that is load-bearing. Every hot loop in
+// the traversal walks hands for a FIXED action - accumulate a child's values
+// into one action's regrets, weight one action's reach, fold one action's
+// strategy into the average. Hand-major made all of those a stride-A scatter
+// across the hand universe, which is both cache-hostile and unvectorizable.
+// Action-major makes them contiguous runs of H floats. The only loop that
+// wants the other order is the per-hand normalization in regret matching,
+// and that is A elements wide (2-5), so it loses far less than the hot
+// loops gain.
+//
+// average_strategy() and current_strategy() still EMIT hand-major rows -
+// that is the public contract every consumer (artifact writer, best
+// response) reads - so this layout stays internal to the solver.
 struct InfosetLayout {
   std::vector<std::size_t> node_offset;  // by decision_index
   std::vector<std::uint32_t> node_hands;
@@ -22,17 +39,37 @@ struct InfosetLayout {
   static InfosetLayout build(const Game& game);
 };
 
+// Hard cap on how many times one root-to-leaf path may fork. Bounds both the
+// helper recursion inside ThreadPool and the number of scratch arenas alive
+// at once (<= threads * (kMaxSplitLevels + 1) + 1), which is what the memory
+// estimator budgets for.
+inline constexpr int kMaxSplitLevels = 4;
+
+// Upper bound on scratch arenas checked out at once: every worker can be
+// nested one level per fork, plus the traversal the caller itself started.
+int max_live_arenas(int threads);
+
 class CfrSolver {
  public:
-  CfrSolver(const Game& game, UpdateConfig update);
+  // `threads` follows the config convention (0 = one per hardware thread,
+  // negative = leave that many cores free). Traversal parallelism is
+  // arithmetically identical to the single-threaded path: sibling subtrees
+  // touch disjoint regret ranges, and every cross-child accumulation still
+  // happens serially in child order after the join. Same config, same
+  // thread count or not, same numbers.
+  CfrSolver(const Game& game, UpdateConfig update, int threads = 1);
 
-  // Run one full iteration (one traversal per seat).
-  void iterate();
+  // Run `iterations` full iterations (one traversal per seat each) and leave
+  // the solver readable: any deferred DCFR discount is settled before this
+  // returns, so callers see exactly the state an eager per-iteration sweep
+  // would have left.
   void run(std::uint64_t iterations);
   std::uint64_t iteration() const { return t_; }
 
-  // Average strategy at a decision node: row-major [hand][action],
-  // rows sum to 1 (uniform when the strategy sum is all zero).
+  // Average strategy at a decision node: row-major [hand][action] - the
+  // transpose of the internal storage, kept because that is what the
+  // artifact writer and the best-response pass consume. Rows sum to 1
+  // (uniform when the strategy sum is all zero).
   void average_strategy(NodeId node, std::vector<float>& out) const;
 
   // Current (regret-matched) strategy, same shape.
@@ -40,12 +77,43 @@ class CfrSolver {
 
   const InfosetLayout& layout() const { return layout_; }
   const Game& game() const { return game_; }
+  // Shared with the best-response pass so one solve owns one set of threads.
+  ThreadPool& pool() const { return *pool_; }
+  // Fan-out budget handed to the root of a traversal; 1 disables splitting.
+  int split_budget() const { return split_budget_; }
 
   // Estimated bytes for regrets + strategy sums under this layout.
   static std::size_t state_bytes(const Game& game);
 
  private:
-  void apply_discounts();
+  // Scratch buffers for one in-flight traversal, keyed by (depth, slot).
+  // A forked subtree gets its own arena: the parent holds references into
+  // its own slots across the recursive call, so arenas are never shared.
+  struct Arena {
+    std::vector<std::vector<float>> slots;
+  };
+  // Checks an arena out for the lifetime of a forked subtree.
+  class ArenaLease {
+   public:
+    explicit ArenaLease(CfrSolver& solver) : solver_(solver), arena_(solver.acquire_arena()) {}
+    ~ArenaLease() { solver_.release_arena(arena_); }
+    ArenaLease(const ArenaLease&) = delete;
+    ArenaLease& operator=(const ArenaLease&) = delete;
+    Arena& operator*() const { return *arena_; }
+
+   private:
+    CfrSolver& solver_;
+    Arena* arena_;
+  };
+
+  void iterate();
+  // Scale one decision node's regrets and strategy sums by the outstanding
+  // discount and mark it paid.
+  void pay_discount(std::uint32_t decision_index);
+  // Settle the outstanding discount everywhere it has not already been paid.
+  void flush_discounts();
+  Arena* acquire_arena();
+  void release_arena(Arena* arena);
 
   const Game& game_;
   UpdateConfig update_;
@@ -53,15 +121,46 @@ class CfrSolver {
   std::vector<float> regrets_;
   std::vector<float> strat_sum_;
   std::uint64_t t_ = 0;
+  std::unique_ptr<ThreadPool> pool_;
+  int split_budget_ = 1;
 
-  // Returns counterfactual values for `seat`'s hands at `node`.
+  // Deferred DCFR discount.
+  //
+  // Applying it as its own sweep over every regret and strategy entry costs
+  // 13% of an iteration on a turn tree and 18% on a flop tree - pure memory
+  // traffic over data nothing else is touching at that moment. Instead the
+  // factors owed for iteration t are recorded here, and each decision node
+  // pays them on its first visit in iteration t+1, when its rows are already
+  // in cache for regret matching.
+  //
+  // This is the eager sweep exactly, not an approximation. Every node is
+  // visited on every traversal, so at most one discount is ever outstanding;
+  // the payment still lands before any read of that node in the next
+  // iteration; and run() settles the remainder, so the numbers a caller sees
+  // are bit-for-bit what the per-iteration sweep produced.
+  struct PendingDiscount {
+    bool active = false;
+    float pos = 1.0f;
+    float neg = 1.0f;
+    float strat = 1.0f;
+  };
+  PendingDiscount pending_;
+  std::uint32_t pending_iter_ = 0;              // iteration the discount is owed for
+  std::vector<std::uint32_t> discount_stamp_;   // by decision_index: last iteration paid
+
+  // Returns counterfactual values for `seat`'s hands at `node`. `split` is
+  // the remaining fan-out budget: a node with C children hands each child
+  // split/C, so the fork frontier stops widening once the pool is saturated.
   void traverse_impl(NodeId node, int seat, int depth,
                      std::vector<std::vector<float>>& reach,
-                     std::vector<float>& out);
+                     std::vector<float>& out, Arena& arena, int split, int fork_depth);
 
-  // Scratch buffers keyed by (depth, slot) so recursion reuses allocations.
-  std::vector<float>& scratch(int depth, int slot);
-  std::vector<std::vector<float>> pool_;
+  std::vector<float>& scratch(Arena& arena, int depth, int slot);
+
+  std::size_t arena_slots_ = 0;
+  std::mutex arena_mu_;
+  std::vector<std::unique_ptr<Arena>> arenas_;
+  std::vector<Arena*> free_arenas_;
 };
 
 }  // namespace engine

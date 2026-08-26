@@ -8,19 +8,23 @@
 
 namespace engine {
 
-RiverEvaluator::RiverEvaluator(const std::vector<Card>& board) {
+RiverEvaluator::RiverEvaluator(const std::vector<Card>& board,
+                               const std::vector<Combo>& universe) {
   if (board.size() != 5) throw std::runtime_error("RiverEvaluator needs a 5-card board");
   board_mask_ = cards_mask(board);
-  strength_.assign(kNumCombos, 0);
-  valid_.assign(kNumCombos, 0);
+  combos_ = universe;
+  const int hands = static_cast<int>(combos_.size());
+  masks_.resize(static_cast<std::size_t>(hands));
+  strength_.assign(static_cast<std::size_t>(hands), 0);
+  valid_.assign(static_cast<std::size_t>(hands), 0);
   Card cards[7];
   for (int i = 0; i < 5; ++i) cards[i] = board[i];
-  const std::vector<Combo>& combos = canonical_combos();
-  for (int i = 0; i < kNumCombos; ++i) {
-    if (combo_mask(i) & board_mask_) continue;
+  for (int i = 0; i < hands; ++i) {
+    masks_[i] = (1ULL << combos_[i].hi) | (1ULL << combos_[i].lo);
+    if (masks_[i] & board_mask_) continue;
     valid_[i] = 1;
-    cards[5] = combos[i].hi;
-    cards[6] = combos[i].lo;
+    cards[5] = combos_[i].hi;
+    cards[6] = combos_[i].lo;
     strength_[i] = evaluate7(cards, 7);
     sorted_.push_back(i);
   }
@@ -37,26 +41,26 @@ RiverEvaluator::RiverEvaluator(const std::vector<Card>& board) {
 void RiverEvaluator::compat_reach(const float* opp_reach, float* out) const {
   double total = 0.0;
   double per_card[kNumCards] = {};
-  const std::vector<Combo>& combos = canonical_combos();
   for (int i : sorted_) {
     const double r = opp_reach[i];
     total += r;
-    per_card[combos[i].hi] += r;
-    per_card[combos[i].lo] += r;
+    per_card[combos_[i].hi] += r;
+    per_card[combos_[i].lo] += r;
   }
-  for (int i = 0; i < kNumCombos; ++i) {
+  const int hands = num_hands();
+  for (int i = 0; i < hands; ++i) {
     if (!valid_[i]) {
       out[i] = 0.0f;
       continue;
     }
-    out[i] = static_cast<float>(total - per_card[combos[i].hi] - per_card[combos[i].lo] +
+    out[i] = static_cast<float>(total - per_card[combos_[i].hi] - per_card[combos_[i].lo] +
                                 opp_reach[i]);
   }
 }
 
 void RiverEvaluator::showdown_2p(const float* opp_reach, double pot, double my_delta,
                                  float* out) const {
-  const std::vector<Combo>& combos = canonical_combos();
+  const std::vector<Combo>& combos = combos_;
 
   // Totals over the full opponent range (for R(h)).
   double total = 0.0;
@@ -68,7 +72,8 @@ void RiverEvaluator::showdown_2p(const float* opp_reach, double pot, double my_d
     per_card[combos[i].lo] += r;
   }
 
-  for (int i = 0; i < kNumCombos; ++i) out[i] = 0.0f;
+  const int hands = num_hands();
+  for (int i = 0; i < hands; ++i) out[i] = 0.0f;
 
   // Ascending sweep: worse_* accumulate strictly-worse groups.
   double worse_total = 0.0;
@@ -108,13 +113,14 @@ void RiverEvaluator::showdown_2p(const float* opp_reach, double pot, double my_d
 
 void RiverEvaluator::showdown_2p_slow(const float* opp_reach, double pot, double my_delta,
                                       float* out) const {
-  for (int i = 0; i < kNumCombos; ++i) {
+  const int hands = num_hands();
+  for (int i = 0; i < hands; ++i) {
     out[i] = 0.0f;
     if (!valid_[i]) continue;
-    const std::uint64_t mask = combo_mask(i);
+    const std::uint64_t mask = masks_[i];
     double v = 0.0;
-    for (int o = 0; o < kNumCombos; ++o) {
-      if (!valid_[o] || (combo_mask(o) & mask)) continue;
+    for (int o = 0; o < hands; ++o) {
+      if (!valid_[o] || (masks_[o] & mask)) continue;
       const double r = opp_reach[o];
       if (r == 0.0) continue;
       double share = 0.0;
@@ -131,7 +137,7 @@ double RiverEvaluator::total_profile_weight_2p(const float* r0, const float* r1)
   // per-card sums + r1[i]).
   double total1 = 0.0;
   double per_card1[kNumCards] = {};
-  const std::vector<Combo>& combos = canonical_combos();
+  const std::vector<Combo>& combos = combos_;
   for (int i : sorted_) {
     total1 += r1[i];
     per_card1[combos[i].hi] += r1[i];

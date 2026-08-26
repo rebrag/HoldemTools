@@ -1,6 +1,8 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include <vector>
+
 
 #include "game/public_tree.hpp"
 
@@ -28,6 +30,12 @@ class Game {
 
   // Does this hand contain the given dealt card (chance-node blocking)?
   virtual bool hand_blocks_card(int seat, int hand, int card) const = 0;
+
+  // The same question asked the other way round: which of a seat's hands
+  // contain `card`, as hand indices. Only a handful of hands can, so chance
+  // nodes walk this list instead of testing every hand - and what is left
+  // over is a straight contiguous loop the compiler can vectorize.
+  virtual const std::vector<std::uint16_t>& hands_blocking_card(int seat, int card) const = 0;
 
   // Probability weight of each child card at a chance node, from public
   // information only (card removal vs. private hands is handled by reach
@@ -57,6 +65,11 @@ class Game {
   // The seat's hand dictionary for artifact export: universe ids in hand
   // order (canonical 1326 combo indices for hold'em, 0..H-1 for toy games).
   virtual std::vector<std::uint16_t> hand_dictionary(int seat) const = 0;
+
+  // Bytes the game holds beyond its public tree - precomputed showdown
+  // machinery, mostly. Reported by the memory estimator, which must not
+  // drift from what actually gets allocated.
+  virtual std::size_t auxiliary_bytes() const { return 0; }
 };
 
 }  // namespace engine
