@@ -55,6 +55,9 @@ namespace PokerRangeAPI2.Controllers
             public string? Error { get; set; }
             public bool Heartbeat { get; set; }
             public string? ResultBlobPath { get; set; }
+            // Per-stage wall times (flat dict of seconds), sent with the
+            // terminal report. Stored verbatim; the frontend renders it.
+            public JsonObject? Timings { get; set; }
         }
 
         // POST api/enginecompare/claim   body: { watcherId }
@@ -112,6 +115,13 @@ namespace PokerRangeAPI2.Controllers
             }
             if (req.ResultBlobPath != null)
                 job.ResultBlobPath = Truncate(req.ResultBlobPath, 512);
+            if (req.Timings != null)
+            {
+                // Never truncate: a cut-off JSON string is unparseable, so an
+                // oversized dict (should not happen) is dropped whole.
+                var timingsJson = req.Timings.ToJsonString();
+                if (timingsJson.Length <= 4000) job.TimingsJson = timingsJson;
+            }
 
             await _db.SaveChangesAsync();
             return Ok(new { ok = true, status = job.Status });

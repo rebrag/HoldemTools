@@ -316,7 +316,13 @@ def main() -> int:
         # Pio's load_tree never responds for a missing file - fail fast here.
         parser.error(f"--cfr file not found: {args.cfr}")
 
+    # Harness phase wall times; lands in summary.timing so the /compare
+    # pipeline panel can show where the non-solve time goes.
+    harness_timing: Dict[str, float] = {}
+
+    phase_start = time.perf_counter()
     meta = load_engine_meta(args)
+    harness_timing["meta_load_s"] = time.perf_counter() - phase_start
 
     # --- Refuse non-Nash artifacts outright. -----------------------------
     if meta.get("mode") != "nash" or meta.get("lambda") is not None:
@@ -335,7 +341,10 @@ def main() -> int:
               f"are diagnostics on those runouts; the cross-exploitability check is "
               f"SKIPPED (it needs the full strategy in Pio), so the gate is root-EV "
               f"agreement only.")
+    phase_start = time.perf_counter()
     dump = load_engine_dump(args, None if full_mode else args.runouts)
+    harness_timing["dump_load_s"] = time.perf_counter() - phase_start
+    print(f"engine dump loaded in {harness_timing['dump_load_s']:.2f} s")
 
     pot = float(meta["pot"])
     print(f"spot: board={meta['board']!r} pot={pot} config={meta['config_hash'][:10]}")
@@ -347,7 +356,9 @@ def main() -> int:
     from pyosolver import PYOSolver  # noqa: E402
 
     # PIO_LOG=<path> logs the full UPI dialogue for debugging hangs.
+    phase_start = time.perf_counter()
     solver = PYOSolver(args.pio_dir, args.pio_exe, log_file=os.environ.get("PIO_LOG"))
+    harness_timing["pio_spawn_s"] = time.perf_counter() - phase_start
     pio_timing = {"solve_s": None, "setup_s": None,
                   "peak_bytes": None, "baseline_bytes": None}
     try:
@@ -388,6 +399,7 @@ def main() -> int:
         # Full per-hand comparison rows for --json-out / the /compare page.
         compare_nodes: List[dict] = []
 
+        phase_start = time.perf_counter()
         for key, node in sorted(dump["nodes"].items(), key=lambda kv: int(kv[0])):
             if node["kind"] != "decision":
                 continue
@@ -527,6 +539,9 @@ def main() -> int:
                             ]},
                     "l1": round(l1, 4),
                 })
+        harness_timing["compare_loop_s"] = time.perf_counter() - phase_start
+        print(f"per-hand compare loop: {harness_timing['compare_loop_s']:.2f} s "
+              f"({nodes_compared} nodes)")
 
         # --- Cross-exploitability: the primary gate (full mode only). -----
         # Per-hand strategies from two correct solvers may legitimately
@@ -538,6 +553,7 @@ def main() -> int:
         # sampled mode skips it.
         engine_results: Dict[str, float] = {}
         if full_mode:
+            phase_start = time.perf_counter()
             print(f"\ncross-check: loading the engine strategy into Pio "
                   f"({len(strategy_upload)} nodes)...")
             # Do NOT lock_node here: locked nodes are excluded from Pio's MES
@@ -557,6 +573,8 @@ def main() -> int:
                         engine_results[label.strip()] = float(value.strip())
                     except ValueError:
                         pass
+            harness_timing["cross_check_s"] = time.perf_counter() - phase_start
+            print(f"cross-check: {harness_timing['cross_check_s']:.2f} s")
     finally:
         # Never use solver._run("exit"): Pio quits without emitting the END
         # marker, so _run spins forever on EOF. Ask politely, then kill -
@@ -720,6 +738,10 @@ def main() -> int:
                     "pio_solve_s": pio_timing.get("solve_s"),
                     "pio_setup_s": pio_timing.get("setup_s"),
                     "accuracy_chips": round(max(args.pio_accuracy_pct / 100.0 * pot, 1e-4), 4),
+                    # Harness phases (everything around the two solves), for
+                    # the /compare pipeline timing panel. Keys absent when a
+                    # phase did not run (e.g. cross_check_s in sampled mode).
+                    **{k: round(v, 3) for k, v in harness_timing.items()},
                 },
                 # Peak working set of each solver process over building AND
                 # solving the tree - the same OS counter on both sides. Pio's

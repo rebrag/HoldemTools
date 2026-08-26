@@ -115,6 +115,7 @@ namespace PokerRangeAPI2.Data
                 entity.Property(e => e.ResultBlobPath).HasMaxLength(512);
                 entity.Property(e => e.ResultStacks).HasMaxLength(200);
                 entity.Property(e => e.ResultNodeName).HasMaxLength(200);
+                entity.Property(e => e.TimingsJson).HasMaxLength(4000);
 
                 entity.HasIndex(e => e.UserId);
                 // Drives the claim ordering (Queued, oldest first).
