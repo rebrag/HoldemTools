@@ -172,7 +172,27 @@ SolveConfig load_config(const std::string& path_text) {
     else fail("preflop_aggressor must be ip | oop | none");
   }
 
-  if (j.contains("algorithm")) config.update = parse_algorithm(j.at("algorithm"));
+  if (j.contains("algorithm")) {
+    config.update = parse_algorithm(j.at("algorithm"));
+    if (j.at("algorithm").contains("recalc")) {
+      const json& r = j.at("algorithm").at("recalc");
+      config.recalc.enabled = r.value("enabled", config.recalc.enabled);
+      config.recalc.margin = r.value("margin", config.recalc.margin);
+      config.recalc.eps_reach = r.value("eps_reach", config.recalc.eps_reach);
+      config.recalc.max_period = r.value("max_period", config.recalc.max_period);
+      config.recalc.warmup = r.value("warmup", config.recalc.warmup);
+      if (config.recalc.margin < 0.0f || config.recalc.margin > 10000.0f) {
+        fail("algorithm.recalc.margin must be in [0, 10000]");
+      }
+      if (config.recalc.eps_reach < 0.0f || config.recalc.eps_reach > 1.0f) {
+        fail("algorithm.recalc.eps_reach is a relative L1 threshold in [0, 1]");
+      }
+      if (config.recalc.max_period < 1 || config.recalc.max_period > 4096) {
+        fail("algorithm.recalc.max_period must be in [1, 4096]");
+      }
+      if (config.recalc.warmup < 0) fail("algorithm.recalc.warmup cannot be negative");
+    }
+  }
 
   if (j.contains("qre")) {
     config.qre_mode = j.at("qre").value("mode", "nash");
@@ -216,6 +236,7 @@ SolveConfig load_config(const std::string& path_text) {
     if (config.checkpoint_every == 0) config.checkpoint_every = 1000;
   }
 
+  config.isomorphism = j.value("isomorphism", config.isomorphism);
   config.memory_limit_gb = j.value("memory_limit_gb", config.memory_limit_gb);
   if (config.memory_limit_gb <= 0) fail("memory_limit_gb must be positive");
 

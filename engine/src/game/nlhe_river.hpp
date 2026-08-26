@@ -10,6 +10,7 @@
 #include "config/schema.hpp"
 #include "eval/terminal.hpp"
 #include "game/game.hpp"
+#include "ranges/iso.hpp"
 #include "ranges/universe.hpp"
 
 namespace engine {
@@ -59,12 +60,26 @@ class NlhePostflopGame final : public Game {
 
   std::size_t auxiliary_bytes() const override;
 
+  IsoRef iso_rep(NodeId node) const override {
+    const NodeId rep = iso_rep_[node];
+    if (rep == node) return {node, nullptr};
+    return {rep, &perm_maps_[iso_perm_[node]]};
+  }
+  // How many chance-node children were collapsed into an equivalent
+  // representative (observability + tests).
+  std::size_t iso_collapsed_children() const { return iso_collapsed_; }
+
   const std::vector<Card>& board() const { return board_; }
 
  private:
   const RiverEvaluator& evaluator_for(std::uint64_t board_mask) const;
   // Fill `evaluators_` for every showdown terminal in the tree, in parallel.
   void build_evaluators(int threads);
+  // Group suit-equivalent runout children and map their subtrees onto the
+  // representatives (docs in nlhe_river.cpp).
+  void build_isomorphism();
+  void map_member_subtree(NodeId rep, NodeId member, std::uint16_t perm_id,
+                          const SuitPerm& perm);
 
   PublicTree tree_;
   std::vector<Card> board_;  // root board (3-5 cards)
@@ -76,6 +91,13 @@ class NlhePostflopGame final : public Game {
   // means roughly 4% of the universe per card, so a chance node that walks
   // this does ~25x less work than one that tests every hand.
   std::array<std::vector<std::uint16_t>, kNumCards> blocking_;
+  // Suit isomorphism (see iso_rep). iso_rep_[n] == n for nodes that are
+  // their own representative; members carry the corresponding rep node and
+  // an index into perm_maps_.
+  std::vector<NodeId> iso_rep_;
+  std::vector<std::uint16_t> iso_perm_;
+  std::vector<std::vector<std::uint16_t>> perm_maps_;
+  std::size_t iso_collapsed_ = 0;
   std::vector<std::vector<float>> ranges_;  // compact, one per seat
   double profile_weight_ = 0.0;
   // Showdown machinery per completed 5-card board: a flop tree needs up to

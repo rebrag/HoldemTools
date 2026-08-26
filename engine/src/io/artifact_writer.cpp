@@ -390,6 +390,7 @@ void write_artifact(ArtifactStore& store, const std::string& path, const Game& g
   meta["wall_time_s"] = stats.wall_time_s;
   meta["setup_time_s"] = stats.setup_time_s;
   meta["threads"] = stats.threads;
+  meta["recalc_skips"] = stats.recalc_skips;
   meta["peak_rss_bytes"] = stats.peak_rss_bytes;
   meta["board"] = config.board;
   meta["chip_scale"] = config.chip_scale;

@@ -36,7 +36,11 @@ struct SolveConfig {
   // gates whether OOP's first-in sizes come from donks or bets.
   Aggressor preflop_aggressor = Aggressor::None;
 
-  UpdateConfig update;  // algorithm.update / dcfr params
+  UpdateConfig update;   // algorithm.update / dcfr params
+  RecalcConfig recalc;   // algorithm.recalc - chance-child revisit schedule
+  // Collapse suit-equivalent runout subtrees (lossless relabeling). Disabled
+  // automatically when the ranges are not suit-symmetric.
+  bool isomorphism = true;
 
   std::string qre_mode = "nash";  // nash | qre (qre lands in M7)
 
