@@ -12,19 +12,20 @@ import { HJ_23, CO_23, type RawSolution } from "./solutionData";
 
 export const RANKS = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"] as const;
 
+import { getColorForAction } from "@/lib/solver/utils";
+
 export type ActionKey = "ALLIN" | "Raise 50%" | "Min" | "Call" | "Fold";
 
 // Fixed render order so segments keep their slot across state swaps (this is
 // what lets each cell's widths transition smoothly instead of jumping).
 export const SEGMENT_ORDER: ActionKey[] = ["ALLIN", "Raise 50%", "Min", "Call", "Fold"];
 
-export const ACTION_COLORS: Record<ActionKey, string> = {
-  ALLIN: "#7d1f1e",
-  "Raise 50%": "#C14c39",
-  Min: "#F03c3c",
-  Call: "#5ab964",
-  Fold: "#3d7cb8",
-};
+/* Derived from the solver's palette rather than copied from it: this preview
+ * sits on the marketing homepage, and a hardcoded copy silently drifts out of
+ * step with the real matrix the first time the palette is retuned. */
+export const ACTION_COLORS: Record<ActionKey, string> = Object.fromEntries(
+  SEGMENT_ORDER.map((action) => [action, getColorForAction(action)])
+) as Record<ActionKey, string>;
 
 export const ACTION_LABELS: Record<ActionKey, string> = {
   ALLIN: "All-in",

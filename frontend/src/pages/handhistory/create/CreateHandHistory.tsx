@@ -1096,6 +1096,19 @@ const CreateHandHistory: React.FC<Props> = ({
     setSolveBusy(true);
     setSolveError(null);
     try {
+      // The manifest's chipScale and the config's amounts have to be the same
+      // number or every bet in the solved tree is misread by that factor. The
+      // panel carries the scale rather than re-deriving it, so a mismatch here
+      // means that contract broke somewhere upstream - loud in dev, and the
+      // upload below still uses the extract-time value either way.
+      if (import.meta.env.DEV && params.chipScale !== solveOffer.chipScale) {
+        console.error(
+          "chipScale drifted between the extract and the tree-building panel:",
+          solveOffer.chipScale,
+          "->",
+          params.chipScale
+        );
+      }
       const text = buildTreeConfigText(params, flopCards);
       // The concurrent save may still be running — or not even started, when
       // the showdown-equity worker is what the auto-save is waiting on — so

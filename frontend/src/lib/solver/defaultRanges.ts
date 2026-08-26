@@ -125,3 +125,56 @@ export const getDefaultRange = (
       return expandRange(LIMP);
   }
 };
+
+/* ---------- the built-in library ----------
+ *
+ * The same charts above, exposed as a browsable read-only tree so the range
+ * picker is useful before a user has saved anything of their own. These are the
+ * only ranges a signed-out user sees.
+ *
+ * Kept as specs rather than expanded weight maps: expansion is cheap and doing
+ * it lazily keeps 169-key objects out of the module's startup cost. */
+
+export interface BuiltinRange {
+  /** Stable id, used as a React key and as the picker's selection token. */
+  id: string;
+  name: string;
+  spec: string;
+}
+
+export interface BuiltinFolder {
+  id: string;
+  name: string;
+  ranges: BuiltinRange[];
+}
+
+const OPEN_ORDER = ["UTG", "UTG1", "LJ", "HJ", "CO", "BTN", "SB"] as const;
+
+export const BUILTIN_RANGE_FOLDERS: BuiltinFolder[] = [
+  {
+    id: "builtin-opens",
+    name: "Opens",
+    ranges: OPEN_ORDER.map((pos) => ({
+      id: `builtin-open-${pos}`,
+      name: `${pos} open`,
+      spec: OPEN[pos],
+    })),
+  },
+  {
+    id: "builtin-vs-open",
+    name: "Facing an open",
+    ranges: [
+      { id: "builtin-flat", name: "Flat call", spec: FLAT_CALL },
+      { id: "builtin-3bet", name: "3-bet", spec: THREE_BET },
+      { id: "builtin-bb-defend", name: "BB defend", spec: BB_DEFEND },
+    ],
+  },
+  {
+    id: "builtin-other",
+    name: "Other spots",
+    ranges: [
+      { id: "builtin-3bet-call", name: "Call a 3-bet", spec: THREE_BET_CALL },
+      { id: "builtin-limp", name: "Limp", spec: LIMP },
+    ],
+  },
+];

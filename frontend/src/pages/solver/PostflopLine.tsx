@@ -7,7 +7,7 @@
 import React from "react";
 import { X } from "lucide-react";
 import PlayingCard from "@/components/PlayingCard";
-import { getColorForAction, stringToColor } from "@/lib/solver/utils";
+import { buildActionPalette, stringToColor } from "@/lib/solver/utils";
 import type { PostflopSessionLineNode } from "@/hooks/usePostflopSession";
 import type { PreflopLineNode } from "./usePreflopLineNodes";
 import { fmtMoneyValue, type MoneyOpts } from "./boardDisplay";
@@ -58,8 +58,14 @@ export interface PostflopLineProps {
   actionsDisabled?: boolean;
 }
 
-const chipColor = (label: string, sizeRef = 1) =>
-  getColorForAction(label, sizeRef) || stringToColor(label);
+/* Colours for one node's whole option list. Built per card rather than per
+ * label so two close bet sizes stay tellable apart, and so these dots agree
+ * with the matrix segments for the same node. */
+const nodePalette = (options: string[], sizeRef = 1): Record<string, string> => {
+  const palette = buildActionPalette(options, sizeRef);
+  for (const option of options) palette[option] ||= stringToColor(option);
+  return palette;
+};
 
 /* Shared card shell, mirroring the preflop Line's seat cards. `clickable`
  * cards take a click anywhere on their body, not just on an option row. */
@@ -98,14 +104,15 @@ const CardHeader: React.FC<{
 const OptionRow: React.FC<{
   action: string;
   /** Units of the bet labels per big blind; see getColorForAction. */
-  sizeRef?: number;
+  /** Resolved from the node's palette by the caller. */
+  color: string;
   taken?: boolean;
   /** This is the action the player actually took in the recorded hand. */
   played?: boolean;
   disabled?: boolean;
   onClick?: () => void;
   title?: string;
-}> = ({ action, sizeRef = 1, taken, played, disabled, onClick, title }) => (
+}> = ({ action, color, taken, played, disabled, onClick, title }) => (
   <button
     type="button"
     /* The card body is clickable too, so a row click must not also count as
@@ -126,7 +133,7 @@ const OptionRow: React.FC<{
   >
     <span
       className="inline-block w-1.5 h-1.5 rounded-[2px] flex-shrink-0"
-      style={{ backgroundColor: chipColor(action, sizeRef) }}
+      style={{ backgroundColor: color }}
     />
     <span
       className={`text-[0.55rem] leading-tight whitespace-nowrap ${
@@ -170,6 +177,11 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
   /* Postflop labels are in the solve's money; the colour ramp is calibrated
    * in big blinds, so tell it how much money makes one. */
   const sizeRef = money?.bbSize && money.bbSize > 0 ? money.bbSize : 1;
+  /* The seat-to-act card's own palette, from the options it actually offers. */
+  const activePalette = nodePalette(
+    (actions ?? []).map((a) => a.display),
+    sizeRef
+  );
   const preflopSummary =
     !handSolve && preflopLine && preflopLine.length > 1
       ? preflopLine.slice(1).join(" · ")
@@ -224,10 +236,11 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
                     are big blinds whatever unit the postflop solve uses. */}
                 <CardHeader label={node.seat} stack={node.stackBB} />
                 <div className="flex flex-col gap-0.5">
-                  {node.options.map((action) => (
+                  {node.options.map((action, _i, all) => (
                     <OptionRow
                       key={action}
                       action={action}
+                      color={nodePalette(all)[action]}
                       taken={action === node.taken}
                       onClick={
                         onPreflopJump ? () => onPreflopJump(i, action) : undefined
@@ -296,11 +309,11 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
               >
                 <CardHeader label={node.seat} stack={node.stackMoney} money={money} />
                 <div className="flex flex-col gap-0.5">
-                  {node.options.map((action) => (
+                  {node.options.map((action, _i, all) => (
                     <OptionRow
                       key={action}
                       action={action}
-                      sizeRef={sizeRef}
+                      color={nodePalette(all, sizeRef)[action]}
                       taken={action === node.taken}
                       disabled={actionsDisabled}
                       onClick={
@@ -332,7 +345,7 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
                   <OptionRow
                     key={a.display}
                     action={a.display}
-                    sizeRef={sizeRef}
+                    color={activePalette[a.display]}
                     played={!!playedAction && a.display === playedAction}
                     disabled={actionsDisabled}
                     onClick={onActionClick ? () => onActionClick(a.display) : undefined}

@@ -38,22 +38,31 @@ export function stringToColor(str: string): string {
 
 // ---- Action colors ----
 //
-// Single source of truth for BOTH the ColorKey legend and the DecisionMatrix
-// cells. Every action label is colored by the same pure function, so the legend
-// and the matrix segments always agree. Passive actions (check/call) share the
-// preflop green; folds are blue; bets/raises are a red graded by size so
-// distinct sizings are visually distinguishable and consistent between views.
+// Single source of truth for the ColorKey legend, the DecisionMatrix cells, the
+// action summary and both line strips, so every view agrees. Passive actions
+// (check/call) share the preflop green; folds are blue; bets and raises run a
+// warm orange -> deep red ramp graded by size, and all-in is darker than
+// anything the ramp can reach.
+//
+// Two rules the ramp has to satisfy at once, which is what makes this more than
+// a lerp:
+//   1. DARKER IS ALWAYS BIGGER, and roughly stable across nodes, so a shade
+//      means something on its own.
+//   2. Sizes that actually appear together at one node must be TELLABLE APART.
+// An absolute ramp alone fails (2): a 2 / 2.5 / 3bb open family lands within a
+// few percent of the gradient. So buildActionPalette anchors each bet
+// absolutely, then guarantees a minimum gap between the sizes present at that
+// node. getColorForAction stays as the single-label fallback.
 
 const ACTION_GREEN = "#5ab964"; // Check / Call
 const ACTION_BLUE = "#3d7cb8"; // Fold
 const ACTION_MIN = "#F03c3c"; // Min (pre-flop min-open)
-const ACTION_ALLIN = "#7d1f1e"; // All-in
-const BET_LIGHT = "#E8743C"; // smallest bet/raise (orange-red)
-const BET_DARK = "#9E2A24"; // largest bet/raise (deep red, still above ALL-IN)
+/** All-in. Deliberately far darker than BET_DARK - it used to sit ~33 points of
+ *  red away from the ramp's end, which read as "just the biggest bet". */
+const ACTION_ALLIN = "#5B1210";
+const BET_LIGHT = "#F08A4B"; // smallest bet/raise (warm orange)
+const BET_DARK = "#A02722"; // largest bet/raise (deep red, still short of all-in)
 const ACTION_FALLBACK = "#C14c39";
-
-// Retained for backward-compat imports; no longer used for coloring.
-export const UNKNOWN_MULTI_COLOR = "#F2733c";
 
 const isPassive = (n: string) =>
   n === "check" || n === "call" || n === "c" || n === "x";
@@ -61,8 +70,42 @@ const isFold = (n: string) => n === "fold" || n === "f";
 const isAllin = (n: string) => n === "allin" || n === "all-in" || n === "all in";
 const isBetOrRaise = (label: string) => /^(bet|raise)\b/i.test(label.trim());
 
-/** Numeric size in a bet/raise label ("Bet 1.8bb", "Raise to 20bb", "Raise 2bb",
- * "Raise 54%") — the first number found, or null. */
+/** What a bet label's number is denominated in. */
+export type BetUnit = "pct" | "bb";
+
+export interface ParsedBetSize {
+  /** Percent of pot when unit is "pct"; big blinds when "bb". */
+  value: number;
+  unit: BetUnit;
+}
+
+/**
+ * Size and UNIT of a bet/raise label.
+ *
+ * Reading the number without its unit is what used to break the ramp: preflop
+ * plates mix "Raise 3bb" with "Raise 54%" / "Raise 75%" / "Raise 100%" /
+ * "Raise 125%" (see lib/solver/constants.ts), and treating 54..125 as big
+ * blinds pushed every percent-labelled raise past the ramp's ceiling, so they
+ * all rendered the identical darkest red - indistinguishable from each other
+ * and nearly indistinguishable from all-in.
+ *
+ * A bare number is the hand's own money; `sizeRef` (money per big blind)
+ * converts it, so "Bet 50" in a $5 game is 10bb.
+ */
+export function parseBetSize(label: string, sizeRef = 1): ParsedBetSize | null {
+  if (!isBetOrRaise(label)) return null;
+  const m = label.match(/(\d+(?:\.\d+)?)\s*(%|bb)?/i);
+  if (!m) return null;
+  const value = parseFloat(m[1]);
+  if (!Number.isFinite(value)) return null;
+  const suffix = (m[2] ?? "").toLowerCase();
+  if (suffix === "%") return { value, unit: "pct" };
+  if (suffix === "bb") return { value, unit: "bb" };
+  return { value: value / (sizeRef > 0 ? sizeRef : 1), unit: "bb" };
+}
+
+/** The raw number in a bet/raise label, unit-blind. Kept for callers that only
+ *  need to sort within one node, where every label shares a unit. */
 export function betSize(label: string): number | null {
   if (!isBetOrRaise(label)) return null;
   const m = label.match(/(\d+(?:\.\d+)?)/);
@@ -82,30 +125,140 @@ export const mixHex = (c1: string, c2: string, t: number): string => {
   );
 };
 
+/* Ramp calibration, one band per unit. A node's labels always share a unit, so
+ * per-unit anchoring keeps "darker is bigger" true wherever it is observable.
+ * Both are log-spaced because bet sizes are perceived multiplicatively - the
+ * step from 33% to 50% reads like the step from 100% to 150%. */
+const PCT_MIN = 20; // a small stab
+const PCT_MAX = 300; // a big overbet
+const BB_MIN = 0.75;
+const BB_MAX = 60;
+
+const logNorm = (v: number, lo: number, hi: number): number =>
+  Math.max(0, Math.min(1, Math.log(Math.max(v, lo) / lo) / Math.log(hi / lo)));
+
+/** Absolute ramp position, 0 = smallest, 1 = largest. */
+const betRampT = (size: ParsedBetSize): number =>
+  size.unit === "pct"
+    ? logNorm(size.value, PCT_MIN, PCT_MAX)
+    : logNorm(size.value, BB_MIN, BB_MAX);
+
 /**
- * `sizeRef` is how much of the label's unit makes one big blind. It is 1 when
- * the label is already in big blinds (every preflop sim), and the hand's big
- * blind when the label is in a recorded hand's own money - a "Bet 50" in a
- * $5 game is 10bb, and without this every bet at a real stake would exceed
- * the ramp's ceiling and render the same darkest shade.
+ * Smallest perceptual step we are willing to render between two bet sizes at
+ * the same node. Roughly a fifth of the ramp, which on this gradient is a
+ * clearly visible change in both hue and lightness.
  */
-export const getColorForAction = (action: string, sizeRef = 1): string => {
+const MIN_BET_GAP = 0.19;
+
+/**
+ * Push ascending ramp positions apart so adjacent ones differ visibly, without
+ * reordering them and without leaving the ramp.
+ *
+ * Order is preserved by construction (each pass only ever moves a value toward
+ * the neighbour it is too close to, never past it). When more sizes are present
+ * than the ramp can separate at MIN_BET_GAP, the gap shrinks to an even split
+ * rather than clipping the largest ones together at the dark end.
+ */
+const spreadRamp = (ascending: number[]): number[] => {
+  const n = ascending.length;
+  if (n < 2) return ascending;
+
+  const gap = Math.min(MIN_BET_GAP, 1 / (n - 1));
+  const t = [...ascending];
+
+  const pushUp = () => {
+    for (let i = 1; i < n; i++) t[i] = Math.max(t[i], t[i - 1] + gap);
+  };
+
+  pushUp();
+  if (t[n - 1] > 1) {
+    // Ran off the dark end: pin the largest at the ramp's end and push back
+    // down, then repair any collision that creates at the light end.
+    t[n - 1] = 1;
+    for (let i = n - 2; i >= 0; i--) t[i] = Math.min(t[i], t[i + 1] - gap);
+    t[0] = Math.max(0, t[0]);
+    pushUp();
+  }
+  return t.map((v) => Math.max(0, Math.min(1, v)));
+};
+
+const betColorAt = (t: number): string => mixHex(BET_LIGHT, BET_DARK, t);
+
+/** Color for a non-bet label, or null when it is a bet/raise. */
+const categoricalColor = (action: string): string | null => {
   const a = (action ?? "").trim();
   const n = a.toLowerCase();
   if (isPassive(n)) return ACTION_GREEN;
   if (isFold(n)) return ACTION_BLUE;
   if (isAllin(n)) return ACTION_ALLIN;
   if (a === "Min") return ACTION_MIN;
-  const size = betSize(a);
-  if (size != null) {
-    // Log ramp so small flop bets and large river bets both spread across the
-    // gradient (~0.5bb → light, ~40bb+ → dark).
-    const sizeBB = size / (sizeRef > 0 ? sizeRef : 1);
-    const t = Math.max(0, Math.min(1, Math.log2(sizeBB + 1) / Math.log2(41)));
-    return mixHex(BET_LIGHT, BET_DARK, t);
-  }
-  if (isBetOrRaise(a)) return BET_LIGHT; // bet/raise with no parsable size
+  if (isBetOrRaise(a)) return null;
   return ACTION_FALLBACK;
+};
+
+/**
+ * Colors for every action at ONE node, with bet sizes guaranteed to be
+ * distinguishable from each other.
+ *
+ * Prefer this over getColorForAction wherever the whole action set is in hand -
+ * which is everywhere that matters, since the legend, the cells, the summary
+ * and the line strips all enumerate a node's options. Using it everywhere is
+ * also what keeps them agreeing: a bet's color depends on the node's size set,
+ * so two views that pass different sets would disagree.
+ *
+ * `sizeRef` is how much of the label's unit makes one big blind: 1 when the
+ * label is already in big blinds (every preflop sim), the hand's big blind when
+ * it is in a recorded hand's own money.
+ */
+export const buildActionPalette = (
+  actions: string[],
+  sizeRef = 1
+): Record<string, string> => {
+  const out: Record<string, string> = {};
+
+  /* One entry per DISTINCT size, so two labels for the same size (a bet and a
+   * raise to the same amount) get the same shade instead of being forced
+   * apart. */
+  const bySize = new Map<number, string[]>();
+  for (const action of actions) {
+    const flat = categoricalColor(action);
+    if (flat !== null) {
+      out[action] = flat;
+      continue;
+    }
+    const parsed = parseBetSize(action, sizeRef);
+    if (!parsed) {
+      out[action] = BET_LIGHT; // bet/raise with no parsable size
+      continue;
+    }
+    const t = betRampT(parsed);
+    const bucket = bySize.get(t);
+    if (bucket) bucket.push(action);
+    else bySize.set(t, [action]);
+  }
+
+  const ascending = [...bySize.keys()].sort((a, b) => a - b);
+  const spread = spreadRamp(ascending);
+  ascending.forEach((key, i) => {
+    const color = betColorAt(spread[i]);
+    for (const action of bySize.get(key)!) out[action] = color;
+  });
+
+  return out;
+};
+
+/**
+ * Color for a single label, with no node context.
+ *
+ * This is the fallback: it can only place a bet on the absolute ramp, so two
+ * close sizes will look close. Callers that know the node's full option list
+ * should use buildActionPalette instead.
+ */
+export const getColorForAction = (action: string, sizeRef = 1): string => {
+  const flat = categoricalColor(action);
+  if (flat !== null) return flat;
+  const parsed = parseBetSize(action, sizeRef);
+  return parsed ? betColorAt(betRampT(parsed)) : BET_LIGHT;
 };
 
 export type ActionCategory = "allin" | "bet" | "min" | "passive" | "fold" | "other";
