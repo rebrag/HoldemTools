@@ -348,10 +348,17 @@ def main() -> int:
 
             pio_strategy = solver.show_strategy(pio_id)
             pio_evs, pio_matchups = solver.calc_ev(position, pio_id)
+            # Pio's OWN reach for the actor at this node. Load-bearing for
+            # the diagnostics: a (node, hand) that Pio never reaches is
+            # off-path for Pio, where BOTH its strategy (unconstrained in an
+            # equilibrium) and its calc_ev (conditioned on a zero-probability
+            # event, and observed returning things like -381 chips) are
+            # meaningless. The engine reaching it instead is exactly what
+            # picking a different equilibrium looks like, not a bug.
+            pio_reach = solver.show_range(position, pio_id) or []
             # How often this node is actually reached (Pio's global line
             # frequency). Without it the diagnostics drown in noise from
-            # never-taken lines, where per-hand EVs are undefined on both
-            # sides (near-zero matchups) yet formally comparable.
+            # never-taken lines.
             try:
                 global_freq = solver.calc_global_freq(pio_id)
             except Exception:
@@ -405,7 +412,13 @@ def main() -> int:
                     for k in range(len(engine_labels)))
                 pio_ev = pio_evs[idx]
                 ev_diff = (hand["ev"] - pio_ev) if math.isfinite(pio_ev) else float("nan")
-                weight = reach * global_freq
+                # Weight by the probability this (node, hand) is ON-PATH for
+                # BOTH solvers: node frequency x the smaller of the two
+                # reaches. Off-path for either side means that side's numbers
+                # are undefined there, so comparing them measures equilibrium
+                # choice, not correctness.
+                p_reach = pio_reach[idx] if idx < len(pio_reach) else 0.0
+                weight = global_freq * min(reach, p_reach)
                 weighted_l1_sum += weight * l1
                 if math.isfinite(ev_diff):
                     weighted_ev_sum += weight * abs(ev_diff)
@@ -414,6 +427,7 @@ def main() -> int:
                              for k in range(len(engine_labels))]
                 offenders.append({
                     "node": pio_id, "hand": hand["hand"], "reach": reach,
+                    "pio_reach": p_reach, "weight": weight,
                     "gfreq": global_freq, "l1": l1,
                     "ev_engine": hand["ev"], "ev_pio": pio_ev, "ev_diff": ev_diff,
                     "engine_freqs": [round(f, 3) for f in hand["strategy"]],
@@ -425,6 +439,7 @@ def main() -> int:
                 compare_hands.append({
                     "hand": hand["hand"],
                     "reach": round(reach, 6),
+                    "pio_reach": round(p_reach, 6),
                     "ht": {"freq": [round(f, 4) for f in hand["strategy"]],
                            "ev": round(hand["ev"], 3),
                            "action_ev": [_clean(v) for v in hand.get("action_ev", [])]},
@@ -585,14 +600,15 @@ def main() -> int:
 
     diagnostics_ok = mean_l1 <= args.l1_threshold and mean_ev <= ev_threshold
     if not diagnostics_ok:
-        print(f"\nlargest strategy differences (top {args.top} by gfreq * reach * L1):")
-        offenders.sort(key=lambda o: o["gfreq"] * o["reach"] * o["l1"], reverse=True)
-        print(f"{'node':<24}{'hand':<8}{'gfreq':>8}{'reach':>7}{'L1':>8}{'ev_eng':>10}"
-              f"{'ev_pio':>10}  engine_freqs vs pio_freqs")
+        print(f"\nlargest ON-PATH strategy differences (top {args.top} by weight * L1; "
+              f"weight = gfreq * min(engine reach, pio reach)):")
+        offenders.sort(key=lambda o: o["weight"] * o["l1"], reverse=True)
+        print(f"{'node':<24}{'hand':<8}{'gfreq':>8}{'ht_rch':>7}{'pio_rch':>8}{'L1':>8}"
+              f"{'ev_eng':>10}{'ev_pio':>10}  engine_freqs vs pio_freqs")
         for o in offenders[:args.top]:
             print(f"{o['node']:<24}{o['hand']:<8}{o['gfreq']:>8.4f}{o['reach']:>7.3f}"
-                  f"{o['l1']:>8.4f}{o['ev_engine']:>10.2f}{o['ev_pio']:>10.2f}  "
-                  f"{o['engine_freqs']} vs {o['pio_freqs']}")
+                  f"{o['pio_reach']:>8.3f}{o['l1']:>8.4f}{o['ev_engine']:>10.2f}"
+                  f"{o['ev_pio']:>10.2f}  {o['engine_freqs']} vs {o['pio_freqs']}")
 
     if full_mode:
         if exploit_engine is None:
@@ -612,11 +628,21 @@ def main() -> int:
             return 1
 
     if not diagnostics_ok:
-        print("\nNOTE: per-hand strategies/EVs differ beyond the diagnostic thresholds, "
-              "but Pio itself rates the engine strategy as (near-)unexploitable. The two "
-              "solvers picked different equilibria - expected in spots with wide "
-              "indifference regions (symmetric or full ranges especially). Only the "
-              "cross-exploitability above is a correctness statement.")
+        if full_mode:
+            print("\nNOTE: per-hand strategies/EVs differ beyond the diagnostic "
+                  "thresholds, but Pio itself rates the engine strategy as "
+                  "(near-)unexploitable. The two solvers picked different equilibria - "
+                  "expected in spots with wide indifference regions (symmetric or full "
+                  "ranges especially). Only the cross-exploitability above is a "
+                  "correctness statement.")
+        else:
+            print("\nNOTE: per-hand strategies/EVs differ beyond the diagnostic "
+                  "thresholds, and in SAMPLED mode there is NO cross-exploitability "
+                  "check to fall back on - the gate here was root-EV agreement alone. "
+                  "Different equilibria explain per-hand spread (indifference regions "
+                  "are wide in symmetric/full-range spots), but if you want a "
+                  "correctness statement about the strategy itself, re-run a smaller "
+                  "tree in full mode.")
     print("\nPASS")
     return 0
 

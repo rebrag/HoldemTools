@@ -93,16 +93,14 @@ struct ExportPass {
         reach[actor][h] = saved[h] * sigma[static_cast<std::size_t>(h) * actions + k];
       }
       auto child_values = visit(node.first_child + k, reach);
-      const Node& child = tree[node.first_child + k];
       // Actor's conditional EV of taking this action = value at the child,
-      // normalized by the opponents' reach (unchanged by the actor's own
-      // action) and shifted to child-relative commits.
+      // normalized by the opponents' reach (which the actor's own action
+      // does not change). Chips already committed stay subtracted - see the
+      // convention note on ev_cond below.
       data.action_ev_cond[k].assign(hands, 0.0f);
       for (int h = 0; h < hands; ++h) {
         if (compat[h] > 0.0f) {
-          data.action_ev_cond[k][h] =
-              child_values[actor][h] / compat[h] +
-              static_cast<float>(child.commit[actor]);
+          data.action_ev_cond[k][h] = child_values[actor][h] / compat[h];
         }
       }
       for (int s = 0; s < seats; ++s) {
@@ -117,6 +115,17 @@ struct ExportPass {
     }
     reach[actor] = saved;
 
+    // EV CONVENTION (matches PioSolver's calc_ev; see docs/artifact-format.md):
+    // expected share of the final pot minus ALL of the seat's post-root
+    // contributions, including chips already committed before this node.
+    // The terminal utilities already subtract the full commitment, so this
+    // is just the normalized counterfactual value with nothing added back.
+    // Do not "add back" the sunk chips: the viewer's schema-4 bundles are
+    // populated from Pio's calc_ev for every board the Pio watcher solved,
+    // and the same field must mean the same thing regardless of which
+    // solver produced the board. Verified empirically 2026-08-26 - adding
+    // the commitment back made engine EVs differ from Pio's by exactly the
+    // actor's committed chips at every node past the street root.
     data.ev_cond.resize(seats);
     for (int s = 0; s < seats; ++s) {
       std::vector<float> compat_s;
@@ -124,7 +133,7 @@ struct ExportPass {
       data.ev_cond[s].assign(game.num_hands(s), 0.0f);
       for (int h = 0; h < game.num_hands(s); ++h) {
         if (compat_s[h] > 0.0f) {
-          data.ev_cond[s][h] = values[s][h] / compat_s[h] + static_cast<float>(node.commit[s]);
+          data.ev_cond[s][h] = values[s][h] / compat_s[h];
         }
       }
     }

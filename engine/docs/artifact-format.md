@@ -108,7 +108,11 @@ rollup block (only when flag bit 2 set):
 - `EV` cells are `f32`, or `f16` when flag bit 1 is set. `STRAT` cells are `u8` (probability x 255, rounded) when flag bit 0 is set, else `f32`.
 - **Sparseness**: a hand appears iff its reach at the node exceeds `1e-6`. Hands with positive range that never reach a node are absent there.
 - **Strategy renormalization rule**: readers must renormalize each quantized row to sum 1; an all-zero row decodes as uniform.
-- **EV units and reference**: `ev` and `action_ev` are conditional per-hand EVs in chips, relative to the node: the expected share of the final pot minus the seat's expected contributions *after this node* (chips already committed are sunk and not subtracted). Root EVs across seats sum to the root pot (Pio's convention: the fixture root has `ev_oop + ev_ip = pot`). `action_ev[h][k]` is the actor's conditional EV of taking action `k`, measured at the child (commits included), i.e. Pio's "actor's calc_ev at the child node".
+- **EV units and reference**: `ev` and `action_ev` are conditional per-hand EVs in chips: the expected share of the final pot minus **all** of the seat's post-root contributions, including chips it committed before this node. `action_ev[h][k]` is the same quantity evaluated at child `k` - Pio's "actor's calc_ev at the child node".
+
+  This is **PioSolver's `calc_ev` convention**, deliberately: the viewer's schema-4 bundles carry Pio's numbers for every board the Pio watcher solved, so the same field must mean the same thing no matter which solver produced a board. At a street root (nothing committed yet) both seats' EVs sum to the node pot; deeper in a street they sum to pot minus the committed chips.
+
+  The alternative convention - treating already-committed chips as sunk and not subtracting them - reads more naturally hand-by-hand but is **wrong for this format**. It agrees at the root, which is exactly why a river-only solve looks fine under it, and then diverges by precisely the actor's commitment at every node past the street root.
 - **Rollup aggregation rule** (matches `watcher/extraction.py`): class frequency = reach-weighted mean of the actor's per-hand action frequency; when the class carries zero reach the plain mean over its present combos is used. `class_ev` is the reach-weighted mean per-hand EV, 0 when weightless. Rollups are derived data - readers must be able to recompute them from the arrays above when the flag is absent.
 
 ## Index (at EOF)
