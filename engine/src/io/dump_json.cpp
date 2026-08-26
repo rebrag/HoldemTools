@@ -1,3 +1,5 @@
+#include <cstdint>
+
 #include "io/dump_json.hpp"
 
 #include "cards/combos.hpp"

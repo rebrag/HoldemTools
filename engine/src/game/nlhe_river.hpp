@@ -1,4 +1,6 @@
 #pragma once
+#include <bit>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <vector>

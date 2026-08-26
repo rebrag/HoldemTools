@@ -1,6 +1,7 @@
 #include "eval/hand_eval.hpp"
 
 #include <bit>
+#include <cstdint>
 
 namespace engine {
 

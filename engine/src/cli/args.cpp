@@ -1,5 +1,6 @@
 #include "cli/args.hpp"
 
+#include <cstdint>
 #include <cstdlib>
 
 namespace engine {

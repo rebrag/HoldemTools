@@ -1,4 +1,6 @@
-cmake_minimum_required(VERSION 3.24)
+# 3.25 for FetchContent_Declare(SYSTEM), which keeps third-party warnings
+# from tripping our warnings-as-errors build.
+cmake_minimum_required(VERSION 3.25)
 project(holdemtools_engine CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -12,13 +14,29 @@ set_property(CACHE ENGINE_SIMD PROPERTY STRINGS SSE2 AVX2 AVX512)
 
 include(FetchContent)
 
+# doctest 2.4.11 still declares cmake_minimum_required(VERSION 3.0). CMake 4.x
+# removed compatibility with < 3.5 and makes that a hard ERROR, so the CI
+# runners fail to configure while an older local CMake only warns. This is
+# the documented escape hatch; it applies to the fetched dependencies, not to
+# this project (which requires 3.24 above). Drop it when doctest ships a
+# modern minimum.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+
+# SYSTEM: dependency headers must not be held to our warning settings. We
+# enforce warnings-as-errors on OUR code; a compiler upgrade adding a new
+# diagnostic inside a third-party header is not a reason for this build to
+# fail. (Concretely: MSVC's C5285 fires on doctest.h specializing std::tuple,
+# which broke CI on the runner's newer toolset while the older local one
+# said nothing.)
 FetchContent_Declare(nlohmann_json
   URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
   URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
+  SYSTEM
 )
 FetchContent_Declare(doctest
   URL https://github.com/doctest/doctest/archive/refs/tags/v2.4.11.tar.gz
   URL_HASH SHA256=632ed2c05a7f53fa961381497bf8069093f0d6628c5f26286161fbd32a560186
+  SYSTEM
 )
 FetchContent_MakeAvailable(nlohmann_json doctest)
 
@@ -28,7 +46,11 @@ FetchContent_MakeAvailable(nlohmann_json doctest)
 # matters for PioSolver validation. Never add fast-math.
 add_library(engine_flags INTERFACE)
 if(MSVC)
-  target_compile_options(engine_flags INTERFACE /permissive- /W4 /WX /EHsc /fp:precise)
+  # /external:W0 is what actually silences the SYSTEM-marked dependency
+  # headers: CMake passes them via /external:I, but MSVC still applies the
+  # normal /W4 level to them unless an external level is set.
+  target_compile_options(engine_flags INTERFACE
+    /permissive- /W4 /WX /EHsc /fp:precise /external:W0)
   target_compile_definitions(engine_flags INTERFACE _CRT_SECURE_NO_WARNINGS)
   if(ENGINE_SIMD STREQUAL "AVX512")
     target_compile_options(engine_flags INTERFACE /arch:AVX512)

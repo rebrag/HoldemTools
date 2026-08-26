@@ -1,6 +1,7 @@
 #include "solver/cfr.hpp"
 
 #include <cassert>
+#include <cstdint>
 
 namespace engine {
 

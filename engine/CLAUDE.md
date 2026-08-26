@@ -16,6 +16,15 @@ On Windows, **always** go through the wrapper - cl, cmake, and ninja are not on 
 Never invoke cl, cmake, or ninja directly on Windows.
 On Linux/CI, plain `cmake -B build -S engine && cmake --build build && ctest --test-dir build` is fine (the toolchain is on PATH there).
 
+## The dev box is more permissive than CI - expect green-here-red-there
+
+Two environment gaps have bitten already, both invisible locally:
+
+- **MSVC's headers include far more than libstdc++'s.** A missing `<cstdint>`/`<bit>` builds fine here and fails the GCC job. Include what you use; do not rely on transitive includes. The quickest check before pushing is a transitive include audit (resolve project `#include "..."` recursively, then look for `std::` symbols whose header appears nowhere in the graph) - it caught a second break that would otherwise have failed the *next* CI run.
+- **The runner's MSVC and CMake are newer than the local ones.** A newer MSVC emits warnings the local one does not (C5285 on doctest specializing `std::tuple`), and CMake 4.x turns `cmake_minimum_required(VERSION < 3.5)` from a warning into an error. Hence `CMAKE_POLICY_VERSION_MINIMUM` and `FetchContent_Declare(... SYSTEM)` + `/external:W0`: **dependency headers are never held to our warning settings** - `/W4 /WX` is for our code only.
+
+There is no Linux toolchain on this machine, so the GCC job is only ever verified by CI. Push to a branch and let the PR run it.
+
 ## Compiler and portability constraints
 
 - **MSVC (cl) is the primary compiler; all code stays portable to clang-cl and GCC.**

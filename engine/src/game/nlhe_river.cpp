@@ -1,6 +1,7 @@
 #include "game/nlhe_river.hpp"
 
 #include <bit>
+#include <cstdint>
 #include <stdexcept>
 
 #include "game/betting_tree.hpp"
