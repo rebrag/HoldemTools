@@ -1,24 +1,41 @@
 #include <doctest/doctest.h>
 
+#include <bit>
+
+#include "cards/cards.hpp"
 #include "game/betting_tree.hpp"
 
 using namespace engine;
 
 namespace {
-RiverTreeParams small_params() {
-  RiverTreeParams params;
+
+PostflopTreeParams river_params() {
+  PostflopTreeParams params;
   params.pot = 100;
   params.effective_stack = 900;
-  params.sizing.bets = {50.0};
-  params.sizing.raises = {100.0};
-  params.sizing.max_raises = 2;
-  params.sizing.allin_threshold = 0.9;
+  params.start_street = Street::River;
+  params.board_mask = cards_mask(parse_cards("Qs Jh 2h 8d 6c"));
+  params.river.oop.bets = {50.0};
+  params.river.oop.raises = {100.0};
+  params.river.ip.bets = {50.0};
+  params.river.ip.raises = {100.0};
+  params.river.max_raises = 2;
+  params.river.allin_threshold = 0.9;
   return params;
 }
+
+int count_kind(const PublicTree& tree, NodeKind kind) {
+  int n = 0;
+  for (const Node& node : tree.nodes) {
+    if (node.kind == kind) ++n;
+  }
+  return n;
+}
+
 }  // namespace
 
 TEST_CASE("river tree structure and cumulative action amounts") {
-  const PublicTree tree = build_river_tree(small_params());
+  const PublicTree tree = build_postflop_tree(river_params());
   const Node& root = tree[0];
   CHECK(root.actor == 0);
   CHECK(root.pot == 100);
@@ -41,7 +58,7 @@ TEST_CASE("river tree structure and cumulative action amounts") {
   CHECK(check_check.terminal_kind == TerminalKind::Showdown);
   CHECK(check_check.commit[0] == check_check.commit[1]);
 
-  // OOP bets 50% pot: street-cumulative amount 50 (the bNNN convention).
+  // OOP bets 50% pot: cumulative amount 50 (the bNNN convention).
   const Node& bet = tree[root.first_child + 1];
   CHECK(bet.kind == NodeKind::Decision);
   CHECK(bet.action_kind == ActionKind::Bet);
@@ -60,7 +77,7 @@ TEST_CASE("river tree structure and cumulative action amounts") {
   CHECK(call.pot == 200);
 
   // 100% pot raise over a 50 bet: raise_add = pot after call (200), so the
-  // raise-to street total is 50 + 200 = 250, hand-cumulative.
+  // raise-to total is 50 + 200 = 250, hand-cumulative.
   const Node& raise = tree[bet.first_child + 2];
   CHECK(raise.action_kind == ActionKind::Bet);
   CHECK(raise.action_amount == 250);
@@ -77,30 +94,137 @@ TEST_CASE("river tree structure and cumulative action amounts") {
 }
 
 TEST_CASE("bets at or beyond the all-in threshold clamp to all-in") {
-  RiverTreeParams params;
+  PostflopTreeParams params = river_params();
   params.pot = 1000;
   params.effective_stack = 500;
-  params.sizing.bets = {75.0};  // 750 >= 0.9 * 500 -> all-in 500
-  params.sizing.max_raises = 1;
-  const PublicTree tree = build_river_tree(params);
+  params.river.oop.bets = {75.0};  // 750 >= 0.9 * 500 -> all-in 500
+  params.river.ip.bets = {75.0};
+  params.river.max_raises = 1;
+  const PublicTree tree = build_postflop_tree(params);
   const Node& bet = tree[tree[0].first_child + 1];
   CHECK(bet.action_amount == 500);
   // Facing an all-in there is no raise: fold or call only.
   CHECK(bet.num_children == 2);
 }
 
-TEST_CASE("max_raises caps the raise ladder") {
-  RiverTreeParams params;
+TEST_CASE("turn tree deals chance cards and runs out all-in calls") {
+  PostflopTreeParams params;
   params.pot = 100;
-  params.effective_stack = 100000;  // deep enough that stacks never bind
-  params.sizing.bets = {25.0};
-  params.sizing.raises = {50.0};
-  params.sizing.max_raises = 2;
-  const PublicTree tree = build_river_tree(params);
-  // Walk the raise ladder: bet (raises=1) -> raise (raises=2) -> facing node
-  // must offer fold/call only.
+  params.effective_stack = 300;
+  params.start_street = Street::Turn;
+  params.board_mask = cards_mask(parse_cards("Qs Jh 2h 8d"));
+  params.turn.oop.bets = {50.0};
+  params.turn.ip.bets = {50.0};
+  params.turn.max_raises = 1;
+  params.river.oop.bets = {50.0};
+  params.river.ip.bets = {50.0};
+  params.river.max_raises = 1;
+  const PublicTree tree = build_postflop_tree(params);
+
+  // Turn check-check becomes a chance node with 48 children (52 - 4 board),
+  // each dealt child a river decision for OOP with the card on its board.
+  const Node& ip_check_node = tree[tree[0].first_child];
+  const Node& chance = tree[ip_check_node.first_child];
+  CHECK(chance.kind == NodeKind::Chance);
+  CHECK(chance.num_children == 48);
+  const Node& dealt = tree[chance.first_child];
+  CHECK(dealt.kind == NodeKind::Decision);
+  CHECK(dealt.actor == 0);
+  CHECK(dealt.street == Street::River);
+  CHECK(dealt.dealt_card >= 0);
+  CHECK(std::popcount(dealt.board_mask) == 5);
+
+  // Turn bet 50 -> call is all-in? No (100 < 300): it advances to the river.
   const Node& bet = tree[tree[0].first_child + 1];
-  REQUIRE(bet.num_children == 3);
-  const Node& raise = tree[bet.first_child + 2];
-  CHECK(raise.num_children == 2);
+  const Node& call = tree[bet.first_child + 1];
+  CHECK(call.kind == NodeKind::Chance);
+
+  // Force an all-in on the turn: the call must run out the river as a pure
+  // chance chain into showdowns, with no decisions in between.
+  PostflopTreeParams jam = params;
+  jam.turn.oop.bets = {400.0};  // clamps to all-in 300
+  const PublicTree jam_tree = build_postflop_tree(jam);
+  const Node& jam_bet = jam_tree[jam_tree[0].first_child + 1];
+  CHECK(jam_bet.action_amount == 300);
+  const Node& jam_call = jam_tree[jam_bet.first_child + 1];
+  REQUIRE(jam_call.kind == NodeKind::Chance);
+  const Node& river_card = jam_tree[jam_call.first_child];
+  CHECK(river_card.kind == NodeKind::Terminal);
+  CHECK(river_card.terminal_kind == TerminalKind::Showdown);
+  CHECK(river_card.commit[0] == 300);
+  CHECK(river_card.commit[1] == 300);
+}
+
+TEST_CASE("OOP first-in uses donk sizes only against a prior-street aggressor") {
+  PostflopTreeParams params;
+  params.pot = 100;
+  params.effective_stack = 1000;
+  params.start_street = Street::Turn;
+  params.board_mask = cards_mask(parse_cards("Qs Jh 2h 8d"));
+  params.preflop_aggressor = Aggressor::Ip;
+  // OOP: no donks configured, one probe bet size; IP: one bet size.
+  params.turn.oop.bets = {50.0};
+  params.turn.oop.donks = {};
+  params.turn.ip.bets = {50.0};
+  params.river.oop.bets = {50.0};
+  params.river.oop.donks = {25.0};
+  params.river.ip.bets = {50.0};
+  const PublicTree tree = build_postflop_tree(params);
+
+  // Root (turn, prev aggressor = IP): OOP has no donk sizes -> check only.
+  CHECK(tree[0].num_children == 1);
+
+  // After turn goes check / IP bet 50 / OOP call, IP was the turn aggressor,
+  // so river OOP first-in offers the 25% DONK size (25% of pot 200 = 50 ->
+  // cumulative 100).
+  const Node& ip_node = tree[tree[0].first_child];
+  const Node& ip_bet = tree[ip_node.first_child + 1];
+  const Node& call = tree[ip_bet.first_child + 1];
+  REQUIRE(call.kind == NodeKind::Chance);
+  const Node& river_oop = tree[call.first_child];
+  REQUIRE(river_oop.kind == NodeKind::Decision);
+  REQUIRE(river_oop.num_children == 2);  // check + donk
+  const Node& donk = tree[river_oop.first_child + 1];
+  CHECK(donk.action_kind == ActionKind::Bet);
+  CHECK(donk.action_amount == 50 + 50);  // turn 50 + 25% of the 200 pot
+
+  // After turn check-check (no aggressor), river OOP first-in uses BET sizes
+  // (50% of pot 100 = 50).
+  const Node& xx = tree[ip_node.first_child];
+  REQUIRE(xx.kind == NodeKind::Chance);
+  const Node& river_oop2 = tree[xx.first_child];
+  REQUIRE(river_oop2.num_children == 2);
+  const Node& probe = tree[river_oop2.first_child + 1];
+  CHECK(probe.action_amount == 50);
+}
+
+TEST_CASE("flop tree nests two chance levels") {
+  PostflopTreeParams params;
+  params.pot = 100;
+  params.effective_stack = 200;
+  params.start_street = Street::Flop;
+  params.board_mask = cards_mask(parse_cards("Qs Jh 2h"));
+  params.preflop_aggressor = Aggressor::None;
+  params.flop.oop.bets = {50.0};
+  params.flop.ip.bets = {50.0};
+  params.flop.max_raises = 0;
+  params.turn.max_raises = 0;
+  params.river.max_raises = 0;
+  const PublicTree tree = build_postflop_tree(params);
+
+  // check-check -> 49 turn cards -> (per card) check-check -> 48 river cards.
+  const Node& ip_node = tree[tree[0].first_child];
+  const Node& turn_chance = tree[ip_node.first_child];
+  REQUIRE(turn_chance.kind == NodeKind::Chance);
+  CHECK(turn_chance.num_children == 49);
+  const Node& turn_oop = tree[turn_chance.first_child];
+  CHECK(turn_oop.street == Street::Turn);
+  const Node& turn_ip = tree[turn_oop.first_child];
+  const Node& river_chance = tree[turn_ip.first_child];
+  REQUIRE(river_chance.kind == NodeKind::Chance);
+  CHECK(river_chance.num_children == 48);
+  const Node& river_oop = tree[river_chance.first_child];
+  CHECK(river_oop.street == Street::River);
+  CHECK(count_kind(tree, NodeKind::Chance) > 49);
+  CHECK(tree.num_decision_nodes > 1000);  // 49 x 48 river fan-out
 }

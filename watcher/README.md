@@ -116,7 +116,9 @@ python watch_adls_and_run_pio_headless.py
 
 Manual developer tool - never part of the watcher loop and never CI (Pio only runs on this machine).
 It compares a solve from the new C++ engine (`engine/`) against a PioSolver solve of the same spot.
-The primary pass/fail gate is cross-exploitability (the engine's strategy is loaded into Pio via `set_strategy` + `lock_node` and Pio's evaluator reports its exploitability); per-hand L1 on action frequencies and per-hand EV differences are diagnostics, since two correct solvers may pick different equilibria.
+The primary pass/fail gate is cross-exploitability (the engine's strategy is loaded into Pio via `set_strategy` - never `lock_node`, which silently zeroes the MES search - and Pio's evaluator reports its exploitability); per-hand L1 and EV differences are diagnostics weighted by each node's `calc_global_freq` (never-reached lines have undefined EVs on both sides), since two correct solvers may pick different equilibria.
+Multistreet trees build via `add_line` with one token per action = the actor's hand-cumulative total (checks repeat the current total - a mid-line 0 after chips are in can crash Pio).
+Trees past `--full-limit` decision nodes are compared on deterministic sampled runouts with a root-EV gate instead of the (then-meaningless) partial cross-check.
 `--json-out compare.json` additionally writes the full per-hand comparison for the frontend's hidden `/compare` page (side-by-side grids + per-combo table).
 
 ## Compare watcher (`engine_compare_watcher.py`)

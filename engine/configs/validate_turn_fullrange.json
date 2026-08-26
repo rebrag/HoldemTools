@@ -1,0 +1,31 @@
+{
+  // Turn-to-river validation spot: 100% ranges, one bet size + allin per
+  // street. Small enough for the harness's FULL per-node compare and
+  // cross-exploitability upload. Compare with:
+  //   ./build/engine.exe solve configs/validate_turn_fullrange.json
+  //   cd ../watcher
+  //   python engine_compare.py --artifact ../engine/out/validate_turn_fullrange.hta --solve-pio
+  "schema": 1,
+  "game": "nlhe",
+  "board": "9c 5d Jc 7s",
+  "pot": 100,
+  "chip_scale": 100,
+  "players": [
+    { "seat": "OOP", "stack": 400, "range": "@file:ranges/full.txt" },
+    { "seat": "IP",  "stack": 400, "range": "@file:ranges/full.txt" }
+  ],
+  "bet_sizing": {
+    "turn":  { "bets": [50, 400], "raises": [1000], "allin_threshold": 0.9, "max_raises": 2 },
+    "river": { "bets": [50, 400], "raises": [1000], "allin_threshold": 0.9, "max_raises": 2 }
+  },
+  "algorithm": { "update": "dcfr" },
+  "qre": { "mode": "nash" },
+  "budget": { "iterations": 20000, "target_exploitable_pct": 0.02, "checkpoint_every": 250 },
+  "memory_limit_gb": 12,
+  "output": {
+    "path": "out/validate_turn_fullrange.hta",
+    "strategy_quantize_u8": false,
+    "ev_float32": true,
+    "rollups_169": false
+  }
+}

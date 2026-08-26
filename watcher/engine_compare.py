@@ -53,19 +53,47 @@ def normalize_combo(combo: str) -> Tuple[str, str]:
     return (a, b) if a < b else (b, a)
 
 
-def load_engine_dump(args) -> dict:
+def load_engine_meta(args) -> dict:
+    """Just the artifact metadata - cheap, and enough to pick the compare
+    mode before materializing a dump (a full flop dump is gigabytes)."""
     if args.dump:
         with open(args.dump, "r", encoding="utf8") as f:
-            return json.load(f)
+            return json.load(f)["metadata"]
     out = subprocess.run(
-        [args.engine_exe, "dump-json", args.artifact],
+        [args.engine_exe, "dump-json", args.artifact, "--meta-only"],
         capture_output=True, text=True, check=True,
     )
     return json.loads(out.stdout)
 
 
+def load_engine_dump(args, runouts) -> dict:
+    """The per-node dump; `runouts` (None = full) makes the engine emit only
+    that many evenly spaced cards per chance node - same sampling rule the
+    old harness applied, now engine-side so big trees never materialize."""
+    if args.dump:
+        with open(args.dump, "r", encoding="utf8") as f:
+            return json.load(f)
+    cmd = [args.engine_exe, "dump-json", args.artifact]
+    if runouts is not None:
+        cmd += ["--runouts", str(runouts)]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
+CARD_RANKS = "23456789TJQKA"
+CARD_SUITS = "cdhs"
+
+
+def card_str(code) -> str:
+    """Engine card code (rank*4+suit) or dump-json card string -> 'As'."""
+    if isinstance(code, str):
+        return code
+    return CARD_RANKS[code // 4] + CARD_SUITS[code % 4]
+
+
 def engine_colon_ids(nodes: Dict[str, dict]) -> Dict[str, str]:
-    """Rebuild Pio-style colon ids from the node table (root = 'r:0')."""
+    """Rebuild Pio-style colon ids from the node table (root = 'r:0').
+    Deal edges become card segments ('As'), matching Pio's node ids."""
 
     def label(node: dict) -> str:
         kind = node["action_kind"]
@@ -75,6 +103,8 @@ def engine_colon_ids(nodes: Dict[str, dict]) -> Dict[str, str]:
             return "c"
         if kind == "bet":
             return f"b{node['action_amount']}"
+        if kind == "deal":
+            return card_str(node["dealt_card"])
         raise ValueError(f"unexpected action kind {kind}")
 
     ids: Dict[str, str] = {}
@@ -86,26 +116,38 @@ def engine_colon_ids(nodes: Dict[str, dict]) -> Dict[str, str]:
     return ids
 
 
+CARD_SEG = frozenset(
+    r + s for r in CARD_RANKS for s in CARD_SUITS)
+
+
+def betting_skeleton(colon_id: str) -> str:
+    """Node id with card segments dropped - Pio's show_all_lines shape."""
+    return ":".join(seg for seg in colon_id.split(":") if seg not in CARD_SEG)
+
+
 def showdown_lines(nodes: Dict[str, dict]) -> List[List[int]]:
     """Pio add_line encoding of the engine tree: one line per showdown
-    terminal, one amount per action along its path - the actor's cumulative
-    street commitment after the action (check = 0, call = the matched
-    amount), i.e. exactly the engine's action_amount / bNNN convention.
-    Check-check = "0 0", bet-raise-call = "50 400 400". Fold branches are
-    implicit in Pio."""
-    lines: List[List[int]] = []
+    BETTING sequence, one token per betting action along its path. The token
+    is the actor's hand-cumulative postflop total after the action - which is
+    exactly the engine's action_amount for every action kind: a check repeats
+    the current total (0 at zero commit), a call is the matched total, a bet
+    the bNNN amount. Deal edges are skipped (Pio inserts chance nodes
+    itself), so many runout terminals share one line; lines are deduped.
+    Verified empirically 2026-08-25: "0 50 50 0 0" is rejected ("incorrect
+    bet size") and can crash Pio; "0 50 50 50 50" builds the right tree."""
+    unique = set()
     for key, node in nodes.items():
         if node.get("terminal") != "showdown":
             continue
         path: List[int] = []
         cur = node
         while cur["parent_id"] is not None:
-            path.append(int(cur["action_amount"]))
+            if cur["action_kind"] in ("bet", "check_call"):
+                path.append(int(cur["action_amount"]))
             cur = nodes[str(cur["parent_id"])]
         path.reverse()
-        lines.append(path)
-    lines.sort()
-    return lines
+        unique.add(tuple(path))
+    return sorted(list(line) for line in unique)
 
 
 def solve_in_pio(solver, dump: dict, meta: dict, accuracy_chips: float,
@@ -136,18 +178,25 @@ def solve_in_pio(solver, dump: dict, meta: dict, accuracy_chips: float,
 
     solver.clear_lines()
     for line in showdown_lines(dump["nodes"]):
-        solver.add_line(line)
+        resp = solver.add_line(line)
+        if "ERROR" in resp:
+            # Never keep poking a wounded Pio: a rejected line means the
+            # encoding is wrong, and further commands can crash the process.
+            raise RuntimeError(f"Pio rejected add_line {line}: {resp.strip()}")
     solver._run("build_tree")
 
     # The whole comparison assumes identical trees - verify, don't hope.
+    # show_all_lines lists the BETTING skeleton (no card segments), so
+    # compare against the engine tree with deal segments stripped.
     pio_nodes = {ln.strip() for ln in solver.show_all_lines() if ln.strip()}
-    engine_nodes = set(engine_colon_ids(dump["nodes"]).values()) | {"r"}
+    engine_nodes = {betting_skeleton(cid)
+                    for cid in engine_colon_ids(dump["nodes"]).values()} | {"r"}
     if pio_nodes != engine_nodes:
         raise RuntimeError(
             "tree mismatch after build_tree:\n"
             f"  only in pio:    {sorted(pio_nodes - engine_nodes)[:10]}\n"
             f"  only in engine: {sorted(engine_nodes - pio_nodes)[:10]}")
-    print(f"solve-pio: tree verified ({len(pio_nodes)} nodes), solving...")
+    print(f"solve-pio: tree verified ({len(pio_nodes)} betting nodes), solving...")
 
     solver.set_accuracy(accuracy_chips)
     solver.go(quiet=True)
@@ -180,9 +229,20 @@ def main() -> int:
     parser.add_argument("--ev-threshold-frac", type=float, default=0.004,
                         help="diagnostic: reach-weighted mean |EV diff| as a fraction of the pot")
     parser.add_argument("--top", type=int, default=20, help="worst offenders to print")
+    parser.add_argument("--full-limit", type=int, default=2500,
+                        help="max decision nodes for FULL mode (per-node compare of every "
+                             "node + cross-exploitability). Bigger trees switch to sampled "
+                             "runouts")
+    parser.add_argument("--runouts", type=int, default=3,
+                        help="sampled mode: cards followed per chance node (evenly spaced, "
+                             "deterministic)")
     parser.add_argument("--json-out",
-                        help="write the full per-hand comparison to this JSON file "
+                        help="write the per-hand comparison to this JSON file "
                              "(the input for the frontend's hidden /compare page)")
+    parser.add_argument("--json-max-nodes", type=int, default=250,
+                        help="cap per-hand detail in --json-out to the N most-reached "
+                             "nodes (metrics still cover every compared node; a full "
+                             "turn tree's detail is >100MB otherwise)")
     args = parser.parse_args()
     if not args.artifact and not args.dump:
         parser.error("need --artifact or --dump")
@@ -192,8 +252,7 @@ def main() -> int:
         # Pio's load_tree never responds for a missing file - fail fast here.
         parser.error(f"--cfr file not found: {args.cfr}")
 
-    dump = load_engine_dump(args)
-    meta = dump["metadata"]
+    meta = load_engine_meta(args)
 
     # --- Refuse non-Nash artifacts outright. -----------------------------
     if meta.get("mode") != "nash" or meta.get("lambda") is not None:
@@ -202,6 +261,17 @@ def main() -> int:
               "A QRE solve deliberately deviates from Nash and will not - and should "
               "not - match PioSolver. Re-solve with qre.mode = \"nash\".")
         return 2
+
+    decision_count = int(meta.get("decision_node_count", 0))
+    full_mode = decision_count <= args.full_limit
+    if not full_mode:
+        print(f"SAMPLED MODE: {decision_count} decision nodes exceed --full-limit "
+              f"{args.full_limit}. The engine dump and the comparison follow "
+              f"{args.runouts} evenly spaced cards per chance node. Per-hand numbers "
+              f"are diagnostics on those runouts; the cross-exploitability check is "
+              f"SKIPPED (it needs the full strategy in Pio), so the gate is root-EV "
+              f"agreement only.")
+    dump = load_engine_dump(args, None if full_mode else args.runouts)
 
     pot = float(meta["pot"])
     print(f"spot: board={meta['board']!r} pot={pot} config={meta['config_hash'][:10]}")
@@ -237,6 +307,7 @@ def main() -> int:
               f"exploitable={results.get('Exploitable for')}")
 
         colon_ids = engine_colon_ids(dump["nodes"])
+
         offenders: List[dict] = []
         weighted_l1_sum = 0.0
         weighted_ev_sum = 0.0
@@ -277,6 +348,14 @@ def main() -> int:
 
             pio_strategy = solver.show_strategy(pio_id)
             pio_evs, pio_matchups = solver.calc_ev(position, pio_id)
+            # How often this node is actually reached (Pio's global line
+            # frequency). Without it the diagnostics drown in noise from
+            # never-taken lines, where per-hand EVs are undefined on both
+            # sides (near-zero matchups) yet formally comparable.
+            try:
+                global_freq = solver.calc_global_freq(pio_id)
+            except Exception:
+                global_freq = 0.0
             nodes_compared += 1
 
             # Per-action EVs: the actor's calc_ev at each child (the watcher's
@@ -308,6 +387,7 @@ def main() -> int:
                 "actor": actor,
                 "position": position,
                 "actions": engine_labels,
+                "global_freq": round(global_freq, 6),
                 "hands": compare_hands,
             })
 
@@ -325,14 +405,16 @@ def main() -> int:
                     for k in range(len(engine_labels)))
                 pio_ev = pio_evs[idx]
                 ev_diff = (hand["ev"] - pio_ev) if math.isfinite(pio_ev) else float("nan")
-                weighted_l1_sum += reach * l1
+                weight = reach * global_freq
+                weighted_l1_sum += weight * l1
                 if math.isfinite(ev_diff):
-                    weighted_ev_sum += reach * abs(ev_diff)
-                weight_total += reach
+                    weighted_ev_sum += weight * abs(ev_diff)
+                weight_total += weight
                 pio_freqs = [pio_strategy[row_of[engine_labels[k]]][idx]
                              for k in range(len(engine_labels))]
                 offenders.append({
-                    "node": pio_id, "hand": hand["hand"], "reach": reach, "l1": l1,
+                    "node": pio_id, "hand": hand["hand"], "reach": reach,
+                    "gfreq": global_freq, "l1": l1,
                     "ev_engine": hand["ev"], "ev_pio": pio_ev, "ev_diff": ev_diff,
                     "engine_freqs": [round(f, 3) for f in hand["strategy"]],
                     "pio_freqs": [round(f, 3) for f in pio_freqs],
@@ -355,32 +437,35 @@ def main() -> int:
                     "l1": round(l1, 4),
                 })
 
-        # --- Cross-exploitability: the primary gate. ----------------------
+        # --- Cross-exploitability: the primary gate (full mode only). -----
         # Per-hand strategies from two correct solvers may legitimately
         # differ (2p zero-sum games have many equilibria; only the value is
         # unique, and indifference regions - bluff-catchers, mixed sizings -
         # are huge in symmetric spots). The sound test: load the ENGINE's
         # strategy into Pio and let Pio's own evaluator report how
-        # exploitable that profile is.
-        print("\ncross-check: loading the engine strategy into Pio...")
-        # Do NOT lock_node here: locked nodes are excluded from Pio's MES
-        # (best-response) search, so calc_results would report MES == EV and
-        # exploitability would always read 0.000 - a false pass. Verified
-        # empirically: a garbage strategy reads 91.7 unlocked, 0.000 locked.
-        # Nothing recalculates between set_strategy and calc_results (we
-        # never call `go`), so the upload does not need protecting.
-        for pio_id, rows in strategy_upload:
-            values = [f"{v:.6f}" for row in rows for v in row]
-            solver.set_strategy(pio_id, *values)
-        engine_results = {}
-        raw = solver._run("calc_results")
-        for line in raw.splitlines():
-            if ":" in line:
-                label, _, value = line.partition(":")
-                try:
-                    engine_results[label.strip()] = float(value.strip())
-                except ValueError:
-                    pass
+        # exploitable that profile is. Meaningless with a partial upload, so
+        # sampled mode skips it.
+        engine_results: Dict[str, float] = {}
+        if full_mode:
+            print(f"\ncross-check: loading the engine strategy into Pio "
+                  f"({len(strategy_upload)} nodes)...")
+            # Do NOT lock_node here: locked nodes are excluded from Pio's MES
+            # (best-response) search, so calc_results would report MES == EV
+            # and exploitability would always read 0.000 - a false pass.
+            # Verified empirically: a garbage strategy reads 91.7 unlocked,
+            # 0.000 locked. Nothing recalculates between set_strategy and
+            # calc_results (we never call `go`).
+            for pio_id, rows in strategy_upload:
+                values = [f"{v:.6f}" for row in rows for v in row]
+                solver.set_strategy(pio_id, *values)
+            raw = solver._run("calc_results")
+            for line in raw.splitlines():
+                if ":" in line:
+                    label, _, value = line.partition(":")
+                    try:
+                        engine_results[label.strip()] = float(value.strip())
+                    except ValueError:
+                        pass
     finally:
         # Never use solver._run("exit"): Pio quits without emitting the END
         # marker, so _run spins forever on EOF. Ask politely, then kill -
@@ -399,15 +484,29 @@ def main() -> int:
         print("FAIL: nothing compared (tree mismatch everywhere?)")
         return 1
 
-    # --- Primary gate: engine-profile exploitability as measured by Pio. --
+    # --- Primary gate. ----------------------------------------------------
+    # Full mode: engine-profile exploitability as measured by Pio.
+    # Sampled mode: root-EV agreement (both solvers solved the FULL game to
+    # their accuracy targets; only the per-node comparison was sampled).
     exploit_engine = engine_results.get("Exploitable for")
     exploit_pio = results.get("Exploitable for")
     exploit_threshold = max(pot * args.exploit_threshold_frac, 1e-4)
-    print(f"\ncompared {nodes_compared} nodes, {len(offenders)} hand-node pairs")
-    print(f"exploitability per Pio:  pio's own solve {exploit_pio}  "
-          f"ENGINE strategy {exploit_engine}  (threshold {exploit_threshold:.3f})")
-    print(f"engine EVs per Pio:      ev_oop={engine_results.get('EV OOP')} "
-          f"ev_ip={engine_results.get('EV IP')}")
+    root_ev_diff = (abs(meta["ev_chips"][0] - results["EV OOP"])
+                    if results.get("EV OOP") is not None else None)
+    print(f"\ncompared {nodes_compared} nodes, {len(offenders)} hand-node pairs"
+          + ("" if full_mode else f"  [sampled: {args.runouts} runouts/chance node]"))
+    if full_mode:
+        print(f"exploitability per Pio:  pio's own solve {exploit_pio}  "
+              f"ENGINE strategy {exploit_engine}  (threshold {exploit_threshold:.3f})")
+        print(f"engine EVs per Pio:      ev_oop={engine_results.get('EV OOP')} "
+              f"ev_ip={engine_results.get('EV IP')}")
+    else:
+        print(f"root EV: engine {meta['ev_chips'][0]:.3f} vs pio {results.get('EV OOP')}"
+              f"  |diff| {root_ev_diff if root_ev_diff is None else round(root_ev_diff, 3)}"
+              f"  (threshold {exploit_threshold:.3f})")
+        print(f"engine self-reported exploitable: "
+              f"{meta.get('final_exploitable_chips', meta['final_nashconv'] / 2):.4f} chips; "
+              f"pio's own solve: {exploit_pio}")
 
     # --- Diagnostics: per-hand strategy / EV distance. --------------------
     # These can legitimately exceed their thresholds even between two exact
@@ -420,6 +519,17 @@ def main() -> int:
     print(f"reach-weighted mean |EV diff|: {mean_ev:.3f} chips  (diagnostic threshold {ev_threshold:.3f})")
 
     if args.json_out:
+        json_nodes = compare_nodes
+        if len(json_nodes) > args.json_max_nodes:
+            # Keep the most-reached nodes (per Pio's global line frequency);
+            # ties resolved toward earlier (shallower) nodes. Metrics above
+            # already cover every compared node.
+            by_freq = sorted(range(len(compare_nodes)),
+                             key=lambda i: (-compare_nodes[i]["global_freq"], i))
+            keep = sorted(by_freq[:args.json_max_nodes])
+            json_nodes = [compare_nodes[i] for i in keep]
+            print(f"json-out: per-hand detail capped to {len(json_nodes)} of "
+                  f"{len(compare_nodes)} compared nodes (--json-max-nodes)")
         doc = {
             "kind": "htsolver_pio_comparison",
             "schema": 1,
@@ -447,16 +557,27 @@ def main() -> int:
                     "exploitable": results.get("Exploitable for"),
                 },
                 "cross_check": {
+                    # full mode: Pio rates the uploaded engine strategy.
+                    # sampled mode: gate falls back to root-EV agreement.
+                    "gate": "cross_exploitability" if full_mode else "root_ev",
                     "ht_exploitable_per_pio": exploit_engine,
                     "ht_ev_per_pio": [engine_results.get("EV OOP"),
                                       engine_results.get("EV IP")],
+                    "root_ev_diff": None if root_ev_diff is None else round(root_ev_diff, 3),
                     "threshold": exploit_threshold,
-                    "pass": exploit_engine is not None and exploit_engine <= exploit_threshold,
+                    "pass": (exploit_engine is not None and exploit_engine <= exploit_threshold)
+                            if full_mode
+                            else (root_ev_diff is not None and root_ev_diff <= exploit_threshold),
                 },
                 "mean_l1": round(mean_l1, 5),
                 "mean_ev_diff": round(mean_ev, 3),
+                "sampled": not full_mode,
+                "runouts": None if full_mode else args.runouts,
+                "decision_nodes": decision_count,
+                "compared_nodes": nodes_compared,
+                "detail_nodes": len(json_nodes),
             },
-            "nodes": compare_nodes,
+            "nodes": json_nodes,
         }
         with open(args.json_out, "w", encoding="utf8") as f:
             json.dump(doc, f, separators=(",", ":"))
@@ -464,22 +585,31 @@ def main() -> int:
 
     diagnostics_ok = mean_l1 <= args.l1_threshold and mean_ev <= ev_threshold
     if not diagnostics_ok:
-        print(f"\nlargest strategy differences (top {args.top} by reach * L1):")
-        offenders.sort(key=lambda o: o["reach"] * o["l1"], reverse=True)
-        print(f"{'node':<24}{'hand':<8}{'reach':>7}{'L1':>8}{'ev_eng':>10}{'ev_pio':>10}"
-              f"  engine_freqs vs pio_freqs")
+        print(f"\nlargest strategy differences (top {args.top} by gfreq * reach * L1):")
+        offenders.sort(key=lambda o: o["gfreq"] * o["reach"] * o["l1"], reverse=True)
+        print(f"{'node':<24}{'hand':<8}{'gfreq':>8}{'reach':>7}{'L1':>8}{'ev_eng':>10}"
+              f"{'ev_pio':>10}  engine_freqs vs pio_freqs")
         for o in offenders[:args.top]:
-            print(f"{o['node']:<24}{o['hand']:<8}{o['reach']:>7.3f}{o['l1']:>8.4f}"
-                  f"{o['ev_engine']:>10.2f}{o['ev_pio']:>10.2f}  "
+            print(f"{o['node']:<24}{o['hand']:<8}{o['gfreq']:>8.4f}{o['reach']:>7.3f}"
+                  f"{o['l1']:>8.4f}{o['ev_engine']:>10.2f}{o['ev_pio']:>10.2f}  "
                   f"{o['engine_freqs']} vs {o['pio_freqs']}")
 
-    if exploit_engine is None:
-        print("\nFAIL: Pio did not report exploitability for the engine strategy")
-        return 1
-    if exploit_engine > exploit_threshold:
-        print(f"\nFAIL: the engine strategy is exploitable for {exploit_engine} chips "
-              f"per Pio (> {exploit_threshold:.3f})")
-        return 1
+    if full_mode:
+        if exploit_engine is None:
+            print("\nFAIL: Pio did not report exploitability for the engine strategy")
+            return 1
+        if exploit_engine > exploit_threshold:
+            print(f"\nFAIL: the engine strategy is exploitable for {exploit_engine} chips "
+                  f"per Pio (> {exploit_threshold:.3f})")
+            return 1
+    else:
+        if root_ev_diff is None:
+            print("\nFAIL: Pio did not report a root EV to compare against")
+            return 1
+        if root_ev_diff > exploit_threshold:
+            print(f"\nFAIL (sampled mode): root EVs differ by {root_ev_diff:.3f} chips "
+                  f"(> {exploit_threshold:.3f})")
+            return 1
 
     if not diagnostics_ok:
         print("\nNOTE: per-hand strategies/EVs differ beyond the diagnostic thresholds, "

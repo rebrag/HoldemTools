@@ -1,0 +1,30 @@
+{
+  // Small flop-to-river validation spot: 100% ranges, one 50% bet per
+  // street, calls only (no raises), so the tree stays solvable in minutes.
+  // The harness compares this in SAMPLED mode (root-EV gate + sampled
+  // runout diagnostics) - the full tree exceeds the per-node budget.
+  "schema": 1,
+  "game": "nlhe",
+  "board": "9c 5d Jc",
+  "pot": 100,
+  "chip_scale": 100,
+  "players": [
+    { "seat": "OOP", "stack": 400, "range": "@file:ranges/full.txt" },
+    { "seat": "IP",  "stack": 400, "range": "@file:ranges/full.txt" }
+  ],
+  "bet_sizing": {
+    "flop":  { "bets": [50], "raises": [], "max_raises": 0 },
+    "turn":  { "bets": [50], "raises": [], "max_raises": 0 },
+    "river": { "bets": [50], "raises": [], "max_raises": 0 }
+  },
+  "algorithm": { "update": "dcfr" },
+  "qre": { "mode": "nash" },
+  "budget": { "iterations": 600, "target_exploitable_pct": 0.1, "checkpoint_every": 100 },
+  "memory_limit_gb": 12,
+  "output": {
+    "path": "out/validate_flop_small.hta",
+    "strategy_quantize_u8": false,
+    "ev_float32": true,
+    "rollups_169": false
+  }
+}

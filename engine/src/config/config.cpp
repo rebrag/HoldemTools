@@ -27,18 +27,41 @@ std::string read_file(const std::filesystem::path& path) {
   return ss.str();
 }
 
+std::vector<double> parse_pcts(const json& j, const char* key, const char* what) {
+  if (!j.contains(key)) return {};
+  auto pcts = j.at(key).get<std::vector<double>>();
+  for (double pct : pcts) {
+    if (pct <= 0) fail(std::string(what) + " percentages must be positive");
+  }
+  return pcts;
+}
+
+// One street's sizing. Two accepted shapes:
+//   legacy: { "bets": [...], "raises": [...] }          - applied to both seats
+//   split:  { "ip": {"bets","raises"}, "oop": {"bets","donks","raises"} }
+// plus allin_threshold / max_raises at the street level in either shape.
 StreetSizing parse_sizing(const json& j) {
   StreetSizing sizing;
-  if (j.contains("bets")) sizing.bets = j.at("bets").get<std::vector<double>>();
-  if (j.contains("raises")) sizing.raises = j.at("raises").get<std::vector<double>>();
+  if (j.contains("ip") || j.contains("oop")) {
+    if (j.contains("ip")) {
+      const json& ip = j.at("ip");
+      sizing.ip.bets = parse_pcts(ip, "bets", "bet size");
+      sizing.ip.raises = parse_pcts(ip, "raises", "raise size");
+    }
+    if (j.contains("oop")) {
+      const json& oop = j.at("oop");
+      sizing.oop.bets = parse_pcts(oop, "bets", "bet size");
+      sizing.oop.donks = parse_pcts(oop, "donks", "donk size");
+      sizing.oop.raises = parse_pcts(oop, "raises", "raise size");
+    }
+  } else {
+    sizing.oop.bets = sizing.ip.bets = parse_pcts(j, "bets", "bet size");
+    sizing.oop.raises = sizing.ip.raises = parse_pcts(j, "raises", "raise size");
+    // Legacy shape has no donk concept: donking uses the same sizes.
+    sizing.oop.donks = sizing.oop.bets;
+  }
   if (j.contains("allin_threshold")) sizing.allin_threshold = j.at("allin_threshold").get<double>();
   if (j.contains("max_raises")) sizing.max_raises = j.at("max_raises").get<int>();
-  for (double pct : sizing.bets) {
-    if (pct <= 0) fail("bet size percentages must be positive");
-  }
-  for (double pct : sizing.raises) {
-    if (pct <= 0) fail("raise size percentages must be positive");
-  }
   if (sizing.allin_threshold <= 0 || sizing.allin_threshold > 1.5) {
     fail("allin_threshold must be in (0, 1.5]");
   }
@@ -88,9 +111,8 @@ SolveConfig load_config(const std::string& path_text) {
     if (!j.contains("board")) fail("nlhe solves need a board");
     config.board = j.at("board").get<std::string>();
     const auto board_cards = parse_cards(config.board);
-    if (board_cards.size() != 5) {
-      fail("this pass solves rivers only: the board must have exactly 5 cards "
-           "(turn and flop solving land in a later pass)");
+    if (board_cards.size() < 3 || board_cards.size() > 5) {
+      fail("the board must have 3 (flop solve), 4 (turn), or 5 (river) cards");
     }
     if (static_cast<std::size_t>(std::popcount(cards_mask(board_cards))) != board_cards.size()) {
       fail("board has duplicate cards");
@@ -126,10 +148,26 @@ SolveConfig load_config(const std::string& path_text) {
            "but the 2p betting tree does not generate all-in-for-less lines yet)");
     }
 
-    if (!j.contains("bet_sizing") || !j.at("bet_sizing").contains("river")) {
-      fail("nlhe solves need bet_sizing.river");
+    if (!j.contains("bet_sizing")) fail("nlhe solves need bet_sizing");
+    const json& bs = j.at("bet_sizing");
+    // Sizing is required for the root street and every street after it.
+    const std::size_t cards = board_cards.size();
+    if (cards <= 3) {
+      if (!bs.contains("flop")) fail("a flop solve needs bet_sizing.flop");
+      config.flop_sizing = parse_sizing(bs.at("flop"));
     }
-    config.river_sizing = parse_sizing(j.at("bet_sizing").at("river"));
+    if (cards <= 4) {
+      if (!bs.contains("turn")) fail("this solve needs bet_sizing.turn");
+      config.turn_sizing = parse_sizing(bs.at("turn"));
+    }
+    if (!bs.contains("river")) fail("nlhe solves need bet_sizing.river");
+    config.river_sizing = parse_sizing(bs.at("river"));
+
+    const std::string aggressor = j.value("preflop_aggressor", "none");
+    if (aggressor == "ip") config.preflop_aggressor = Aggressor::Ip;
+    else if (aggressor == "oop") config.preflop_aggressor = Aggressor::Oop;
+    else if (aggressor == "none") config.preflop_aggressor = Aggressor::None;
+    else fail("preflop_aggressor must be ip | oop | none");
   }
 
   if (j.contains("algorithm")) config.update = parse_algorithm(j.at("algorithm"));

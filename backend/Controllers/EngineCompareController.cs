@@ -96,8 +96,10 @@ namespace PokerRangeAPI2.Controllers
                 return BadRequest("config.board is required");
             var board = string.Concat(Regex.Matches(boardText, "[2-9TJQKA][hdcs]",
                 RegexOptions.IgnoreCase).Select(m => m.Value));
-            if (board.Length != 10)
-                return BadRequest("config.board must have exactly 5 cards (rivers only)");
+            if (board.Length != 6 && board.Length != 8 && board.Length != 10)
+                return BadRequest("config.board must have 3, 4, or 5 cards");
+            if (request.Mode == EngineCompareJobMode.Publish && board.Length != 10)
+                return BadRequest("publish mode is river-only for now (see engine/docs/roadmap.md)");
 
             var job = new EngineCompareJob
             {
