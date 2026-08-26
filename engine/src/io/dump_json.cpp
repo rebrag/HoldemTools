@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdint>
 
 #include "io/dump_json.hpp"
@@ -36,8 +37,12 @@ json node_to_json(const ArtifactNodeRecord& record, bool nlhe) {
   return j;
 }
 
+// 7 decimals is lossless for the harness (it feeds Pio %.6f) and avoids
+// the 17-digit shortest-round-trip text an f32 widened to double produces.
+double round7(float v) { return std::round(static_cast<double>(v) * 1e7) / 1e7; }
+
 json node_data_to_json(const ArtifactReader& reader, const ArtifactNodeData& data,
-                       bool nlhe) {
+                       bool nlhe, bool strategy_only, bool is_root) {
   const auto& dicts = reader.hand_dicts();
   json j;
   j["actor"] = data.actor;
@@ -46,28 +51,35 @@ json node_data_to_json(const ArtifactReader& reader, const ArtifactNodeData& dat
   for (int s = 0; s < data.num_seats; ++s) {
     const ArtifactSeatData& seat = data.seats[s];
     json hands = json::array();
-    for (std::size_t i = 0; i < seat.idx.size(); ++i) {
-      const std::uint16_t universe_id = dicts[s][seat.idx[i]];
-      json h;
-      h["hand"] = nlhe ? json(combo_to_string(universe_id)) : json(universe_id);
-      h["reach"] = seat.reach[i];
-      h["ev"] = seat.ev[i];
-      if (s == data.actor) {
-        json strat = json::array();
-        json aev = json::array();
-        for (int k = 0; k < data.num_actions; ++k) {
-          strat.push_back(data.strategy[i * data.num_actions + k]);
-          aev.push_back(data.action_ev[i * data.num_actions + k]);
+    // Trimmed dumps keep the actor's hands everywhere and both seats' at
+    // the root (root reaches feed Pio's set_range); other seats stay as
+    // empty arrays so seats[actor] indexing is shape-stable.
+    const bool emit_seat = !strategy_only || is_root || s == data.actor;
+    if (emit_seat) {
+      for (std::size_t i = 0; i < seat.idx.size(); ++i) {
+        const std::uint16_t universe_id = dicts[s][seat.idx[i]];
+        json h;
+        h["hand"] = nlhe ? json(combo_to_string(universe_id)) : json(universe_id);
+        h["reach"] = strategy_only ? json(round7(seat.reach[i])) : json(seat.reach[i]);
+        if (!strategy_only) h["ev"] = seat.ev[i];
+        if (s == data.actor) {
+          json strat = json::array();
+          json aev = json::array();
+          for (int k = 0; k < data.num_actions; ++k) {
+            const float f = data.strategy[i * data.num_actions + k];
+            strat.push_back(strategy_only ? json(round7(f)) : json(f));
+            if (!strategy_only) aev.push_back(data.action_ev[i * data.num_actions + k]);
+          }
+          h["strategy"] = std::move(strat);
+          if (!strategy_only) h["action_ev"] = std::move(aev);
         }
-        h["strategy"] = strat;
-        h["action_ev"] = aev;
+        hands.push_back(std::move(h));
       }
-      hands.push_back(std::move(h));
     }
     seats.push_back({{"seat", s}, {"hands", std::move(hands)}});
   }
   j["seats"] = std::move(seats);
-  if (data.has_rollup) {
+  if (data.has_rollup && !strategy_only) {
     json rollup = json::array();
     for (int cls = 0; cls < 169; ++cls) {
       if (data.rollup_weight[cls] <= 0.0f) continue;
@@ -87,7 +99,7 @@ json node_data_to_json(const ArtifactReader& reader, const ArtifactNodeData& dat
 
 json dump_artifact_json(ArtifactStore& store, const std::string& path,
                         std::optional<std::uint32_t> only_node,
-                        std::optional<int> runouts) {
+                        std::optional<int> runouts, bool strategy_only) {
   ArtifactReader reader(store, path);
   const bool nlhe = reader.metadata().value("hand_universe", "") == "nlhe_combos_1326";
   const auto& records = reader.nodes();
@@ -119,13 +131,16 @@ json dump_artifact_json(ArtifactStore& store, const std::string& path,
   json out;
   out["metadata"] = reader.metadata();
   if (runouts) out["metadata"]["dump_runouts"] = *runouts;
-  json dicts = json::array();
-  for (const auto& dict : reader.hand_dicts()) {
-    json hands = json::array();
-    for (std::uint16_t id : dict) hands.push_back(nlhe ? json(combo_to_string(id)) : json(id));
-    dicts.push_back(std::move(hands));
+  if (strategy_only) out["metadata"]["dump_fields"] = "strategy_only";
+  if (!strategy_only) {
+    json dicts = json::array();
+    for (const auto& dict : reader.hand_dicts()) {
+      json hands = json::array();
+      for (std::uint16_t id : dict) hands.push_back(nlhe ? json(combo_to_string(id)) : json(id));
+      dicts.push_back(std::move(hands));
+    }
+    out["hand_dicts"] = std::move(dicts);
   }
-  out["hand_dicts"] = std::move(dicts);
 
   json nodes = json::object();
   for (const ArtifactNodeRecord& record : records) {
@@ -133,7 +148,8 @@ json dump_artifact_json(ArtifactStore& store, const std::string& path,
     if (!include[record.node_id]) continue;
     json j = node_to_json(record, nlhe);
     if (record.kind == 0) {
-      j["data"] = node_data_to_json(reader, reader.read_node(record.node_id), nlhe);
+      j["data"] = node_data_to_json(reader, reader.read_node(record.node_id), nlhe,
+                                    strategy_only, record.node_id == 0);
     }
     nodes[std::to_string(record.node_id)] = std::move(j);
   }

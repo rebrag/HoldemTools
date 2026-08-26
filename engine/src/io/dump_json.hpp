@@ -18,8 +18,17 @@ namespace engine {
 // Without it, a flop-sized artifact (tens of thousands of decision nodes)
 // produces a JSON DOM too large to build. Betting structure is identical
 // under every card, so a sampled dump still contains every betting line.
+//
+// strategy_only: the harness's gate-only diet. Keeps the full tree structure
+// and metadata (marked "dump_fields": "strategy_only"), the actor seat's
+// {hand, reach, strategy} per decision node, and BOTH seats' {hand, reach}
+// at the root (they feed Pio's set_range); drops per-hand EVs, action EVs,
+// hand_dicts, and rollup_169, and rounds floats to 7 decimals (lossless for
+// the harness, which feeds Pio %.6f). A full-precision consumer must use
+// the default dump.
 nlohmann::json dump_artifact_json(ArtifactStore& store, const std::string& path,
                                   std::optional<std::uint32_t> only_node,
-                                  std::optional<int> runouts = std::nullopt);
+                                  std::optional<int> runouts = std::nullopt,
+                                  bool strategy_only = false);
 
 }  // namespace engine

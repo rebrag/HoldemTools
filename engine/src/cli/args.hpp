@@ -12,6 +12,9 @@ struct CliArgs {
   std::optional<std::uint32_t> node;      // dump-json --node
   std::optional<int> runouts;             // dump-json --runouts (sampled chance fan-out)
   bool meta_only = false;                 // dump-json --meta-only
+  bool compact = false;                   // dump-json --compact (no pretty-print)
+  bool strategy_only = false;             // dump-json --strategy-only (trimmed fields)
+  std::optional<std::string> out_path;    // dump-json --out (write to file, not stdout)
   bool valid = false;
   std::string error;
 };
