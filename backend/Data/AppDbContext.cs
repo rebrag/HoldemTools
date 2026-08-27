@@ -117,6 +117,8 @@ namespace PokerRangeAPI2.Data
                 entity.Property(e => e.Error).HasMaxLength(2000);
                 entity.Property(e => e.WatcherId).HasMaxLength(64);
                 entity.Property(e => e.ResultBlobPath).HasMaxLength(512);
+                entity.Property(e => e.HtResultBlobPath).HasMaxLength(512);
+                entity.Property(e => e.PioResultBlobPath).HasMaxLength(512);
                 entity.Property(e => e.ResultStacks).HasMaxLength(200);
                 entity.Property(e => e.ResultNodeName).HasMaxLength(200);
                 entity.Property(e => e.TimingsJson).HasMaxLength(4000);

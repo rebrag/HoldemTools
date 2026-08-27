@@ -1,34 +1,45 @@
-/** Reader for the .htc comparison payload written by watcher/htc_format.py.
+/** Reader for the .htc payload written by watcher/htc_format.py.
  *
- *  The layout is documented there; this mirrors it. Two properties matter
- *  here: the header is JSON (so the summary panels read it exactly as they
- *  read the old JSON doc), and each node's per-hand columns sit at a
- *  declared offset, so a node is decoded only when it is actually viewed -
- *  the page never touches the other ~1000 nodes' bytes.
+ *  One file holds ONE solver's per-hand detail. The layout is documented
+ *  there; this mirrors it. Two properties matter here: the header is JSON
+ *  (so the summary panels read it directly), and each node's per-hand
+ *  columns sit at a declared offset, so a node is decoded only when it is
+ *  actually viewed - the page never touches the other ~1000 nodes' bytes.
  *
  *  Values are fixed-point at the scales the payload itself declares, rather
  *  than at scales hardcoded here, matching the schema-4 bundle convention.
  */
 
 const MAGIC = "HTCMP01\0";
+const FORMAT_VERSION = 2;
 const EV_NULL = -2147483648; // i32 sentinel
 const AEV_NULL_16 = -32768;
+
+export type SolverTag = "ht" | "pio";
 
 export interface HtcNodeMeta {
   id: string;
   position: string;
   actions: string[];
-  global_freq: number;
+  reach_sum: number;
   hands: number;
   ev_wide: boolean;
   off: number;
   len: number;
 }
 
+export interface HtcSpot {
+  board: string;
+  pot: number;
+  chip_scale?: number;
+  config_hash: string;
+}
+
 export interface HtcHeader {
   kind: string;
   format: number;
-  spot: unknown;
+  solver: SolverTag;
+  spot: HtcSpot;
   summary: unknown;
   scales: { reach: number; freq: number; ev: number; action_ev: number };
   hand_order: string[];
@@ -42,21 +53,22 @@ export interface HtcDoc {
   buf: ArrayBuffer;
 }
 
-/** One hand's two-solver comparison row, matching the JSON doc's shape so
- *  the renderers are indifferent to which format was loaded. */
+/** One hand's row for ONE solver. Comparing two solvers is a join on the
+ *  hand string, done by the page - never by index, since each file carries
+ *  its own solver's hand universe. */
 export interface DecodedHand {
   hand: string;
   reach: number;
-  ht: { freq: number[]; ev: number; action_ev: (number | null)[] };
-  pio: { freq: number[]; ev: number | null; action_ev: (number | null)[] };
-  l1: number;
+  freq: number[];
+  ev: number | null;
+  action_ev: (number | null)[];
 }
 
 export interface DecodedNode {
   id: string;
   position: string;
   actions: string[];
-  global_freq: number;
+  reach_sum: number;
   hands: DecodedHand[];
 }
 
@@ -70,14 +82,20 @@ export const isHtc = (buf: ArrayBuffer): boolean => {
 };
 
 export const parseHtc = (buf: ArrayBuffer): HtcDoc => {
-  if (!isHtc(buf)) throw new Error("Not an .htc comparison payload");
+  if (!isHtc(buf)) throw new Error("Not an .htc payload");
   const view = new DataView(buf);
   const headerLen = view.getUint32(8, true);
   const header = JSON.parse(
     new TextDecoder().decode(new Uint8Array(buf, 16, headerLen))
   ) as HtcHeader;
-  if (header.format !== 1) {
-    throw new Error(`Unsupported .htc format version ${header.format} (this build reads 1)`);
+  if (header.format !== FORMAT_VERSION) {
+    throw new Error(
+      `This payload is format ${header.format}; /compare reads ${FORMAT_VERSION}. ` +
+        `Format 1 held both solvers in one file, before the payload split - re-run the compare.`
+    );
+  }
+  if (header.solver !== "ht" && header.solver !== "pio") {
+    throw new Error(`Payload has no known solver tag (got ${String(header.solver)})`);
   }
   return { header, blocksAt: 16 + headerLen, buf };
 };
@@ -112,53 +130,30 @@ export const decodeNode = (doc: HtcDoc, index: number): DecodedNode | null => {
 
   const idx = u16(n);
   const reach = u16(n);
-  const htFreq = u16(n * A);
-  const pioFreq = u16(n * A);
-  const htEv = i32(n);
-  const pioEv = i32(n);
-  const htAev = aev(n * A);
-  const pioAev = aev(n * A);
+  const freq = u16(n * A);
+  const evQ = i32(n);
+  const aevCol = aev(n * A);
   const aevNull = meta.ev_wide ? EV_NULL : AEV_NULL_16;
 
   const hands: DecodedHand[] = new Array(n);
   for (let i = 0; i < n; i++) {
-    const htFreqRow: number[] = new Array(A);
-    const pioFreqRow: number[] = new Array(A);
-    let l1 = 0;
+    const freqRow: number[] = new Array(A);
+    for (let k = 0; k < A; k++) freqRow[k] = freq[k * n + i] / sFreq;
+
+    const baseQ = evQ[i];
+    // Action EVs are stored as deltas from the hand's own (quantized) EV, so
+    // they are summed before scaling - exactly as they were encoded.
+    const actionEv: (number | null)[] = new Array(A);
     for (let k = 0; k < A; k++) {
-      htFreqRow[k] = htFreq[k * n + i] / sFreq;
-      pioFreqRow[k] = pioFreq[k * n + i] / sFreq;
-      l1 += Math.abs(htFreqRow[k] - pioFreqRow[k]);
+      const d = aevCol[k * n + i];
+      actionEv[k] = d === aevNull || baseQ === EV_NULL ? null : (baseQ + d) / sEv;
     }
-    const htEvQ = htEv[i];
-    const pioEvQ = pioEv[i];
-    // action EVs are stored as deltas from the hand's own (quantized) EV,
-    // so they are summed before scaling - exactly as they were encoded.
-    const actionEv = (
-      col: Int32Array | Int16Array,
-      baseQ: number
-    ): (number | null)[] => {
-      const out: (number | null)[] = new Array(A);
-      for (let k = 0; k < A; k++) {
-        const d = col[k * n + i];
-        out[k] = d === aevNull || baseQ === EV_NULL ? null : (baseQ + d) / sEv;
-      }
-      return out;
-    };
     hands[i] = {
       hand: doc.header.hand_order[idx[i]] ?? "??",
       reach: reach[i] / sReach,
-      ht: {
-        freq: htFreqRow,
-        ev: htEvQ === EV_NULL ? 0 : htEvQ / sEv,
-        action_ev: actionEv(htAev, htEvQ),
-      },
-      pio: {
-        freq: pioFreqRow,
-        ev: pioEvQ === EV_NULL ? null : pioEvQ / sEv,
-        action_ev: actionEv(pioAev, pioEvQ),
-      },
-      l1,
+      freq: freqRow,
+      ev: baseQ === EV_NULL ? null : baseQ / sEv,
+      action_ev: actionEv,
     };
   }
 
@@ -166,7 +161,61 @@ export const decodeNode = (doc: HtcDoc, index: number): DecodedNode | null => {
     id: meta.id,
     position: meta.position,
     actions: meta.actions,
-    global_freq: meta.global_freq,
+    reach_sum: meta.reach_sum,
     hands,
   };
+};
+
+/** One hand as the page renders it: whichever solvers have a row for it,
+ *  plus the L1 distance between their frequencies when both do. */
+export interface JoinedHand {
+  hand: string;
+  /** htsolver's reach where it has the hand, else Pio's - cell heights and
+   *  range weighting need one number, and htsolver is the reference. */
+  reach: number;
+  ht: DecodedHand | null;
+  pio: DecodedHand | null;
+  l1: number | null;
+}
+
+/** Join two solvers' rows for one node BY HAND STRING.
+ *
+ *  Never by index: each payload carries its own solver's hand universe, and
+ *  Pio legitimately drops hands it has no matchups for. Actions are matched
+ *  by label for the same reason - a node whose action lists disagree should
+ *  render blank cells rather than silently pair the wrong columns. */
+export const joinHands = (
+  htNode: DecodedNode | null,
+  pioNode: DecodedNode | null
+): JoinedHand[] => {
+  const out: JoinedHand[] = [];
+  const pioByHand = new Map<string, DecodedHand>();
+  if (pioNode) for (const h of pioNode.hands) pioByHand.set(h.hand, h);
+
+  if (htNode) {
+    const labelIndex = new Map(htNode.actions.map((a, i) => [a, i]));
+    for (const ht of htNode.hands) {
+      const pio = pioByHand.get(ht.hand) ?? null;
+      let l1: number | null = null;
+      if (pio && pioNode) {
+        l1 = 0;
+        for (let k = 0; k < pioNode.actions.length; k++) {
+          const mine = labelIndex.get(pioNode.actions[k]);
+          if (mine == null) {
+            l1 = null; // action lists disagree: no honest distance to report
+            break;
+          }
+          l1 += Math.abs(ht.freq[mine] - pio.freq[k]);
+        }
+      }
+      out.push({ hand: ht.hand, reach: ht.reach, ht, pio, l1 });
+      pioByHand.delete(ht.hand);
+    }
+  }
+  // Hands only Pio reaches are real information (the engine never puts them
+  // in this node), so they are kept - listed after the joined rows.
+  for (const pio of pioByHand.values()) {
+    out.push({ hand: pio.hand, reach: pio.reach, ht: null, pio, l1: null });
+  }
+  return out;
 };

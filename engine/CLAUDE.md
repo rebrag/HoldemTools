@@ -94,4 +94,6 @@ The durable roadmap (goal product, milestone status, next steps) is `docs/roadma
 M0-M6 delivered (Kuhn, Leduc + CI, HU NLHE river Nash, artifact + C# reader, Pio harness, render path).
 The M5 acceptance gate passed 2026-08-25 on a real full-range river spot (`configs/validate_river_fullrange.json`): Pio's own evaluator rated the engine strategy exploitable for 0.0 chips.
 The harness's primary gate is cross-exploitability (engine strategy loaded into Pio via set_strategy), NOT per-hand L1 - per-hand strategies legitimately differ between equilibria; keep it that way.
+It is now **opt-in** (`engine_compare.py --cross-check`) and off in the queue path, because PioSolver is being retired and most /compare runs are engine-only: a validation sweep has to ask for it explicitly, and a run without it reports "no verdict" rather than a PASS.
+The reach-weighted per-hand L1/EV diagnostics were removed with the per-solver payload split - each solver writes its own `.htc` and agreement is judged by eye on the two grids.
 Deferred with schema/plumbing already in place: M7 QRE (`qre.mode`, per-player lambda, annealing, `fit-lambda`), M8 multiway + side-pot fast path, M9 collusion best-response, M10 Bayesian unknown-collusion (`agents.collusion.p`).

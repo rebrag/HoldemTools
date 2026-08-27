@@ -1,9 +1,18 @@
-"""The .htc binary payload: per-hand htsolver-vs-Pio comparison detail.
+"""The .htc binary payload: ONE solver's per-hand detail for a solved spot.
 
 Why this exists: the equivalent JSON ran ~250 bytes per hand row, so a turn
 tree's detail was 40MB+ for a capped 250 nodes and had to be trimmed to stay
-uploadable. Fixed-point columns run ~32 bytes per row, which buys per-hand
+uploadable. Fixed-point columns run ~16 bytes per row, which buys per-hand
 detail for EVERY decision node at a fraction of the bytes.
+
+One file holds one solver, tagged in the header. htsolver and PioSolver each
+get their own, because PioSolver is on its way out: an engine-only run should
+not pay for a format that assumes a second solver exists, and the two halves
+are produced by completely different code paths (the htsolver payload comes
+straight out of the engine dump, the Pio one out of per-node UPI queries).
+Anything wanting to compare them joins on the hand string, never on index -
+each file carries its own solver's hand universe and reach, and the two need
+not agree.
 
 Layout (little-endian throughout, like the .hta artifact):
 
@@ -22,13 +31,11 @@ Per node, columns are struct-of-arrays - which gzips ~25% better than
 interleaving the same numbers - with `n` hands and `A` actions:
 
     u16 idx[n]              index into header.hand_order
-    u16 reach[n]            x scales.reach
-    u16 ht_freq[A][n]       x scales.freq, action-major
-    u16 pio_freq[A][n]      x scales.freq
-    i32 ht_ev[n]            x scales.ev,  EV_NULL when absent
-    i32 pio_ev[n]           x scales.ev
-    T   ht_aev[A][n]        x scales.action_ev, DELTA from that hand's ev
-    T   pio_aev[A][n]       T = i16, or i32 when the node's ev_wide flag is set
+    u16 reach[n]            x scales.reach, THIS solver's own reach
+    u16 freq[A][n]          x scales.freq, action-major
+    i32 ev[n]               x scales.ev,  EV_NULL when absent
+    T   aev[A][n]           x scales.action_ev, DELTA from that hand's ev
+                            T = i16, or i32 when the node's ev_wide flag is set
 
 Precision is pinned to what the UI renders, not to what is smallest: scale
 1000 on frequencies matches the 0.1 percentage point the tables print, and
@@ -49,9 +56,13 @@ import sys
 from array import array
 from typing import Any, Dict, List, Optional, Sequence
 
+# The magic is deliberately unchanged across the v1 -> v2 split: a v1 file
+# then still parses far enough for a reader to say "format 1, produced before
+# the payload split" instead of the useless "not an .htc payload".
 MAGIC = b"HTCMP01\0"
-FORMAT_VERSION = 1
-KIND = "htsolver_pio_comparison_binary"
+FORMAT_VERSION = 2
+KIND = "htsolver_compare_binary"
+SOLVERS = ("ht", "pio")
 
 # Fixed-point scales, shipped in the payload rather than hardcoded in readers
 # (the same convention as the schema-4 bundles' COMBO_SCALE).
@@ -89,7 +100,10 @@ class HtcWriter:
     second pass over the file.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, solver: str) -> None:
+        if solver not in SOLVERS:
+            raise ValueError(f"solver must be one of {SOLVERS}, got {solver!r}")
+        self.solver = solver
         self._blocks: List[bytes] = []
         self._nodes: List[Dict[str, Any]] = []
         self._hand_index: Dict[str, int] = {}
@@ -104,11 +118,11 @@ class HtcWriter:
         return idx
 
     def add_node(self, node_id: str, position: str, actions: Sequence[str],
-                 global_freq: float, hands: Sequence[Dict[str, Any]]) -> None:
-        """One decision node's per-hand rows.
+                 hands: Sequence[Dict[str, Any]]) -> None:
+        """One decision node's per-hand rows for this file's solver.
 
-        Each hand is {hand, reach, ht_freq[A], pio_freq[A], ht_ev, pio_ev,
-        ht_action_ev[A], pio_action_ev[A]}; EVs may be None.
+        Each hand is {hand, reach, freq[A], ev, action_ev[A]}; ev and any
+        action_ev entry may be None.
         """
         n = len(hands)
         num_actions = len(actions)
@@ -116,52 +130,47 @@ class HtcWriter:
         idx_col = [self.hand_id(h["hand"]) for h in hands]
         reach_col = [_q(h["reach"], SCALES["reach"]) for h in hands]
 
-        freq_cols: List[List[int]] = []
-        for side in ("ht_freq", "pio_freq"):
-            col: List[int] = []
-            for k in range(num_actions):
-                col.extend(_q(h[side][k], SCALES["freq"]) for h in hands)
-            freq_cols.append(col)
+        freq_col: List[int] = []
+        for k in range(num_actions):
+            freq_col.extend(_q(h["freq"][k], SCALES["freq"]) for h in hands)
 
-        ev_cols: Dict[str, List[int]] = {}
-        for side in ("ht_ev", "pio_ev"):
-            ev_cols[side] = [EV_NULL if h[side] is None else _q(h[side], SCALES["ev"])
-                             for h in hands]
+        ev_col = [EV_NULL if h["ev"] is None else _q(h["ev"], SCALES["ev"])
+                  for h in hands]
 
         # Deltas are taken between the QUANTIZED values, not the raw ones, so
         # that ev + delta reconstructs the action EV exactly rather than
         # compounding two independent roundings into a full-cent error.
-        aev_cols: List[List[int]] = []
+        aev_col: List[Optional[int]] = []
         wide = False
-        for side, base in (("ht_action_ev", "ht_ev"), ("pio_action_ev", "pio_ev")):
-            base_q = ev_cols[base]
-            col = []
-            for k in range(num_actions):
-                for i, h in enumerate(hands):
-                    v = h[side][k] if k < len(h[side]) else None
-                    if v is None or base_q[i] == EV_NULL:
-                        col.append(None)
-                        continue
-                    d = _q(v, SCALES["ev"]) - base_q[i]
-                    if abs(d) > _I16_LIMIT:
-                        wide = True
-                    col.append(d)
-            aev_cols.append(col)
+        for k in range(num_actions):
+            for i, h in enumerate(hands):
+                row = h["action_ev"]
+                v = row[k] if k < len(row) else None
+                if v is None or ev_col[i] == EV_NULL:
+                    aev_col.append(None)
+                    continue
+                d = _q(v, SCALES["ev"]) - ev_col[i]
+                if abs(d) > _I16_LIMIT:
+                    wide = True
+                aev_col.append(d)
 
         null_aev = AEV_NULL_32 if wide else AEV_NULL_16
-        parts = [_pack("H", idx_col), _pack("H", reach_col),
-                 _pack("H", freq_cols[0]), _pack("H", freq_cols[1]),
-                 _pack("i", ev_cols["ht_ev"]), _pack("i", ev_cols["pio_ev"])]
-        for col in aev_cols:
-            parts.append(_pack("i" if wide else "h",
-                               [null_aev if v is None else v for v in col]))
-        block = b"".join(parts)
+        block = b"".join([
+            _pack("H", idx_col),
+            _pack("H", reach_col),
+            _pack("H", freq_col),
+            _pack("i", ev_col),
+            _pack("i" if wide else "h",
+                  [null_aev if v is None else v for v in aev_col]),
+        ])
 
         self._nodes.append({
             "id": node_id,
             "position": position,
             "actions": list(actions),
-            "global_freq": round(global_freq, 6),
+            # Replaces the old global_freq, which was a Pio-only UPI call
+            # nothing rendered. This is free: it is the column we just built.
+            "reach_sum": round(sum(h["reach"] for h in hands), 6),
             "hands": n,
             "ev_wide": wide,
             "len": len(block),
@@ -183,6 +192,7 @@ class HtcWriter:
         header = {
             "kind": KIND,
             "format": FORMAT_VERSION,
+            "solver": self.solver,
             "spot": spot,
             "summary": summary,
             "scales": dict(SCALES),
@@ -200,26 +210,38 @@ class HtcWriter:
         return 16 + len(blob) + offset
 
 
+def _check_format(header: Dict[str, Any]) -> Dict[str, Any]:
+    got = header.get("format")
+    if got != FORMAT_VERSION:
+        raise ValueError(
+            f"this payload is format {got}; this build reads {FORMAT_VERSION}. "
+            f"Format 1 held both solvers in one file, before the payload split - "
+            f"re-run the compare to regenerate it.")
+    if header.get("solver") not in SOLVERS:
+        raise ValueError(f"payload has no known solver tag (got {header.get('solver')!r})")
+    return header
+
+
 def read_htc_header(path: str) -> Dict[str, Any]:
-    """Just the header - spot, summary, scales, node directory. Reads the
-    first few hundred KB rather than the whole payload."""
+    """Just the header - solver, spot, summary, scales, node directory. Reads
+    the first few hundred KB rather than the whole payload."""
     with open(path, "rb") as f:
         prefix = f.read(16)
         if prefix[:8] != MAGIC:
             raise ValueError(f"not an .htc payload (magic {prefix[:8]!r})")
         header_len = int.from_bytes(prefix[8:12], "little")
-        return json.loads(f.read(header_len).decode("utf8"))
+        return _check_format(json.loads(f.read(header_len).decode("utf8")))
 
 
 def read_htc(path: str) -> Dict[str, Any]:
-    """Decode a whole payload back to JSON-doc shape. Verification/debug use;
+    """Decode a whole payload back to plain dicts. Verification/debug use;
     the frontend decodes one node at a time from the same layout."""
     with open(path, "rb") as f:
         raw = f.read()
     if raw[:8] != MAGIC:
         raise ValueError(f"not an .htc payload (magic {raw[:8]!r})")
     header_len = int.from_bytes(raw[8:12], "little")
-    header = json.loads(raw[16:16 + header_len].decode("utf8"))
+    header = _check_format(json.loads(raw[16:16 + header_len].decode("utf8")))
     scales = header["scales"]
     hand_order = header["hand_order"]
 
@@ -238,40 +260,30 @@ def read_htc(path: str) -> Dict[str, Any]:
         pos = blocks_at + meta["off"]
         idx = col("H", pos, n); pos += n * 2
         reach = col("H", pos, n); pos += n * 2
-        ht_f = col("H", pos, n * A); pos += n * A * 2
-        pio_f = col("H", pos, n * A); pos += n * A * 2
-        ht_e = col("i", pos, n); pos += n * 4
-        pio_e = col("i", pos, n); pos += n * 4
+        freq = col("H", pos, n * A); pos += n * A * 2
+        ev_q = col("i", pos, n); pos += n * 4
         aev_code = "i" if meta["ev_wide"] else "h"
-        aev_size = 4 if meta["ev_wide"] else 2
         aev_null = AEV_NULL_32 if meta["ev_wide"] else AEV_NULL_16
-        ht_a = col(aev_code, pos, n * A); pos += n * A * aev_size
-        pio_a = col(aev_code, pos, n * A)
+        aev = col(aev_code, pos, n * A)
 
         hands = []
         for i in range(n):
-            row: Dict[str, Any] = {
+            ev = None if ev_q[i] == EV_NULL else ev_q[i] / scales["ev"]
+            hands.append({
                 "hand": hand_order[idx[i]],
                 "reach": reach[i] / scales["reach"],
-            }
-            for side, f, e, a in (("ht", ht_f, ht_e, ht_a), ("pio", pio_f, pio_e, pio_a)):
-                ev = None if e[i] == EV_NULL else e[i] / scales["ev"]
-                row[side] = {
-                    "freq": [f[k * n + i] / scales["freq"] for k in range(A)],
-                    "ev": ev,
-                    # Deltas are in ev units: add before dividing, so this is
-                    # the same fixed-point value the writer quantized.
-                    "action_ev": [
-                        None if (a[k * n + i] == aev_null or ev is None)
-                        else (e[i] + a[k * n + i]) / scales["ev"]
-                        for k in range(A)
-                    ],
-                }
-            row["l1"] = sum(abs(row["ht"]["freq"][k] - row["pio"]["freq"][k])
-                            for k in range(A))
-            hands.append(row)
+                "freq": [freq[k * n + i] / scales["freq"] for k in range(A)],
+                "ev": ev,
+                # Deltas are in ev units: add before dividing, so this is the
+                # same fixed-point value the writer quantized.
+                "action_ev": [
+                    None if (aev[k * n + i] == aev_null or ev is None)
+                    else (ev_q[i] + aev[k * n + i]) / scales["ev"]
+                    for k in range(A)
+                ],
+            })
         nodes.append({
             "id": meta["id"], "position": meta["position"], "actions": actions,
-            "global_freq": meta["global_freq"], "hands": hands,
+            "reach_sum": meta["reach_sum"], "hands": hands,
         })
     return {"header": header, "nodes": nodes}

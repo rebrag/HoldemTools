@@ -108,7 +108,10 @@ const SizeField = ({
   </label>
 );
 
-const Check = ({
+/** Exported alongside inputCls/buttonCls for the same reason: a solve-settings
+ *  fieldset sitting beneath this panel should match it. Purely presentational,
+ *  so this does not put page-specific behaviour in the shared panel. */
+export const Check = ({
   label,
   checked,
   onChange,

@@ -32,13 +32,29 @@ namespace PokerRangeAPI2.Models
         // Pio accuracy ("exploitable for") as % of the pot, compare mode only.
         public double PioAccuracyPct { get; set; } = 0.02;
 
+        // Compare-mode options, normalized at create time so the stored row is
+        // always coherent (no Pio means neither the per-hand extraction nor
+        // the gate can run). Default is the fast engine-only loop: PioSolver
+        // is on its way out and is wanted only as an occasional spot-check.
+        public bool DisablePio { get; set; } = true;
+        public bool DisableCompare { get; set; } = true;      // Pio's per-hand extraction
+        public bool DisableCrossCheck { get; set; } = true;   // the cross-exploitability gate
+
         public string Status { get; set; } = EngineCompareJobStatus.Queued;
 
         public int AttemptCount { get; set; }
         public string? Error { get; set; }
         public string? WatcherId { get; set; }
 
-        // compare mode: ADLS path of the uploaded comparison JSON (gzipped).
+        // compare mode: ADLS paths of the two uploaded payloads (gzipped .htc,
+        // one per solver). The Pio path stays null when Pio did not run.
+        public string? HtResultBlobPath { get; set; }
+        public string? PioResultBlobPath { get; set; }
+
+        // LEGACY: the single merged payload written before the per-solver
+        // split. Never set by the current watcher; kept so old rows are
+        // recognizable as such rather than failing to decode under the new
+        // route.
         public string? ResultBlobPath { get; set; }
 
         // Per-stage wall times reported by the watcher (flat JSON dict of
