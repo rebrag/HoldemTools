@@ -7,11 +7,12 @@ watcher's queue protocol (X-Watcher-Key, heartbeats, stale-claim requeue on
 the server).
 
 Job modes:
-  compare  solve with htsolver, then build + solve the IDENTICAL tree in Pio
-           (engine_compare.py --solve-pio) and upload the per-hand comparison
-           payload (gzipped .htc, see htc_format.py) to ADLS
-           enginecompare/{id}.htc.gz. This is the htsolver-verification loop
-           behind the frontend /compare page.
+  compare  solve with htsolver and upload its per-hand payload (gzipped .htc,
+           see htc_format.py) to ADLS enginecompare/{id}.ht.htc.gz. When the
+           job asks for it, ALSO build + solve the IDENTICAL tree in Pio and
+           upload its payload alongside as {id}.pio.htc.gz. Pio is opt-in per
+           job: an engine-only run needs no Pio process at all, which is the
+           fast iteration loop behind the frontend /compare page.
   publish  solve with htsolver only and POST the artifact to the API, which
            converts it to schema-4 bundles and publishes it to the solutions
            library. This is the post-Pio production path.
@@ -71,6 +72,7 @@ def claim() -> Optional[Dict[str, Any]]:
 
 def report(job_id: str, status: Optional[str] = None, error: Optional[str] = None,
            heartbeat: bool = False, result_blob_path: Optional[str] = None,
+           ht_blob_path: Optional[str] = None, pio_blob_path: Optional[str] = None,
            timings: Optional[Dict[str, Any]] = None) -> bool:
     body: Dict[str, Any] = {"watcherId": watcher_id(), "heartbeat": heartbeat}
     if status is not None:
@@ -79,6 +81,10 @@ def report(job_id: str, status: Optional[str] = None, error: Optional[str] = Non
         body["error"] = error[:2000]
     if result_blob_path is not None:
         body["resultBlobPath"] = result_blob_path
+    if ht_blob_path is not None:
+        body["htResultBlobPath"] = ht_blob_path
+    if pio_blob_path is not None:
+        body["pioResultBlobPath"] = pio_blob_path
     if timings:
         body["timings"] = timings
     try:
@@ -115,12 +121,12 @@ class Heartbeat:
             self._thread.join(timeout=2.0)
 
 
-def upload_result(job_id: str, result_path: str) -> str:
-    """Gzip + upload the comparison payload; returns the blob path.
+def upload_result(job_id: str, result_path: str, solver: str) -> str:
+    """Gzip + upload one solver's payload; returns the blob path.
 
-    The blob keeps its format in the extension: the API picks the content
-    type from it, and old `.json.gz` rows stay readable alongside new
-    `.htc.gz` ones."""
+    Each solver gets its own blob, tagged in the name: the frontend fetches
+    the htsolver half first and merges Pio's when it exists, and a Pio
+    failure cannot cost the engine result."""
     from azure.storage.filedatalake import DataLakeServiceClient
 
     conn = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
@@ -130,7 +136,7 @@ def upload_result(job_id: str, result_path: str) -> str:
     fs = DataLakeServiceClient.from_connection_string(conn).get_file_system_client(container)
     with open(result_path, "rb") as f:
         payload = gzip.compress(f.read())
-    rel_path = f"enginecompare/{job_id}.htc.gz"
+    rel_path = f"enginecompare/{job_id}.{solver}.htc.gz"
     fs.get_file_client(rel_path).upload_data(payload, overwrite=True)
     return rel_path
 
@@ -161,35 +167,57 @@ def handle_compare(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) -
     artifact = run_engine(config, run_dir)
     timings["engine_solve_s"] = round(time.perf_counter() - phase_start, 3)
 
-    htc_out = os.path.join(run_dir, "compare.htc")
+    # Pio is opt-in per job. "No Pio" subsumes the other two (neither the
+    # per-hand extraction nor the gate can run without a Pio process); the
+    # API normalizes that too, so this is belt and braces.
+    disable_pio = bool(job.get("disablePio", True))
+    disable_compare = bool(job.get("disableCompare", True)) or disable_pio
+    disable_cross = bool(job.get("disableCrossCheck", True)) or disable_pio
+
+    ht_out = os.path.join(run_dir, "compare.ht.htc")
+    pio_out = os.path.join(run_dir, "compare.pio.htc")
     cmd = [sys.executable, "-u", os.path.join(WATCHER_DIR, "engine_compare.py"),
-           "--artifact", artifact, "--engine-exe", ENGINE_EXE,
-           "--solve-pio", "--pio-accuracy-pct", str(job.get("pioAccuracyPct", 0.02)),
-           "--top", "0", "--htc-out", htc_out]
+           "--artifact", artifact, "--engine-exe", ENGINE_EXE, "--ht-out", ht_out]
+    if not disable_pio:
+        cmd += ["--solve-pio", "--pio-accuracy-pct", str(job.get("pioAccuracyPct", 0.02)),
+                "--pio-out", pio_out]
+        if not disable_compare:
+            cmd += ["--pio-detail"]
+        if not disable_cross:
+            cmd += ["--cross-check"]
+    log(f"  mode: htsolver{'' if disable_pio else ' + pio'}"
+        f"{'' if disable_compare else ' + per-hand'}"
+        f"{'' if disable_cross else ' + cross-check'}")
     phase_start = time.perf_counter()
     out = subprocess.run(cmd, cwd=WATCHER_DIR, capture_output=True, text=True, timeout=1800)
     timings["compare_total_s"] = round(time.perf_counter() - phase_start, 3)
-    if not os.path.exists(htc_out):
+    if not os.path.exists(ht_out):
         raise RuntimeError(f"engine_compare failed (exit {out.returncode}): "
                            f"{(out.stdout + out.stderr)[-1500:]}")
     for line in out.stdout.splitlines():
-        if any(k in line for k in ("exploitability", "PASS", "FAIL")):
+        if any(k in line for k in ("exploitability", "PASS", "FAIL", "no verdict")):
             log(f"  {line.strip()}")
-    # Harvest the child's per-phase numbers (pio build/solve, dump, compare
-    # loop) so the whole breakdown rides one job row. Never fail the job on
-    # a harvest problem - the result itself is already good.
-    try:
-        child_timing = read_htc_header(htc_out).get("summary", {}).get("timing", {})
-        timings.update({k: v for k, v in child_timing.items() if v is not None})
-    except Exception as e:
-        log(f"  timing harvest failed (ignored): {e}")
+    # Harvest each payload's per-phase numbers so the whole breakdown rides
+    # one job row. Never fail the job on a harvest problem - the results
+    # themselves are already good.
+    for path in (ht_out, pio_out):
+        if not os.path.exists(path):
+            continue
+        try:
+            child_timing = read_htc_header(path).get("summary", {}).get("timing", {})
+            timings.update({k: v for k, v in child_timing.items() if v is not None})
+        except Exception as e:
+            log(f"  timing harvest failed for {os.path.basename(path)} (ignored): {e}")
 
     report(job_id, status="Uploading")
     phase_start = time.perf_counter()
-    blob_path = upload_result(job_id, htc_out)
+    ht_blob = upload_result(job_id, ht_out, "ht")
+    pio_blob = (upload_result(job_id, pio_out, "pio")
+                if os.path.exists(pio_out) else None)
     timings["upload_s"] = round(time.perf_counter() - phase_start, 3)
-    report(job_id, status="Done", result_blob_path=blob_path, timings=timings)
-    log(f"  done -> {blob_path}")
+    report(job_id, status="Done", ht_blob_path=ht_blob, pio_blob_path=pio_blob,
+           timings=timings)
+    log(f"  done -> {ht_blob}" + (f" + {pio_blob}" if pio_blob else ""))
 
 
 def handle_publish(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) -> None:

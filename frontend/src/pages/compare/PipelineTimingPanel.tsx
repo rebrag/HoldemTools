@@ -12,6 +12,9 @@ export interface JobTimings {
   engine_solve_s?: number | null;
   compare_total_s?: number | null;
   upload_s?: number | null;
+  // Harness phases, harvested from each payload's header.
+  ht_extract_s?: number | null;
+  pio_extract_s?: number | null;
   // Engine self-report, harvested from the artifact meta.
   ht_solve_s?: number | null;
   ht_setup_s?: number | null;
@@ -34,11 +37,15 @@ export interface ClientMarks {
   fetchHeadersMs?: number;
   downloadParseMs?: number;
   renderMs?: number;
+  /** Fetch + merge of PioSolver's payload, which arrives after the page has
+   *  already rendered htsolver's. Absent on engine-only runs. */
+  pioMergeMs?: number;
   totalMs?: number;
 }
 
 /** The structural slice of CompareJob the panel needs. */
 export interface PipelineJob {
+  id: string;
   mode: "compare" | "publish";
   createdAtUtc: string;
   claimedAtUtc: string | null;
@@ -136,26 +143,34 @@ const PipelineTimingPanel = ({ job, marks }: PipelineRun) => {
       ? (num(t.meta_load_s) ?? 0) + (num(t.dump_load_s) ?? 0)
       : null;
   push("dump", "Engine dump", engineDump, "engine", "dump-json export + parse");
+  push(
+    "htrows",
+    "htsolver rows",
+    num(t.ht_extract_s),
+    "engine",
+    "per-hand strategy and EV read out of the engine dump, then packed"
+  );
   push("spawn", "Pio spawn", num(t.pio_spawn_s), "pio", "PioSolver process start");
   push("build", "Pio tree build", num(t.pio_setup_s), "pio", "set_range + add_line + build_tree");
   push("piosolve", "Pio solve", num(t.pio_solve_s), "pio");
-  push("loop", "Compare loop", num(t.compare_loop_s), "pio", "per-node, per-hand UPI queries");
+  push("piorows", "Pio rows", num(t.pio_extract_s), "pio", "per-node, per-hand UPI queries");
   push(
     "cross",
     "Cross-check",
     num(t.cross_check_s),
     "pio",
-    "engine strategy uploaded to Pio + calc_results"
+    "action map + engine strategy uploaded to Pio + calc_results"
   );
 
   const compareTotal = num(t.compare_total_s);
   if (compareTotal != null) {
     const childSum = [
       engineDump,
+      num(t.ht_extract_s),
       num(t.pio_spawn_s),
       num(t.pio_setup_s),
       num(t.pio_solve_s),
-      num(t.compare_loop_s),
+      num(t.pio_extract_s),
       num(t.cross_check_s),
     ].reduce<number>((acc, v) => acc + (v ?? 0), 0);
     push(
@@ -163,7 +178,7 @@ const PipelineTimingPanel = ({ job, marks }: PipelineRun) => {
       "Harness overhead",
       compareTotal - childSum,
       "watcher",
-      "python startup, imports, comparison JSON write",
+      "python startup, imports, payload writes",
       true
     );
   }
@@ -198,7 +213,7 @@ const PipelineTimingPanel = ({ job, marks }: PipelineRun) => {
     "Download + parse",
     ms(marks.downloadParseMs),
     "client",
-    "body download, gunzip, and JSON parse (fetch cannot separate them)"
+    "htsolver payload: body download, gunzip, header parse (fetch cannot separate them)"
   );
   push("render", "Render", ms(marks.renderMs), "client", "React render to painted frame");
 
@@ -214,6 +229,15 @@ const PipelineTimingPanel = ({ job, marks }: PipelineRun) => {
       true
     );
   }
+  // After the total: this lands once htsolver's half is already on screen, so
+  // it is not part of the click-to-results measurement above.
+  push(
+    "piomerge",
+    "Pio detail (after render)",
+    ms(marks.pioMergeMs),
+    "client",
+    "PioSolver payload fetched and merged once the engine result was already showing"
+  );
 
   const maxS = rows.reduce((acc, r) => Math.max(acc, r.seconds), 0);
 
