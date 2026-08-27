@@ -37,6 +37,27 @@ export interface BuilderState extends TreeConfigText {
   disableCompare: boolean;
   /** Skip the cross-exploitability gate (set_strategy upload + calc_results). */
   disableCrossCheck: boolean;
+
+  /* ---- htsolver algorithm settings ----
+   * These reach engine.exe verbatim inside `config.algorithm`. The defaults
+   * below are the engine's own defaults, so leaving this block alone produces
+   * exactly the config /compare sent before it existed. */
+
+  /** Regret update rule. dcfr is the default and, on every tree measured so
+   *  far, the fastest: cfr_plus needs about twice its iterations. */
+  updateRule: "dcfr" | "cfr_plus" | "rm";
+  /** Collapse suit-equivalent runout subtrees. Lossless, and worth 1.3-1.6x
+   *  on boards that have a usable permutation. Disable only to reproduce a
+   *  pre-isomorphism result. */
+  isomorphism: boolean;
+  /** The chance-child revisit schedule. */
+  recalc: boolean;
+  /** Chance-node subsampling. Off by default and slower when on - it exists
+   *  for preflop trees, where full enumeration is impossible rather than
+   *  merely expensive. Mutually exclusive with `recalc`. */
+  sampling: boolean;
+  samplingRunouts: string;
+  samplingAnnealAt: string;
 }
 
 const street = (bet: string, raise: string, donk = ""): StreetBoxes => ({
@@ -74,6 +95,12 @@ export const DEFAULT_BUILDER: BuilderState = {
   disablePio: true,
   disableCompare: true,
   disableCrossCheck: true,
+  updateRule: "dcfr",
+  isomorphism: true,
+  recalc: true,
+  sampling: false,
+  samplingRunouts: "12",
+  samplingAnnealAt: "2000",
 };
 
 /* ---------- shared tree-building panel adapters ----------
@@ -225,7 +252,24 @@ export const buildEngineConfig = (b: BuilderState): EngineConfigResult => {
       ],
       bet_sizing: betSizing,
       preflop_aggressor: b.preflopAggressor,
-      algorithm: { update: "dcfr" },
+      // The engine refuses sampling and recalc together (the recalc cache
+      // holds full-enumeration values a sampled iteration never produces),
+      // so sampling wins here rather than sending a config that will be
+      // rejected after the job has already been queued.
+      algorithm: {
+        update: b.updateRule,
+        recalc: { enabled: b.sampling ? false : b.recalc },
+        ...(b.sampling
+          ? {
+              sampling: {
+                mode: "chance",
+                runouts: Math.max(1, Number(b.samplingRunouts) || 12),
+                anneal_full_at: Math.max(0, Number(b.samplingAnnealAt) || 2000),
+              },
+            }
+          : {}),
+      },
+      isomorphism: b.isomorphism,
       qre: { mode: "nash" },
       budget: {
         iterations,

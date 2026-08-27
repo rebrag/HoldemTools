@@ -27,6 +27,7 @@ import {
   type EngineConfigResult,
 } from "./builderState";
 import { parseBoardCards, pioClipboardCodec } from "./treeConfigText";
+import { ENGINE_PRESETS } from "./enginePresets";
 import { pioRangeCodec } from "@/lib/solver/rangeTokens";
 import PipelineTimingPanel, {
   secs,
@@ -900,6 +901,102 @@ const SolverCompare = () => {
                   this ends the run instead of letting it grind forever.
                 </span>
               </label>
+
+              <fieldset>
+                <legend className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                  htsolver settings
+                </legend>
+                <div className="mt-1.5 flex flex-col gap-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] text-slate-400">Benchmark spot</span>
+                    <select
+                      className={`${inputCls} w-56`}
+                      value=""
+                      disabled={solving}
+                      onChange={(e) => {
+                        const preset = ENGINE_PRESETS.find((p) => p.id === e.target.value);
+                        if (preset) setBuilder((b) => ({ ...b, ...preset.patch }));
+                      }}
+                      title="Load one of the trees the engine is benchmarked on, so a run here is comparable to a recorded result and to the same spot on another build."
+                    >
+                      <option value="">Load a preset spot...</option>
+                      {ENGINE_PRESETS.map((p) => (
+                        <option key={p.id} value={p.id} title={p.note}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] text-slate-400">Update rule</span>
+                    <select
+                      className={`${inputCls} w-40`}
+                      value={builder.updateRule}
+                      disabled={solving}
+                      onChange={(e) =>
+                        setB("updateRule", e.target.value as BuilderState["updateRule"])
+                      }
+                    >
+                      <option value="dcfr">dcfr (default)</option>
+                      <option value="cfr_plus">cfr_plus</option>
+                      <option value="rm">rm</option>
+                    </select>
+                    {builder.updateRule !== "dcfr" && (
+                      <span className="max-w-[16rem] text-[10px] leading-relaxed text-amber-500/80">
+                        {builder.updateRule === "cfr_plus"
+                          ? "Measured at about 2x dcfr's iterations on the turn reference."
+                          : "Plain regret matching did not reach 0.02% of pot inside 20000 iterations on the turn reference."}
+                      </span>
+                    )}
+                  </label>
+
+                  <Check
+                    label="Suit isomorphism"
+                    checked={builder.isomorphism}
+                    disabled={solving}
+                    onChange={(v) => setB("isomorphism", v)}
+                    title="Collapse suit-equivalent runout subtrees. Lossless, and worth 1.3-1.6x on boards with a usable permutation. Turn off only to reproduce a pre-isomorphism result."
+                  />
+                  <Check
+                    label="Recalc schedule"
+                    checked={builder.recalc && !builder.sampling}
+                    disabled={solving || builder.sampling}
+                    onChange={(v) => setB("recalc", v)}
+                    title="Stop re-traversing runout subtrees whose values have stopped moving. On by default; disabled automatically while chance sampling is on."
+                  />
+                  <Check
+                    label="Chance sampling"
+                    checked={builder.sampling}
+                    disabled={solving}
+                    onChange={(v) => setB("sampling", v)}
+                    title="Traverse only some of each chance node's children per iteration, scaled by n/m. Unbiased, but slower here - it exists for preflop trees."
+                  />
+                  {builder.sampling && (
+                    <div className="ml-4 flex flex-col gap-1.5">
+                      <label className="flex items-center gap-2 text-[11px] text-slate-300">
+                        <span className="text-[10px] text-slate-400">runouts</span>
+                        <input
+                          className={`${inputCls} w-16 tabular-nums`}
+                          value={builder.samplingRunouts}
+                          onChange={(e) => setB("samplingRunouts", e.target.value)}
+                        />
+                        <span className="text-[10px] text-slate-400">anneal by</span>
+                        <input
+                          className={`${inputCls} w-20 tabular-nums`}
+                          value={builder.samplingAnnealAt}
+                          onChange={(e) => setB("samplingAnnealAt", e.target.value)}
+                        />
+                      </label>
+                      <span className="max-w-[16rem] text-[10px] leading-relaxed text-amber-500/80">
+                        Measured 1.9-3.0x SLOWER than full enumeration on flop and turn
+                        trees. It turns the recalc schedule off, and the accuracy stop
+                        cannot fire until it has annealed to exact enumeration.
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </fieldset>
 
               <fieldset>
                 <legend className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
