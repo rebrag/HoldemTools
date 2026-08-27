@@ -48,10 +48,15 @@ namespace PokerRangeAPI2.Controllers
         }
 
         // POST api/engine/compare - dev-only: solve the config with htsolver,
-        // build + solve the identical tree in Pio (engine_compare.py
-        // --solve-pio), and return the full per-hand comparison JSON that the
-        // /compare page renders. Synchronous: a river spot takes seconds for
-        // htsolver plus roughly Pio's solve time.
+        // build + solve the identical tree in Pio, gate on cross-exploitability,
+        // and return the run log plus both solvers' summary headers.
+        // Synchronous: a river spot takes seconds for htsolver plus roughly
+        // Pio's solve time.
+        //
+        // The per-hand rows are NOT returned: they are binary payloads (tens of
+        // MB) that the queue path uploads to ADLS for the /compare page. This
+        // endpoint is a local sanity poke - "does my config solve, and does Pio
+        // agree" - and has no callers in the repo.
         [HttpPost("compare")]
         public async Task<IActionResult> Compare([FromBody] CompareRequestDto request,
                                                  CancellationToken ct)
@@ -94,20 +99,21 @@ namespace PokerRangeAPI2.Controllers
                     if (engineExit != 0)
                         return Problem($"htsolver solve failed (exit {engineExit}):\n{engineLog}");
 
-                    var jsonOut = Path.Combine(runDir, "compare.json");
+                    var htOut = Path.Combine(runDir, "compare.ht.htc");
+                    var pioOut = Path.Combine(runDir, "compare.pio.htc");
                     var harnessArgs =
                         $"-u engine_compare.py --artifact \"{Path.Combine(runDir, "solve.hta")}\" " +
                         $"--engine-exe \"{engineExe}\" --solve-pio " +
-                        $"--pio-accuracy-pct {request.PioAccuracyPct} --top 0 --json-out \"{jsonOut}\"";
+                        $"--pio-accuracy-pct {request.PioAccuracyPct} " +
+                        $"--ht-out \"{htOut}\" --pio-out \"{pioOut}\" --cross-check";
                     var (pioExit, pioLog) = await RunProcessAsync(
                         python, harnessArgs, watcherDir, TimeSpan.FromMinutes(10), ct);
-                    if (!System.IO.File.Exists(jsonOut))
+                    if (!System.IO.File.Exists(pioOut))
                         return Problem($"comparison failed (exit {pioExit}):\n{engineLog}\n{pioLog}");
 
-                    var comparison = await System.IO.File.ReadAllTextAsync(jsonOut, ct);
                     return Content(
                         $"{{\"log\":{System.Text.Json.JsonSerializer.Serialize(engineLog + "\n" + pioLog)}," +
-                        $"\"comparison\":{comparison}}}",
+                        $"\"ht\":{ReadHtcSummary(htOut)},\"pio\":{ReadHtcSummary(pioOut)}}}",
                         "application/json");
                 }
                 finally
@@ -118,6 +124,34 @@ namespace PokerRangeAPI2.Controllers
             finally
             {
                 CompareGate.Release();
+            }
+        }
+
+        /// <summary>
+        /// The `summary` block out of an .htc payload's header, as raw JSON.
+        /// The layout is documented in watcher/htc_format.py: an 8-byte magic,
+        /// a u32 header length, a u32 flags word, then that many bytes of
+        /// header JSON. Only the header is read - the per-hand block region
+        /// after it can be tens of megabytes.
+        /// </summary>
+        private static string ReadHtcSummary(string path)
+        {
+            try
+            {
+                using var stream = System.IO.File.OpenRead(path);
+                var prefix = new byte[16];
+                if (stream.Read(prefix, 0, 16) != 16) return "null";
+                var headerLen = BitConverter.ToUInt32(prefix, 8);
+                var header = new byte[headerLen];
+                if (stream.Read(header, 0, (int)headerLen) != headerLen) return "null";
+                using var doc = System.Text.Json.JsonDocument.Parse(header);
+                return doc.RootElement.TryGetProperty("summary", out var summary)
+                    ? summary.GetRawText()
+                    : "null";
+            }
+            catch (Exception)
+            {
+                return "null"; // a dev poke should not 500 over a readback
             }
         }
 

@@ -117,20 +117,31 @@ python watch_adls_and_run_pio_headless.py
 
 ## Engine validation harness (`engine_compare.py`)
 
-Manual developer tool - never part of the watcher loop and never CI (Pio only runs on this machine).
-It compares a solve from the new C++ engine (`engine/`) against a PioSolver solve of the same spot.
-The primary pass/fail gate is cross-exploitability (the engine's strategy is loaded into Pio via `set_strategy` - never `lock_node`, which silently zeroes the MES search - and Pio's evaluator reports its exploitability); per-hand L1 and EV differences are diagnostics only, since two correct solvers may pick different equilibria.
-Those diagnostics are weighted by `gfreq * min(engine reach, pio reach)`: off-path (node, hand) pairs have an unconstrained strategy and an undefined `calc_ev` on the side that does not reach them, so including them measures equilibrium choice rather than correctness.
+Solves a spot with the C++ engine (`engine/`) and, when asked, with PioSolver too.
+Pio is opt-in: it runs only with `--solve-pio` or `--cfr`, and an engine-only run spawns no Pio process and makes no UPI call at all.
+That is the fast loop - dump, extract, pack - and it is what the compare watcher does by default, because the mid-term plan is to drop Pio entirely and keep it only as an occasional accuracy check.
+
+**Each solver writes its own payload** (`htc_format.py`), never a merged one:
+
+| Flag | What it writes |
+|---|---|
+| `--ht-out a.ht.htc` | htsolver's per-hand rows. Needs no Pio: node ids, action labels and hand rows all come out of the engine dump. |
+| `--pio-out a.pio.htc` | PioSolver's payload - its summary (root EV, exploitability, solve time, peak memory) always, per-hand rows only with `--pio-detail`. |
+| `--pio-detail` | Extract Pio's per-hand rows. The expensive half: 4 + actions UPI round trips per node. |
+| `--cross-check` | The cross-exploitability gate. **Off by default**; without it a run reports "no verdict" rather than a cheap PASS. |
+
+Anything comparing the two joins them **by hand string**, never by index: each file carries its own solver's hand universe and its own reach, and Pio legitimately drops hands it has no matchups for.
+Both sides spell combos the engine's way (`engine_combo_str`), which is what makes that join land.
+
+The gate is cross-exploitability: the engine's strategy is loaded into Pio via `set_strategy` - never `lock_node`, which silently zeroes the MES search - and Pio's evaluator reports how exploitable that profile is.
+It remains the only real correctness statement, since two correct solvers may pick different equilibria; per-hand agreement is now judged by eye on the two grids rather than by a reach-weighted L1 the harness used to compute.
 Multistreet trees build via `add_line` with one token per action = the actor's hand-cumulative total (checks repeat the current total - a mid-line 0 after chips are in can crash Pio).
-Trees past `--full-limit` decision nodes are compared on deterministic sampled runouts with a root-EV gate instead of the (then-meaningless) partial cross-check.
-`--htc-out compare.htc` writes the per-hand comparison as the compact binary payload the `/compare` page loads (see `htc_format.py`): every decision node at roughly 32 bytes per hand row, against the ~250 the equivalent JSON costs.
-That ratio is what lets the whole tree ship - a turn tree runs ~24MB raw and ~5MB gzipped for all ~1100 nodes, where the JSON needed a 250-node cap to stay under 40MB.
-`--json-out compare.json` still writes the JSON doc, capped by `--json-max-nodes`, for reading a run by hand.
-`--gate-only` skips the per-hand work entirely - a `--fields gate` engine dump, one UPI call per node (the action map for `set_strategy`), and the unchanged cross-exploitability gate - for when only the verdict matters.
+Trees past `--full-limit` decision nodes use deterministic sampled runouts, and the gate falls back to root-EV agreement instead of the (then-meaningless) partial cross-check.
 
-The engine dump is always trimmed (`--fields detail`, or `gate` under `--gate-only`) and written to a file rather than piped: the harness reads only the actor seat's hands and the root's reaches, so a full dump would move ~680MB of pretty-printed JSON to use a fraction of it.
+A turn tree's htsolver payload runs ~24MB raw and ~4MB gzipped for all ~1160 nodes, at roughly 16 bytes per hand row.
+The engine dump is always trimmed (`--fields detail` when `--ht-out` is asked for, else `gate`) and written to a file rather than piped: the harness reads only the actor seat's hands and the root's reaches, so a full dump would move ~680MB of pretty-printed JSON to use a fraction of it.
 
-Both solvers' wall clock AND peak memory are reported (they land in `summary.timing` and `summary.memory` of the JSON) so the two are directly comparable: same tree, same accuracy target.
+Both solvers' wall clock AND peak memory are reported (they land in each payload's `summary.timing` and `summary.memory`) so the two are directly comparable: same tree, same accuracy target.
 Memory is the peak working set of each solver PROCESS, read with the same OS call the engine uses for its own `peak_rss_bytes`, so it is one measurement of one thing rather than two solvers' opinions of their own footprint.
 Pio's figure includes the tens of MB the process carries at idle - real RAM the machine has to have - and `pio_baseline_bytes` records what that was before any tree work, so the tree's own cost can be read off if wanted.
 Tree building is timed apart from solving on both sides - the engine's own `setup_time_s` covers its tree and showdown tables, Pio's covers `set_range` + `add_line` + `build_tree` - because lumping them together flatters whichever solver builds faster.
@@ -140,8 +151,10 @@ A run against a pre-solved `--cfr` reports no Pio time: that tree was solved els
 ## Compare watcher (`engine_compare_watcher.py`)
 
 The queue-driven sibling of the harness: claims `EngineCompareJob`s from `POST /api/enginecompare/claim` (same `X-Watcher-Key` + heartbeat protocol as the solve queue) and executes them on this machine.
-`compare` jobs solve with htsolver AND Pio (`engine_compare.py --solve-pio --htc-out`) and upload the binary comparison payload to ADLS `enginecompare/{id}.htc.gz`; `publish` jobs solve with htsolver only and POST the artifact to the API, which publishes schema-4 bundles into the solutions library.
-The API picks the response content type from that extension, so jobs predating the binary format still serve their `.json.gz` blobs unchanged.
+`compare` jobs solve with htsolver and upload its payload to ADLS `enginecompare/{id}.ht.htc.gz`, plus `{id}.pio.htc.gz` when the job asked for Pio; `publish` jobs solve with htsolver only and POST the artifact to the API, which publishes schema-4 bundles into the solutions library.
+Three per-job options ride the claim payload and decide how much runs: `disablePio` (no Pio process at all - the default), `disableCompare` (Pio solves, but its per-hand rows are not extracted), and `disableCrossCheck` (no gate).
+The API normalizes them, so "no Pio" always implies the other two.
+The frontend fetches the htsolver half first and merges Pio's when it lands, and `/api/enginecompare/{id}/result/{ht|pio}` serves either without waiting for the job to reach `Done` - so a Pio failure cannot cost you the engine result.
 Run it with `python engine_compare_watcher.py` (same `.env`; set `ENGINE_EXE` if the engine binary is not at `../engine/build/engine.exe`).
 Only one instance - it spawns Pio processes.
 

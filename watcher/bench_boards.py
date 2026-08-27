@@ -36,6 +36,10 @@ import sys
 import time
 
 WATCHER_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, WATCHER_DIR)
+
+from htc_format import read_htc_header  # noqa: E402
+
 ENGINE_DIR = os.path.join(WATCHER_DIR, "..", "engine")
 ENGINE_EXE = os.path.join(ENGINE_DIR, "build", "engine.exe")
 BENCH_DIR = os.path.join(ENGINE_DIR, "configs", "_bench")
@@ -146,20 +150,29 @@ def run_engine(config_path: str) -> dict:
     return info
 
 
-def run_compare(artifact: str, json_out: str, accuracy_pct: float,
+def run_compare(artifact: str, out_prefix: str, accuracy_pct: float,
                 timeout_s: int) -> dict:
+    """Solve in Pio, gate on cross-exploitability, and return the merged
+    summary of both payload headers.
+
+    Per-hand rows are deliberately not requested (--pio-detail): the bench
+    reads headline numbers only, and the per-node UPI pass is the slow part."""
+    ht_out = f"{out_prefix}.ht.htc"
+    pio_out = f"{out_prefix}.pio.htc"
     cmd = [sys.executable, "-u", os.path.join(WATCHER_DIR, "engine_compare.py"),
            "--artifact", artifact, "--engine-exe", ENGINE_EXE,
            "--solve-pio", "--pio-accuracy-pct", str(accuracy_pct),
-           "--top", "0", "--json-out", json_out]
+           "--ht-out", ht_out, "--pio-out", pio_out, "--cross-check"]
     proc = subprocess.run(cmd, cwd=WATCHER_DIR, capture_output=True, text=True,
                           timeout=timeout_s)
-    if not os.path.exists(json_out):
+    if not (os.path.exists(ht_out) and os.path.exists(pio_out)):
         raise RuntimeError(f"engine_compare failed ({proc.returncode}):\n"
                            f"{proc.stdout[-3000:]}\n{proc.stderr[-2000:]}")
-    with open(json_out, "r", encoding="utf8") as f:
-        doc = json.load(f)
-    return doc["summary"]
+    ht = read_htc_header(ht_out)["summary"]
+    pio = read_htc_header(pio_out)["summary"]
+    return {**ht, **pio,
+            "timing": {**ht.get("timing", {}), **pio.get("timing", {})},
+            "memory": {**ht.get("memory", {}), **pio.get("memory", {})}}
 
 
 def mb(value) -> str:
@@ -201,11 +214,11 @@ def main() -> int:
             config_path = build_config(board, name, args.iterations,
                                        args.accuracy_pct, args.threads, args.ranges)
             artifact = os.path.join(ENGINE_DIR, "out", "_bench", f"{name}.hta")
-            json_out = os.path.join(OUT_DIR, f"{name}.compare.json")
+            out_prefix = os.path.join(OUT_DIR, f"{name}.compare")
             row = {"family": family, "board": board, "name": name, "ranges": args.ranges}
             try:
                 row.update(run_engine(config_path))
-                summary = run_compare(artifact, json_out, args.accuracy_pct, args.timeout)
+                summary = run_compare(artifact, out_prefix, args.accuracy_pct, args.timeout)
                 row["timing"] = summary.get("timing", {})
                 row["memory"] = summary.get("memory", {})
                 row["pass"] = summary.get("cross_check", {}).get("pass")

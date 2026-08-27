@@ -42,6 +42,10 @@ namespace PokerRangeAPI2.Controllers
             public JsonObject Config { get; set; } = new();
             public double PioAccuracyPct { get; set; } = 0.02;
             public string Mode { get; set; } = EngineCompareJobMode.Compare;
+            // Default to the fast engine-only loop; see EngineCompareJob.
+            public bool DisablePio { get; set; } = true;
+            public bool DisableCompare { get; set; } = true;
+            public bool DisableCrossCheck { get; set; } = true;
         }
 
         public class JobDto
@@ -56,6 +60,16 @@ namespace PokerRangeAPI2.Controllers
             public DateTimeOffset CreatedAtUtc { get; set; }
             public DateTimeOffset? ClaimedAtUtc { get; set; }
             public DateTimeOffset? CompletedAtUtc { get; set; }
+
+            public bool DisablePio { get; set; }
+            public bool DisableCompare { get; set; }
+            public bool DisableCrossCheck { get; set; }
+
+            /// <summary>Which payloads this job has, so the page knows what to fetch.</summary>
+            public bool HasHtResult { get; set; }
+            public bool HasPioResult { get; set; }
+            /// <summary>A pre-split job: one merged payload the current page cannot read.</summary>
+            public bool LegacyResult { get; set; }
 
             // Per-stage wall times from the watcher (flat dict of seconds);
             // null for jobs that predate the instrumentation.
@@ -74,6 +88,14 @@ namespace PokerRangeAPI2.Controllers
                 ClaimedAtUtc = job.ClaimedAtUtc,
                 CompletedAtUtc = job.CompletedAtUtc,
                 Timings = ParseTimings(job.TimingsJson),
+                DisablePio = job.DisablePio,
+                DisableCompare = job.DisableCompare,
+                DisableCrossCheck = job.DisableCrossCheck,
+                HasHtResult = !string.IsNullOrEmpty(job.HtResultBlobPath),
+                HasPioResult = !string.IsNullOrEmpty(job.PioResultBlobPath),
+                LegacyResult = !string.IsNullOrEmpty(job.ResultBlobPath)
+                               && string.IsNullOrEmpty(job.HtResultBlobPath)
+                               && string.IsNullOrEmpty(job.PioResultBlobPath),
             };
 
             private static JsonNode? ParseTimings(string? json)
@@ -101,6 +123,14 @@ namespace PokerRangeAPI2.Controllers
                 return Forbid();
             if (request.PioAccuracyPct <= 0 || request.PioAccuracyPct > 10)
                 return BadRequest("pioAccuracyPct must be in (0, 10]");
+            // "No Pio" subsumes the other two: neither the per-hand extraction
+            // nor the gate can run without a Pio process. Normalize here so the
+            // stored row is coherent and the watcher never re-derives it.
+            if (request.DisablePio)
+            {
+                request.DisableCompare = true;
+                request.DisableCrossCheck = true;
+            }
 
             var configJson = request.Config.ToJsonString();
             if (configJson.Length > MaxConfigBytes)
@@ -123,6 +153,9 @@ namespace PokerRangeAPI2.Controllers
                 ConfigJson = configJson,
                 Board = board,
                 PioAccuracyPct = request.PioAccuracyPct,
+                DisablePio = request.DisablePio,
+                DisableCompare = request.DisableCompare,
+                DisableCrossCheck = request.DisableCrossCheck,
                 Status = EngineCompareJobStatus.Queued,
                 CreatedAtUtc = DateTimeOffset.UtcNow,
             };
@@ -192,6 +225,40 @@ namespace PokerRangeAPI2.Controllers
                 ? "application/json"
                 : "application/octet-stream";
             return File(bytes.Value.Content.ToArray(), contentType);
+        }
+
+        // GET api/enginecompare/{id}/result/{solver} - one solver's payload
+        // ("ht" or "pio"). Deliberately does NOT require Status == Done: the
+        // htsolver half is uploaded before Pio finishes, and a Pio failure
+        // must not cost the engine result.
+        [HttpGet("{id:guid}/result/{solver}")]
+        public async Task<IActionResult> ResultFor(Guid id, string solver)
+        {
+            if (solver != "ht" && solver != "pio")
+                return BadRequest("solver must be \"ht\" or \"pio\"");
+            var uid = this.CurrentUid();
+            if (string.IsNullOrWhiteSpace(uid)) return Unauthorized();
+            var job = await _db.EngineCompareJobs
+                .FirstOrDefaultAsync(j => j.Id == id && j.UserId == uid);
+            if (job == null) return NotFound();
+
+            var path = solver == "ht" ? job.HtResultBlobPath : job.PioResultBlobPath;
+            if (string.IsNullOrEmpty(path))
+                return NotFound($"Job has no {solver} payload.");
+
+            var connectionString = _config["AzureStorage:ConnectionString"];
+            var containerName = _config["AzureStorage:ContainerName"] ?? "onlinerangedata";
+            if (string.IsNullOrWhiteSpace(connectionString))
+                return Problem("AzureStorage:ConnectionString is missing from configuration.");
+            var blob = new BlobServiceClient(connectionString)
+                .GetBlobContainerClient(containerName)
+                .GetBlobClient(path);
+            if (!await blob.ExistsAsync())
+                return NotFound($"Result blob missing: {path}");
+            var bytes = await blob.DownloadContentAsync();
+            Response.Headers.ContentEncoding = "gzip";
+            Response.Headers.CacheControl = "private, max-age=86400"; // results are immutable
+            return File(bytes.Value.Content.ToArray(), "application/octet-stream");
         }
 
         private bool IsAdmin()

@@ -24,6 +24,19 @@ export interface BuilderState extends TreeConfigText {
   /** PioViewer's "Change only betting structure when loading configuration":
    *  a pasted config replaces the sizing boxes and leaves the spot alone. */
   betStructureOnly: boolean;
+
+  /* PioSolver is opt-in per run, and its two expensive halves are opt-in
+   * within that. All three default to disabled: htsolver-only is the fast
+   * iteration loop, and Pio is wanted only as an occasional accuracy check.
+   * "No Pio" implies the other two, which the API also normalizes. */
+
+  /** Do not run PioSolver at all: no process, no UPI, no Pio payload. */
+  disablePio: boolean;
+  /** Run Pio, but skip its per-hand extraction (the per-node UPI queries).
+   *  Its root EV, exploitability and cost comparison still travel. */
+  disableCompare: boolean;
+  /** Skip the cross-exploitability gate (set_strategy upload + calc_results). */
+  disableCrossCheck: boolean;
 }
 
 const street = (bet: string, raise: string, donk = ""): StreetBoxes => ({
@@ -58,6 +71,9 @@ export const DEFAULT_BUILDER: BuilderState = {
   accuracy: "0.02",
   maxIterations: "20000",
   betStructureOnly: false,
+  disablePio: true,
+  disableCompare: true,
+  disableCrossCheck: true,
 };
 
 /* ---------- shared tree-building panel adapters ----------
@@ -127,6 +143,12 @@ export interface EngineConfigResult {
   config: object;
   /** The accuracy target handed to Pio, as a percent of the pot. */
   pioAccuracyPct: number;
+  /* Harness options, siblings of `config` rather than fields inside it:
+   * `config` is the htsolver config handed verbatim to engine.exe, while
+   * these steer engine_compare.py. Same shape as pioAccuracyPct. */
+  disablePio: boolean;
+  disableCompare: boolean;
+  disableCrossCheck: boolean;
 }
 
 /** Build the htsolver config from the form; throws with a readable message
@@ -188,6 +210,9 @@ export const buildEngineConfig = (b: BuilderState): EngineConfigResult => {
 
   return {
     pioAccuracyPct: accuracyPct,
+    disablePio: b.disablePio,
+    disableCompare: b.disableCompare,
+    disableCrossCheck: b.disableCrossCheck,
     config: {
       schema: 1,
       game: "nlhe",

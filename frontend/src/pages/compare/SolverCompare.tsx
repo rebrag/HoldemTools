@@ -16,7 +16,7 @@ import { HAND_ORDER } from "@/lib/solver/handOrder";
 import { authedFetch } from "@/lib/api";
 import type { MoneyOpts } from "@/pages/solver/boardDisplay";
 import ResponsiveDrawer from "@/components/ResponsiveDrawer";
-import TreeBuilding, { inputCls } from "@/components/TreeBuilding";
+import TreeBuilding, { Check, inputCls } from "@/components/TreeBuilding";
 import {
   applyViewToBuilder,
   buildEngineConfig,
@@ -24,6 +24,7 @@ import {
   cloneBuilder,
   DEFAULT_BUILDER,
   type BuilderState,
+  type EngineConfigResult,
 } from "./builderState";
 import { parseBoardCards, pioClipboardCodec } from "./treeConfigText";
 import { pioRangeCodec } from "@/lib/solver/rangeTokens";
@@ -35,121 +36,101 @@ import PipelineTimingPanel, {
 } from "./PipelineTimingPanel";
 import {
   decodeNode,
-  isHtc,
+  joinHands,
   parseHtc,
-  type DecodedHand,
   type DecodedNode,
   type HtcDoc,
+  type JoinedHand,
 } from "./htcDecode";
 
 /**
- * Hidden verification page (/compare, no nav entry): htsolver vs PioSolver
- * gates, solve-cost comparison, and pipeline timing for the same spot.
+ * Hidden verification page (/compare, no nav entry): htsolver's own per-hand
+ * results, optionally next to PioSolver's for an accuracy check.
+ *
+ * Each solver writes its OWN binary .htc payload (see htcDecode.ts), and
+ * PioSolver is opt-in per run - the mid-term plan is to drop it entirely, so
+ * an engine-only run must not pay for it. That shapes this page: EVERY
+ * Pio-dependent element is conditional, and a run with no Pio payload
+ * renders one full-width grid with no gate badge and no diff columns.
  *
  * Two ways in:
  *  - Build a spot in the tree builder and "Solve & Compare" - the compare
- *    watcher solves it with htsolver, then builds + solves the IDENTICAL
- *    tree in Pio (validated node-for-node, --gate-only) and uploads the
- *    summary.
- *  - Drop a JSON produced by `watcher/engine_compare.py --json-out` - works
- *    anywhere, including the deployed site.
+ *    watcher solves it with htsolver, plus Pio when the job asked for it.
+ *    htsolver's payload renders first; Pio's merges in when it arrives.
+ *  - Drop one or two .htc files produced by `engine_compare.py --ht-out /
+ *    --pio-out` - works anywhere, including the deployed site.
  *
  * Reading the numbers: only the game VALUE of a 2p zero-sum spot is unique;
  * per-hand strategies (and, via blockers, per-hand EVs) may legitimately
  * differ between two exact equilibria. The correctness verdict is the
- * cross-check badge (Pio's own evaluator rating the htsolver strategy); the
- * per-hand view is for seeing where and how the two solutions differ.
- *
- * Per-hand detail arrives as a binary .htc payload (see htcDecode.ts) that
- * carries every decision node at a fraction of the JSON's bytes, and is
- * decoded one node at a time as they are selected. Older jobs and
- * hand-dropped files are still plain JSON and render identically.
+ * cross-check badge (Pio's own evaluator rating the htsolver strategy), and
+ * it only exists when that gate was requested; the per-hand view is for
+ * seeing where and how the two solutions differ, by eye.
  */
 
-/* ---------- the harness's JSON shapes ---------- */
+/* ---------- the two payloads' summary shapes ---------- */
 
-/** A hand row, from either wire format: the .htc decoder emits this shape so
- *  everything below is indifferent to which one was loaded. */
-type CompareHand = DecodedHand;
 type CompareNode = DecodedNode;
 
-interface CompareDoc {
-  kind: string;
-  schema: number;
-  generated_utc?: string;
-  spot: { board: string; pot: number; chip_scale?: number; config_hash: string; cfr: string };
-  summary: {
-    ht: {
-      iterations: number;
-      nashconv: number;
-      exploitable_chips?: number;
-      ev: number[];
-    };
-    pio: { ev_oop: number | null; ev_ip: number | null; exploitable: number | null };
-    cross_check: {
-      gate?: "cross_exploitability" | "root_ev";
-      ht_exploitable_per_pio: number | null;
-      ht_ev_per_pio: (number | null)[];
-      root_ev_diff?: number | null;
-      threshold: number;
-      pass: boolean;
-    };
-    /** Null in gate-only docs, where the diagnostics never ran. */
-    mean_l1: number | null;
-    mean_ev_diff: number | null;
-    /** False when Pio's line frequencies gave the per-hand diagnostics
-     *  nothing to normalize against, which happens on boards where its
-     *  global frequencies underflow to zero. The two means above are then
-     *  placeholders, not measurements. Absent in older comparison JSON,
-     *  where they were always real. */
-    diagnostics_weighted?: boolean;
-    /** True when the run skipped per-hand diagnostics entirely (the compare
-     *  watcher's fast path). Absent in older comparison JSON. */
-    gate_only?: boolean;
-    /** Wall clock for both solvers on the same tree at the same accuracy
-     *  target (added by engine_compare.py; absent in older comparison JSON). */
-    timing?: {
-      ht_solve_s: number | null;
-      ht_setup_s?: number | null;
-      ht_threads?: number | null;
-      ht_iterations?: number | null;
-      pio_solve_s: number | null;
-      pio_setup_s?: number | null;
-      accuracy_chips?: number | null;
-      /* Harness phases around the two solves (absent in older JSON); the
-       * pipeline panel reads them from the job row, but a hand-loaded file
-       * carries them here too. */
-      meta_load_s?: number | null;
-      dump_load_s?: number | null;
-      pio_spawn_s?: number | null;
-      compare_loop_s?: number | null;
-      cross_check_s?: number | null;
-    };
-    /** Peak working set of each solver PROCESS over building and solving the
-     *  tree - the same OS counter on both sides. Absent in older JSON. */
-    memory?: {
-      ht_peak_bytes: number | null;
-      pio_peak_bytes: number | null;
-      pio_baseline_bytes?: number | null;
-    };
-    sampled?: boolean;
-    runouts?: number | null;
-    decision_nodes?: number;
-    compared_nodes?: number;
-    detail_nodes?: number;
+/** htsolver's payload header. Everything here comes from the artifact, so it
+ *  exists whether or not Pio ran. */
+interface HtSummary {
+  solver: "ht";
+  ht: {
+    iterations: number;
+    nashconv: number;
+    exploitable_chips?: number;
+    exploitable_pct_pot?: number | null;
+    ev: number[];
   };
-  /** Per-hand detail, present in JSON docs. Binary payloads carry it in
-   *  their block region instead and leave this undefined - `nodeList` below
-   *  is what the page reads either way. */
-  nodes?: CompareNode[];
+  timing?: {
+    ht_solve_s?: number | null;
+    ht_setup_s?: number | null;
+    ht_threads?: number | null;
+    ht_iterations?: number | null;
+    meta_load_s?: number | null;
+    dump_load_s?: number | null;
+    ht_extract_s?: number | null;
+  };
+  memory?: { ht_peak_bytes?: number | null };
+  sampled?: boolean;
+  runouts?: number | null;
+  decision_nodes?: number;
+  detail_nodes?: number;
 }
 
-/** A loaded comparison: the summary doc plus however its per-hand detail
- *  arrived. `htc` is set for binary payloads, whose nodes are decoded
- *  lazily; JSON docs carry their nodes inline and already decoded. */
-interface LoadedCompare {
-  doc: CompareDoc;
-  htc: HtcDoc | null;
+/** PioSolver's payload header. Present only when Pio ran; its `detail_nodes`
+ *  is 0 when Pio solved but its per-hand rows were not extracted. */
+interface PioSummary {
+  solver: "pio";
+  source?: string;
+  pio: { ev_oop: number | null; ev_ip: number | null; exploitable: number | null };
+  cross_check: {
+    /** "none" when no gate was asked for - which is not the same as failing. */
+    gate?: "cross_exploitability" | "root_ev" | "none";
+    ht_exploitable_per_pio: number | null;
+    ht_ev_per_pio: (number | null)[];
+    root_ev_diff?: number | null;
+    threshold: number;
+    pass: boolean | null;
+  };
+  timing?: {
+    pio_solve_s?: number | null;
+    pio_setup_s?: number | null;
+    pio_spawn_s?: number | null;
+    pio_extract_s?: number | null;
+    cross_check_s?: number | null;
+    accuracy_chips?: number | null;
+  };
+  memory?: { pio_peak_bytes?: number | null; pio_baseline_bytes?: number | null };
+  detail_nodes?: number;
+}
+
+/** What the page has loaded. Either half may be absent: an engine-only run
+ *  has no Pio payload at all, and the htsolver half arrives first. */
+interface Loaded {
+  ht: HtcDoc | null;
+  pio: HtcDoc | null;
 }
 
 /* ---------- helpers ---------- */
@@ -168,36 +149,33 @@ const displayLabels = (node: CompareNode): string[] => {
 };
 
 interface SolverView {
+  labels: string[];
   grid: HandCellData[];
   comboDetail: ComboDetail;
-}
-
-interface NodeView {
-  labels: string[];
-  ht: SolverView;
-  pio: SolverView;
+  /** This solver's OWN reach per class: each file carries its own range, so
+   *  a grid's cell heights describe the solver it belongs to. */
   reachByHand: Map<string, number>;
-  /** Shared EV range over BOTH solvers' combos, so heat colors compare. */
-  evRange: ValueRange | null;
+  evMin: number;
+  evMax: number;
 }
 
-/** Per-solver 169-class grid + ComboDetail from the comparison rows.
+/** One solver's 169-class grid + ComboDetail from its own per-hand rows.
  *  Aggregation is range-weighted with a plain-mean fallback - the same rule
  *  as the schema-4 pipeline. */
-const buildNodeView = (node: CompareNode): NodeView => {
+const buildSolverView = (node: CompareNode): SolverView => {
   const labels = displayLabels(node);
   const nActions = labels.length;
 
   interface Agg {
     w: number;
     n: number;
-    freqW: [number[], number[]];
-    freqPlain: [number[], number[]];
-    evW: [number, number];
-    evWSum: [number, number];
+    freqW: number[];
+    freqPlain: number[];
+    evW: number;
+    evWSum: number;
   }
   const byClass = new Map<string, Agg>();
-  const byCombo: [Map<string, ComboRow>, Map<string, ComboRow>] = [new Map(), new Map()];
+  const byCombo = new Map<string, ComboRow>();
   let evMin = Infinity;
   let evMax = -Infinity;
 
@@ -210,72 +188,67 @@ const buildNodeView = (node: CompareNode): NodeView => {
       agg = {
         w: 0,
         n: 0,
-        freqW: [Array(nActions).fill(0), Array(nActions).fill(0)],
-        freqPlain: [Array(nActions).fill(0), Array(nActions).fill(0)],
-        evW: [0, 0],
-        evWSum: [0, 0],
+        freqW: Array(nActions).fill(0),
+        freqPlain: Array(nActions).fill(0),
+        evW: 0,
+        evWSum: 0,
       };
       byClass.set(cls, agg);
     }
     agg.w += hand.reach;
     agg.n += 1;
 
-    const solvers = [hand.ht, hand.pio] as const;
-    solvers.forEach((solver, s) => {
-      if (solver.ev != null) {
-        agg!.evW[s] += hand.reach * solver.ev;
-        agg!.evWSum[s] += hand.reach;
-        if (hand.reach > 0) {
-          if (solver.ev < evMin) evMin = solver.ev;
-          if (solver.ev > evMax) evMax = solver.ev;
-        }
+    if (hand.ev != null) {
+      agg.evW += hand.reach * hand.ev;
+      agg.evWSum += hand.reach;
+      if (hand.reach > 0) {
+        if (hand.ev < evMin) evMin = hand.ev;
+        if (hand.ev > evMax) evMax = hand.ev;
       }
-      for (let k = 0; k < nActions; k++) {
-        agg!.freqW[s][k] += hand.reach * solver.freq[k];
-        agg!.freqPlain[s][k] += solver.freq[k];
-      }
-      const actions: ComboRow["actions"] = {};
-      for (let k = 0; k < nActions; k++) {
-        actions[labels[k]] = {
-          freq: solver.freq[k],
-          ev: solver.action_ev?.[k] ?? null,
-          evLoss: null,
-        };
-      }
-      byCombo[s].set(comboKey(c1, c2), {
-        key: comboKey(c1, c2),
-        weight: hand.reach,
-        equity: null,
-        ev: solver.ev,
-        matchups: null,
-        actions,
-      });
+    }
+    for (let k = 0; k < nActions; k++) {
+      agg.freqW[k] += hand.reach * hand.freq[k];
+      agg.freqPlain[k] += hand.freq[k];
+    }
+    const actions: ComboRow["actions"] = {};
+    for (let k = 0; k < nActions; k++) {
+      actions[labels[k]] = {
+        freq: hand.freq[k],
+        ev: hand.action_ev?.[k] ?? null,
+        evLoss: null,
+      };
+    }
+    byCombo.set(comboKey(c1, c2), {
+      key: comboKey(c1, c2),
+      weight: hand.reach,
+      equity: null,
+      ev: hand.ev,
+      matchups: null,
+      actions,
     });
   }
 
   const reachByHand = new Map<string, number>();
-  const grids: [HandCellData[], HandCellData[]] = [[], []];
+  const grid: HandCellData[] = [];
   for (const [cls, agg] of byClass) {
     reachByHand.set(cls, agg.w / combosForHand(cls));
-    for (const s of [0, 1] as const) {
-      const actions: Record<string, number> = {};
-      const evs: Record<string, number> = {};
-      const ev = agg.evWSum[s] > 0 ? agg.evW[s] / agg.evWSum[s] : null;
-      for (let k = 0; k < nActions; k++) {
-        actions[labels[k]] =
-          agg.w > 0 ? agg.freqW[s][k] / agg.w : agg.freqPlain[s][k] / agg.n;
-        if (ev != null) evs[labels[k]] = ev;
-      }
-      grids[s].push({ hand: cls, actions, evs });
+    const actions: Record<string, number> = {};
+    const evs: Record<string, number> = {};
+    const ev = agg.evWSum > 0 ? agg.evW / agg.evWSum : null;
+    for (let k = 0; k < nActions; k++) {
+      actions[labels[k]] = agg.w > 0 ? agg.freqW[k] / agg.w : agg.freqPlain[k] / agg.n;
+      if (ev != null) evs[labels[k]] = ev;
     }
+    grid.push({ hand: cls, actions, evs });
   }
 
   return {
     labels,
-    ht: { grid: grids[0], comboDetail: { actor: "oop", actions: labels, byCombo: byCombo[0] } },
-    pio: { grid: grids[1], comboDetail: { actor: "oop", actions: labels, byCombo: byCombo[1] } },
+    grid,
+    comboDetail: { actor: "oop", actions: labels, byCombo },
     reachByHand,
-    evRange: evMin <= evMax ? { min: evMin, max: evMax } : null,
+    evMin,
+    evMax,
   };
 };
 
@@ -321,6 +294,14 @@ interface CompareJob {
   completedAtUtc: string | null;
   /** Per-stage wall times from the watcher; null for pre-instrumentation jobs. */
   timings: JobTimings | null;
+  disablePio: boolean;
+  disableCompare: boolean;
+  disableCrossCheck: boolean;
+  /** Which payloads exist, so the page knows what to fetch. */
+  hasHtResult: boolean;
+  hasPioResult: boolean;
+  /** A pre-split job whose single merged payload this build cannot read. */
+  legacyResult: boolean;
 }
 
 const TERMINAL_STATUSES = ["Done", "Failed"];
@@ -336,8 +317,7 @@ type SortKey = "evDiff" | "l1" | "reach" | "hand";
 type DisplayMode = "strategy" | "ev";
 
 const SolverCompare = () => {
-  const [loaded, setLoaded] = useState<LoadedCompare | null>(null);
-  const doc = loaded?.doc ?? null;
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nodeIndex, setNodeIndex] = useState(0);
   const [selectedHand, setSelectedHand] = useState<string | null>(null);
@@ -356,6 +336,9 @@ const SolverCompare = () => {
   const [pipeline, setPipeline] = useState<PipelineRun | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const cancelledRef = useRef(false);
+  // Which job's payloads the page is currently showing, so a slow Pio fetch
+  // from an abandoned job can never land on top of a newer selection.
+  const loadedJobRef = useRef<string | null>(null);
   useEffect(() => {
     // Reset on mount: StrictMode's dev double-mount runs the cleanup once,
     // and a latched ref would silently kill every poll loop.
@@ -368,50 +351,68 @@ const SolverCompare = () => {
   const setB = <K extends keyof BuilderState>(key: K, value: BuilderState[K]) =>
     setBuilder((cur) => ({ ...cur, [key]: value }));
 
-  const acceptLoaded = useCallback((next: LoadedCompare) => {
-    if (!next.doc.kind.startsWith("htsolver_pio_comparison")) {
-      throw new Error("Not a comparison file - generate one with engine_compare.py");
+  /** Turning Pio off forces its two halves off too - neither can run without
+   *  a Pio process. The API normalizes the same way, so a job's stored row
+   *  can never claim otherwise. */
+  const setRunPio = (run: boolean) =>
+    setBuilder((cur) => ({
+      ...cur,
+      disablePio: !run,
+      disableCompare: run ? cur.disableCompare : true,
+      disableCrossCheck: run ? cur.disableCrossCheck : true,
+    }));
+
+  /** Accept one payload into its solver's slot.
+   *
+   *  A payload for the SAME spot merges beside whatever is already loaded -
+   *  which is how Pio's half arrives after htsolver's, and how two files
+   *  dropped one at a time combine. A payload for a different spot starts
+   *  fresh, so a mismatched pair can never render as a meaningless
+   *  side-by-side comparison. */
+  const acceptPayload = useCallback((buf: ArrayBuffer) => {
+    const htc = parseHtc(buf);
+    let switchedSpot = false;
+    setLoaded((cur) => {
+      const existing = cur?.ht ?? cur?.pio ?? null;
+      const sameSpot =
+        existing != null &&
+        existing.header.spot.config_hash === htc.header.spot.config_hash;
+      switchedSpot = !sameSpot;
+      const base: Loaded = sameSpot && cur ? cur : { ht: null, pio: null };
+      return { ...base, [htc.header.solver]: htc };
+    });
+    if (switchedSpot) {
+      setNodeIndex(0);
+      setSelectedHand(null);
+      setHoverHand(null);
     }
-    setLoaded(next);
-    setNodeIndex(0);
-    setSelectedHand(null);
-    setHoverHand(null);
     setBuilderOpen(false);
     setError(null);
   }, []);
 
-  /** Both wire formats end up here: a binary payload keeps its buffer for
-   *  lazy per-node decoding, a JSON doc carries its nodes inline. */
-  const acceptBytes = useCallback(
-    (buf: ArrayBuffer) => {
-      if (isHtc(buf)) {
-        const htc = parseHtc(buf);
-        acceptLoaded({
-          doc: {
-            kind: htc.header.kind,
-            schema: htc.header.format,
-            spot: htc.header.spot as CompareDoc["spot"],
-            summary: htc.header.summary as CompareDoc["summary"],
-          },
-          htc,
-        });
-        return;
-      }
-      const text = new TextDecoder().decode(buf);
-      acceptLoaded({ doc: JSON.parse(text) as CompareDoc, htc: null });
+  const loadFiles = useCallback(
+    (files: FileList) => {
+      setPipeline(null); // hand-loaded files have no pipeline run behind them
+      const list = Array.from(files);
+      void (async () => {
+        try {
+          const bufs = await Promise.all(list.map((f) => f.arrayBuffer()));
+          // Dropping several files at once that disagree on the spot is a
+          // mistake worth naming, rather than silently keeping the last one.
+          const hashes = new Set(bufs.map((b) => parseHtc(b).header.spot.config_hash));
+          if (hashes.size > 1) {
+            throw new Error(
+              "Those payloads are from different spots (config_hash differs) - " +
+                "load both halves of one run."
+            );
+          }
+          bufs.forEach(acceptPayload);
+        } catch (e: unknown) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
+      })();
     },
-    [acceptLoaded]
-  );
-
-  const loadFile = useCallback(
-    (file: File) => {
-      setPipeline(null); // a hand-loaded file has no pipeline run behind it
-      file
-        .arrayBuffer()
-        .then((buf) => acceptBytes(buf))
-        .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
-    },
-    [acceptBytes]
+    [acceptPayload]
   );
 
   const refreshJobs = useCallback(async () => {
@@ -426,22 +427,33 @@ const SolverCompare = () => {
     void refreshJobs();
   }, [refreshJobs]);
 
+  /** Load a finished job's payloads.
+   *
+   *  htsolver's half is fetched and rendered FIRST, then Pio's is merged in
+   *  if it exists: the engine result is what the turnaround is measured
+   *  against, and it should not wait on the larger Pio download. */
   const loadJobResult = useCallback(
     async (job: CompareJob, opts: { submitMs?: number; tClickMs?: number } = {}) => {
       setError(null);
+      if (job.legacyResult) {
+        setError(
+          "This run predates the per-solver payload split and cannot be opened here. " +
+            "Re-run the spot to regenerate it."
+        );
+        return;
+      }
+      loadedJobRef.current = job.id;
       try {
         const t0 = performance.now();
-        const resp = await authedFetch(`/api/enginecompare/${job.id}/result`);
+        const resp = await authedFetch(`/api/enginecompare/${job.id}/result/ht`);
         if (!resp.ok) throw new Error(await resp.text());
         const t1 = performance.now();
-        // Binary or JSON - acceptBytes sniffs the magic, so the endpoint's
-        // content type never has to be trusted.
         const buf = await resp.arrayBuffer();
         const t2 = performance.now();
-        acceptBytes(buf);
-        // Two rAFs bracket the commit + paint of the accepted doc: the first
-        // fires before the frame, the second after it was presented. Finite
-        // and event-driven - no idle cost.
+        if (loadedJobRef.current !== job.id) return; // a newer job took over
+        acceptPayload(buf);
+        // Two rAFs bracket the commit + paint: the first fires before the
+        // frame, the second after it was presented. Finite and event-driven.
         const t3 = await new Promise<number>((resolve) =>
           requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now())))
         );
@@ -453,11 +465,26 @@ const SolverCompare = () => {
           totalMs: opts.tClickMs == null ? undefined : t3 - opts.tClickMs,
         };
         setPipeline({ job, marks });
+
+        if (job.hasPioResult) {
+          const pioStart = performance.now();
+          const pioResp = await authedFetch(`/api/enginecompare/${job.id}/result/pio`);
+          if (!pioResp.ok) throw new Error(await pioResp.text());
+          const pioBuf = await pioResp.arrayBuffer();
+          if (loadedJobRef.current !== job.id) return;
+          acceptPayload(pioBuf);
+          const pioMergeMs = performance.now() - pioStart;
+          setPipeline((cur) =>
+            cur && cur.job.id === job.id
+              ? { ...cur, marks: { ...cur.marks, pioMergeMs } }
+              : cur
+          );
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [acceptBytes]
+    [acceptPayload]
   );
 
   /** Queue a job for the compare watcher and poll it to completion. */
@@ -465,7 +492,7 @@ const SolverCompare = () => {
     async (mode: "compare" | "publish") => {
       setError(null);
       setRunLog(null);
-      let payload: { config: object; pioAccuracyPct: number };
+      let payload: EngineConfigResult;
       try {
         payload = buildEngineConfig(builder);
       } catch (e) {
@@ -536,67 +563,106 @@ const SolverCompare = () => {
     }
   }, [builder]);
 
-  /** The node directory, from whichever format was loaded. Binary payloads
-   *  expose it without decoding any hand rows. */
+  /* ---------- derived from whichever payloads are loaded ---------- */
+
+  const htSummary = (loaded?.ht?.header.summary ?? null) as HtSummary | null;
+  const pioSummary = (loaded?.pio?.header.summary ?? null) as PioSummary | null;
+  const spot = loaded?.ht?.header.spot ?? loaded?.pio?.header.spot ?? null;
+  const cross = pioSummary?.cross_check ?? null;
+  /** Both halves' timing/memory merged: each file carries only its own. */
+  const timing = { ...htSummary?.timing, ...pioSummary?.timing };
+  const memory = { ...htSummary?.memory, ...pioSummary?.memory };
+  /** Pio ran at all vs Pio extracted its per-hand rows - different questions. */
+  const hasPio = loaded?.pio != null;
+  const hasPioDetail = (loaded?.pio?.header.nodes.length ?? 0) > 0;
+
+  /** The node directory, from whichever payload is present. Read straight off
+   *  the header, so no hand rows are decoded to populate the picker. */
   const nodeDir = useMemo(
     () =>
-      loaded?.htc
-        ? loaded.htc.header.nodes.map((n) => ({ id: n.id, position: n.position }))
-        : (loaded?.doc.nodes ?? []).map((n) => ({ id: n.id, position: n.position })),
+      (loaded?.ht ?? loaded?.pio)?.header.nodes.map((n) => ({
+        id: n.id,
+        position: n.position,
+      })) ?? [],
     [loaded]
   );
 
-  const chipScale = doc?.spot.chip_scale ?? 100;
+  const chipScale = spot?.chip_scale ?? 100;
   // Everything on this page displays in chips (mode "money" = plain numbers,
   // no bb suffix); bbSize still calibrates the bet-label color ramp.
   const money: MoneyOpts = useMemo(
     () => ({ mode: "money", bbSize: chipScale }),
     [chipScale]
   );
-  /** Only the selected node's rows are decoded - the other ~1000 nodes' bytes
-   *  are never touched, which is what makes a full-tree payload cheap to
-   *  browse. */
-  const node = useMemo<CompareNode | null>(() => {
-    if (!loaded) return null;
-    if (loaded.htc) return decodeNode(loaded.htc, nodeIndex);
-    return loaded.doc.nodes?.[nodeIndex] ?? null;
-  }, [loaded, nodeIndex]);
-  const view = useMemo(() => (node ? buildNodeView(node) : null), [node]);
-  const board = useMemo(() => (doc ? parseBoardCards(doc.spot.board) : []), [doc]);
+  /** Only the selected node's rows are decoded, per solver - the other ~1000
+   *  nodes' bytes are never touched, which is what makes a full-tree payload
+   *  cheap to browse. Pio's node is found BY ID: the two files need not carry
+   *  the same node list. */
+  const htNode = useMemo<CompareNode | null>(
+    () => (loaded?.ht ? decodeNode(loaded.ht, nodeIndex) : null),
+    [loaded, nodeIndex]
+  );
+  const pioNode = useMemo<CompareNode | null>(() => {
+    const id = htNode?.id ?? nodeDir[nodeIndex]?.id;
+    if (!loaded?.pio || !id) return null;
+    const at = loaded.pio.header.nodes.findIndex((n) => n.id === id);
+    return at >= 0 ? decodeNode(loaded.pio, at) : null;
+  }, [loaded, htNode, nodeDir, nodeIndex]);
+
+  const htView = useMemo(() => (htNode ? buildSolverView(htNode) : null), [htNode]);
+  const pioView = useMemo(() => (pioNode ? buildSolverView(pioNode) : null), [pioNode]);
+  const board = useMemo(() => (spot ? parseBoardCards(spot.board) : []), [spot]);
+
+  /** Shared across whichever grids are shown, so EV heat stays comparable. */
+  const evRange = useMemo<ValueRange | null>(() => {
+    const present = [htView, pioView].filter(Boolean) as SolverView[];
+    const min = Math.min(...present.map((v) => v.evMin));
+    const max = Math.max(...present.map((v) => v.evMax));
+    return present.length > 0 && min <= max ? { min, max } : null;
+  }, [htView, pioView]);
 
   const displayData = useMemo(() => {
-    if (!view || displayMode !== "ev") return { ht: null, pio: null };
+    if (displayMode !== "ev") return { ht: null, pio: null };
     return {
-      ht: buildEvDisplay(view.ht.comboDetail, board, view.evRange),
-      pio: buildEvDisplay(view.pio.comboDetail, board, view.evRange),
+      ht: htView ? buildEvDisplay(htView.comboDetail, board, evRange) : null,
+      pio: pioView ? buildEvDisplay(pioView.comboDetail, board, evRange) : null,
     };
-  }, [view, displayMode, board]);
+  }, [htView, pioView, displayMode, board, evRange]);
 
   const breakdownHand = hoverHand ?? selectedHand;
 
+  /** A sort that needs Pio is meaningless without it; coerce rather than
+   *  syncing state in an effect. */
+  const effectiveSortKey: SortKey =
+    !hasPioDetail && (sortKey === "evDiff" || sortKey === "l1") ? "reach" : sortKey;
+
+  /** The per-combo table's rows: the two solvers joined by hand string. */
   const tableRows = useMemo(() => {
-    if (!node) return [];
-    let rows = node.hands;
-    if (selectedHand) {
-      rows = rows.filter(
-        (h) => handClassOf(h.hand.slice(0, 2), h.hand.slice(2, 4)) === selectedHand
-      );
-    }
-    const evDiff = (h: CompareHand) =>
-      h.pio.ev == null ? 0 : Math.abs(h.ht.ev - h.pio.ev);
+    const rows = joinHands(htNode, pioNode).filter(
+      (h) =>
+        !selectedHand ||
+        handClassOf(h.hand.slice(0, 2), h.hand.slice(2, 4)) === selectedHand
+    );
+    const evDiff = (h: JoinedHand) =>
+      h.ht?.ev == null || h.pio?.ev == null ? 0 : Math.abs(h.ht.ev - h.pio.ev);
     const sorted = [...rows];
-    if (sortKey === "evDiff") sorted.sort((a, b) => evDiff(b) - evDiff(a));
-    else if (sortKey === "l1") sorted.sort((a, b) => b.l1 * b.reach - a.l1 * a.reach);
-    else if (sortKey === "reach") sorted.sort((a, b) => b.reach - a.reach);
+    if (effectiveSortKey === "evDiff") sorted.sort((a, b) => evDiff(b) - evDiff(a));
+    else if (effectiveSortKey === "l1")
+      sorted.sort((a, b) => (b.l1 ?? 0) * b.reach - (a.l1 ?? 0) * a.reach);
+    else if (effectiveSortKey === "reach") sorted.sort((a, b) => b.reach - a.reach);
     else sorted.sort((a, b) => a.hand.localeCompare(b.hand));
     return sorted;
-  }, [node, selectedHand, sortKey]);
+  }, [htNode, pioNode, selectedHand, effectiveSortKey]);
 
   const shownRows = tableRows.slice(0, 200);
+  /** Column labels come from whichever solver's node is loaded; the join
+   *  matches Pio's actions to these by label, never by position. */
+  const tableLabels = htView?.labels ?? pioView?.labels ?? [];
   const chips = (v: number | null | undefined): string => (v == null ? "-" : v.toFixed(2));
   const megabytes = (v: number | null | undefined): string =>
     v == null ? "n/a" : v >= 1024 ** 3 ? `${(v / 1024 ** 3).toFixed(2)} GB` : `${Math.round(v / 1024 ** 2)} MB`;
-  const pct = (f: number): string => `${Math.round(f * 1000) / 10}`;
+  const pct = (f: number | null | undefined): string =>
+    f == null ? "-" : `${Math.round(f * 1000) / 10}`;
 
   const onSelect = useCallback(
     (hand: string) => setSelectedHand((cur) => (cur === hand ? null : hand)),
@@ -605,6 +671,8 @@ const SolverCompare = () => {
 
   const onActionClick = useCallback(
     (label: string) => {
+      const view = htView ?? pioView;
+      const node = htNode ?? pioNode;
       if (!node || !view) return;
       const k = view.labels.indexOf(label);
       if (k < 0) return;
@@ -616,26 +684,31 @@ const SolverCompare = () => {
         setHoverHand(null);
       }
     },
-    [node, view, nodeDir]
+    [htNode, pioNode, htView, pioView, nodeDir]
   );
 
-  const cross = doc?.summary.cross_check;
-  const timing = doc?.summary.timing;
-  const memory = doc?.summary.memory;
   /** Pio's cost divided by htsolver's: > 1 means htsolver won. Null whenever
-   *  either side is missing, which is the pre-solved-.cfr case. */
+   *  either side is missing, which now includes every engine-only run. */
   const ratioOf = (ht?: number | null, pio?: number | null): number | null =>
     ht != null && ht > 0 && pio != null ? pio / ht : null;
-  const speedup = ratioOf(timing?.ht_solve_s, timing?.pio_solve_s);
-  const memRatio = ratioOf(memory?.ht_peak_bytes, memory?.pio_peak_bytes);
+  const speedup = ratioOf(timing.ht_solve_s, timing.pio_solve_s);
+  const memRatio = ratioOf(memory.ht_peak_bytes, memory.pio_peak_bytes);
 
   return (
     <div className="mx-auto max-w-7xl px-3 py-6 text-slate-200">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold text-white">Solver comparison</h1>
         <span className="text-xs text-slate-500">
-          <span className="font-medium text-emerald-400">htsolver</span> vs{" "}
-          <span className="font-medium text-sky-400">PioSolver</span>, same tree
+          {hasPio ? (
+            <>
+              <span className="font-medium text-emerald-400">htsolver</span> vs{" "}
+              <span className="font-medium text-sky-400">PioSolver</span>, same tree
+            </>
+          ) : (
+            <>
+              <span className="font-medium text-emerald-400">htsolver</span>, engine-only run
+            </>
+          )}
         </span>
         <button
           type="button"
@@ -649,16 +722,16 @@ const SolverCompare = () => {
           onClick={() => fileRef.current?.click()}
           className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition-colors hover:border-slate-500 hover:bg-slate-800/60"
         >
-          Load JSON
+          Load payload
         </button>
         <input
           ref={fileRef}
           type="file"
-          accept="application/json,.json"
+          accept=".htc,application/octet-stream"
+          multiple
           className="hidden"
           onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) loadFile(file);
+            if (e.target.files?.length) loadFiles(e.target.files);
             e.target.value = "";
           }}
         />
@@ -670,25 +743,35 @@ const SolverCompare = () => {
       {jobs.length > 0 && (
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
           <span className="text-[11px] font-medium text-slate-500">Recent runs</span>
-          {jobs.slice(0, 12).map((job) => (
+          {jobs.slice(0, 12).map((job) => {
+            // A compare job is openable only if its htsolver payload is
+            // actually pointed at from the row. A job whose watcher uploaded
+            // the blob while the API was too old to record the path is Done
+            // with nothing to fetch - say so rather than 404 on click.
+            const openable =
+              job.status === "Done" &&
+              (job.mode === "publish" || job.hasHtResult || job.legacyResult);
+            return (
             <button
               key={job.id}
               type="button"
-              disabled={job.status !== "Done"}
+              disabled={!openable}
               title={
                 job.status === "Failed"
                   ? job.error ?? "failed"
                   : job.mode === "publish"
                     ? "Published solve - opens /solutions"
-                    : "Load this comparison"
+                    : job.status === "Done" && !openable
+                      ? "No payload recorded for this run - re-run the spot"
+                      : "Load this comparison"
               }
               onClick={() => {
-                if (job.status !== "Done") return;
+                if (!openable) return;
                 if (job.mode === "publish") window.location.href = solutionsUrl(job);
                 else void loadJobResult(job);
               }}
               className={`rounded-md border px-2 py-0.5 text-[11px] transition-colors ${
-                job.status === "Done"
+                openable
                   ? "border-slate-600 text-slate-200 hover:border-emerald-500 hover:bg-emerald-500/10"
                   : job.status === "Failed"
                     ? "border-red-900 text-red-400"
@@ -696,9 +779,10 @@ const SolverCompare = () => {
               }`}
             >
               {job.board ?? "?"} · {job.mode === "publish" ? "publish" : "compare"} ·{" "}
-              {job.status}
+              {job.status === "Done" && !openable ? "no payload" : job.status}
             </button>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -742,7 +826,8 @@ const SolverCompare = () => {
               Tree building parameters
             </h2>
             <p className="text-[11px] text-slate-500">
-              Both solvers get this exact tree, node for node.
+              htsolver solves this tree; when PioSolver is enabled it gets the identical
+              tree, node for node.
             </p>
           </div>
 
@@ -815,6 +900,41 @@ const SolverCompare = () => {
                   this ends the run instead of letting it grind forever.
                 </span>
               </label>
+
+              <fieldset>
+                <legend className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                  PioSolver comparison
+                </legend>
+                <div className="mt-1.5 flex flex-col gap-1.5">
+                  <Check
+                    label="Run PioSolver"
+                    checked={!builder.disablePio}
+                    disabled={solving}
+                    onChange={setRunPio}
+                    title="Build and solve the identical tree in Pio. Off by default: an htsolver-only run needs no Pio process at all and is much faster."
+                  />
+                  <div className="ml-4 flex flex-col gap-1.5">
+                    <Check
+                      label="Pio per-hand results"
+                      checked={!builder.disableCompare}
+                      disabled={solving || builder.disablePio}
+                      onChange={(v) => setB("disableCompare", !v)}
+                      title="Extract Pio's strategy and EVs node by node over UPI, so its grid can sit beside htsolver's. This is the slow part of a comparison run."
+                    />
+                    <Check
+                      label="Cross-exploitability gate"
+                      checked={!builder.disableCrossCheck}
+                      disabled={solving || builder.disablePio}
+                      onChange={(v) => setB("disableCrossCheck", !v)}
+                      title="Load the htsolver strategy into Pio and let Pio rate how exploitable it is. The primary correctness statement; full trees only."
+                    />
+                  </div>
+                  <span className="max-w-[16rem] text-[10px] leading-relaxed text-slate-500">
+                    Off by default: htsolver alone is the fast loop. Turn Pio on when you
+                    want an accuracy check.
+                  </span>
+                </div>
+              </fieldset>
             </div>
           </div>
 
@@ -867,26 +987,30 @@ const SolverCompare = () => {
       )}
 
       {/* ---------- empty state: drop zone ---------- */}
-      {!doc && (
+      {!spot && (
         <button
           type="button"
           onClick={() => fileRef.current?.click()}
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
-            const file = e.dataTransfer.files?.[0];
-            if (file) loadFile(file);
+            if (e.dataTransfer.files?.length) loadFiles(e.dataTransfer.files);
           }}
           className="mt-6 flex w-full flex-col items-center rounded-2xl border-2 border-dashed border-slate-700 bg-slate-800/30 px-6 py-10 text-slate-400 transition-colors hover:border-emerald-500"
         >
           <span className="font-medium">
-            ...or drop a comparison JSON here (engine_compare.py --json-out)
+            ...or drop one or two .htc payloads here
+          </span>
+          <span className="mt-1 text-[11px] text-slate-500">
+            engine_compare.py --ht-out / --pio-out
           </span>
         </button>
       )}
 
-      {/* ---------- loaded state ---------- */}
-      {doc && cross && (
+      {/* ---------- loaded state ----------
+           Gated on the SPOT, not on a Pio gate result: an engine-only run has
+           no cross_check at all and must still render. */}
+      {spot && (
         <>
           <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-3">
             <div className="flex items-center gap-1.5">
@@ -895,28 +1019,48 @@ const SolverCompare = () => {
               ))}
             </div>
             <div className="text-sm text-slate-300">
-              Pot {doc.spot.pot} chips
-              <span className="mx-2 text-slate-600">·</span>
-              <span className="text-slate-500">{doc.spot.cfr}</span>
+              Pot {spot.pot} chips
+              {pioSummary?.source && (
+                <>
+                  <span className="mx-2 text-slate-600">·</span>
+                  <span className="text-slate-500">{pioSummary.source}</span>
+                </>
+              )}
             </div>
-            <span
-              className={`ml-auto rounded-full px-3 py-1 text-xs font-semibold ${
-                cross.pass ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"
-              }`}
-              title={
-                cross.gate === "root_ev"
-                  ? "Sampled tree: gate is root-EV agreement (cross-exploitability needs a full strategy upload)"
-                  : "Pio's own evaluator rating the htsolver strategy's exploitability"
-              }
-            >
-              {cross.gate === "root_ev"
-                ? `root-EV gate ${cross.pass ? "PASS" : "FAIL"} · Δ ${
-                    cross.root_ev_diff ?? "?"
-                  } chips (sampled ${doc.summary.runouts ?? "?"} runouts)`
-                : `cross-check ${cross.pass ? "PASS" : "FAIL"} · ${
-                    cross.ht_exploitable_per_pio ?? "?"
-                  } chips exploitable per Pio`}
-            </span>
+            {!hasPio ? (
+              <span
+                className="ml-auto rounded-full bg-slate-700/40 px-3 py-1 text-xs font-semibold text-slate-300"
+                title="PioSolver was not run for this spot, so there is nothing to compare against and no correctness gate."
+              >
+                htsolver only
+              </span>
+            ) : cross?.gate === "none" || cross?.pass == null ? (
+              <span
+                className="ml-auto rounded-full bg-slate-700/40 px-3 py-1 text-xs font-semibold text-slate-300"
+                title="The cross-exploitability gate was not requested for this run, so no correctness verdict was produced. Root EVs above are still directly comparable."
+              >
+                no gate (cross-check off)
+              </span>
+            ) : (
+              <span
+                className={`ml-auto rounded-full px-3 py-1 text-xs font-semibold ${
+                  cross.pass ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"
+                }`}
+                title={
+                  cross.gate === "root_ev"
+                    ? "Sampled tree: gate is root-EV agreement (cross-exploitability needs a full strategy upload)"
+                    : "Pio's own evaluator rating the htsolver strategy's exploitability"
+                }
+              >
+                {cross.gate === "root_ev"
+                  ? `root-EV gate ${cross.pass ? "PASS" : "FAIL"} · Δ ${
+                      cross.root_ev_diff ?? "?"
+                    } chips (sampled ${htSummary?.runouts ?? "?"} runouts)`
+                  : `cross-check ${cross.pass ? "PASS" : "FAIL"} · ${
+                      cross.ht_exploitable_per_pio ?? "?"
+                    } chips exploitable per Pio`}
+              </span>
+            )}
           </div>
 
           {/* What the tree COST each solver: the headline when the point is
@@ -932,7 +1076,7 @@ const SolverCompare = () => {
                       ht: timing?.ht_solve_s == null ? null : secs(timing.ht_solve_s),
                       pio: timing?.pio_solve_s == null ? null : secs(timing.pio_solve_s),
                       htNote: [
-                        `${timing?.ht_iterations ?? doc.summary.ht.iterations} iters`,
+                        `${timing?.ht_iterations ?? htSummary?.ht.iterations ?? "?"} iters`,
                         timing?.ht_threads ? `${timing.ht_threads} threads` : null,
                         // Sub-10ms setup would just read "setup 0.00s".
                         timing?.ht_setup_s != null && timing.ht_setup_s >= 0.01
@@ -941,8 +1085,9 @@ const SolverCompare = () => {
                       ]
                         .filter(Boolean)
                         .join(" · "),
-                      pioNote:
-                        timing?.pio_solve_s == null
+                      pioNote: !hasPio
+                        ? "not run"
+                        : timing?.pio_solve_s == null
                           ? "loaded from a pre-solved .cfr"
                           : timing.pio_setup_s != null
                             ? `tree build ${secs(timing.pio_setup_s)}`
@@ -1033,58 +1178,70 @@ const SolverCompare = () => {
               <div className="text-slate-500">Root EV chips (OOP / IP)</div>
               <div className="mt-0.5">
                 <span className="font-medium text-emerald-400">htsolver</span>{" "}
-                {chips(doc.summary.ht.ev[0])} / {chips(doc.summary.ht.ev[1])}
+                {chips(htSummary?.ht.ev[0])} / {chips(htSummary?.ht.ev[1])}
               </div>
-              <div>
-                <span className="font-medium text-sky-400">Pio</span>{" "}
-                {chips(doc.summary.pio.ev_oop)} / {chips(doc.summary.pio.ev_ip)}
-              </div>
+              {hasPio && (
+                <div>
+                  <span className="font-medium text-sky-400">Pio</span>{" "}
+                  {chips(pioSummary?.pio.ev_oop)} / {chips(pioSummary?.pio.ev_ip)}
+                </div>
+              )}
             </div>
             <div className="rounded-lg bg-slate-800/60 p-2.5">
               <div className="text-slate-500">Exploitable for (chips)</div>
               <div className="mt-0.5">
                 <span className="font-medium text-emerald-400">htsolver</span>{" "}
-                {chips(doc.summary.ht.exploitable_chips ?? doc.summary.ht.nashconv / 2)}{" "}
-                <span className="text-slate-500">self</span> ·{" "}
-                {cross.ht_exploitable_per_pio ?? "?"} <span className="text-slate-500">per Pio</span>
+                {chips(
+                  htSummary
+                    ? htSummary.ht.exploitable_chips ?? htSummary.ht.nashconv / 2
+                    : null
+                )}{" "}
+                <span className="text-slate-500">self</span>
+                {cross?.ht_exploitable_per_pio != null && (
+                  <>
+                    {" "}
+                    · {cross.ht_exploitable_per_pio}{" "}
+                    <span className="text-slate-500">per Pio</span>
+                  </>
+                )}
               </div>
-              <div>
-                <span className="font-medium text-sky-400">Pio</span>{" "}
-                {doc.summary.pio.exploitable ?? "?"}{" "}
-                <span className="text-slate-500">own solve</span>
-              </div>
+              {hasPio && (
+                <div>
+                  <span className="font-medium text-sky-400">Pio</span>{" "}
+                  {pioSummary?.pio.exploitable ?? "?"}{" "}
+                  <span className="text-slate-500">own solve</span>
+                </div>
+              )}
             </div>
             <div className="rounded-lg bg-slate-800/60 p-2.5">
               <div className="text-slate-500">htsolver solve</div>
               <div className="mt-0.5">
-                {doc.summary.ht.iterations} iters · NashConv {doc.summary.ht.nashconv.toFixed(3)}
+                {htSummary?.ht.iterations ?? "?"} iters · NashConv{" "}
+                {htSummary ? htSummary.ht.nashconv.toFixed(3) : "?"}
               </div>
             </div>
             <div className="rounded-lg bg-slate-800/60 p-2.5">
-              <div className="text-slate-500">Per-hand diagnostics</div>
+              <div className="text-slate-500">Run mode</div>
               <div className="mt-0.5">
-                {doc.summary.gate_only ? (
-                  <span
-                    className="text-slate-500"
-                    title="This run skipped the per-hand comparison entirely (the watcher's fast path). The cross-check badge above is the correctness statement; eyeball specific hands in the /solutions viewer."
-                  >
-                    skipped (gate-only)
+                {!hasPio ? (
+                  <span title="PioSolver was not run: htsolver's own per-hand results only. This is the fast iteration loop.">
+                    htsolver only
                   </span>
-                ) : doc.summary.diagnostics_weighted === false ||
-                  doc.summary.mean_l1 == null ||
-                  doc.summary.mean_ev_diff == null ? (
-                  <span
-                    className="text-slate-500"
-                    title="Pio reported zero global frequency on every line of this board, so there was no weight to normalize the per-hand comparison against. The cross-check badge above is unaffected - it is the correctness statement."
-                  >
-                    unavailable on this board
+                ) : hasPioDetail ? (
+                  <span title="Both solvers' per-hand results are loaded and shown side by side.">
+                    with Pio · per-hand
                   </span>
                 ) : (
-                  <>
-                    mean L1 {doc.summary.mean_l1.toFixed(3)} · mean |ΔEV|{" "}
-                    {doc.summary.mean_ev_diff.toFixed(2)}
-                  </>
+                  <span title="Pio solved the same tree, so its headline numbers and cost are comparable, but its per-hand rows were not extracted.">
+                    with Pio · summary only
+                  </span>
                 )}
+              </div>
+              <div className="text-slate-500">
+                {htSummary?.decision_nodes ?? nodeDir.length} nodes
+                {hasPioDetail && pioSummary?.detail_nodes != null
+                  ? ` · ${pioSummary.detail_nodes} with Pio`
+                  : ""}
               </div>
             </div>
           </div>
@@ -1153,73 +1310,77 @@ const SolverCompare = () => {
             )}
           </div>
 
-          {/* side-by-side: matrix + action summary + hand breakdown */}
-          {view && (
-            <div className="mt-3 grid gap-4 lg:grid-cols-2">
+          {/* One grid per loaded solver: an engine-only run gets the full
+              width rather than a half-empty row. */}
+          {(htView || pioView) && (
+            <div className={`mt-3 grid gap-4 ${htView && pioView ? "lg:grid-cols-2" : ""}`}>
               {(
                 [
-                  ["htsolver", view.ht, displayData.ht, "text-emerald-400"],
-                  ["PioSolver", view.pio, displayData.pio, "text-sky-400"],
+                  ["htsolver", htView, displayData.ht, "text-emerald-400"],
+                  ["PioSolver", pioView, displayData.pio, "text-sky-400"],
                 ] as const
-              ).map(([name, solverView, solverDisplay, color]) => (
-                <div key={name}>
-                  <div className={`mb-1 text-sm font-medium ${color}`}>{name}</div>
-                  <DecisionMatrix
-                    gridData={solverView.grid}
-                    heightMode="normalized"
-                    reachByHand={view.reachByHand}
-                    displayData={solverDisplay}
-                    money={money}
-                    selectedHand={selectedHand}
-                    onHandSelect={onSelect}
-                    onHandHover={setHoverHand}
-                  />
-                  <div className="mt-2">
-                    <ActionSummary
-                      data={solverView.grid}
-                      sizeRef={chipScale}
-                      onActionClick={onActionClick}
-                      compact
+              )
+                .filter(([, solverView]) => solverView != null)
+                .map(([name, solverView, solverDisplay, color]) => (
+                  <div key={name}>
+                    <div className={`mb-1 text-sm font-medium ${color}`}>{name}</div>
+                    <DecisionMatrix
+                      gridData={solverView!.grid}
+                      heightMode="normalized"
+                      reachByHand={solverView!.reachByHand}
+                      displayData={solverDisplay}
+                      money={money}
+                      selectedHand={selectedHand}
+                      onHandSelect={onSelect}
+                      onHandHover={setHoverHand}
                     />
+                    <div className="mt-2">
+                      <ActionSummary
+                        data={solverView!.grid}
+                        sizeRef={chipScale}
+                        onActionClick={onActionClick}
+                        compact
+                      />
+                    </div>
+                    <div className="mt-2 h-64">
+                      <HandBreakdown
+                        data={solverView!.grid}
+                        hand={breakdownHand}
+                        board={board}
+                        comboDetail={solverView!.comboDetail}
+                        displayMode={displayMode}
+                        evRange={evRange}
+                        chipEv={false}
+                        sizeRef={chipScale}
+                        className="h-full"
+                      />
+                    </div>
                   </div>
-                  <div className="mt-2 h-64">
-                    <HandBreakdown
-                      data={solverView.grid}
-                      hand={breakdownHand}
-                      board={board}
-                      comboDetail={solverView.comboDetail}
-                      displayMode={displayMode}
-                      evRange={view.evRange}
-                      chipEv={false}
-                      sizeRef={chipScale}
-                      className="h-full"
-                    />
-                  </div>
-                </div>
-              ))}
+                ))}
             </div>
           )}
           <p className="mt-1 text-[11px] text-slate-600">
-            Cell heights use htsolver's reach at this node for both grids; EV heat shares one
-            color scale across both solvers. Click an action panel to walk into that line;
-            hover or click a hand class for its combos.
+            Each grid's cell heights use that solver's own reach at this node
+            {hasPioDetail ? "; EV heat shares one color scale across both" : ""}. Click an
+            action panel to walk into that line; hover or click a hand class for its combos.
           </p>
 
           {/* per-combo table */}
-          {node && view && (
+          {(htNode || pioNode) && (
             <div className="mt-5">
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-medium text-slate-300">
-                  Per-combo comparison{selectedHand ? ` — ${selectedHand}` : ""}
+                  Per-combo{hasPioDetail ? " comparison" : ""}
+                  {selectedHand ? ` — ${selectedHand}` : ""}
                 </h2>
                 <select
-                  value={sortKey}
+                  value={effectiveSortKey}
                   onChange={(e) => setSortKey(e.target.value as SortKey)}
                   className={`ml-auto ${inputCls} text-xs`}
                   aria-label="Sort combos"
                 >
-                  <option value="evDiff">Sort by |ΔEV|</option>
-                  <option value="l1">Sort by reach·L1</option>
+                  {hasPioDetail && <option value="evDiff">Sort by |ΔEV|</option>}
+                  {hasPioDetail && <option value="l1">Sort by reach·L1</option>}
                   <option value="reach">Sort by reach</option>
                   <option value="hand">Sort by combo</option>
                 </select>
@@ -1230,50 +1391,70 @@ const SolverCompare = () => {
                     <tr>
                       <th className="px-2 py-1.5 text-left">Combo</th>
                       <th className="px-2 py-1.5">Reach</th>
-                      {view.labels.map((label) => (
+                      {tableLabels.map((label) => (
                         <th key={label} className="px-2 py-1.5">
                           {label}
-                          <span className="block font-normal text-slate-600">ht% / pio%</span>
+                          <span className="block font-normal text-slate-600">
+                            {hasPioDetail ? "ht% / pio%" : "ht%"}
+                          </span>
                         </th>
                       ))}
                       <th className="px-2 py-1.5">
                         EV chips
-                        <span className="block font-normal text-slate-600">ht / pio</span>
+                        <span className="block font-normal text-slate-600">
+                          {hasPioDetail ? "ht / pio" : "ht"}
+                        </span>
                       </th>
-                      <th className="px-2 py-1.5">ΔEV chips</th>
-                      <th className="px-2 py-1.5">L1</th>
+                      {hasPioDetail && <th className="px-2 py-1.5">ΔEV chips</th>}
+                      {hasPioDetail && <th className="px-2 py-1.5">L1</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {shownRows.map((h) => {
-                      const diff = h.pio.ev == null ? null : h.ht.ev - h.pio.ev;
-                      const diffBad = diff != null && Math.abs(diff) > doc.spot.pot * 0.02;
+                      const diff =
+                        h.ht?.ev == null || h.pio?.ev == null ? null : h.ht.ev - h.pio.ev;
+                      const diffBad =
+                        diff != null && spot != null && Math.abs(diff) > spot.pot * 0.02;
                       return (
                         <tr key={h.hand} className="border-t border-slate-800/70">
                           <td className="px-2 py-1 text-left font-medium text-slate-200">
                             {h.hand}
                           </td>
                           <td className="px-2 py-1 text-slate-400">{h.reach.toFixed(3)}</td>
-                          {view.labels.map((label, k) => (
+                          {tableLabels.map((label, k) => (
                             <td key={label} className="px-2 py-1">
-                              <span className="text-emerald-300">{pct(h.ht.freq[k])}</span>
-                              <span className="text-slate-600"> / </span>
-                              <span className="text-sky-300">{pct(h.pio.freq[k])}</span>
+                              <span className="text-emerald-300">{pct(h.ht?.freq[k])}</span>
+                              {hasPioDetail && (
+                                <>
+                                  <span className="text-slate-600"> / </span>
+                                  <span className="text-sky-300">{pct(h.pio?.freq[k])}</span>
+                                </>
+                              )}
                             </td>
                           ))}
                           <td className="px-2 py-1">
-                            <span className="text-emerald-300">{chips(h.ht.ev)}</span>
-                            <span className="text-slate-600"> / </span>
-                            <span className="text-sky-300">{chips(h.pio.ev)}</span>
+                            <span className="text-emerald-300">{chips(h.ht?.ev)}</span>
+                            {hasPioDetail && (
+                              <>
+                                <span className="text-slate-600"> / </span>
+                                <span className="text-sky-300">{chips(h.pio?.ev)}</span>
+                              </>
+                            )}
                           </td>
-                          <td
-                            className={`px-2 py-1 ${
-                              diffBad ? "font-semibold text-amber-400" : "text-slate-400"
-                            }`}
-                          >
-                            {diff == null ? "-" : diff.toFixed(2)}
-                          </td>
-                          <td className="px-2 py-1 text-slate-500">{h.l1.toFixed(3)}</td>
+                          {hasPioDetail && (
+                            <td
+                              className={`px-2 py-1 ${
+                                diffBad ? "font-semibold text-amber-400" : "text-slate-400"
+                              }`}
+                            >
+                              {diff == null ? "-" : diff.toFixed(2)}
+                            </td>
+                          )}
+                          {hasPioDetail && (
+                            <td className="px-2 py-1 text-slate-500">
+                              {h.l1 == null ? "-" : h.l1.toFixed(3)}
+                            </td>
+                          )}
                         </tr>
                       );
                     })}

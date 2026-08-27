@@ -73,6 +73,13 @@ public class EngineCompareJobsTests
         var claim = Assert.IsType<OkObjectResult>(await watcher.Claim(
             new EngineCompareWatcherController.ClaimRequestDto { WatcherId = "w1" }));
         Assert.NotNull(claim.Value);
+        // The claim body is the ONLY channel to the watcher, so its fields are
+        // worth asserting: an option that never reaches it silently does nothing.
+        var claimed = claim.Value!.GetType();
+        Assert.Equal(true, claimed.GetProperty("disablePio")!.GetValue(claim.Value));
+        Assert.Equal(true, claimed.GetProperty("disableCompare")!.GetValue(claim.Value));
+        Assert.Equal(true, claimed.GetProperty("disableCrossCheck")!.GetValue(claim.Value));
+        Assert.Equal(0.02, claimed.GetProperty("pioAccuracyPct")!.GetValue(claim.Value));
 
         foreach (var status in new[] { "Running", "Uploading" })
         {
@@ -88,7 +95,7 @@ public class EngineCompareJobsTests
             {
                 WatcherId = "w1",
                 Status = "Done",
-                ResultBlobPath = "enginecompare/x.htc.gz",
+                HtResultBlobPath = "enginecompare/x.ht.htc.gz",
                 Timings = new JsonObject
                 {
                     ["schema"] = 1,
@@ -99,17 +106,120 @@ public class EngineCompareJobsTests
 
         var stored = await db.EngineCompareJobs.SingleAsync();
         Assert.Equal("Done", stored.Status);
-        Assert.Equal("enginecompare/x.htc.gz", stored.ResultBlobPath);
+        Assert.Equal("enginecompare/x.ht.htc.gz", stored.HtResultBlobPath);
+        Assert.Null(stored.PioResultBlobPath); // Pio was disabled for this job
         Assert.NotNull(stored.CompletedAtUtc);
         Assert.Contains("engine_solve_s", stored.TimingsJson);
 
-        // The user-facing poll surfaces the claim timestamp and parsed timings.
+        // The user-facing poll surfaces the claim timestamp, parsed timings,
+        // and which payloads exist.
         var polled = Assert.IsType<EngineCompareController.JobDto>(
             Assert.IsType<OkObjectResult>(
                 (await UserController(db, "uid-1").Get(job.Id)).Result).Value);
         Assert.NotNull(polled.ClaimedAtUtc);
         Assert.NotNull(polled.Timings);
         Assert.Equal(1.5, polled.Timings!["engine_solve_s"]!.GetValue<double>());
+        Assert.True(polled.HasHtResult);
+        Assert.False(polled.HasPioResult);
+        Assert.False(polled.LegacyResult);
+    }
+
+    [Fact]
+    public async Task Pio_options_round_trip_and_normalize()
+    {
+        using var db = NewDb();
+        // All three off: Pio runs with per-hand extraction and the gate.
+        var full = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>((await UserController(db, "uid-1").Create(
+                new EngineCompareController.CreateDto
+                {
+                    Config = SpotConfig(),
+                    DisablePio = false,
+                    DisableCompare = false,
+                    DisableCrossCheck = false,
+                })).Result).Value);
+        Assert.False(full.DisablePio);
+        Assert.False(full.DisableCompare);
+        Assert.False(full.DisableCrossCheck);
+
+        // "No Pio" subsumes the other two even when the body says otherwise:
+        // neither can run without a Pio process.
+        var noPio = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>((await UserController(db, "uid-2").Create(
+                new EngineCompareController.CreateDto
+                {
+                    Config = SpotConfig(),
+                    DisablePio = true,
+                    DisableCompare = false,
+                    DisableCrossCheck = false,
+                })).Result).Value);
+        Assert.True(noPio.DisablePio);
+        Assert.True(noPio.DisableCompare);
+        Assert.True(noPio.DisableCrossCheck);
+
+        // Defaults, when the body omits them entirely: the fast engine-only loop.
+        var bare = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>((await UserController(db, "uid-3").Create(
+                new EngineCompareController.CreateDto { Config = SpotConfig() })).Result).Value);
+        Assert.True(bare.DisablePio);
+    }
+
+    [Fact]
+    public async Task Both_payload_paths_round_trip_to_the_dto()
+    {
+        using var db = NewDb();
+        await UserController(db, "uid-1").Create(
+            new EngineCompareController.CreateDto { Config = SpotConfig(), DisablePio = false });
+        var watcher = WatcherController(db);
+        await watcher.Claim(new EngineCompareWatcherController.ClaimRequestDto { WatcherId = "w1" });
+        var id = (await db.EngineCompareJobs.SingleAsync()).Id;
+
+        foreach (var status in new[] { "Running", "Uploading" })
+            await watcher.Report(id, new EngineCompareWatcherController.ReportRequestDto
+            { WatcherId = "w1", Status = status });
+        await watcher.Report(id, new EngineCompareWatcherController.ReportRequestDto
+        {
+            WatcherId = "w1",
+            Status = "Done",
+            HtResultBlobPath = "enginecompare/x.ht.htc.gz",
+            PioResultBlobPath = "enginecompare/x.pio.htc.gz",
+        });
+
+        var polled = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>(
+                (await UserController(db, "uid-1").Get(id)).Result).Value);
+        Assert.True(polled.HasHtResult);
+        Assert.True(polled.HasPioResult);
+        Assert.False(polled.LegacyResult);
+    }
+
+    [Fact]
+    public async Task Result_route_validates_the_solver_name()
+    {
+        using var db = NewDb();
+        var created = await UserController(db, "uid-1").Create(
+            new EngineCompareController.CreateDto { Config = SpotConfig() });
+        var job = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>(created.Result).Value);
+
+        Assert.IsType<BadRequestObjectResult>(
+            await UserController(db, "uid-1").ResultFor(job.Id, "bogus"));
+        // A job with no Pio payload 404s for that half rather than 500ing.
+        Assert.IsType<NotFoundObjectResult>(
+            await UserController(db, "uid-1").ResultFor(job.Id, "pio"));
+    }
+
+    [Fact]
+    public async Task Pio_accuracy_outside_its_range_is_rejected()
+    {
+        using var db = NewDb();
+        foreach (var bad in new[] { 0.0, -1.0, 10.5 })
+        {
+            var result = await UserController(db, "uid-1").Create(
+                new EngineCompareController.CreateDto
+                { Config = SpotConfig(), PioAccuracyPct = bad });
+            Assert.IsType<BadRequestObjectResult>(result.Result);
+        }
     }
 
     [Fact]
