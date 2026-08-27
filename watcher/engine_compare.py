@@ -27,11 +27,15 @@ hands printed when they exceed their thresholds - that is what makes a real
 failure debuggable.
 
 --gate-only skips all of the per-hand diagnostics and keeps only the gate:
-a trimmed --strategy-only engine dump, one UPI call per node (the action
-map for set_strategy), the cross-exploitability check, and a summary-only
---json-out (nodes: []). This is the compare watcher's fast path; manual
-validation runs should stay in full mode, where per-hand detail is what
-makes a failure debuggable.
+a `--fields gate` engine dump, one UPI call per node (the action map for
+set_strategy), the cross-exploitability check, and a summary-only output
+(nodes: []). Useful when only the verdict matters.
+
+--htc-out writes the per-hand comparison as a compact binary payload (see
+htc_format.py) covering EVERY decision node - roughly 32 bytes per hand row
+against the ~250 the equivalent JSON costs, which is what makes full-tree
+detail small enough to upload and load. --json-out still writes the JSON
+doc, capped by --json-max-nodes, for eyeballing a run by hand.
 
 A QRE artifact (mode != "nash") is refused: QRE deliberately deviates from
 Nash and must never be validated against Pio.
@@ -47,6 +51,9 @@ import subprocess
 import sys
 import time
 from typing import Dict, List, Tuple
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from htc_format import HtcWriter  # noqa: E402
 
 DEFAULT_PIO_DIR = os.environ.get("PIO_DIR", r"C:\PioSOLVER")
 DEFAULT_PIO_EXE = os.environ.get("PIO_EXE", "PioSOLVER2-edge.exe")
@@ -122,17 +129,20 @@ def load_engine_dump(args, runouts) -> dict:
     that many evenly spaced cards per chance node - same sampling rule the
     old harness applied, now engine-side so big trees never materialize.
 
-    Gate-only runs take the trimmed diet: --strategy-only --compact to a
-    file. A full turn dump is ~680MB of pretty-printed text through a pipe
-    and the gate reads a fraction of it; the trimmed file is ~10x smaller
-    and skips the pipe capture entirely."""
+    The harness never needs a full dump: it reads the actor seat's hands and
+    the root's reaches, and nothing else. So it always asks for a trimmed
+    diet written to a file - `gate` when only the cross-check runs, `detail`
+    (which adds per-hand EVs) otherwise. A full turn dump is ~680MB of
+    pretty-printed text through a pipe; `detail` is ~140MB and `gate` ~78MB,
+    both without the pipe capture."""
+    fields = "gate" if args.gate_only else "detail"
     if args.dump:
         with open(args.dump, "r", encoding="utf8") as f:
             dump = json.load(f)
-    elif args.gate_only:
-        out_path = args.artifact + ".gate_dump.json"
+    else:
+        out_path = f"{args.artifact}.{fields}_dump.json"
         cmd = [args.engine_exe, "dump-json", args.artifact,
-               "--compact", "--strategy-only", "--out", out_path]
+               "--compact", "--fields", fields, "--out", out_path]
         if runouts is not None:
             cmd += ["--runouts", str(runouts)]
         try:
@@ -144,15 +154,9 @@ def load_engine_dump(args, runouts) -> dict:
                 os.remove(out_path)
             except OSError:
                 pass
-    else:
-        cmd = [args.engine_exe, "dump-json", args.artifact]
-        if runouts is not None:
-            cmd += ["--runouts", str(runouts)]
-        out = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        dump = json.loads(out.stdout)
-    if not args.gate_only and dump.get("metadata", {}).get("dump_fields") == "strategy_only":
-        raise SystemExit("this dump is strategy-only (no per-hand EVs); re-dump without "
-                         "--strategy-only or run with --gate-only")
+    if not args.gate_only and dump.get("metadata", {}).get("dump_fields") == "gate":
+        raise SystemExit("this dump has no per-hand EVs (--fields gate); re-dump with "
+                         "--fields detail or run with --gate-only")
     return dump
 
 
@@ -328,7 +332,7 @@ def main() -> int:
     parser.add_argument("--gate-only", action="store_true",
                         help="skip all per-hand diagnostics; PASS/FAIL rests on the "
                              "cross-exploitability gate alone (root-EV in sampled mode). "
-                             "Uses a trimmed --strategy-only engine dump and 1 UPI call "
+                             "Uses a --fields gate engine dump and 1 UPI call "
                              "per node instead of ~5+actions. The compare watcher's fast "
                              "path; manual runs default to full diagnostics")
     parser.add_argument("--full-limit", type=int, default=2500,
@@ -341,6 +345,11 @@ def main() -> int:
     parser.add_argument("--json-out",
                         help="write the per-hand comparison to this JSON file "
                              "(the input for the frontend's hidden /compare page)")
+    parser.add_argument("--htc-out",
+                        help="write the per-hand comparison as a binary .htc payload "
+                             "(the /compare page's input). Carries EVERY decision node "
+                             "at ~32 bytes per hand row, where the JSON in --json-out "
+                             "runs ~250 and has to be capped")
     parser.add_argument("--json-max-nodes", type=int, default=250,
                         help="cap per-hand detail in --json-out to the N most-reached "
                              "nodes (metrics still cover every compared node; a full "
@@ -434,8 +443,10 @@ def main() -> int:
         # Engine strategy re-expressed on Pio's grid, for the cross-check:
         # (pio_id, rows), rows[pio_action_row][pio_hand_index].
         strategy_upload: List[Tuple[str, List[List[float]]]] = []
-        # Full per-hand comparison rows for --json-out / the /compare page.
+        # Full per-hand comparison rows for --json-out (JSON, capped) and
+        # --htc-out (binary, every node - what the /compare page loads).
         compare_nodes: List[dict] = []
+        htc = HtcWriter() if args.htc_out else None
 
         phase_start = time.perf_counter()
         for key, node in sorted(dump["nodes"].items(), key=lambda kv: int(kv[0])):
@@ -520,14 +531,16 @@ def main() -> int:
                     pio_action_evs.append(None)
 
             compare_hands: List[dict] = []
-            compare_nodes.append({
-                "id": pio_id,
-                "actor": actor,
-                "position": position,
-                "actions": engine_labels,
-                "global_freq": round(global_freq, 6),
-                "hands": compare_hands,
-            })
+            htc_hands: List[dict] = []
+            if args.json_out:
+                compare_nodes.append({
+                    "id": pio_id,
+                    "actor": actor,
+                    "position": position,
+                    "actions": engine_labels,
+                    "global_freq": round(global_freq, 6),
+                    "hands": compare_hands,
+                })
 
             for hand in data["seats"][actor]["hands"]:
                 idx = pio_index.get(normalize_combo(hand["hand"]))
@@ -564,24 +577,45 @@ def main() -> int:
                     "engine_freqs": [round(f, 3) for f in hand["strategy"]],
                     "pio_freqs": [round(f, 3) for f in pio_freqs],
                 })
+                def _fin(v):
+                    return v if v is not None and math.isfinite(v) else None
+
                 def _clean(v):
                     return round(v, 3) if v is not None and math.isfinite(v) else None
 
-                compare_hands.append({
-                    "hand": hand["hand"],
-                    "reach": round(reach, 6),
-                    "pio_reach": round(p_reach, 6),
-                    "ht": {"freq": [round(f, 4) for f in hand["strategy"]],
-                           "ev": round(hand["ev"], 3),
-                           "action_ev": [_clean(v) for v in hand.get("action_ev", [])]},
-                    "pio": {"freq": [round(f, 4) for f in pio_freqs],
-                            "ev": _clean(pio_ev),
-                            "action_ev": [
-                                _clean(row[idx]) if row is not None else None
-                                for row in pio_action_evs
-                            ]},
-                    "l1": round(l1, 4),
-                })
+                if htc is not None:
+                    htc_hands.append({
+                        "hand": hand["hand"],
+                        "reach": reach,
+                        "ht_freq": hand["strategy"],
+                        "pio_freq": pio_freqs,
+                        "ht_ev": _fin(hand["ev"]),
+                        "pio_ev": _fin(pio_ev),
+                        "ht_action_ev": [_fin(v) for v in hand.get("action_ev", [])],
+                        "pio_action_ev": [
+                            _fin(row[idx]) if row is not None else None
+                            for row in pio_action_evs
+                        ],
+                    })
+                if args.json_out:
+                    compare_hands.append({
+                        "hand": hand["hand"],
+                        "reach": round(reach, 6),
+                        "pio_reach": round(p_reach, 6),
+                        "ht": {"freq": [round(f, 4) for f in hand["strategy"]],
+                               "ev": round(hand["ev"], 3),
+                               "action_ev": [_clean(v) for v in hand.get("action_ev", [])]},
+                        "pio": {"freq": [round(f, 4) for f in pio_freqs],
+                                "ev": _clean(pio_ev),
+                                "action_ev": [
+                                    _clean(row[idx]) if row is not None else None
+                                    for row in pio_action_evs
+                                ]},
+                        "l1": round(l1, 4),
+                    })
+
+            if htc is not None and htc_hands:
+                htc.add_node(pio_id, position, engine_labels, global_freq, htc_hands)
         harness_timing["compare_loop_s"] = time.perf_counter() - phase_start
         print(f"per-hand compare loop: {harness_timing['compare_loop_s']:.2f} s "
               f"({nodes_compared} nodes)")
@@ -719,6 +753,96 @@ def main() -> int:
             line += f"  ->  {pio_peak / ht_peak:.1f}x"
         print(line)
 
+    # Shared by both outputs: the binary payload carries the same spot and
+    # summary blocks as the JSON doc, so every panel on /compare reads them
+    # identically whichever form it loaded.
+    if args.json_out or args.htc_out:
+        spot_block = {
+            "board": meta["board"],
+            "pot": pot,
+            "chip_scale": meta.get("chip_scale", 100),
+            "config_hash": meta["config_hash"],
+            "cfr": os.path.basename(args.cfr) if args.cfr
+                   else f"solve-pio @ {args.pio_accuracy_pct:g}% pot",
+        }
+        summary_block = {
+            "ht": {
+                "iterations": meta["iterations"],
+                "nashconv": meta["final_nashconv"],
+                "exploitable_chips": meta.get("final_exploitable_chips",
+                                              meta["final_nashconv"] / 2.0),
+                "exploitable_pct_pot": meta.get("final_exploitable_pct_pot"),
+                "ev": meta["ev_chips"],
+            },
+            "pio": {
+                "ev_oop": results.get("EV OOP"),
+                "ev_ip": results.get("EV IP"),
+                "exploitable": results.get("Exploitable for"),
+            },
+            "cross_check": {
+                # full mode: Pio rates the uploaded engine strategy.
+                # sampled mode: gate falls back to root-EV agreement.
+                "gate": "cross_exploitability" if full_mode else "root_ev",
+                "ht_exploitable_per_pio": exploit_engine,
+                "ht_ev_per_pio": [engine_results.get("EV OOP"),
+                                  engine_results.get("EV IP")],
+                "root_ev_diff": None if root_ev_diff is None else round(root_ev_diff, 3),
+                "threshold": exploit_threshold,
+                "pass": (exploit_engine is not None and exploit_engine <= exploit_threshold)
+                        if full_mode
+                        else (root_ev_diff is not None and root_ev_diff <= exploit_threshold),
+            },
+            # Wall clock, for comparing the two solvers head to head on
+            # the SAME tree at the SAME accuracy target. Setup is kept
+            # separate from solving on both sides (engine: tree +
+            # showdown tables; Pio: set_range + add_line + build_tree),
+            # and the engine's thread count is carried along because a
+            # solve time without it is not a comparable number.
+            "timing": {
+                "ht_solve_s": meta.get("wall_time_s"),
+                "ht_setup_s": meta.get("setup_time_s"),
+                "ht_threads": meta.get("threads"),
+                "ht_iterations": meta["iterations"],
+                "pio_solve_s": pio_timing.get("solve_s"),
+                "pio_setup_s": pio_timing.get("setup_s"),
+                "accuracy_chips": round(max(args.pio_accuracy_pct / 100.0 * pot, 1e-4), 4),
+                # Harness phases (everything around the two solves), for
+                # the /compare pipeline timing panel. Keys absent when a
+                # phase did not run (e.g. cross_check_s in sampled mode).
+                **{k: round(v, 3) for k, v in harness_timing.items()},
+            },
+            # Peak working set of each solver process over building AND
+            # solving the tree - the same OS counter on both sides. Pio's
+            # includes the ~100 MB the process carries at idle, which is
+            # real RAM the machine has to have; `pio_baseline_bytes` is
+            # what that was before any tree work, so the tree's own cost
+            # can be read off if wanted.
+            "memory": {
+                "ht_peak_bytes": meta.get("peak_rss_bytes"),
+                "pio_peak_bytes": pio_timing.get("peak_bytes"),
+                "pio_baseline_bytes": pio_timing.get("baseline_bytes"),
+            },
+            # None in gate-only mode: the diagnostics never ran, which is
+            # different from "ran and measured zero".
+            "mean_l1": None if args.gate_only else round(mean_l1, 5),
+            "mean_ev_diff": None if args.gate_only else round(mean_ev, 3),
+            # False when Pio's line frequencies gave the per-hand
+            # diagnostics nothing to normalize against; the two means
+            # above are then placeholders, not measurements.
+            "diagnostics_weighted": diagnostics_weighted,
+            "gate_only": args.gate_only,
+            "sampled": not full_mode,
+            "runouts": None if full_mode else args.runouts,
+            "decision_nodes": decision_count,
+            "compared_nodes": nodes_compared,
+        }
+
+    if args.htc_out:
+        size = htc.write(args.htc_out, spot_block,
+                         dict(summary_block, detail_nodes=htc.node_count()))
+        print(f"wrote comparison payload: {args.htc_out} "
+              f"({size / 1e6:.1f} MB, {htc.node_count()} nodes, every compared node)")
+
     if args.json_out:
         json_nodes = compare_nodes
         if len(json_nodes) > args.json_max_nodes:
@@ -735,86 +859,8 @@ def main() -> int:
             "kind": "htsolver_pio_comparison",
             "schema": 1,
             "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
-            "spot": {
-                "board": meta["board"],
-                "pot": pot,
-                "chip_scale": meta.get("chip_scale", 100),
-                "config_hash": meta["config_hash"],
-                "cfr": os.path.basename(args.cfr) if args.cfr
-                       else f"solve-pio @ {args.pio_accuracy_pct:g}% pot",
-            },
-            "summary": {
-                "ht": {
-                    "iterations": meta["iterations"],
-                    "nashconv": meta["final_nashconv"],
-                    "exploitable_chips": meta.get("final_exploitable_chips",
-                                                  meta["final_nashconv"] / 2.0),
-                    "exploitable_pct_pot": meta.get("final_exploitable_pct_pot"),
-                    "ev": meta["ev_chips"],
-                },
-                "pio": {
-                    "ev_oop": results.get("EV OOP"),
-                    "ev_ip": results.get("EV IP"),
-                    "exploitable": results.get("Exploitable for"),
-                },
-                "cross_check": {
-                    # full mode: Pio rates the uploaded engine strategy.
-                    # sampled mode: gate falls back to root-EV agreement.
-                    "gate": "cross_exploitability" if full_mode else "root_ev",
-                    "ht_exploitable_per_pio": exploit_engine,
-                    "ht_ev_per_pio": [engine_results.get("EV OOP"),
-                                      engine_results.get("EV IP")],
-                    "root_ev_diff": None if root_ev_diff is None else round(root_ev_diff, 3),
-                    "threshold": exploit_threshold,
-                    "pass": (exploit_engine is not None and exploit_engine <= exploit_threshold)
-                            if full_mode
-                            else (root_ev_diff is not None and root_ev_diff <= exploit_threshold),
-                },
-                # Wall clock, for comparing the two solvers head to head on
-                # the SAME tree at the SAME accuracy target. Setup is kept
-                # separate from solving on both sides (engine: tree +
-                # showdown tables; Pio: set_range + add_line + build_tree),
-                # and the engine's thread count is carried along because a
-                # solve time without it is not a comparable number.
-                "timing": {
-                    "ht_solve_s": meta.get("wall_time_s"),
-                    "ht_setup_s": meta.get("setup_time_s"),
-                    "ht_threads": meta.get("threads"),
-                    "ht_iterations": meta["iterations"],
-                    "pio_solve_s": pio_timing.get("solve_s"),
-                    "pio_setup_s": pio_timing.get("setup_s"),
-                    "accuracy_chips": round(max(args.pio_accuracy_pct / 100.0 * pot, 1e-4), 4),
-                    # Harness phases (everything around the two solves), for
-                    # the /compare pipeline timing panel. Keys absent when a
-                    # phase did not run (e.g. cross_check_s in sampled mode).
-                    **{k: round(v, 3) for k, v in harness_timing.items()},
-                },
-                # Peak working set of each solver process over building AND
-                # solving the tree - the same OS counter on both sides. Pio's
-                # includes the ~100 MB the process carries at idle, which is
-                # real RAM the machine has to have; `pio_baseline_bytes` is
-                # what that was before any tree work, so the tree's own cost
-                # can be read off if wanted.
-                "memory": {
-                    "ht_peak_bytes": meta.get("peak_rss_bytes"),
-                    "pio_peak_bytes": pio_timing.get("peak_bytes"),
-                    "pio_baseline_bytes": pio_timing.get("baseline_bytes"),
-                },
-                # None in gate-only mode: the diagnostics never ran, which is
-                # different from "ran and measured zero".
-                "mean_l1": None if args.gate_only else round(mean_l1, 5),
-                "mean_ev_diff": None if args.gate_only else round(mean_ev, 3),
-                # False when Pio's line frequencies gave the per-hand
-                # diagnostics nothing to normalize against; the two means
-                # above are then placeholders, not measurements.
-                "diagnostics_weighted": diagnostics_weighted,
-                "gate_only": args.gate_only,
-                "sampled": not full_mode,
-                "runouts": None if full_mode else args.runouts,
-                "decision_nodes": decision_count,
-                "compared_nodes": nodes_compared,
-                "detail_nodes": len(json_nodes),
-            },
+            "spot": spot_block,
+            "summary": dict(summary_block, detail_nodes=len(json_nodes)),
             "nodes": json_nodes,
         }
         with open(args.json_out, "w", encoding="utf8") as f:

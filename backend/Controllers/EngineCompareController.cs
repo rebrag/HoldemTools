@@ -158,9 +158,13 @@ namespace PokerRangeAPI2.Controllers
             return Ok(JobDto.From(job));
         }
 
-        // GET api/enginecompare/{id}/result - the comparison JSON. Stored
+        // GET api/enginecompare/{id}/result - the comparison payload. Stored
         // gzipped in ADLS by the watcher; served as-is with Content-Encoding
         // (same shape as the street-bundle endpoint).
+        //
+        // Current jobs upload a binary .htc payload (watcher/htc_format.py);
+        // jobs from before that still hold JSON, so the content type comes
+        // from the stored path and both keep working.
         [HttpGet("{id:guid}/result")]
         public async Task<IActionResult> Result(Guid id)
         {
@@ -184,7 +188,10 @@ namespace PokerRangeAPI2.Controllers
             var bytes = await blob.DownloadContentAsync();
             Response.Headers.ContentEncoding = "gzip";
             Response.Headers.CacheControl = "private, max-age=86400"; // results are immutable
-            return File(bytes.Value.Content.ToArray(), "application/json");
+            var contentType = job.ResultBlobPath.EndsWith(".json.gz", StringComparison.OrdinalIgnoreCase)
+                ? "application/json"
+                : "application/octet-stream";
+            return File(bytes.Value.Content.ToArray(), contentType);
         }
 
         private bool IsAdmin()

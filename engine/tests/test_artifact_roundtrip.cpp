@@ -87,35 +87,44 @@ void roundtrip(bool strategy_u8, bool ev_float32, float strategy_tol, float ev_t
   CHECK(dump.at("nodes").size() == game.tree().size());
   CHECK(dump.contains("hand_dicts"));
 
-  // A strategy-only dump keeps the tree + actor strategies (+ root reaches)
-  // and drops everything the gate-only harness never reads.
-  const nlohmann::json trimmed =
-      dump_artifact_json(store, path, std::nullopt, std::nullopt, /*strategy_only=*/true);
-  CHECK(trimmed.at("metadata").at("dump_fields") == "strategy_only");
-  CHECK(!trimmed.contains("hand_dicts"));
-  CHECK(trimmed.at("nodes").size() == game.tree().size());
-  for (const auto& [key, node] : trimmed.at("nodes").items()) {
-    if (!node.contains("data")) continue;
-    const auto& data = node.at("data");
-    const int actor = data.at("actor").get<int>();
-    const bool is_root = key == "0";
-    for (const auto& seat : data.at("seats")) {
-      const int s = seat.at("seat").get<int>();
-      const auto& hands = seat.at("hands");
-      if (s == actor || is_root) {
+  // Both trimmed dumps keep the tree + actor strategies (+ root reaches) and
+  // drop the dictionaries, rollups and non-actor seats nothing downstream
+  // reads. They differ only in whether per-hand EVs travel: kDetail feeds the
+  // per-hand comparison view, kGate feeds the cross-exploitability gate.
+  for (const auto fields : {DumpFields::kDetail, DumpFields::kGate}) {
+    const bool with_ev = fields == DumpFields::kDetail;
+    const nlohmann::json trimmed =
+        dump_artifact_json(store, path, std::nullopt, std::nullopt, fields);
+    CHECK(trimmed.at("metadata").at("dump_fields") == (with_ev ? "detail" : "gate"));
+    CHECK(!trimmed.contains("hand_dicts"));
+    CHECK(trimmed.at("nodes").size() == game.tree().size());
+    for (const auto& [key, node] : trimmed.at("nodes").items()) {
+      if (!node.contains("data")) continue;
+      const auto& data = node.at("data");
+      const int actor = data.at("actor").get<int>();
+      const auto actions = data.at("num_actions").get<std::size_t>();
+      const bool is_root = key == "0";
+      for (const auto& seat : data.at("seats")) {
+        const int s = seat.at("seat").get<int>();
+        const auto& hands = seat.at("hands");
+        if (s != actor && !is_root) {
+          CHECK(hands.empty());
+          continue;
+        }
         CHECK(!hands.empty());
         for (const auto& h : hands) {
           CHECK(h.contains("reach"));
-          CHECK(!h.contains("ev"));
-          CHECK(!h.contains("action_ev"));
           if (s == actor) {
-            CHECK(h.at("strategy").size() == data.at("num_actions").get<std::size_t>());
+            CHECK(h.at("strategy").size() == actions);
+            CHECK(h.contains("ev") == with_ev);
+            CHECK(h.contains("action_ev") == with_ev);
+            if (with_ev) CHECK(h.at("action_ev").size() == actions);
           } else {
+            // Root's non-actor seat carries reaches for set_range, nothing more.
             CHECK(!h.contains("strategy"));
+            CHECK(!h.contains("ev"));
           }
         }
-      } else {
-        CHECK(hands.empty());
       }
     }
   }
