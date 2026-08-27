@@ -743,25 +743,35 @@ const SolverCompare = () => {
       {jobs.length > 0 && (
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
           <span className="text-[11px] font-medium text-slate-500">Recent runs</span>
-          {jobs.slice(0, 12).map((job) => (
+          {jobs.slice(0, 12).map((job) => {
+            // A compare job is openable only if its htsolver payload is
+            // actually pointed at from the row. A job whose watcher uploaded
+            // the blob while the API was too old to record the path is Done
+            // with nothing to fetch - say so rather than 404 on click.
+            const openable =
+              job.status === "Done" &&
+              (job.mode === "publish" || job.hasHtResult || job.legacyResult);
+            return (
             <button
               key={job.id}
               type="button"
-              disabled={job.status !== "Done"}
+              disabled={!openable}
               title={
                 job.status === "Failed"
                   ? job.error ?? "failed"
                   : job.mode === "publish"
                     ? "Published solve - opens /solutions"
-                    : "Load this comparison"
+                    : job.status === "Done" && !openable
+                      ? "No payload recorded for this run - re-run the spot"
+                      : "Load this comparison"
               }
               onClick={() => {
-                if (job.status !== "Done") return;
+                if (!openable) return;
                 if (job.mode === "publish") window.location.href = solutionsUrl(job);
                 else void loadJobResult(job);
               }}
               className={`rounded-md border px-2 py-0.5 text-[11px] transition-colors ${
-                job.status === "Done"
+                openable
                   ? "border-slate-600 text-slate-200 hover:border-emerald-500 hover:bg-emerald-500/10"
                   : job.status === "Failed"
                     ? "border-red-900 text-red-400"
@@ -769,9 +779,10 @@ const SolverCompare = () => {
               }`}
             >
               {job.board ?? "?"} · {job.mode === "publish" ? "publish" : "compare"} ·{" "}
-              {job.status}
+              {job.status === "Done" && !openable ? "no payload" : job.status}
             </button>
-          ))}
+            );
+          })}
         </div>
       )}
 
