@@ -233,11 +233,6 @@ class CfrSolver {
 
   void strategy_rows(NodeId node, bool current, std::vector<float>& out) const;
 
-  // Chance-node sampling (off by default). Mutually exclusive with recalc,
-  // enforced in the constructor as well as in config parsing.
-  SamplingConfig sampling_;
-  std::uint64_t sampled_chance_children_ = 0;  // observability
-
   RecalcConfig recalc_config_;
   bool recalc_on_ = false;                    // enabled AND a 2-seat game
   std::vector<std::uint32_t> recalc_base_;    // by NodeId: first child's slot, or kNoIndex
@@ -251,6 +246,13 @@ class CfrSolver {
   double recalc_last_e_ = 0.0;       // exploitability at the previous budget call
   std::uint64_t recalc_last_t_ = 0;  // iteration of the previous budget call
   std::atomic<std::uint64_t> recalc_skips_{0};
+
+  // ---- chance sampling --------------------------------------------------
+  // Declared last so adding them does not shift the offsets of the hot
+  // members above. (Tested as a suspect for a regression that turned out to
+  // be measurement noise; kept because appending is the right default for a
+  // cold, optional field either way.)
+  SamplingConfig sampling_;
   std::atomic<std::uint64_t> sampling_skips_{0};
 };
 
