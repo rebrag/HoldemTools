@@ -194,6 +194,31 @@ SolveConfig load_config(const std::string& path_text) {
     }
   }
 
+  if (j.contains("algorithm") && j.at("algorithm").contains("sampling")) {
+    const json& s = j.at("algorithm").at("sampling");
+    const std::string mode = s.value("mode", "off");
+    if (mode == "off") config.sampling.enabled = false;
+    else if (mode == "chance") config.sampling.enabled = true;
+    else fail("algorithm.sampling.mode must be off | chance, got '" + mode + "'");
+    config.sampling.runouts = s.value("runouts", config.sampling.runouts);
+    config.sampling.anneal_full_at =
+        s.value("anneal_full_at", config.sampling.anneal_full_at);
+    if (config.sampling.runouts < 1) fail("algorithm.sampling.runouts must be at least 1");
+    if (config.sampling.enabled && config.recalc.enabled &&
+        j.at("algorithm").contains("recalc") &&
+        j.at("algorithm").at("recalc").value("enabled", true)) {
+      // Both skip chance children, and they skip them for incompatible
+      // reasons: recalc folds in a cached full-enumeration value while a
+      // sampled iteration produces n/m-scaled ones. Refuse rather than
+      // silently picking a winner.
+      fail("algorithm.sampling and algorithm.recalc cannot both be enabled: the recalc "
+           "cache holds full-enumeration values, which a sampled iteration does not "
+           "produce. Disable one.");
+    }
+    // Sampling wins over the recalc DEFAULT (which is on).
+    if (config.sampling.enabled) config.recalc.enabled = false;
+  }
+
   if (j.contains("qre")) {
     config.qre_mode = j.at("qre").value("mode", "nash");
     if (config.qre_mode != "nash") {

@@ -72,7 +72,6 @@ class NlhePostflopGame final : public Game {
   const std::vector<Card>& board() const { return board_; }
 
  private:
-  const RiverEvaluator& evaluator_for(std::uint64_t board_mask) const;
   // Fill `evaluators_` for every showdown terminal in the tree, in parallel.
   void build_evaluators(int threads);
   // Group suit-equivalent runout children and map their subtrees onto the
@@ -110,6 +109,14 @@ class NlhePostflopGame final : public Game {
   // lookups afterwards are pure reads. Solving touches all of them on the
   // first iteration anyway, so this only moves the work, and parallelizes it.
   std::map<std::uint64_t, std::unique_ptr<RiverEvaluator>> evaluators_;
+  // The same evaluators, resolved once per showdown terminal and indexed by
+  // the node's dense terminal_index. terminal_values() runs on the hot path
+  // and used to reach them through a std::map::find on the board mask - a
+  // red-black descent per terminal visit per seat per iteration, which on a
+  // flop tree is millions of pointer chases buying nothing. Built alongside
+  // the evaluators and immutable for the rest of the solve, like everything
+  // else the traversal touches. Null for fold terminals.
+  std::vector<const RiverEvaluator*> terminal_eval_;
 };
 
 }  // namespace engine

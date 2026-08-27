@@ -204,10 +204,66 @@ test("htsolver config is byte-identical to the shipped output", () => {
       },
     },
     preflop_aggressor: "none",
-    algorithm: { update: "dcfr" },
+    // The engine's own defaults, but emitted EXPLICITLY rather than left to
+    // it. A downloaded or published config has to say what the solve
+    // actually used - config_hash is a SHA-256 of this object and lands in
+    // the artifact's metadata, so "absent means on" would make two solves
+    // with different engine defaults indistinguishable after the fact.
+    algorithm: { update: "dcfr", recalc: { enabled: true } },
+    isomorphism: true,
     qre: { mode: "nash" },
     budget: { iterations: 20000, target_exploitable_pct: 0.02, checkpoint_every: 250 },
     memory_limit_gb: 12,
     threads: 0,
+  });
+});
+
+test("htsolver algorithm settings reach the config, and sampling disables recalc", () => {
+  const base: BuilderState = {
+    ...DEFAULT_BUILDER,
+    oopRange: { AA: 1 },
+    ipRange: { QQ: 1 },
+    board: "Ah Kd 9c 2s",
+  };
+
+  // Non-defaults travel verbatim.
+  const tuned = buildEngineConfig({
+    ...base,
+    updateRule: "cfr_plus",
+    isomorphism: false,
+    recalc: false,
+  }).config as Record<string, unknown>;
+  expect(tuned.algorithm).toEqual({ update: "cfr_plus", recalc: { enabled: false } });
+  expect(tuned.isomorphism).toBe(false);
+
+  // The engine REFUSES sampling and recalc together - the recalc cache holds
+  // full-enumeration values a sampled iteration never produces. The form must
+  // not be able to express the rejected pair, or a job gets queued and then
+  // fails after the fact. `recalc: true` here is the trap: sampling wins.
+  const sampled = buildEngineConfig({
+    ...base,
+    sampling: true,
+    recalc: true,
+    samplingRunouts: "8",
+    samplingAnnealAt: "500",
+  }).config as Record<string, unknown>;
+  expect(sampled.algorithm).toEqual({
+    update: "dcfr",
+    recalc: { enabled: false },
+    sampling: { mode: "chance", runouts: 8, anneal_full_at: 500 },
+  });
+
+  // Junk in the numeric boxes falls back to the defaults rather than sending
+  // NaN, which the engine would reject.
+  const junk = buildEngineConfig({
+    ...base,
+    sampling: true,
+    samplingRunouts: "",
+    samplingAnnealAt: "abc",
+  }).config as Record<string, unknown>;
+  expect(junk.algorithm).toEqual({
+    update: "dcfr",
+    recalc: { enabled: false },
+    sampling: { mode: "chance", runouts: 12, anneal_full_at: 2000 },
   });
 });

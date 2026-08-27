@@ -1,5 +1,7 @@
 #include "solver/cfr.hpp"
 
+#include "solver/sample.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -11,14 +13,16 @@ namespace engine {
 namespace {
 // Scratch slot ids per recursion level.
 constexpr int kSlotSigma = 0;
-constexpr int kSlotValue = 1;
-constexpr int kSlotChild = 2;
+constexpr int kSlotChild = 1;
 // One hands-wide buffer reused twice per decision node: first the
 // regret-matching row sums, then the strategy-averaging reach weights.
 // They never overlap in time, and an arena slot is not free.
-constexpr int kSlotHandScratch = 3;
-constexpr int kSlotSavedBase = 4;  // + seat index
+constexpr int kSlotHandScratch = 2;
+constexpr int kSlotSavedBase = 3;  // + seat index
 constexpr int kSlotsPerLevel = kSlotSavedBase + kMaxSeats;
+// There is deliberately no per-level "value" slot: an actor decision node
+// accumulates its node value directly into the caller's `out` buffer, so the
+// slot it used to need is gone. Keep memory.cpp's per_level term in step.
 
 // Forking below this many children is not worth a reach-vector copy per
 // child; the pool would spend more on hand-off than the subtree costs.
@@ -111,9 +115,16 @@ InfosetLayout InfosetLayout::build(const Game& game) {
   return layout;
 }
 
-CfrSolver::CfrSolver(const Game& game, UpdateConfig update, int threads, RecalcConfig recalc)
+CfrSolver::CfrSolver(const Game& game, UpdateConfig update, int threads, RecalcConfig recalc,
+                     SamplingConfig sampling)
     : game_(game), update_(update), layout_(InfosetLayout::build(game)),
-      recalc_config_(recalc) {
+      recalc_config_(recalc), sampling_(sampling) {
+  // Sampling and the recalc schedule cannot both run: the cache holds
+  // full-enumeration values while a sampled iteration produces n/m-scaled
+  // ones, and recalc's movement metric would be reading sampling noise.
+  // config.cpp rejects the combination; this is the belt-and-braces copy so
+  // a programmatic caller cannot construct the broken pairing.
+  if (sampling_.enabled) recalc_config_.enabled = false;
   regrets_.assign(layout_.total, 0.0f);
   strat_sum_.assign(layout_.total, 0.0f);
   pool_ = std::make_unique<ThreadPool>(resolve_thread_count(threads));
@@ -391,9 +402,25 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
   const PublicTree& tree = game_.tree();
   const Node& node = tree[id];
   const std::uint32_t my_hands = static_cast<std::uint32_t>(game_.num_hands(seat));
-  out.assign(my_hands, 0.0f);
+
+  // `out` is sized here but NOT zeroed here. Two of the four branches below
+  // overwrite every entry, so a blanket zero-fill was a wasted pass over a
+  // hands-wide buffer at every node in the tree. Each branch now does exactly
+  // what it needs: the two accumulators zero, the two overwriters only size.
+  //
+  // Aliasing note, load-bearing now that the actor branch accumulates in
+  // place: `out` at depth d is always the caller's scratch(arena, d-1,
+  // kSlotChild), a parent-owned forked_out[c], or iterate()'s local `values`.
+  // A node at depth d only ever touches scratch(arena, d, *), so no slot it
+  // uses can alias `out`. `reach` is never aliased into an arena slot either
+  // - the save/restore below copies through kSlotSavedBase rather than
+  // binding a reference.
 
   if (node.kind == NodeKind::Terminal) {
+    // terminal_values fully overwrites: the showdown path writes every entry
+    // through out.data(), and the fold path's compat_weights does its own
+    // assign. It does NOT resize, so the size still has to be right here.
+    out.resize(my_hands);
     game_.terminal_values(id, seat, reach, out);
     return;
   }
@@ -426,7 +453,7 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
   };
 
   if (node.kind == NodeKind::Chance) {
-    const float w = static_cast<float>(game_.chance_weight(id));
+    out.assign(my_hands, 0.0f);  // accumulator: every child folds in below
     // Mask every seat's reach for hands that block the dealt card, so
     // strategy averaging and terminal weighting below this card are exact.
     const auto mask_for_card = [&](int card, std::vector<std::vector<float>>& target) {
@@ -442,9 +469,6 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
     const auto zero_blocked = [&](int card, std::vector<float>& child_vals) {
       for (std::uint16_t h : game_.hands_blocking_card(seat, card)) child_vals[h] = 0.0f;
     };
-    const auto accumulate = [&](const std::vector<float>& child_vals) {
-      for (std::uint32_t h = 0; h < my_hands; ++h) out[h] += w * child_vals[h];
-    };
 
     // Suit isomorphism: a member child is never traversed; its contribution
     // is its representative's values read through the member's hand gather.
@@ -456,12 +480,72 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
       return iso_base != kNoIndex && game_.iso_rep(node.first_child + static_cast<NodeId>(c)).rep !=
                                          node.first_child + static_cast<NodeId>(c);
     };
+
+    // Chance sampling. Units are the REPRESENTATIVE children only - a
+    // suit-isomorphic member is never a unit, because its contribution comes
+    // from its rep's values through a gather. An unsampled rep therefore
+    // takes its members with it, and the n/m scaling (applied to `w`, which
+    // both accumulate and fold_members use) compensates in expectation.
+    //
+    // Decided serially here, before any forking, and keyed only on
+    // (node id, iteration) - so the sampled game is a pure function of
+    // position and is identical at any thread count.
+    // Everything in this block is skipped outright when sampling is off.
+    // Building the unit list means calling is_member() - and so
+    // Game::iso_rep() - once per child per chance-node visit, which is work
+    // a solve that is not sampling should not do. The saving is below this
+    // benchmark's noise floor (see docs/roadmap.md on measurement); the
+    // early-out is kept because it is obviously less work, not because a
+    // number was demonstrated.
+    std::array<bool, 52> sampled_in{};
+    bool sampling_here = false;
+    float ht_scale = 1.0f;
+    if (sampling_.enabled) {
+      std::uint8_t units[64];
+      int num_units = 0;
+      for (int c = 0; c < children && num_units < 64; ++c) {
+        if (!is_member(c)) units[num_units++] = static_cast<std::uint8_t>(c);
+      }
+      const int take = sampling_.runouts_at(t_, num_units);
+      sampling_here = take < num_units;
+      if (sampling_here) {
+        std::uint8_t chosen[64];
+        sample_without_replacement(units, num_units, take, id, t_, chosen);
+        for (int i = 0; i < take; ++i) sampled_in[chosen[i]] = true;
+        sampling_skips_.fetch_add(static_cast<std::uint64_t>(num_units - take),
+                                  std::memory_order_relaxed);
+        // Horvitz-Thompson: scale every surviving unit by n/m so the
+        // estimator stays unbiased regardless of what chance_weight returns
+        // (it is 1/(52 - known - 4), not a distribution summing to 1 over
+        // children - HT does not care).
+        ht_scale = static_cast<float>(num_units) / static_cast<float>(take);
+      }
+    }
+    // The chance weight, final and CONST, so the accumulate loops below can
+    // treat it as loop-invariant. The sampling factor is folded in here
+    // rather than by mutating `w` after the fold lambdas have captured it -
+    // a reference-captured mutable would have to be reloaded inside the
+    // innermost fold. (Measured as neutral on the flop benchmark, which
+    // cannot resolve a change this size; the const form is simply the one
+    // that does not depend on the optimizer proving anything.)
+    const float w = static_cast<float>(game_.chance_weight(id)) * ht_scale;
+    const auto accumulate = [&](const std::vector<float>& child_vals) {
+      for (std::uint32_t h = 0; h < my_hands; ++h) out[h] += w * child_vals[h];
+    };
     const auto fold_members = [&](int c, const std::vector<float>& vals) {
       if (iso_base == kNoIndex) return;
       for (const std::vector<std::uint16_t>* map : iso_members_[iso_base + static_cast<std::uint32_t>(c)]) {
         const std::uint16_t* g = map->data();
         for (std::uint32_t h = 0; h < my_hands; ++h) out[h] += w * vals[g[h]];
       }
+    };
+
+    // A member rides on its rep, so it is "in" exactly when its rep is.
+    const auto dropped = [&](int c) {
+      if (!sampling_here) return false;
+      const NodeId child = node.first_child + static_cast<NodeId>(c);
+      const NodeId rep = game_.iso_rep(child).rep;
+      return !sampled_in[static_cast<std::size_t>(rep - node.first_child)];
     };
 
     // Recalc decisions per child, made serially BEFORE any forking so the
@@ -497,7 +581,9 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
       std::vector<int> full;
       full.reserve(static_cast<std::size_t>(children));
       for (int c = 0; c < children; ++c) {
-        if (!is_member(c) && !skip[static_cast<std::size_t>(c)]) full.push_back(c);
+        if (!is_member(c) && !skip[static_cast<std::size_t>(c)] && !(sampling_here && dropped(c))) {
+          full.push_back(c);
+        }
       }
       pool_->parallel_for(static_cast<int>(full.size()), [&](int i) {
         const int c = full[static_cast<std::size_t>(i)];
@@ -513,7 +599,7 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
         finish_child(c, forked_out[static_cast<std::size_t>(c)]);
       });
       for (int c = 0; c < children; ++c) {
-        if (is_member(c)) continue;
+        if (is_member(c) || (sampling_here && dropped(c))) continue;
         if (skip[static_cast<std::size_t>(c)]) {
           recalc_skips_.fetch_add(1, std::memory_order_relaxed);
           const std::vector<float>& vals = recalc_[base + static_cast<std::uint32_t>(c)].value[seat];
@@ -529,7 +615,7 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
 
     std::vector<float>& child_vals = scratch(arena, depth, kSlotChild);
     for (int c = 0; c < children; ++c) {
-      if (is_member(c)) continue;
+      if (is_member(c) || (sampling_here && dropped(c))) continue;
       if (skip[static_cast<std::size_t>(c)]) {
         recalc_skips_.fetch_add(1, std::memory_order_relaxed);
         const std::vector<float>& vals = recalc_[base + static_cast<std::uint32_t>(c)].value[seat];
@@ -574,14 +660,16 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
                               hand_scratch.data());
 
   if (actor == seat) {
-    std::vector<float>& v = scratch(arena, depth, kSlotValue);
-    v.assign(hands, 0.0f);
+    // The node value accumulates straight into `out` instead of into a
+    // scratch slot that then had to be copied over it. hands == my_hands
+    // here, because actor == seat and node_hands is num_hands(actor).
+    out.assign(hands, 0.0f);
     const auto fold_in = [&](std::uint16_t k, const std::vector<float>& child_vals) {
       const std::size_t col = static_cast<std::size_t>(k) * hands;
       float* regret_col = regrets_.data() + off + col;
       const float* sigma_col = sigma.data() + col;
       for (std::uint32_t h = 0; h < hands; ++h) {
-        v[h] += sigma_col[h] * child_vals[h];
+        out[h] += sigma_col[h] * child_vals[h];
         // Defer subtracting v(h): R += cv now, R -= v after the loop.
         regret_col[h] += child_vals[h];
       }
@@ -619,22 +707,22 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
       // is what the branch did.
       if (clamp) {
         for (std::uint32_t h = 0; h < hands; ++h) {
-          const float r = regret_col[h] - v[h];
+          const float r = regret_col[h] - out[h];
           regret_col[h] = r < 0.0f ? 0.0f : r;
           strat_col[h] += rw[h] * sigma_col[h];
         }
       } else {
         for (std::uint32_t h = 0; h < hands; ++h) {
-          regret_col[h] -= v[h];
+          regret_col[h] -= out[h];
           strat_col[h] += rw[h] * sigma_col[h];
         }
       }
     }
-    out = v;
     return;
   }
 
   // Opponent decision: weight the actor's reach by each action's probability.
+  out.assign(my_hands, 0.0f);  // accumulator: every action folds in below
   if (fork) {
     run_children([&](int c, std::vector<std::vector<float>>& child_reach) {
       const float* sigma_col = sigma.data() + static_cast<std::size_t>(c) * hands;

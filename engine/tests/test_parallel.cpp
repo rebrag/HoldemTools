@@ -122,3 +122,93 @@ TEST_CASE("an nlhe turn tree solves identically on one thread and on eight") {
   const auto game = tiny_turn_game();
   check_identical_solutions(*game, 20);
 }
+
+// ---- chance sampling ------------------------------------------------------
+//
+// Sampling is the one feature here whose whole correctness story is "the draw
+// is a pure function of position, not of scheduling". If that is wrong, the
+// numbers differ by thread count and the Pio acceptance gate loses its
+// meaning - so it is pinned rather than argued.
+
+namespace {
+SamplingConfig sampling_on(int runouts) {
+  SamplingConfig s;
+  s.enabled = true;
+  s.runouts = runouts;
+  s.anneal_full_at = 0;  // hold m fixed so the test actually samples
+  return s;
+}
+
+// Same shape as check_identical_solutions, but carries a sampling config.
+void check_identical_sampled(const Game& game, std::uint64_t iterations,
+                             SamplingConfig sampling) {
+  UpdateConfig update;
+  RecalcConfig recalc;
+  CfrSolver serial(game, update, 1, recalc, sampling);
+  CfrSolver parallel(game, update, 8, recalc, sampling);
+  REQUIRE(parallel.pool().threads() > 1);
+  serial.run(iterations);
+  parallel.run(iterations);
+
+  std::vector<float> a, b;
+  for (const Node& node : game.tree().nodes) {
+    if (node.kind != NodeKind::Decision) continue;
+    const NodeId id = static_cast<NodeId>(&node - game.tree().nodes.data());
+    serial.average_strategy(id, a);
+    parallel.average_strategy(id, b);
+    REQUIRE(a.size() == b.size());
+    CHECK(a == b);
+  }
+  CHECK(serial.sampling_skips() == parallel.sampling_skips());
+}
+}  // namespace
+
+TEST_CASE("chance sampling is identical on one thread and on eight") {
+  const auto game = tiny_turn_game();
+  check_identical_sampled(*game, 20, sampling_on(6));
+}
+
+TEST_CASE("chance sampling actually skips, and only when asked") {
+  const auto game = tiny_turn_game();
+  UpdateConfig update;
+  RecalcConfig recalc;
+
+  CfrSolver off(*game, update, 1, recalc, SamplingConfig{});
+  off.run(5);
+  CHECK(off.sampling_skips() == 0);
+  CHECK(off.sampling_exact());
+
+  CfrSolver on(*game, update, 1, recalc, sampling_on(6));
+  on.run(5);
+  CHECK(on.sampling_skips() > 0);
+  CHECK_FALSE(on.sampling_exact());
+}
+
+// m == n has to degenerate to exactly the un-sampled solver: the n/m factor
+// becomes 1 and every unit survives. This is a strong structural check that
+// the Horvitz-Thompson scaling is applied in the right place - a stray factor
+// anywhere would show up here as a bitwise difference.
+TEST_CASE("sampling every runout is bit-identical to sampling off") {
+  const auto game = tiny_turn_game();
+  UpdateConfig update;
+  RecalcConfig recalc;
+  recalc.enabled = false;  // off on both arms; sampling would disable it anyway
+
+  CfrSolver plain(*game, update, 1, recalc, SamplingConfig{});
+  CfrSolver full(*game, update, 1, recalc, sampling_on(100));  // m > n at every chance node
+  plain.run(20);
+  full.run(20);
+  CHECK(full.sampling_skips() == 0);
+
+  std::vector<float> a, b;
+  int compared = 0;
+  for (const Node& node : game->tree().nodes) {
+    if (node.kind != NodeKind::Decision) continue;
+    const NodeId id = static_cast<NodeId>(&node - game->tree().nodes.data());
+    plain.average_strategy(id, a);
+    full.average_strategy(id, b);
+    CHECK(a == b);
+    ++compared;
+  }
+  CHECK(compared > 0);
+}

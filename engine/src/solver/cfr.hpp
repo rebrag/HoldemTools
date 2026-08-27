@@ -65,7 +65,7 @@ class CfrSolver {
   // happens serially in child order after the join. Same config, same
   // thread count or not, same numbers.
   CfrSolver(const Game& game, UpdateConfig update, int threads = 1,
-            RecalcConfig recalc = {});
+            RecalcConfig recalc = {}, SamplingConfig sampling = {});
 
   // Run `iterations` full iterations (one traversal per seat each) and leave
   // the solver readable: any deferred DCFR discount is settled before this
@@ -98,6 +98,17 @@ class CfrSolver {
   std::uint64_t recalc_skips() const {
     return recalc_skips_.load(std::memory_order_relaxed);
   }
+
+  // Chance-node children NOT traversed because sampling left them out (0
+  // when sampling is off). Keeps the sampling tests non-vacuous, the same
+  // way recalc_skips() does for the schedule.
+  std::uint64_t sampling_skips() const {
+    return sampling_skips_.load(std::memory_order_relaxed);
+  }
+
+  // Is the solver enumerating exactly right now? The caller's accuracy stop
+  // must not fire while this is false.
+  bool sampling_exact() const { return sampling_.exact_at(t_); }
 
   // Feed the schedule the measured per-player exploitability (chips) from
   // the caller's latest best-response checkpoint. Until the first call the
@@ -235,6 +246,14 @@ class CfrSolver {
   double recalc_last_e_ = 0.0;       // exploitability at the previous budget call
   std::uint64_t recalc_last_t_ = 0;  // iteration of the previous budget call
   std::atomic<std::uint64_t> recalc_skips_{0};
+
+  // ---- chance sampling --------------------------------------------------
+  // Declared last so adding them does not shift the offsets of the hot
+  // members above. (Tested as a suspect for a regression that turned out to
+  // be measurement noise; kept because appending is the right default for a
+  // cold, optional field either way.)
+  SamplingConfig sampling_;
+  std::atomic<std::uint64_t> sampling_skips_{0};
 };
 
 }  // namespace engine

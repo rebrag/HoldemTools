@@ -90,11 +90,12 @@ MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc) {
   for (const Node& n : tree.nodes) {
     max_actions = std::max(max_actions, static_cast<std::size_t>(n.num_children));
   }
-  // Per level: sigma (hands*actions), value + child + reach-weight (hands
-  // each), one saved reach per seat (hands each). Mirrors one CfrSolver
-  // scratch arena; a multithreaded solve checks out several at once.
+  // Per level: sigma (hands*actions), child + reach-weight (hands each), one
+  // saved reach per seat (hands each). Mirrors one CfrSolver scratch arena; a
+  // multithreaded solve checks out several at once. There is no value slot -
+  // actor decision nodes accumulate into the caller's `out` buffer.
   const std::size_t per_level =
-      max_hands * max_actions + (3 + game.num_seats()) * max_hands;
+      max_hands * max_actions + (2 + game.num_seats()) * max_hands;
   const std::size_t arena =
       static_cast<std::size_t>(max_depth + 2) * per_level * sizeof(float);
   est.workspace_bytes =

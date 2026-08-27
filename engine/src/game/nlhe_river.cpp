@@ -216,15 +216,14 @@ void NlhePostflopGame::build_evaluators(int threads) {
     }
     slot.second = std::make_unique<RiverEvaluator>(cards, universe_.combos);
   });
-}
 
-const RiverEvaluator& NlhePostflopGame::evaluator_for(std::uint64_t board_mask) const {
-  const auto it = evaluators_.find(board_mask);
-  if (it == evaluators_.end() || !it->second) {
-    // Only reachable if a showdown terminal appeared after construction.
-    throw std::runtime_error("no showdown evaluator for this board - tree changed after build");
+  // Flatten the lookup: showdown terminals resolve by dense terminal_index
+  // from here on, never by map descent.
+  terminal_eval_.assign(tree_.num_terminal_nodes, nullptr);
+  for (const Node& n : tree_.nodes) {
+    if (n.terminal_kind != TerminalKind::Showdown) continue;
+    terminal_eval_[n.terminal_index] = evaluators_.find(n.board_mask)->second.get();
   }
-  return *it->second;
 }
 
 std::size_t NlhePostflopGame::auxiliary_bytes() const {
@@ -251,7 +250,12 @@ void NlhePostflopGame::terminal_values(NodeId id, int seat,
     const int hands = universe_.size();
     for (int i = 0; i < hands; ++i) out[i] = static_cast<float>(out[i] * u);
   } else {
-    evaluator_for(node.board_mask).showdown_2p(opp, pot, my_delta, out.data());
+    const RiverEvaluator* eval = terminal_eval_[node.terminal_index];
+    if (eval == nullptr) {
+      // Only reachable if a showdown terminal appeared after construction.
+      throw std::runtime_error("no showdown evaluator for this terminal - tree changed after build");
+    }
+    eval->showdown_2p(opp, pot, my_delta, out.data());
   }
 }
 
