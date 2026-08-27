@@ -29,3 +29,26 @@ TEST_CASE("leduc NashConv decreases across checkpoints and hits the threshold") 
   const BrResult br = compute_best_response(game, solver);
   CHECK(br.ev[0] + br.ev[1] == doctest::Approx(2.0).epsilon(1e-6));
 }
+
+// Leduc has a chance node, so it is the smallest game that exercises the
+// sampler end to end. Convergence is looser than the enumerated case on
+// purpose: sampling trades bias for VARIANCE, and the point of this test is
+// that the variance averages out rather than that it is absent.
+TEST_CASE("leduc still converges with chance sampling") {
+  toy::LeducGame game;
+  UpdateConfig update;
+  RecalcConfig recalc;
+  SamplingConfig sampling;
+  sampling.enabled = true;
+  sampling.runouts = 2;
+  sampling.anneal_full_at = 2000;
+
+  CfrSolver solver(game, update, 1, recalc, sampling);
+  solver.run(5000);
+  CHECK(solver.sampling_skips() > 0);
+  CHECK(solver.sampling_exact());  // annealed to exact by iteration 2000
+
+  const BrResult br = compute_best_response(game, solver);
+  CHECK(br.nashconv() < 0.05);
+  CHECK(br.ev[0] + br.ev[1] == doctest::Approx(2.0).epsilon(1e-6));
+}

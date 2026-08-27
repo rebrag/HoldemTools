@@ -67,7 +67,7 @@ int run_solve(const SolveConfig& config, bool dry_run) {
 
   std::cout << "setup " << setup_s << " s (tree + showdown tables) on " << threads
             << " thread" << (threads == 1 ? "" : "s") << "\n";
-  CfrSolver solver(*game, config.update, config.threads, config.recalc);
+  CfrSolver solver(*game, config.update, config.threads, config.recalc, config.sampling);
   const auto start = std::chrono::steady_clock::now();
   double nashconv = 0.0;
   BrResult br;
@@ -92,11 +92,16 @@ int run_solve(const SolveConfig& config, bool dry_run) {
     std::cout << "  ev";
     for (double ev : br.ev) std::cout << " " << ev;
     std::cout << "\n";
-    if (config.target_nashconv > 0.0 && nashconv <= config.target_nashconv) {
+    // The accuracy stop must not fire while the solver is still subsampling
+    // runouts. Exploitability itself is honest (best response always
+    // enumerates), but the average strategy it is rating is still noisy, so a
+    // lucky checkpoint could stop the solve at a strategy that is not there.
+    const bool may_stop = solver.sampling_exact();
+    if (may_stop && config.target_nashconv > 0.0 && nashconv <= config.target_nashconv) {
       std::cout << "target_nashconv reached\n";
       break;
     }
-    if (config.target_exploitable_pct > 0.0 && pot > 0.0 &&
+    if (may_stop && config.target_exploitable_pct > 0.0 && pot > 0.0 &&
         exploitable <= config.target_exploitable_pct / 100.0 * pot) {
       std::cout << "target_exploitable_pct reached\n";
       break;
