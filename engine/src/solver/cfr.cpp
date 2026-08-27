@@ -11,14 +11,16 @@ namespace engine {
 namespace {
 // Scratch slot ids per recursion level.
 constexpr int kSlotSigma = 0;
-constexpr int kSlotValue = 1;
-constexpr int kSlotChild = 2;
+constexpr int kSlotChild = 1;
 // One hands-wide buffer reused twice per decision node: first the
 // regret-matching row sums, then the strategy-averaging reach weights.
 // They never overlap in time, and an arena slot is not free.
-constexpr int kSlotHandScratch = 3;
-constexpr int kSlotSavedBase = 4;  // + seat index
+constexpr int kSlotHandScratch = 2;
+constexpr int kSlotSavedBase = 3;  // + seat index
 constexpr int kSlotsPerLevel = kSlotSavedBase + kMaxSeats;
+// There is deliberately no per-level "value" slot: an actor decision node
+// accumulates its node value directly into the caller's `out` buffer, so the
+// slot it used to need is gone. Keep memory.cpp's per_level term in step.
 
 // Forking below this many children is not worth a reach-vector copy per
 // child; the pool would spend more on hand-off than the subtree costs.
@@ -391,9 +393,25 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
   const PublicTree& tree = game_.tree();
   const Node& node = tree[id];
   const std::uint32_t my_hands = static_cast<std::uint32_t>(game_.num_hands(seat));
-  out.assign(my_hands, 0.0f);
+
+  // `out` is sized here but NOT zeroed here. Two of the four branches below
+  // overwrite every entry, so a blanket zero-fill was a wasted pass over a
+  // hands-wide buffer at every node in the tree. Each branch now does exactly
+  // what it needs: the two accumulators zero, the two overwriters only size.
+  //
+  // Aliasing note, load-bearing now that the actor branch accumulates in
+  // place: `out` at depth d is always the caller's scratch(arena, d-1,
+  // kSlotChild), a parent-owned forked_out[c], or iterate()'s local `values`.
+  // A node at depth d only ever touches scratch(arena, d, *), so no slot it
+  // uses can alias `out`. `reach` is never aliased into an arena slot either
+  // - the save/restore below copies through kSlotSavedBase rather than
+  // binding a reference.
 
   if (node.kind == NodeKind::Terminal) {
+    // terminal_values fully overwrites: the showdown path writes every entry
+    // through out.data(), and the fold path's compat_weights does its own
+    // assign. It does NOT resize, so the size still has to be right here.
+    out.resize(my_hands);
     game_.terminal_values(id, seat, reach, out);
     return;
   }
@@ -426,6 +444,7 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
   };
 
   if (node.kind == NodeKind::Chance) {
+    out.assign(my_hands, 0.0f);  // accumulator: every child folds in below
     const float w = static_cast<float>(game_.chance_weight(id));
     // Mask every seat's reach for hands that block the dealt card, so
     // strategy averaging and terminal weighting below this card are exact.
@@ -574,14 +593,16 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
                               hand_scratch.data());
 
   if (actor == seat) {
-    std::vector<float>& v = scratch(arena, depth, kSlotValue);
-    v.assign(hands, 0.0f);
+    // The node value accumulates straight into `out` instead of into a
+    // scratch slot that then had to be copied over it. hands == my_hands
+    // here, because actor == seat and node_hands is num_hands(actor).
+    out.assign(hands, 0.0f);
     const auto fold_in = [&](std::uint16_t k, const std::vector<float>& child_vals) {
       const std::size_t col = static_cast<std::size_t>(k) * hands;
       float* regret_col = regrets_.data() + off + col;
       const float* sigma_col = sigma.data() + col;
       for (std::uint32_t h = 0; h < hands; ++h) {
-        v[h] += sigma_col[h] * child_vals[h];
+        out[h] += sigma_col[h] * child_vals[h];
         // Defer subtracting v(h): R += cv now, R -= v after the loop.
         regret_col[h] += child_vals[h];
       }
@@ -619,22 +640,22 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
       // is what the branch did.
       if (clamp) {
         for (std::uint32_t h = 0; h < hands; ++h) {
-          const float r = regret_col[h] - v[h];
+          const float r = regret_col[h] - out[h];
           regret_col[h] = r < 0.0f ? 0.0f : r;
           strat_col[h] += rw[h] * sigma_col[h];
         }
       } else {
         for (std::uint32_t h = 0; h < hands; ++h) {
-          regret_col[h] -= v[h];
+          regret_col[h] -= out[h];
           strat_col[h] += rw[h] * sigma_col[h];
         }
       }
     }
-    out = v;
     return;
   }
 
   // Opponent decision: weight the actor's reach by each action's probability.
+  out.assign(my_hands, 0.0f);  // accumulator: every action folds in below
   if (fork) {
     run_children([&](int c, std::vector<std::vector<float>>& child_reach) {
       const float* sigma_col = sigma.data() + static_cast<std::size_t>(c) * hands;
