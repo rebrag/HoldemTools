@@ -9,8 +9,9 @@ the server).
 Job modes:
   compare  solve with htsolver, then build + solve the IDENTICAL tree in Pio
            (engine_compare.py --solve-pio) and upload the per-hand comparison
-           JSON (gzipped) to ADLS enginecompare/{id}.json.gz. This is the
-           htsolver-verification loop behind the frontend /compare page.
+           payload (gzipped .htc, see htc_format.py) to ADLS
+           enginecompare/{id}.htc.gz. This is the htsolver-verification loop
+           behind the frontend /compare page.
   publish  solve with htsolver only and POST the artifact to the API, which
            converts it to schema-4 bundles and publishes it to the solutions
            library. This is the post-Pio production path.
@@ -42,6 +43,7 @@ WATCHER_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, WATCHER_DIR)
 
 from api_client import log, watcher_id, _base, _key, enabled  # noqa: E402
+from htc_format import read_htc_header  # noqa: E402
 
 POLL_SECS = float(os.getenv("ENGINE_WATCHER_POLL_SECS", "5"))
 TIMEOUT_SECS = 30.0
@@ -113,8 +115,12 @@ class Heartbeat:
             self._thread.join(timeout=2.0)
 
 
-def upload_result(job_id: str, json_path: str) -> str:
-    """Gzip + upload the comparison JSON; returns the blob path."""
+def upload_result(job_id: str, result_path: str) -> str:
+    """Gzip + upload the comparison payload; returns the blob path.
+
+    The blob keeps its format in the extension: the API picks the content
+    type from it, and old `.json.gz` rows stay readable alongside new
+    `.htc.gz` ones."""
     from azure.storage.filedatalake import DataLakeServiceClient
 
     conn = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
@@ -122,9 +128,9 @@ def upload_result(job_id: str, json_path: str) -> str:
     if not conn:
         raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING is not set")
     fs = DataLakeServiceClient.from_connection_string(conn).get_file_system_client(container)
-    with open(json_path, "rb") as f:
+    with open(result_path, "rb") as f:
         payload = gzip.compress(f.read())
-    rel_path = f"enginecompare/{job_id}.json.gz"
+    rel_path = f"enginecompare/{job_id}.htc.gz"
     fs.get_file_client(rel_path).upload_data(payload, overwrite=True)
     return rel_path
 
@@ -155,15 +161,15 @@ def handle_compare(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) -
     artifact = run_engine(config, run_dir)
     timings["engine_solve_s"] = round(time.perf_counter() - phase_start, 3)
 
-    json_out = os.path.join(run_dir, "compare.json")
+    htc_out = os.path.join(run_dir, "compare.htc")
     cmd = [sys.executable, "-u", os.path.join(WATCHER_DIR, "engine_compare.py"),
            "--artifact", artifact, "--engine-exe", ENGINE_EXE,
            "--solve-pio", "--pio-accuracy-pct", str(job.get("pioAccuracyPct", 0.02)),
-           "--gate-only", "--top", "0", "--json-out", json_out]
+           "--top", "0", "--htc-out", htc_out]
     phase_start = time.perf_counter()
     out = subprocess.run(cmd, cwd=WATCHER_DIR, capture_output=True, text=True, timeout=1800)
     timings["compare_total_s"] = round(time.perf_counter() - phase_start, 3)
-    if not os.path.exists(json_out):
+    if not os.path.exists(htc_out):
         raise RuntimeError(f"engine_compare failed (exit {out.returncode}): "
                            f"{(out.stdout + out.stderr)[-1500:]}")
     for line in out.stdout.splitlines():
@@ -173,15 +179,14 @@ def handle_compare(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) -
     # loop) so the whole breakdown rides one job row. Never fail the job on
     # a harvest problem - the result itself is already good.
     try:
-        with open(json_out, "r", encoding="utf8") as f:
-            child_timing = json.load(f).get("summary", {}).get("timing", {})
+        child_timing = read_htc_header(htc_out).get("summary", {}).get("timing", {})
         timings.update({k: v for k, v in child_timing.items() if v is not None})
     except Exception as e:
         log(f"  timing harvest failed (ignored): {e}")
 
     report(job_id, status="Uploading")
     phase_start = time.perf_counter()
-    blob_path = upload_result(job_id, json_out)
+    blob_path = upload_result(job_id, htc_out)
     timings["upload_s"] = round(time.perf_counter() - phase_start, 3)
     report(job_id, status="Done", result_blob_path=blob_path, timings=timings)
     log(f"  done -> {blob_path}")

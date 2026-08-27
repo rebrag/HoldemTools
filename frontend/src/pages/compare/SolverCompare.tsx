@@ -1,6 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import DecisionMatrix from "@/pages/solver/DecisionMatrix";
+import ActionSummary from "@/pages/solver/ActionSummary";
+import HandBreakdown from "@/pages/solver/HandBreakdown";
 import PlayingCard from "@/components/PlayingCard";
+import type { HandCellData } from "@/lib/solver/utils";
+import { handClassOf, comboKey, type ComboDetail, type ComboRow } from "@/lib/solver/comboDetail";
+import { combosForHand, expandHandCombos } from "@/lib/solver/aggregates";
+import {
+  heatColor,
+  normalizeToRange,
+  type MatrixDisplayData,
+  type ValueRange,
+} from "@/lib/solver/matrixDisplayMode";
+import { HAND_ORDER } from "@/lib/solver/handOrder";
 import { authedFetch } from "@/lib/api";
+import type { MoneyOpts } from "@/pages/solver/boardDisplay";
 import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import TreeBuilding, { inputCls } from "@/components/TreeBuilding";
 import {
@@ -19,6 +33,14 @@ import PipelineTimingPanel, {
   type JobTimings,
   type PipelineRun,
 } from "./PipelineTimingPanel";
+import {
+  decodeNode,
+  isHtc,
+  parseHtc,
+  type DecodedHand,
+  type DecodedNode,
+  type HtcDoc,
+} from "./htcDecode";
 
 /**
  * Hidden verification page (/compare, no nav entry): htsolver vs PioSolver
@@ -35,12 +57,21 @@ import PipelineTimingPanel, {
  * Reading the numbers: only the game VALUE of a 2p zero-sum spot is unique;
  * per-hand strategies (and, via blockers, per-hand EVs) may legitimately
  * differ between two exact equilibria. The correctness verdict is the
- * cross-check badge (Pio's own evaluator rating the htsolver strategy).
- * Per-combo detail is no longer rendered here - eyeball specific hands in
- * the /solutions viewer instead.
+ * cross-check badge (Pio's own evaluator rating the htsolver strategy); the
+ * per-hand view is for seeing where and how the two solutions differ.
+ *
+ * Per-hand detail arrives as a binary .htc payload (see htcDecode.ts) that
+ * carries every decision node at a fraction of the JSON's bytes, and is
+ * decoded one node at a time as they are selected. Older jobs and
+ * hand-dropped files are still plain JSON and render identically.
  */
 
 /* ---------- the harness's JSON shapes ---------- */
+
+/** A hand row, from either wire format: the .htc decoder emits this shape so
+ *  everything below is indifferent to which one was loaded. */
+type CompareHand = DecodedHand;
+type CompareNode = DecodedNode;
 
 interface CompareDoc {
   kind: string;
@@ -107,11 +138,173 @@ interface CompareDoc {
     compared_nodes?: number;
     detail_nodes?: number;
   };
-  /** Per-combo detail. Empty in gate-only docs and no longer rendered here -
-   *  hands are eyeballed in the /solutions viewer instead. Kept in the type
-   *  so hand-loaded full docs still parse. */
-  nodes?: unknown[];
+  /** Per-hand detail, present in JSON docs. Binary payloads carry it in
+   *  their block region instead and leave this undefined - `nodeList` below
+   *  is what the page reads either way. */
+  nodes?: CompareNode[];
 }
+
+/** A loaded comparison: the summary doc plus however its per-hand detail
+ *  arrived. `htc` is set for binary payloads, whose nodes are decoded
+ *  lazily; JSON docs carry their nodes inline and already decoded. */
+interface LoadedCompare {
+  doc: CompareDoc;
+  htc: HtcDoc | null;
+}
+
+/* ---------- helpers ---------- */
+
+/** Raw harness labels -> readable labels, amounts in chips ("Bet 50",
+ *  "Raise to 400") - the harness's unit, matching the bNNN node ids. */
+const displayLabels = (node: CompareNode): string[] => {
+  const lastSeg = node.id.split(":").pop() ?? "";
+  const facing = lastSeg.startsWith("b");
+  return node.actions.map((a) => {
+    if (a === "f") return "Fold";
+    if (a === "c") return facing ? "Call" : "Check";
+    const amount = Number(a.slice(1));
+    return facing ? `Raise to ${amount}` : `Bet ${amount}`;
+  });
+};
+
+interface SolverView {
+  grid: HandCellData[];
+  comboDetail: ComboDetail;
+}
+
+interface NodeView {
+  labels: string[];
+  ht: SolverView;
+  pio: SolverView;
+  reachByHand: Map<string, number>;
+  /** Shared EV range over BOTH solvers' combos, so heat colors compare. */
+  evRange: ValueRange | null;
+}
+
+/** Per-solver 169-class grid + ComboDetail from the comparison rows.
+ *  Aggregation is range-weighted with a plain-mean fallback - the same rule
+ *  as the schema-4 pipeline. */
+const buildNodeView = (node: CompareNode): NodeView => {
+  const labels = displayLabels(node);
+  const nActions = labels.length;
+
+  interface Agg {
+    w: number;
+    n: number;
+    freqW: [number[], number[]];
+    freqPlain: [number[], number[]];
+    evW: [number, number];
+    evWSum: [number, number];
+  }
+  const byClass = new Map<string, Agg>();
+  const byCombo: [Map<string, ComboRow>, Map<string, ComboRow>] = [new Map(), new Map()];
+  let evMin = Infinity;
+  let evMax = -Infinity;
+
+  for (const hand of node.hands) {
+    const c1 = hand.hand.slice(0, 2);
+    const c2 = hand.hand.slice(2, 4);
+    const cls = handClassOf(c1, c2);
+    let agg = byClass.get(cls);
+    if (!agg) {
+      agg = {
+        w: 0,
+        n: 0,
+        freqW: [Array(nActions).fill(0), Array(nActions).fill(0)],
+        freqPlain: [Array(nActions).fill(0), Array(nActions).fill(0)],
+        evW: [0, 0],
+        evWSum: [0, 0],
+      };
+      byClass.set(cls, agg);
+    }
+    agg.w += hand.reach;
+    agg.n += 1;
+
+    const solvers = [hand.ht, hand.pio] as const;
+    solvers.forEach((solver, s) => {
+      if (solver.ev != null) {
+        agg!.evW[s] += hand.reach * solver.ev;
+        agg!.evWSum[s] += hand.reach;
+        if (hand.reach > 0) {
+          if (solver.ev < evMin) evMin = solver.ev;
+          if (solver.ev > evMax) evMax = solver.ev;
+        }
+      }
+      for (let k = 0; k < nActions; k++) {
+        agg!.freqW[s][k] += hand.reach * solver.freq[k];
+        agg!.freqPlain[s][k] += solver.freq[k];
+      }
+      const actions: ComboRow["actions"] = {};
+      for (let k = 0; k < nActions; k++) {
+        actions[labels[k]] = {
+          freq: solver.freq[k],
+          ev: solver.action_ev?.[k] ?? null,
+          evLoss: null,
+        };
+      }
+      byCombo[s].set(comboKey(c1, c2), {
+        key: comboKey(c1, c2),
+        weight: hand.reach,
+        equity: null,
+        ev: solver.ev,
+        matchups: null,
+        actions,
+      });
+    });
+  }
+
+  const reachByHand = new Map<string, number>();
+  const grids: [HandCellData[], HandCellData[]] = [[], []];
+  for (const [cls, agg] of byClass) {
+    reachByHand.set(cls, agg.w / combosForHand(cls));
+    for (const s of [0, 1] as const) {
+      const actions: Record<string, number> = {};
+      const evs: Record<string, number> = {};
+      const ev = agg.evWSum[s] > 0 ? agg.evW[s] / agg.evWSum[s] : null;
+      for (let k = 0; k < nActions; k++) {
+        actions[labels[k]] =
+          agg.w > 0 ? agg.freqW[s][k] / agg.w : agg.freqPlain[s][k] / agg.n;
+        if (ev != null) evs[labels[k]] = ev;
+      }
+      grids[s].push({ hand: cls, actions, evs });
+    }
+  }
+
+  return {
+    labels,
+    ht: { grid: grids[0], comboDetail: { actor: "oop", actions: labels, byCombo: byCombo[0] } },
+    pio: { grid: grids[1], comboDetail: { actor: "oop", actions: labels, byCombo: byCombo[1] } },
+    reachByHand,
+    evRange: evMin <= evMax ? { min: evMin, max: evMax } : null,
+  };
+};
+
+/** EV-heat stripes for one solver over a SHARED range (so the two grids'
+ *  colors are directly comparable - buildMatrixDisplayData would normalize
+ *  each grid to its own range). */
+const buildEvDisplay = (
+  detail: ComboDetail,
+  board: string[],
+  evRange: ValueRange | null
+): MatrixDisplayData | null => {
+  if (!evRange) return null;
+  const blocked = new Set(board);
+  const stripesByHand = new Map<string, string[]>();
+  for (const hand of HAND_ORDER) {
+    const stripes: string[] = [];
+    for (const [c1, c2] of expandHandCombos(hand)) {
+      if (blocked.has(c1) || blocked.has(c2)) continue;
+      const row = detail.byCombo.get(comboKey(c1, c2));
+      stripes.push(
+        row && row.weight > 0 && row.ev != null
+          ? heatColor(normalizeToRange(row.ev, evRange))
+          : "transparent"
+      );
+    }
+    if (stripes.length) stripesByHand.set(hand, stripes);
+  }
+  return { mode: "ev", stripesByHand, solidByHand: null, evRange };
+};
 
 /* ---------- job pipeline (executed by the compare watcher) ---------- */
 
@@ -139,9 +332,18 @@ const solutionsUrl = (job: CompareJob): string =>
 
 /* ---------- page ---------- */
 
+type SortKey = "evDiff" | "l1" | "reach" | "hand";
+type DisplayMode = "strategy" | "ev";
+
 const SolverCompare = () => {
-  const [doc, setDoc] = useState<CompareDoc | null>(null);
+  const [loaded, setLoaded] = useState<LoadedCompare | null>(null);
+  const doc = loaded?.doc ?? null;
   const [error, setError] = useState<string | null>(null);
+  const [nodeIndex, setNodeIndex] = useState(0);
+  const [selectedHand, setSelectedHand] = useState<string | null>(null);
+  const [hoverHand, setHoverHand] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("evDiff");
+  const [displayMode, setDisplayMode] = useState<DisplayMode>("strategy");
   const [builder, setBuilder] = useState<BuilderState>(() => cloneBuilder(DEFAULT_BUILDER));
   const [builderOpen, setBuilderOpen] = useState(false);
   const [solving, setSolving] = useState(false);
@@ -166,24 +368,50 @@ const SolverCompare = () => {
   const setB = <K extends keyof BuilderState>(key: K, value: BuilderState[K]) =>
     setBuilder((cur) => ({ ...cur, [key]: value }));
 
-  const acceptDoc = useCallback((parsed: CompareDoc) => {
-    if (parsed.kind !== "htsolver_pio_comparison") {
-      throw new Error("Not a comparison file - generate one with engine_compare.py --json-out");
+  const acceptLoaded = useCallback((next: LoadedCompare) => {
+    if (!next.doc.kind.startsWith("htsolver_pio_comparison")) {
+      throw new Error("Not a comparison file - generate one with engine_compare.py");
     }
-    setDoc(parsed);
+    setLoaded(next);
+    setNodeIndex(0);
+    setSelectedHand(null);
+    setHoverHand(null);
     setBuilderOpen(false);
     setError(null);
   }, []);
+
+  /** Both wire formats end up here: a binary payload keeps its buffer for
+   *  lazy per-node decoding, a JSON doc carries its nodes inline. */
+  const acceptBytes = useCallback(
+    (buf: ArrayBuffer) => {
+      if (isHtc(buf)) {
+        const htc = parseHtc(buf);
+        acceptLoaded({
+          doc: {
+            kind: htc.header.kind,
+            schema: htc.header.format,
+            spot: htc.header.spot as CompareDoc["spot"],
+            summary: htc.header.summary as CompareDoc["summary"],
+          },
+          htc,
+        });
+        return;
+      }
+      const text = new TextDecoder().decode(buf);
+      acceptLoaded({ doc: JSON.parse(text) as CompareDoc, htc: null });
+    },
+    [acceptLoaded]
+  );
 
   const loadFile = useCallback(
     (file: File) => {
       setPipeline(null); // a hand-loaded file has no pipeline run behind it
       file
-        .text()
-        .then((text) => acceptDoc(JSON.parse(text) as CompareDoc))
+        .arrayBuffer()
+        .then((buf) => acceptBytes(buf))
         .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
     },
-    [acceptDoc]
+    [acceptBytes]
   );
 
   const refreshJobs = useCallback(async () => {
@@ -206,9 +434,11 @@ const SolverCompare = () => {
         const resp = await authedFetch(`/api/enginecompare/${job.id}/result`);
         if (!resp.ok) throw new Error(await resp.text());
         const t1 = performance.now();
-        const parsed = (await resp.json()) as CompareDoc;
+        // Binary or JSON - acceptBytes sniffs the magic, so the endpoint's
+        // content type never has to be trusted.
+        const buf = await resp.arrayBuffer();
         const t2 = performance.now();
-        acceptDoc(parsed);
+        acceptBytes(buf);
         // Two rAFs bracket the commit + paint of the accepted doc: the first
         // fires before the frame, the second after it was presented. Finite
         // and event-driven - no idle cost.
@@ -227,7 +457,7 @@ const SolverCompare = () => {
         setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [acceptDoc]
+    [acceptBytes]
   );
 
   /** Queue a job for the compare watcher and poll it to completion. */
@@ -306,10 +536,88 @@ const SolverCompare = () => {
     }
   }, [builder]);
 
+  /** The node directory, from whichever format was loaded. Binary payloads
+   *  expose it without decoding any hand rows. */
+  const nodeDir = useMemo(
+    () =>
+      loaded?.htc
+        ? loaded.htc.header.nodes.map((n) => ({ id: n.id, position: n.position }))
+        : (loaded?.doc.nodes ?? []).map((n) => ({ id: n.id, position: n.position })),
+    [loaded]
+  );
+
+  const chipScale = doc?.spot.chip_scale ?? 100;
+  // Everything on this page displays in chips (mode "money" = plain numbers,
+  // no bb suffix); bbSize still calibrates the bet-label color ramp.
+  const money: MoneyOpts = useMemo(
+    () => ({ mode: "money", bbSize: chipScale }),
+    [chipScale]
+  );
+  /** Only the selected node's rows are decoded - the other ~1000 nodes' bytes
+   *  are never touched, which is what makes a full-tree payload cheap to
+   *  browse. */
+  const node = useMemo<CompareNode | null>(() => {
+    if (!loaded) return null;
+    if (loaded.htc) return decodeNode(loaded.htc, nodeIndex);
+    return loaded.doc.nodes?.[nodeIndex] ?? null;
+  }, [loaded, nodeIndex]);
+  const view = useMemo(() => (node ? buildNodeView(node) : null), [node]);
   const board = useMemo(() => (doc ? parseBoardCards(doc.spot.board) : []), [doc]);
+
+  const displayData = useMemo(() => {
+    if (!view || displayMode !== "ev") return { ht: null, pio: null };
+    return {
+      ht: buildEvDisplay(view.ht.comboDetail, board, view.evRange),
+      pio: buildEvDisplay(view.pio.comboDetail, board, view.evRange),
+    };
+  }, [view, displayMode, board]);
+
+  const breakdownHand = hoverHand ?? selectedHand;
+
+  const tableRows = useMemo(() => {
+    if (!node) return [];
+    let rows = node.hands;
+    if (selectedHand) {
+      rows = rows.filter(
+        (h) => handClassOf(h.hand.slice(0, 2), h.hand.slice(2, 4)) === selectedHand
+      );
+    }
+    const evDiff = (h: CompareHand) =>
+      h.pio.ev == null ? 0 : Math.abs(h.ht.ev - h.pio.ev);
+    const sorted = [...rows];
+    if (sortKey === "evDiff") sorted.sort((a, b) => evDiff(b) - evDiff(a));
+    else if (sortKey === "l1") sorted.sort((a, b) => b.l1 * b.reach - a.l1 * a.reach);
+    else if (sortKey === "reach") sorted.sort((a, b) => b.reach - a.reach);
+    else sorted.sort((a, b) => a.hand.localeCompare(b.hand));
+    return sorted;
+  }, [node, selectedHand, sortKey]);
+
+  const shownRows = tableRows.slice(0, 200);
   const chips = (v: number | null | undefined): string => (v == null ? "-" : v.toFixed(2));
   const megabytes = (v: number | null | undefined): string =>
     v == null ? "n/a" : v >= 1024 ** 3 ? `${(v / 1024 ** 3).toFixed(2)} GB` : `${Math.round(v / 1024 ** 2)} MB`;
+  const pct = (f: number): string => `${Math.round(f * 1000) / 10}`;
+
+  const onSelect = useCallback(
+    (hand: string) => setSelectedHand((cur) => (cur === hand ? null : hand)),
+    []
+  );
+
+  const onActionClick = useCallback(
+    (label: string) => {
+      if (!node || !view) return;
+      const k = view.labels.indexOf(label);
+      if (k < 0) return;
+      const childId = `${node.id}:${node.actions[k]}`;
+      const idx = nodeDir.findIndex((n) => n.id === childId);
+      if (idx >= 0) {
+        setNodeIndex(idx);
+        setSelectedHand(null);
+        setHoverHand(null);
+      }
+    },
+    [node, view, nodeDir]
+  );
 
   const cross = doc?.summary.cross_check;
   const timing = doc?.summary.timing;
@@ -780,6 +1088,206 @@ const SolverCompare = () => {
               </div>
             </div>
           </div>
+
+          {/* node picker + display mode */}
+          <div className="mt-5 flex flex-wrap items-center gap-2">
+            <label className="text-xs text-slate-500" htmlFor="compare-node">
+              Node
+            </label>
+            <select
+              id="compare-node"
+              value={nodeIndex}
+              onChange={(e) => {
+                setNodeIndex(Number(e.target.value));
+                setSelectedHand(null);
+                setHoverHand(null);
+              }}
+              className={inputCls}
+            >
+              {nodeDir.map((n, i) => (
+                <option key={n.id} value={i}>
+                  {n.id} — {n.position} to act
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={nodeIndex === 0}
+              onClick={() => setNodeIndex((i) => Math.max(0, i - 1))}
+              className="rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-400 disabled:opacity-40"
+            >
+              Prev
+            </button>
+            <button
+              type="button"
+              disabled={nodeIndex >= nodeDir.length - 1}
+              onClick={() => setNodeIndex((i) => Math.min(nodeDir.length - 1, i + 1))}
+              className="rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-400 disabled:opacity-40"
+            >
+              Next
+            </button>
+            <div className="ml-2 flex overflow-hidden rounded-lg border border-slate-700 text-xs">
+              {(["strategy", "ev"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setDisplayMode(mode)}
+                  className={`px-3 py-1 ${
+                    displayMode === mode
+                      ? "bg-emerald-600 text-white"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  {mode === "strategy" ? "Strategy" : "EV heat"}
+                </button>
+              ))}
+            </div>
+            {selectedHand && (
+              <button
+                type="button"
+                onClick={() => setSelectedHand(null)}
+                className="rounded-lg bg-emerald-500/15 px-2.5 py-1 text-xs text-emerald-300"
+              >
+                {selectedHand} · clear filter
+              </button>
+            )}
+          </div>
+
+          {/* side-by-side: matrix + action summary + hand breakdown */}
+          {view && (
+            <div className="mt-3 grid gap-4 lg:grid-cols-2">
+              {(
+                [
+                  ["htsolver", view.ht, displayData.ht, "text-emerald-400"],
+                  ["PioSolver", view.pio, displayData.pio, "text-sky-400"],
+                ] as const
+              ).map(([name, solverView, solverDisplay, color]) => (
+                <div key={name}>
+                  <div className={`mb-1 text-sm font-medium ${color}`}>{name}</div>
+                  <DecisionMatrix
+                    gridData={solverView.grid}
+                    heightMode="normalized"
+                    reachByHand={view.reachByHand}
+                    displayData={solverDisplay}
+                    money={money}
+                    selectedHand={selectedHand}
+                    onHandSelect={onSelect}
+                    onHandHover={setHoverHand}
+                  />
+                  <div className="mt-2">
+                    <ActionSummary
+                      data={solverView.grid}
+                      sizeRef={chipScale}
+                      onActionClick={onActionClick}
+                      compact
+                    />
+                  </div>
+                  <div className="mt-2 h-64">
+                    <HandBreakdown
+                      data={solverView.grid}
+                      hand={breakdownHand}
+                      board={board}
+                      comboDetail={solverView.comboDetail}
+                      displayMode={displayMode}
+                      evRange={view.evRange}
+                      chipEv={false}
+                      sizeRef={chipScale}
+                      className="h-full"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="mt-1 text-[11px] text-slate-600">
+            Cell heights use htsolver's reach at this node for both grids; EV heat shares one
+            color scale across both solvers. Click an action panel to walk into that line;
+            hover or click a hand class for its combos.
+          </p>
+
+          {/* per-combo table */}
+          {node && view && (
+            <div className="mt-5">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-medium text-slate-300">
+                  Per-combo comparison{selectedHand ? ` — ${selectedHand}` : ""}
+                </h2>
+                <select
+                  value={sortKey}
+                  onChange={(e) => setSortKey(e.target.value as SortKey)}
+                  className={`ml-auto ${inputCls} text-xs`}
+                  aria-label="Sort combos"
+                >
+                  <option value="evDiff">Sort by |ΔEV|</option>
+                  <option value="l1">Sort by reach·L1</option>
+                  <option value="reach">Sort by reach</option>
+                  <option value="hand">Sort by combo</option>
+                </select>
+              </div>
+              <div className="mt-2 overflow-x-auto rounded-xl border border-slate-800">
+                <table className="w-full min-w-[720px] text-right text-xs tabular-nums">
+                  <thead className="bg-slate-800/80 text-slate-400">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left">Combo</th>
+                      <th className="px-2 py-1.5">Reach</th>
+                      {view.labels.map((label) => (
+                        <th key={label} className="px-2 py-1.5">
+                          {label}
+                          <span className="block font-normal text-slate-600">ht% / pio%</span>
+                        </th>
+                      ))}
+                      <th className="px-2 py-1.5">
+                        EV chips
+                        <span className="block font-normal text-slate-600">ht / pio</span>
+                      </th>
+                      <th className="px-2 py-1.5">ΔEV chips</th>
+                      <th className="px-2 py-1.5">L1</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shownRows.map((h) => {
+                      const diff = h.pio.ev == null ? null : h.ht.ev - h.pio.ev;
+                      const diffBad = diff != null && Math.abs(diff) > doc.spot.pot * 0.02;
+                      return (
+                        <tr key={h.hand} className="border-t border-slate-800/70">
+                          <td className="px-2 py-1 text-left font-medium text-slate-200">
+                            {h.hand}
+                          </td>
+                          <td className="px-2 py-1 text-slate-400">{h.reach.toFixed(3)}</td>
+                          {view.labels.map((label, k) => (
+                            <td key={label} className="px-2 py-1">
+                              <span className="text-emerald-300">{pct(h.ht.freq[k])}</span>
+                              <span className="text-slate-600"> / </span>
+                              <span className="text-sky-300">{pct(h.pio.freq[k])}</span>
+                            </td>
+                          ))}
+                          <td className="px-2 py-1">
+                            <span className="text-emerald-300">{chips(h.ht.ev)}</span>
+                            <span className="text-slate-600"> / </span>
+                            <span className="text-sky-300">{chips(h.pio.ev)}</span>
+                          </td>
+                          <td
+                            className={`px-2 py-1 ${
+                              diffBad ? "font-semibold text-amber-400" : "text-slate-400"
+                            }`}
+                          >
+                            {diff == null ? "-" : diff.toFixed(2)}
+                          </td>
+                          <td className="px-2 py-1 text-slate-500">{h.l1.toFixed(3)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {tableRows.length > shownRows.length && (
+                <p className="mt-1 text-[11px] text-slate-600">
+                  Showing {shownRows.length} of {tableRows.length} combos - narrow with the
+                  sort or a hand-class filter.
+                </p>
+              )}
+            </div>
+          )}
 
           {runLog && (
             <details className="mt-4 text-xs text-slate-500">

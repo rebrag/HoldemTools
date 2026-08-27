@@ -148,7 +148,7 @@ int main(int argc, char** argv) {
         return 0;
       }
       const nlohmann::json dump = dump_artifact_json(store, args.input_path, args.node,
-                                                     args.runouts, args.strategy_only);
+                                                     args.runouts, args.fields);
       const std::string text = args.compact ? dump.dump() : dump.dump(2);
       if (args.out_path) {
         std::ofstream out(*args.out_path, std::ios::binary);

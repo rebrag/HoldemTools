@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include "io/dump_fields.hpp"
+
 namespace engine {
 
 struct CliArgs {
@@ -13,7 +15,7 @@ struct CliArgs {
   std::optional<int> runouts;             // dump-json --runouts (sampled chance fan-out)
   bool meta_only = false;                 // dump-json --meta-only
   bool compact = false;                   // dump-json --compact (no pretty-print)
-  bool strategy_only = false;             // dump-json --strategy-only (trimmed fields)
+  DumpFields fields = DumpFields::kFull;  // dump-json --fields
   std::optional<std::string> out_path;    // dump-json --out (write to file, not stdout)
   bool valid = false;
   std::string error;

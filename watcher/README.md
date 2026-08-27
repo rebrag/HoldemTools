@@ -123,9 +123,12 @@ The primary pass/fail gate is cross-exploitability (the engine's strategy is loa
 Those diagnostics are weighted by `gfreq * min(engine reach, pio reach)`: off-path (node, hand) pairs have an unconstrained strategy and an undefined `calc_ev` on the side that does not reach them, so including them measures equilibrium choice rather than correctness.
 Multistreet trees build via `add_line` with one token per action = the actor's hand-cumulative total (checks repeat the current total - a mid-line 0 after chips are in can crash Pio).
 Trees past `--full-limit` decision nodes are compared on deterministic sampled runouts with a root-EV gate instead of the (then-meaningless) partial cross-check.
-`--json-out compare.json` additionally writes the comparison summary (gates, timing, memory) for the frontend's hidden `/compare` page; in full mode it also carries the per-hand detail, which the page no longer renders.
-`--gate-only` is the fast path the compare watcher uses: a trimmed `--strategy-only --compact` engine dump, one UPI call per node (the action map for `set_strategy`), the unchanged cross-exploitability gate, and a summary-only `--json-out`.
-Manual validation runs should stay in full mode, where the per-hand diagnostics are what make a failure debuggable.
+`--htc-out compare.htc` writes the per-hand comparison as the compact binary payload the `/compare` page loads (see `htc_format.py`): every decision node at roughly 32 bytes per hand row, against the ~250 the equivalent JSON costs.
+That ratio is what lets the whole tree ship - a turn tree runs ~24MB raw and ~5MB gzipped for all ~1100 nodes, where the JSON needed a 250-node cap to stay under 40MB.
+`--json-out compare.json` still writes the JSON doc, capped by `--json-max-nodes`, for reading a run by hand.
+`--gate-only` skips the per-hand work entirely - a `--fields gate` engine dump, one UPI call per node (the action map for `set_strategy`), and the unchanged cross-exploitability gate - for when only the verdict matters.
+
+The engine dump is always trimmed (`--fields detail`, or `gate` under `--gate-only`) and written to a file rather than piped: the harness reads only the actor seat's hands and the root's reaches, so a full dump would move ~680MB of pretty-printed JSON to use a fraction of it.
 
 Both solvers' wall clock AND peak memory are reported (they land in `summary.timing` and `summary.memory` of the JSON) so the two are directly comparable: same tree, same accuracy target.
 Memory is the peak working set of each solver PROCESS, read with the same OS call the engine uses for its own `peak_rss_bytes`, so it is one measurement of one thing rather than two solvers' opinions of their own footprint.
@@ -137,7 +140,8 @@ A run against a pre-solved `--cfr` reports no Pio time: that tree was solved els
 ## Compare watcher (`engine_compare_watcher.py`)
 
 The queue-driven sibling of the harness: claims `EngineCompareJob`s from `POST /api/enginecompare/claim` (same `X-Watcher-Key` + heartbeat protocol as the solve queue) and executes them on this machine.
-`compare` jobs solve with htsolver AND Pio (`engine_compare.py --solve-pio --gate-only`) and upload the summary JSON (~1KB gzipped) to ADLS `enginecompare/{id}.json.gz`; `publish` jobs solve with htsolver only and POST the artifact to the API, which publishes schema-4 bundles into the solutions library.
+`compare` jobs solve with htsolver AND Pio (`engine_compare.py --solve-pio --htc-out`) and upload the binary comparison payload to ADLS `enginecompare/{id}.htc.gz`; `publish` jobs solve with htsolver only and POST the artifact to the API, which publishes schema-4 bundles into the solutions library.
+The API picks the response content type from that extension, so jobs predating the binary format still serve their `.json.gz` blobs unchanged.
 Run it with `python engine_compare_watcher.py` (same `.env`; set `ENGINE_EXE` if the engine binary is not at `../engine/build/engine.exe`).
 Only one instance - it spawns Pio processes.
 

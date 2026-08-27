@@ -88,7 +88,7 @@ public class EngineCompareJobsTests
             {
                 WatcherId = "w1",
                 Status = "Done",
-                ResultBlobPath = "enginecompare/x.json.gz",
+                ResultBlobPath = "enginecompare/x.htc.gz",
                 Timings = new JsonObject
                 {
                     ["schema"] = 1,
@@ -99,7 +99,7 @@ public class EngineCompareJobsTests
 
         var stored = await db.EngineCompareJobs.SingleAsync();
         Assert.Equal("Done", stored.Status);
-        Assert.Equal("enginecompare/x.json.gz", stored.ResultBlobPath);
+        Assert.Equal("enginecompare/x.htc.gz", stored.ResultBlobPath);
         Assert.NotNull(stored.CompletedAtUtc);
         Assert.Contains("engine_solve_s", stored.TimingsJson);
 
