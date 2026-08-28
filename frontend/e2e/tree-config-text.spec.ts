@@ -268,7 +268,7 @@ test("htsolver algorithm settings reach the config, and sampling disables recalc
   });
 });
 
-test("qre drives the qre block, not algorithm.update, and forces Pio off", () => {
+test("qre drives the qre block, not algorithm.update, and forces only the gate off", () => {
   const base: BuilderState = {
     ...DEFAULT_BUILDER,
     oopRange: { AA: 1 },
@@ -281,6 +281,12 @@ test("qre drives the qre block, not algorithm.update, and forces Pio off", () =>
     updateRule: "qre",
     qreLambdaOop: "20",
     qreLambdaIp: "5",
+    // Explicitly false, not left at the default. DEFAULT_BUILDER has all
+    // three disabled, so asserting "still true" below would pass whether or
+    // not QRE forces them and would prove nothing.
+    disablePio: false,
+    disableCompare: false,
+    disableCrossCheck: false,
   });
   const config = qre.config as Record<string, unknown>;
 
@@ -292,11 +298,25 @@ test("qre drives the qre block, not algorithm.update, and forces Pio off", () =>
   // typed means the same thing on any tree. Default pot is 100.
   expect(config.qre).toEqual({ mode: "qre", lambda: [0.2, 0.05] });
 
-  // A QRE solve is not Nash, so the harness refuses to rate it against Pio.
-  // The form must not be able to queue a job that only fails at the watcher.
-  expect(qre.disablePio).toBe(true);
-  expect(qre.disableCompare).toBe(true);
+  // Pio MAY run alongside a QRE solve - it solves the identical tree for Nash
+  // and the point is to see how the two grids differ - so these follow the
+  // user rather than being forced.
+  expect(qre.disablePio).toBe(false);
+  expect(qre.disableCompare).toBe(false);
+  // Only the cross-exploitability gate is meaningless for a QRE: it would rate
+  // how far from Nash the strategy is, which is the feature. Forced off here
+  // so the form cannot queue a job the harness will refuse.
   expect(qre.disableCrossCheck).toBe(true);
+
+  // ...and a Nash run leaves all three exactly as the user set them.
+  const nashRun = buildEngineConfig({
+    ...base,
+    updateRule: "dcfr",
+    disablePio: false,
+    disableCompare: false,
+    disableCrossCheck: false,
+  });
+  expect(nashRun.disableCrossCheck).toBe(false);
 
   // Annealing is opt-in and omitted entirely when off, so a fixed-lambda
   // config hashes the same as one written before annealing existed.

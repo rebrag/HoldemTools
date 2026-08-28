@@ -283,11 +283,14 @@ export const buildEngineConfig = (b: BuilderState): EngineConfigResult => {
 
   return {
     pioAccuracyPct: accuracyPct,
-    // A QRE solve is deliberately not a Nash equilibrium, so the Pio harness
-    // refuses to rate one - correctly. Force all three off rather than let the
-    // form queue a job that only fails once it reaches the watcher.
-    disablePio: qre ? true : b.disablePio,
-    disableCompare: qre ? true : b.disableCompare,
+    // Pio may run alongside a QRE solve: it solves the identical tree for
+    // Nash, and seeing how the two grids differ is the whole point of looking
+    // at a boundedly-rational strategy. Only the cross-exploitability GATE is
+    // meaningless - it would rate how far from Nash the strategy is, which is
+    // the feature rather than a defect - so that one stays forced off, and the
+    // harness refuses it independently.
+    disablePio: b.disablePio,
+    disableCompare: b.disableCompare,
     disableCrossCheck: qre ? true : b.disableCrossCheck,
     config: {
       schema: 1,

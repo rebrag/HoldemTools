@@ -39,8 +39,14 @@ games have a unique value but many equilibria, and indifference regions
 therefore the primary correctness statement about the engine. It is OFF by
 default: a run without it reports no verdict rather than a cheap PASS.
 
-A QRE artifact (mode != "nash") is refused: QRE deliberately deviates from
-Nash and must never be validated against Pio.
+A QRE artifact (mode != "nash") may be solved alongside Pio, but never GATED
+against it. Pio solves the identical tree for Nash and its per-hand rows are
+extracted as usual, so the two grids can be compared by eye - seeing how a
+boundedly-rational strategy differs from GTO is the point of running both.
+What is refused is --cross-check: rating how exploitable a deliberately
+non-Nash strategy is measures the feature, not a defect, and reporting that as
+a PASS/FAIL verdict would be meaningless. Root-EV differences are likewise
+expected rather than discrepancies, and are labelled as such.
 """
 
 from __future__ import annotations
@@ -605,29 +611,38 @@ def main() -> int:
     meta = load_engine_meta(args)
     harness_timing["meta_load_s"] = time.perf_counter() - phase_start
 
-    # --- Refuse to involve Pio in a non-Nash artifact. --------------------
-    # A QRE solve deliberately deviates from Nash, so rating it against Pio -
-    # by per-hand comparison or by cross-exploitability - is meaningless and
-    # must never happen. But that objection is to the PIO half of this
-    # harness, not the engine half: an engine-only run just extracts
-    # htsolver's own strategy into a .htc for /compare to render, and there is
-    # nothing there to be wrong about.
+    # --- Refuse the GATE on a non-Nash artifact, not Pio itself. ----------
+    # Loading a QRE strategy into Pio and having Pio's MES rate it produces a
+    # number that means "how far from Nash is this" - which for a QRE is the
+    # FEATURE, not an error. Reporting it as a PASS/FAIL verdict would be
+    # meaningless, so the cross-exploitability gate stays refused.
     #
-    # Gating on pio_enabled is what lets a QRE job produce a viewable result
-    # at all. Refusing unconditionally failed the whole job - this returned
-    # before ht_out was written, and the watcher treats a missing ht_out as a
-    # hard error - even when no Pio comparison had been asked for.
+    # Everything else Pio does here is sound for a QRE artifact and worth
+    # having: solve_in_pio builds Pio's tree from the ENGINE's node table
+    # (action_kind, action_amount, parent_id, root reach) and never reads
+    # mode, lambda or the strategy, so the trees still match node-for-node.
+    # Pio then solves that tree for Nash and extracts its own per-hand rows,
+    # which is exactly the side-by-side a user wants in order to SEE how a
+    # boundedly-rational strategy differs from GTO.
+    #
+    # The narrower invariant, stated once: a QRE solve must never be GATED
+    # against Pio, and its differences from Pio must never be reported as
+    # error.
     is_qre = meta.get("mode") != "nash" or meta.get("lambda") is not None
-    if is_qre and pio_enabled:
-        print("REFUSING to compare: this artifact is a QRE solve "
+    if is_qre and args.cross_check:
+        print("REFUSING --cross-check: this artifact is a QRE solve "
               f"(mode={meta.get('mode')!r}, lambda={meta.get('lambda')!r}).\n"
-              "A QRE solve deliberately deviates from Nash and will not - and should "
-              "not - match PioSolver. Re-solve with qre.mode = \"nash\", or drop "
-              "--solve-pio/--cfr to extract the engine strategy on its own.")
+              "Pio would be rating how exploitable a deliberately non-Nash strategy is, "
+              "which is the point of the strategy rather than a verdict on it. Drop "
+              "--cross-check to solve the same tree in Pio and compare the two grids "
+              "by eye, or re-solve with qre.mode = \"nash\" for a gated run.")
         return 2
-    if is_qre:
-        print(f"QRE artifact (lambda={meta.get('lambda')!r}): engine-only extraction. "
-              "Pio comparison and cross-exploitability are not applicable here.")
+    if is_qre and pio_enabled:
+        print(f"QRE artifact (lambda={meta.get('lambda')!r}): Pio will solve the same "
+              "tree for NASH, as a reference to eyeball against. The two strategies are "
+              "SUPPOSED to differ - no gate is run and no verdict is reported.")
+    elif is_qre:
+        print(f"QRE artifact (lambda={meta.get('lambda')!r}): engine-only extraction.")
 
     decision_count = int(meta.get("decision_node_count", 0))
     full_mode = decision_count <= args.full_limit
@@ -794,9 +809,16 @@ def main() -> int:
     else:
         gate = "none"
         gate_pass = None
+        # For a QRE artifact the engine's root EV is the QRE's value, not the
+        # game value Pio converged to, so a nonzero difference here is the
+        # expected outcome rather than a discrepancy. Say which it is instead
+        # of printing a bare |diff| that reads like a disagreement.
+        note = ("   (QRE vs Nash: these are different equilibria, so this "
+                "difference is expected)" if is_qre
+                else "   (no gate: --cross-check not requested)")
         print(f"\nroot EV: engine {meta['ev_chips'][0]:.3f} vs pio {results.get('EV OOP')}"
               f"  |diff| {root_ev_diff if root_ev_diff is None else round(root_ev_diff, 3)}"
-              f"   (no gate: --cross-check not requested)")
+              f"{note}")
 
     print_cost_line(meta, pio_timing)
 
