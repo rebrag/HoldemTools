@@ -9,7 +9,7 @@ htsolver replaces PioSolver in the HoldemTools pipeline.
 
 - The watcher picks up a gametree job, solves it with **htsolver**, uploads schema-4 bundles, and frontend users browse the result in `/solutions` - exactly today's flow with Pio swapped out. The plumbing already exists: publish-mode `EngineCompareJob`s do this for river spots now.
 - Pio is retired once htsolver is trusted **as much or more than Pio**. Trust is earned through the `/compare` loop: every spot solvable by both, compared per hand, gated on cross-exploitability.
-- htsolver's differentiators over Pio/Monker (the reason it exists): **QRE** (per-player rationality, lambda fitting), **3+ players** (NashConv, side pots), **configurable cooperation/collusion** (seat->agent partitions, payoff weights, Bayesian unknown-collusion). Everything else is table stakes.
+- htsolver's differentiators over Pio/Monker (the reason it exists): **QRE** (per-player rationality - *shipped, M7*; lambda fitting still to come), **3+ players** (NashConv, side pots), **configurable cooperation/collusion** (seat->agent partitions, payoff weights, Bayesian unknown-collusion). Everything else is table stakes.
 - Hard boundaries that never change: the engine is a headless CLI with zero cloud/Firebase/GUI dependencies; artifacts are local files; upload/index/serving is the backend + watcher's job; Firebase is auth-only.
 
 ## Milestones
@@ -129,6 +129,28 @@ Both were found by chasing an iteration count that could not have moved if the e
 
 The sweep's hardest board (`Ks Kd 4c 9h`, which has a usable s<->d permutation) went 17.9 s -> 9.45 s at 100% ranges. Full-range turn boards remain the one family where Pio is still ahead (0.71x median, best board 0.93x - close to parity); per M6.10's negative results, closing that residual is an update-rule question, not further scheduling or collapsing.
 
+- **M7 - QRE (quantal response equilibrium).** Landed 2026-08-28. **The first differentiator over Pio to actually ship.**
+
+  Entropy-regularized CFR, implemented as a **reward transformation inside the traversal** rather than as a replacement for regret matching. At an actor's decision node each action's counterfactual value is charged the dilated KL of the current strategy to uniform:
+
+  `vt(h,a) = v(h,a) - pi(h) * (1/lambda) * (log sigma(h,a) + log A)`
+
+  whose fixed point is the logit QRE. `pi(h)` is `Game::compat_weights` - the compatible-opponent-reach the counterfactual values already carry - and it is load-bearing rather than cosmetic: softmax is not scale-invariant, so regularizing the raw counterfactual value would make effective rationality vary with how often the opponent can hold a compatible hand. Scaling by `pi(h)` is what makes one lambda mean the same thing at every infoset.
+
+  **Why the transformation and not a softmax policy.** Because only the values fed into the regrets change, `regret_matched_action_major`, the cold-path `row_from_action_major`, `average_strategy()`, `current_strategy()`, the schema-4 exporter, the C# reader and the frontend are all untouched, and the average strategy is still the answer. A softmax-over-regrets design would have had to mirror itself in both regret-matching implementations and would have changed what `current_strategy()` means. Config is `qre.mode: "qre"` plus a per-seat `qre.lambda` (1/chips; a scalar broadcasts), with optional `qre.anneal: {factor, full_at}`.
+
+  **The stop criterion is the interesting part, and it is a correction to the obvious plan.** A fixed-lambda QRE is not Nash: perturbing a payoff by at most eps makes the perturbed equilibrium a 2*eps-Nash of the true game, so plain exploitability plateaus around `2*D*log(A)/lambda` chips and **can never reach a tight accuracy target, however long the solve runs**. `compute_qre_best_response` therefore measures exploitability in the entropy-augmented game - a smooth (log-sum-exp) maximum against an on-profile value charged the same KL - which does converge and is chip-denominated, so `budget.target_exploitable_pct` works unchanged. Charging the `ev` side too is the easy thing to miss; regularizing only the best-response side leaves a gap that never closes. Both numbers are printed and land in artifact metadata, and solve start warns when the configured lambda cannot reach the configured target.
+
+  Measured on `configs/validate_turn_fullrange.json` at lambda 0.1 (= 10 per pot) with a 0.3%-of-pot target: the QRE gap reaches 0.235% in 500 iterations while plain exploitability sits at 6.89% and stays there. That separation is the feature, not a failure.
+
+  **Bit-neutral on the Nash path, verified rather than assumed:** `validate_turn_fullrange` at 300 iterations still gives `nashconv 0.232074, ev 45.9951 54.0049`, and all 37 pre-existing tests pass with no tolerance loosened (`test_parallel` and `test_iso` compare exact floats).
+
+  Interactions, each tested rather than argued: the deferred DCFR discount is untouched (the transform runs inside the traversal, after `pay_discount`); the recalc schedule is fed the **regularized** gap, because feeding it a plateauing number would make its feedback controller quarter its aggressiveness on nothing; suit isomorphism composes, and the QRE test asserts something stronger than the Nash one can - the regularized solution is **unique**, so iso-on and iso-off must agree on the strategy itself, not merely the game value (measured residual 0.053 -> 0.028 -> 0.0085 at 600 -> 2400 -> 9600 iterations, i.e. going to zero); and 1 vs 8 threads stay bitwise identical.
+
+  **Annealing is available but is a research bet, not a result.** With a moving lambda the strategy average would span different games, so the solver drops the average once at the moment lambda settles and the accuracy target reverts to plain Nash exploitability, gated on annealing having finished. Whether it beats plain DCFR to a Nash target is unmeasured; M6.10's negative results are the precedent for expecting little.
+
+  Not built, deliberately: `fit-lambda` (MLE from observed frequency counts) needs hand-history frequency plumbing that does not exist yet.
+
 ## Where the time goes: the chance-node cliff (measured 2026-08-26)
 
 `watcher/bench_boards.py` swept 10 turn boards and 10 river boards through both solvers - same ranges, pot, stacks and betting structure, same 0.02%-of-pot accuracy target, so the only variable is whether the tree contains a chance node. All 20 passed the cross-exploitability gate.
@@ -189,7 +211,6 @@ Re-run `bench_boards.py --ranges tight` after each item; it is the only number t
 
 Next (config schema already carries the keys; do not re-plumb):
 
-- **M7 - QRE**: entropy-regularized CFR (`qre.mode`, per-player lambda, annealing schedules), `fit-lambda` subcommand (MLE from observed frequency counts). A QRE artifact must never be compared to Pio (the harness refuses).
 - **M8 - multiway (3+ players)**: N-seat public tree, fast side-pot terminal path (`showdown_share` is the correct-but-slow reference), NashConv already generalizes. `multiway_no_nash_guarantee` stays surfaced - CFR converges to coarse correlated equilibria with 3+ players.
 - **M9 - collusion, best-response mode first**: seat->agent partition + payoff-weight matrices, joint-range representation (1326x1225 - river-only on 16GB), frozen-opponent team best response.
 - **M10 - Bayesian unknown-collusion**: chance root over team type with probability p; opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.

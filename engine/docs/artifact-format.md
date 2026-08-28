@@ -44,7 +44,8 @@ One JSON object. Fields (all present unless marked optional):
 
 - `solver_version`, `format_version`, `config_hash` (SHA-256 hex of the canonical config dump), `config` (the full parsed config, embedded), `game`.
 - `mode` - `"nash"` or `"qre"`. A QRE solve and a Nash solve must be distinguishable downstream; the validation harness refuses `"qre"`.
-- `lambda` - per-player λ array for QRE solves, `null` for Nash.
+- `lambda` - per-seat λ array (in 1/chips) for QRE solves, `null` for Nash.
+- `final_qre_gap_chips`, `final_qre_gap_pct_pot` - per-player exploitability measured in the entropy-augmented game, which is what a QRE solve converges on and stops against. `null` on a Nash solve. `final_nashconv` / `final_exploitable_*` stay the PLAIN measurement of the same strategy; on a QRE solve that number plateaus at a λ-dependent floor by design, so both travel and a consumer should show the plateau rather than report it as a failure to converge.
 - `iterations`, `final_nashconv` (chips), `ev_chips` (per-seat root EVs; they sum to the root pot).
 - `partition` (seat->agent), `payoff_weights` (`null` = identity), `collusion` (`{mode, p}`).
 - `multiway_no_nash_guarantee` - `true` whenever the game has 3+ seats. CFR converges to the coarse correlated equilibrium set there, not necessarily Nash; consumers must not over-trust multiway results.

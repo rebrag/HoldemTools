@@ -6,7 +6,7 @@ No GUI, no cloud SDKs, no Firebase - the same binary runs on a dev box, a big-RA
 
 Differentiators over existing solvers (PioSolver, MonkerSolver):
 
-- **QRE** (quantal response equilibrium) via entropy-regularized CFR, with per-player rationality (λ) and λ-fitting from observed frequencies. *(Scheduled: M7.)*
+- **QRE** (quantal response equilibrium) via entropy-regularized CFR, with per-player rationality (λ). *(Landed: M7. λ-fitting from observed frequencies is still scheduled.)*
 - **3+ player support** from the ground up, with side-pot-correct terminal evaluation and NashConv as the convergence metric. *(Terminal evaluator landed; full multiway solving scheduled: M8.)*
 - **Configurable cooperation/collusion**: a seat->agent partition plus payoff-weight matrix, with known (common-knowledge) and unknown (Bayesian) collusion modes. *(Scheduled: M9-M10.)*
 
@@ -34,6 +34,7 @@ Currently implemented: heads-up NLHE **river** solving in Nash mode, validated a
 
 - **CFR has no Nash-equilibrium guarantee for 3+ players.** It converges to the coarse correlated equilibrium set, and multiway games can have many Nash equilibria with no principled way to pick one. Pluribus used CFR anyway and it worked empirically - that is the state of the art, not a theorem. Multiway artifacts carry `multiway_no_nash_guarantee: true` in their metadata; downstream consumers should not over-trust multiway results.
 - **QRE** (λ-parameterized logit response: `P(a) ∝ exp(λ·u(a))`) models boundedly rational opponents: λ=0 is uniform random, λ→∞ recovers Nash. A QRE solve is deliberately *not* an equilibrium in the Nash sense and is never comparable to Pio output - the validation harness refuses to try.
+- **A fixed-λ QRE solve has a Nash-exploitability floor, and that is the design, not a bug.** Perturbing a payoff by at most ε makes the perturbed game's equilibrium a 2ε-Nash of the true one, so plain exploitability plateaus around `2·D·log(A)/λ` chips (D = a player's own remaining decision points, A = actions per node). It will never reach a tight accuracy target however long the solve runs. The engine therefore stops a QRE solve on the **QRE gap** - exploitability measured in the same entropy-augmented game the solve is minimizing, which does converge - and reports the plain number alongside so the plateau is visible rather than mistaken for a stall. Solve start warns when the configured λ cannot reach the configured target.
 - **Collusion solving is a research/analysis capability.** Modeling information-sharing teams is standard published game theory and is how collusion-*detection* work is done. Using it against live real-money tables is cheating and bannable everywhere.
 
 ## Validation ladder
@@ -77,7 +78,7 @@ See the commented `configs/example_river_hu.json`. Summary:
 | `players[]` | seat label, stack (chips behind), range string or `@file:` |
 | `bet_sizing.<street>` | per seat: `bets`/`raises` (and OOP `donks`) as %-of-pot lists, plus `no_3bet` (that seat never makes the street's third aggression); `allin_threshold` and `max_raises` are street-wide |
 | `algorithm` | `rm` \| `cfr_plus` \| `dcfr` (+ `dcfr.alpha/beta/gamma`; default DCFR, linear averaging) |
-| `qre` | `mode: "nash"` (QRE lands in M7; schema reserved) |
+| `qre` | `mode: "nash" \| "qre"`; for `"qre"`, `lambda` (per seat, in 1/chips - a scalar broadcasts) and optional `anneal: {factor, full_at}`. A QRE solve stops on the **QRE gap**, not on plain exploitability - see below |
 | `agents` | `partition` (identity only this pass), `payoff_weights`, `collusion` (reserved) |
 | `budget` | `iterations`, `target_nashconv` (chips, early stop), `checkpoint_every` |
 | `memory_limit_gb` | fail-fast ceiling for the pre-solve estimate |

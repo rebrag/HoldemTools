@@ -32,8 +32,17 @@
   // (linear averaging).
   "algorithm": { "update": "dcfr" },
 
-  // Only "nash" is implemented in this pass; per-player lambda and
-  // annealing schedules land with the QRE milestone (M7).
+  // "nash" solves for a Nash equilibrium. "qre" solves for a logit quantal
+  // response equilibrium instead - boundedly rational play, where better
+  // actions are taken more often rather than always - and then needs
+  // "lambda": one rationality per seat in 1/chips (a scalar broadcasts to
+  // both). Larger lambda is closer to Nash; different values per seat model
+  // a sharp player against a loose one.
+  //
+  // A QRE is deliberately NOT Nash, so its plain exploitability plateaus and
+  // budget.target_exploitable_pct is measured against the QRE gap instead.
+  // Optional "anneal": { "factor": N, "full_at": T } grows lambda toward Nash
+  // by iteration T and switches the target back to plain exploitability.
   "qre": { "mode": "nash" },
 
   // Identity partition, no collusion. Team play lands in a later pass.

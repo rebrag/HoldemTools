@@ -605,13 +605,29 @@ def main() -> int:
     meta = load_engine_meta(args)
     harness_timing["meta_load_s"] = time.perf_counter() - phase_start
 
-    # --- Refuse non-Nash artifacts outright. -----------------------------
-    if meta.get("mode") != "nash" or meta.get("lambda") is not None:
+    # --- Refuse to involve Pio in a non-Nash artifact. --------------------
+    # A QRE solve deliberately deviates from Nash, so rating it against Pio -
+    # by per-hand comparison or by cross-exploitability - is meaningless and
+    # must never happen. But that objection is to the PIO half of this
+    # harness, not the engine half: an engine-only run just extracts
+    # htsolver's own strategy into a .htc for /compare to render, and there is
+    # nothing there to be wrong about.
+    #
+    # Gating on pio_enabled is what lets a QRE job produce a viewable result
+    # at all. Refusing unconditionally failed the whole job - this returned
+    # before ht_out was written, and the watcher treats a missing ht_out as a
+    # hard error - even when no Pio comparison had been asked for.
+    is_qre = meta.get("mode") != "nash" or meta.get("lambda") is not None
+    if is_qre and pio_enabled:
         print("REFUSING to compare: this artifact is a QRE solve "
               f"(mode={meta.get('mode')!r}, lambda={meta.get('lambda')!r}).\n"
               "A QRE solve deliberately deviates from Nash and will not - and should "
-              "not - match PioSolver. Re-solve with qre.mode = \"nash\".")
+              "not - match PioSolver. Re-solve with qre.mode = \"nash\", or drop "
+              "--solve-pio/--cfr to extract the engine strategy on its own.")
         return 2
+    if is_qre:
+        print(f"QRE artifact (lambda={meta.get('lambda')!r}): engine-only extraction. "
+              "Pio comparison and cross-exploitability are not applicable here.")
 
     decision_count = int(meta.get("decision_node_count", 0))
     full_mode = decision_count <= args.full_limit
@@ -664,6 +680,16 @@ def main() -> int:
                                               meta["final_nashconv"] / 2.0),
                 "exploitable_pct_pot": meta.get("final_exploitable_pct_pot"),
                 "ev": meta["ev_chips"],
+                # QRE solves only (null on a Nash solve). `exploitable_*` above
+                # stays the PLAIN measurement, which on a QRE solve plateaus at
+                # a lambda-dependent floor by design; the gap is what such a
+                # solve actually converges on and stops against. Both travel so
+                # /compare can show the plateau for what it is rather than
+                # reporting it as a failure to converge.
+                "mode": meta.get("mode", "nash"),
+                "lambda": meta.get("lambda"),
+                "qre_gap_chips": meta.get("final_qre_gap_chips"),
+                "qre_gap_pct_pot": meta.get("final_qre_gap_pct_pot"),
             },
             "timing": {
                 "ht_solve_s": meta.get("wall_time_s"),

@@ -163,5 +163,5 @@ It claims from its own queue, runs `engine.exe` itself, and `engine_compare.py` 
 `watch_adls_and_run_pio_headless.py` serves a different queue entirely (the gametree/SolveJobs pipeline behind `/solutions`, driving PioViewer through pywinauto), and nothing on the compare path goes through it.
 Run both only when you also want the Pio solutions library fed; they share the `.env` and do not interfere.
 The one place they meet is `publish` mode, and even there they stay out of each other's way by writing separate index blobs (`enginesolutions-index.json` vs `piosolutions-index.json`), merged at read time.
-It reuses the vendored `pyosolver.py` UPI client to query a live Pio process (`show_hand_order` / `show_strategy` / `calc_ev` / `calc_results`), and refuses QRE artifacts - only Nash-mode solves are comparable to Pio.
+It reuses the vendored `pyosolver.py` UPI client to query a live Pio process (`show_hand_order` / `show_strategy` / `calc_ev` / `calc_results`), and refuses to involve Pio in a QRE artifact - only Nash-mode solves are comparable to Pio. The refusal is scoped to runs that actually use Pio (`--solve-pio` / `--cfr`); an engine-only extraction of a QRE solve is fine, and is how `/compare` renders one.
 Usage and workflow: see "Validation ladder" in `engine/README.md`.
