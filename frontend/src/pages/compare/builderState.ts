@@ -347,7 +347,18 @@ export const buildEngineConfig = (b: BuilderState): EngineConfigResult => {
       budget: {
         iterations,
         target_exploitable_pct: accuracyPct,
-        checkpoint_every: 250,
+        // The accuracy stop can only fire AT a checkpoint, so this is the
+        // resolution of the solve: expected overshoot is checkpoint_every / 2
+        // iterations of pure waste. But a checkpoint is a best-response pass
+        // over the whole tree, and on a flop tree that costs about 2.7
+        // iterations - the "checkpoints are free" measurement in the engine
+        // roadmap was taken on a turn tree and does not generalize.
+        //
+        // So both ends are expensive. Cost is (N/cp) * 2.7 + cp/2 iterations,
+        // minimized near sqrt(2 * N * 2.7); for the 100-1000 iteration solves
+        // this page produces that is ~25-40. This was 250, which on a flop
+        // tree needing 265 iterations ran 500 and cost 1.44x - measured.
+        checkpoint_every: 25,
       },
       memory_limit_gb: 12,
       // 0 = one worker per hardware thread on the machine that runs the
