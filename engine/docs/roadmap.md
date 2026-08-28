@@ -143,6 +143,31 @@ The sweep's hardest board (`Ks Kd 4c 9h`, which has a usable s<->d permutation) 
 
   Measured on `configs/validate_turn_fullrange.json` at lambda 0.1 (= 10 per pot) with a 0.3%-of-pot target: the QRE gap reaches 0.235% in 500 iterations while plain exploitability sits at 6.89% and stays there. That separation is the feature, not a failure.
 
+  **QRE is NOT faster than DCFR, and the hope that it might be is now measured and dead.** On the `LPopenBBcall` flop tree (`3s Kd Js`, pot 100, stacks 700, ~30% ranges, 414110 decision nodes), both to a 0.3%-of-pot target:
+
+  | | iterations | wall | ms/iteration | what it reached |
+  |---|---|---|---|---|
+  | dcfr | 225 | **53.0 s** | 236 | 0.30% plain exploitable |
+  | qre, lambda 20/pot | 525 | **195.5 s** | 372 | 0.30% QRE gap; plain exploitability plateaued at **4.09%** |
+
+  So QRE cost **3.7x the wall clock** for a strategy that is 13.6x more exploitable in the Nash sense. Two independent factors, worth separating because only one is fixable:
+
+  - **1.58x per iteration** (236 -> 372 ms). This is the `logf` per regret cell plus a `compat_weights` pass per actor node. It is the cost of the feature and roughly matches the 20-60% predicted up front. Fusing `log sigma` into the regret matcher (one pass producing both) and/or a vendored polynomial `log2f` would recover part of it; not attempted, since QRE is a modelling feature rather than a speed feature.
+  - **2.3x the iterations.** At a soft lambda the QRE gap simply starts much higher and grinds down; the regularization is too mild here to buy the better conditioning that would pay for itself.
+
+  **But ANNEALED lambda is a real Nash speed-up, and that was the surprise.** Same tree, same **plain Nash** 0.3% target, lambda 0.2 annealed x50 (to 10/chip) by iteration 50, strategy average dropped at the anneal point so it covers only the near-Nash game:
+
+  | | iterations | wall | reached |
+  |---|---|---|---|
+  | dcfr | 225 | 53.0 s | 0.30% plain exploitable |
+  | qre, annealed | **100** | **36.4 s** | 0.24% plain exploitable |
+
+  **1.44x wall clock and 2.25x fewer iterations**, while still paying the 1.58x per-iteration cost - so the iteration saving is larger than it looks (3.5x on iterations-normalized work). Correctness cross-check: root EVs agree with dcfr's to 0.0013 chips (31.9765/68.0236 vs 31.9778/68.0222), so it is converging to the same game value rather than stopping somewhere else.
+
+  This is homotopy-to-Nash working as hoped: a soft lambda finds the neighbourhood cheaply, then annealing sharpens inside it. **Caveats, because this is one board and one schedule:** n=1, `anneal_full_at` was hand-picked at 50, and the post-anneal average covers only 50 iterations. Before this becomes a default it needs `bench_boards.py --ranges tight` across the 20-board sweep and some sensitivity analysis on `full_at` / `factor`. Recorded as promising, not as settled.
+
+  The conclusion to carry forward: **fixed lambda is a modelling feature and costs 3.7x; annealed lambda is a Nash accelerator worth 1.44x on the one tree tested.** Do not conflate the two - they are different products of the same code path, and only the annealed one competes with dcfr.
+
   **Bit-neutral on the Nash path, verified rather than assumed:** `validate_turn_fullrange` at 300 iterations still gives `nashconv 0.232074, ev 45.9951 54.0049`, and all 37 pre-existing tests pass with no tolerance loosened (`test_parallel` and `test_iso` compare exact floats).
 
   Interactions, each tested rather than argued: the deferred DCFR discount is untouched (the transform runs inside the traversal, after `pay_discount`); the recalc schedule is fed the **regularized** gap, because feeding it a plateauing number would make its feedback controller quarter its aggressiveness on nothing; suit isomorphism composes, and the QRE test asserts something stronger than the Nash one can - the regularized solution is **unique**, so iso-on and iso-off must agree on the strategy itself, not merely the game value (measured residual 0.053 -> 0.028 -> 0.0085 at 600 -> 2400 -> 9600 iterations, i.e. going to zero); and 1 vs 8 threads stay bitwise identical.

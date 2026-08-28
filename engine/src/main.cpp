@@ -99,17 +99,24 @@ int run_solve(const SolveConfig& config, bool dry_run) {
         if (n.kind != NodeKind::Decision) continue;
         max_actions = std::max(max_actions, static_cast<int>(n.num_children));
       }
-      const double smallest = *std::min_element(config.qre.lambda.begin(),
-                                                config.qre.lambda.end());
+      // The lambda actually in force when the accuracy stop is allowed to
+      // fire. Under annealing that is the FINAL lambda, not the starting one -
+      // warning off the starting value would claim a floor 'factor' times too
+      // high for a run that is explicitly climbing away from it.
+      const bool annealing =
+          config.qre.anneal_full_at != 0 && config.qre.anneal_factor > 1.0;
+      const double effective =
+          *std::min_element(config.qre.lambda.begin(), config.qre.lambda.end()) *
+          (annealing ? config.qre.anneal_factor : 1.0);
       // 2 * D * log(A) / lambda, with D = a player's own remaining decision
       // points. A LOOSE UPPER BOUND on the floor, not the floor itself - the
       // realized plateau is typically well under it. It is here to answer one
       // question only: can this lambda reach this target at all?
       const double d = 3.0;
       const double bound =
-          2.0 * d * std::log(static_cast<double>(std::max(2, max_actions))) / smallest;
+          2.0 * d * std::log(static_cast<double>(std::max(2, max_actions))) / effective;
       const double target_chips = config.target_exploitable_pct / 100.0 * pot;
-      if (bound > target_chips) {
+      if (bound > target_chips && !annealing) {
         std::cout << "  note: at this lambda the strategy is deliberately not Nash, so "
                      "plain exploitability will PLATEAU rather than reach the "
                   << config.target_exploitable_pct << "%-of-pot target ("
@@ -117,6 +124,14 @@ int run_solve(const SolveConfig& config, bool dry_run) {
                      "which does converge. Raise lambda if you wanted a near-Nash "
                      "strategy - the plateau is bounded above by roughly "
                   << bound << " chips.\n";
+      } else if (bound > target_chips) {
+        // Annealing targets plain Nash exploitability, so an unreachable
+        // target here is a genuine dead end rather than a change of metric.
+        std::cout << "  note: even the annealed lambda (" << effective
+                  << ") may not reach the " << config.target_exploitable_pct
+                  << "%-of-pot target (" << target_chips
+                  << " chips): the floor is bounded above by roughly " << bound
+                  << " chips. Raise qre.anneal.factor if the run stalls.\n";
       }
     }
   }

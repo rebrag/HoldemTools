@@ -182,6 +182,8 @@ const buildSolverView = (
     freqPlain: number[];
     evW: number;
     evWSum: number;
+    actionEvW: number[];
+    actionEvWSum: number[];
   }
   const byClass = new Map<string, Agg>();
   const byCombo = new Map<string, ComboRow>();
@@ -201,6 +203,11 @@ const buildSolverView = (
         freqPlain: Array(nActions).fill(0),
         evW: 0,
         evWSum: 0,
+        // Per-action EV, reach-weighted per action: a hand can carry an EV
+        // for one action and null for another, so each needs its own
+        // denominator rather than sharing the node EV's.
+        actionEvW: Array(nActions).fill(0),
+        actionEvWSum: Array(nActions).fill(0),
       };
       byClass.set(cls, agg);
     }
@@ -218,6 +225,11 @@ const buildSolverView = (
     for (let k = 0; k < nActions; k++) {
       agg.freqW[k] += hand.reach * hand.freq[k];
       agg.freqPlain[k] += hand.freq[k];
+      const aev = hand.action_ev?.[k];
+      if (aev != null) {
+        agg.actionEvW[k] += hand.reach * aev;
+        agg.actionEvWSum[k] += hand.reach;
+      }
     }
     const actions: ComboRow["actions"] = {};
     for (let k = 0; k < nActions; k++) {
@@ -246,7 +258,16 @@ const buildSolverView = (
     const ev = agg.evWSum > 0 ? agg.evW / agg.evWSum : null;
     for (let k = 0; k < nActions; k++) {
       actions[labels[k]] = agg.w > 0 ? agg.freqW[k] / agg.w : agg.freqPlain[k] / agg.n;
-      if (ev != null) evs[labels[k]] = ev;
+      // The EV of TAKING this action, not the node's strategy-weighted value.
+      // Assigning the node EV to every action made the tooltip read as though
+      // every action were worth the same - actively wrong, and most visibly so
+      // on a QRE solve, where actions are deliberately NOT equalized (a Nash
+      // solve makes in-support actions indifferent, which is what hid this).
+      if (agg.actionEvWSum[k] > 0) {
+        evs[labels[k]] = agg.actionEvW[k] / agg.actionEvWSum[k];
+      } else if (ev != null) {
+        evs[labels[k]] = ev;
+      }
     }
     grid.push({ hand: cls, actions, evs });
   }
@@ -1750,8 +1771,10 @@ const SolverCompare = () => {
                           </label>
                           <span className="max-w-[18rem] text-[10px] leading-relaxed text-slate-500">
                             Grows lambda toward Nash, then averages only over the iterations
-                            after it settles. Switches the accuracy target back to plain
-                            exploitability. Unproven as a speed-up - measure it.
+                            after it settles, so the target goes back to plain
+                            exploitability. Measured 1.44x faster than dcfr to the same Nash
+                            target on one flop tree - promising, but one board and one
+                            schedule, so check it on yours.
                           </span>
                         </div>
                       )}
