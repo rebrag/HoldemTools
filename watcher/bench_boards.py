@@ -143,7 +143,7 @@ def run_engine(config_path: str) -> dict:
                            f"{proc.stderr[-2000:]}")
     info = {"process_wall_s": round(wall, 3)}
     for line in proc.stdout.splitlines():
-        if line.startswith("estimated solver memory:"):
+        if line.startswith("estimated peak memory:"):
             info["estimate"] = line.strip()
         if line.startswith("iter "):
             info["last_iter_line"] = line.strip()

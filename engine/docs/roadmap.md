@@ -163,6 +163,25 @@ So neither half of the result is a compute win:
 
 A tight range is roughly 190 live combos per seat against 1176 for a full range after board removal, and htsolver charges for all 1326 either way. Since every spot a user actually solves is a range spot, this is the single largest and least risky win available, and it is a re-indexing rather than an algorithm change.
 
+### Every peak-memory figure above is a SOLVE-PHASE number (corrected 2026-08-28)
+
+Until 2026-08-28 the engine sampled peak RSS when the solve loop ended and wrote
+that into `peak_rss_bytes`, so every htsolver peak in the tables above excludes
+the artifact export pass that runs immediately afterwards.
+
+That keeps the **Pio comparisons honest** - the harness reads Pio's counter right
+after its own `go()`, so both sides are solve-only - and those rows stand. What it
+does not describe is what a box has to hold: on `3s Kd Js` at ~30% ranges with
+142k decision nodes, the solve phase peaked at 538 MB and the process peaked at
+2255 MB, because the export pass holds one record per decision node alive at once.
+The line above about a realistic-range flop tree running "with a 242 MB peak"
+is a solve-phase figure in exactly this sense.
+
+Both numbers now travel in the metadata (`solve_peak_rss_bytes` and
+`peak_rss_bytes`, plus `peak_commit_bytes`), the estimator counts the export term,
+and `engine_compare.py` compares Pio against the solve-phase one. Re-running the
+sweep would not move any ratio in the tables; it would add a second, larger column.
+
 ### Also measured, so nobody re-derives it
 
 - **DCFR is already the right update rule.** Iterations to 0.02% of pot on `9c 5d Jc 7s`: dcfr 1100 (6.07 s), cfr_plus 2000 (10.16 s), plain regret matching did not converge inside 20000 (100 s). There is no free win in swapping the rule.

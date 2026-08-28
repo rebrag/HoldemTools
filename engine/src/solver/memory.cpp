@@ -5,6 +5,7 @@
 #include <sstream>
 #include <vector>
 
+#include "io/artifact_writer.hpp"
 #include "solver/cfr.hpp"
 #include "util/parallel.hpp"
 
@@ -36,12 +37,13 @@ std::string human(std::size_t bytes) {
 
 std::string MemoryEstimate::to_string() const {
   std::ostringstream out;
-  out << "estimated solver memory: " << human(total())
+  out << "estimated peak memory: " << human(total())
       << " (regrets+strategy " << human(regret_strategy_bytes)
       << ", tree " << human(tree_bytes)
       << ", showdown " << human(showdown_bytes)
       << ", recalc " << human(recalc_bytes)
-      << ", workspace ceiling " << human(workspace_bytes) << ")";
+      << ", workspace ceiling " << human(workspace_bytes)
+      << ", artifact export " << human(export_bytes) << ")";
   return out.str();
 }
 
@@ -50,30 +52,9 @@ MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc) {
   est.regret_strategy_bytes = CfrSolver::state_bytes(game);
   est.tree_bytes = game.tree().size() * sizeof(Node);
   est.showdown_bytes = game.auxiliary_bytes();
+  est.export_bytes = export_pass_bytes(game);
 
-  if (recalc && game.num_seats() == 2) {
-    // One slot per chance-node child, per seat: cached value vector + reach
-    // snapshot, both hand-universe wide. Suit-isomorphic member subtrees are
-    // never traversed, so neither their chance nodes nor member children
-    // ever populate a cache.
-    std::size_t chance_children = 0;
-    const PublicTree& tree = game.tree();
-    for (NodeId id = 0; id < tree.size(); ++id) {
-      const Node& n = tree[id];
-      if (n.kind != NodeKind::Chance) continue;
-      if (game.iso_rep(id).rep != id) continue;
-      for (std::uint16_t c = 0; c < n.num_children; ++c) {
-        const NodeId child = n.first_child + c;
-        if (game.iso_rep(child).rep == child) ++chance_children;
-      }
-    }
-    std::size_t hands = 0;
-    for (int s = 0; s < game.num_seats(); ++s) {
-      hands = std::max(hands, static_cast<std::size_t>(game.num_hands(s)));
-    }
-    est.recalc_bytes = chance_children * 2 /*seats*/ * 2 /*value+snapshot*/ * hands *
-                       sizeof(float);
-  }
+  est.recalc_bytes = CfrSolver::recalc_state_bytes(game, recalc);
 
   const PublicTree& tree = game.tree();
   std::vector<int> depth(tree.size(), 0);
@@ -103,20 +84,29 @@ MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc) {
   return est;
 }
 
-std::size_t peak_rss_bytes() {
+PeakMemory peak_memory() {
 #if defined(_WIN32)
-  PROCESS_MEMORY_COUNTERS counters;
+  // PeakWorkingSetSize and PeakPagefileUsage are both SIZE_T members of the
+  // BASE counters struct, so reading private commit needs no _EX variant and
+  // no cb juggling. Both are 64-bit on x64 and neither saturates: an earlier
+  // 4x gap against tasklist was a sampling-time bug, not a counter width one.
+  PROCESS_MEMORY_COUNTERS counters{};
+  counters.cb = sizeof(counters);
   if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters))) {
-    return counters.PeakWorkingSetSize;
+    return {counters.PeakWorkingSetSize, counters.PeakPagefileUsage};
   }
-  return 0;
+  return {};
 #else
   struct rusage usage;
   if (getrusage(RUSAGE_SELF, &usage) == 0) {
-    return static_cast<std::size_t>(usage.ru_maxrss) * 1024;  // ru_maxrss is KB on Linux
+    // ru_maxrss is KB on Linux. POSIX exposes no peak-commit counter, so the
+    // commit figure stays 0 rather than being faked from the resident one.
+    return {static_cast<std::size_t>(usage.ru_maxrss) * 1024, 0};
   }
-  return 0;
+  return {};
 #endif
 }
+
+std::size_t peak_rss_bytes() { return peak_memory().working_set; }
 
 }  // namespace engine

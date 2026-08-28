@@ -149,13 +149,22 @@ def print_cost_line(meta: dict, pio_timing: dict) -> None:
             line += "  |  pio not run"
         print(line)
 
-    ht_peak = meta.get("peak_rss_bytes")
+    # The Pio figure is read immediately after go(), so it covers building and
+    # solving the tree and nothing else. The comparable htsolver number is
+    # therefore its SOLVE-phase peak, not the whole-run one: the engine goes on
+    # to write an artifact, and on a flop tree that export pass costs more than
+    # the solve did. Artifacts written before the engine reported the two
+    # separately carry only the one key.
+    ht_peak = meta.get("solve_peak_rss_bytes") or meta.get("peak_rss_bytes")
+    ht_run_peak = meta.get("peak_rss_bytes")
     pio_peak = pio_timing.get("peak_bytes")
     if ht_peak or pio_peak:
         mb = lambda b: "n/a" if not b else f"{b / (1024 ** 2):.0f} MB"
         line = f"peak memory: htsolver {mb(ht_peak)}  |  pio {mb(pio_peak)}"
         if ht_peak and pio_peak:
             line += f"  ->  {pio_peak / ht_peak:.1f}x"
+        if ht_run_peak and ht_run_peak != ht_peak:
+            line += f"  (htsolver whole run, artifact included: {mb(ht_run_peak)})"
         print(line)
 
 
@@ -672,7 +681,14 @@ def main() -> int:
                 "ht_iterations": meta["iterations"],
                 **{k: round(v, 3) for k, v in harness_timing.items()},
             },
-            "memory": {"ht_peak_bytes": meta.get("peak_rss_bytes")},
+            # ht_peak_bytes stays the Pio-comparable solve-phase figure (see
+            # print_cost_line); the whole-run peak travels beside it.
+            "memory": {
+                "ht_peak_bytes": (meta.get("solve_peak_rss_bytes")
+                                  or meta.get("peak_rss_bytes")),
+                "ht_run_peak_bytes": meta.get("peak_rss_bytes"),
+                "ht_run_peak_commit_bytes": meta.get("peak_commit_bytes"),
+            },
             "sampled": not full_mode,
             "runouts": None if full_mode else args.runouts,
             "decision_nodes": decision_count,

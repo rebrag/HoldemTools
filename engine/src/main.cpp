@@ -119,16 +119,26 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   stats.setup_time_s = setup_s;
   stats.threads = threads;
   stats.recalc_skips = solver.recalc_skips();
+  // Solve-phase peak only. The artifact export pass that write_artifact runs
+  // next allocates one record per decision node and is the real high-water
+  // mark; write_artifact samples that itself, after the pass. Both numbers go
+  // into the metadata.
   stats.peak_rss_bytes = peak_rss_bytes();
 
   LocalStore store;
   write_artifact(store, config.output_path, *game, solver, config, stats);
+  const PeakMemory peak = peak_memory();
   std::cout << "solve time " << wall_s << " s (" << done << " iters on " << threads
             << " thread" << (threads == 1 ? "" : "s") << ", "
             << (wall_s > 0.0 ? static_cast<double>(done) / wall_s : 0.0) << " iters/s)\n";
   std::cout << "wrote " << config.output_path << "  (wall " << wall_s + setup_s
             << " s including setup, peak RSS "
-            << stats.peak_rss_bytes / (1024.0 * 1024.0) << " MB)\n";
+            << peak.working_set / (1024.0 * 1024.0) << " MB";
+  // Commit is what the process asked for; the working set is what the OS kept
+  // resident, and it is trimmed under memory pressure. They usually agree
+  // closely, and when they do not the commit figure is the honest one.
+  if (peak.commit > 0) std::cout << ", commit " << peak.commit / (1024.0 * 1024.0) << " MB";
+  std::cout << "; solve phase " << stats.peak_rss_bytes / (1024.0 * 1024.0) << " MB)\n";
   return 0;
 }
 

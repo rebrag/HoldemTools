@@ -1,5 +1,6 @@
 #include "solver/cfr.hpp"
 
+#include "solver/memory.hpp"  // kHeapBlockOverhead
 #include "solver/sample.hpp"
 
 #include <algorithm>
@@ -193,6 +194,41 @@ std::size_t CfrSolver::state_bytes(const Game& game) {
   // Regrets + strategy sums, plus the per-node "discount paid at" stamp.
   return layout.total * 2 * sizeof(float) +
          layout.node_offset.size() * sizeof(std::uint32_t);
+}
+
+std::size_t CfrSolver::recalc_state_bytes(const Game& game, bool enabled) {
+  const PublicTree& tree = game.tree();
+  // recalc_base_ is assigned whether or not the schedule is on.
+  std::size_t bytes = tree.size() * sizeof(std::uint32_t);
+  if (!enabled || game.num_seats() != 2) return bytes;
+
+  // The slot ARRAY covers every chance node's every child, isomorphic member
+  // subtrees included: the constructor indexes it by raw NodeId and does not
+  // filter. Only representative children are ever traversed, so only those
+  // fill in the four hand-wide vectors - the rest cost one empty struct each,
+  // which at hundreds of thousands of slots is still worth counting.
+  std::size_t slots = 0;
+  std::size_t populated = 0;
+  for (NodeId id = 0; id < tree.size(); ++id) {
+    const Node& n = tree[id];
+    if (n.kind != NodeKind::Chance) continue;
+    slots += n.num_children;
+    if (game.iso_rep(id).rep != id) continue;
+    for (std::uint16_t c = 0; c < n.num_children; ++c) {
+      const NodeId child = n.first_child + c;
+      if (game.iso_rep(child).rep == child) ++populated;
+    }
+  }
+  std::size_t hands = 0;
+  for (int s = 0; s < game.num_seats(); ++s) {
+    hands = std::max(hands, static_cast<std::size_t>(game.num_hands(s)));
+  }
+  bytes += slots * sizeof(RecalcSlot);
+  // Per traversing seat: the cached value vector and the reach snapshot that
+  // produced it, both hand-universe wide, each its own heap block.
+  bytes += populated * 2 /*seats*/ * 2 /*value + snapshot*/ *
+           (hands * sizeof(float) + kHeapBlockOverhead);
+  return bytes;
 }
 
 CfrSolver::Arena* CfrSolver::acquire_arena() {

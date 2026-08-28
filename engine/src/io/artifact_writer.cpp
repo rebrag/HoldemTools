@@ -2,13 +2,16 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <stdexcept>
+#include <vector>
 
 #include "cards/combos.hpp"
 #include "config/sha256.hpp"
 #include "io/artifact_format.hpp"
+#include "solver/memory.hpp"
 
 namespace engine {
 
@@ -24,6 +27,14 @@ struct NodeExportData {
   std::vector<float> strategy;                    // actor, row-major [hand][action]
   std::vector<std::vector<float>> action_ev_cond; // [action][hand] actor conditional child EV
 };
+
+// export_pass_bytes() below sizes this struct field by field. A new member
+// that is not counted there silently re-opens the hole the export term was
+// added to close - the memory limit is checked against the ESTIMATE, so an
+// undercount is a solve that should have been refused and instead thrashes
+// the box. Break the build instead.
+static_assert(sizeof(NodeExportData) == 4 * sizeof(std::vector<float>),
+              "NodeExportData gained or lost a member - update export_pass_bytes()");
 
 // One post-order traversal under the average strategy computing, at every
 // decision node, both seats' reach, conditional per-hand EVs, and the
@@ -142,6 +153,44 @@ struct ExportPass {
     return values;
   }
 };
+
+// Live bytes of the ExportPass map at its peak, which is the moment the last
+// decision node is inserted: nothing is erased until write_artifact returns.
+std::size_t export_map_bytes(const Game& game) {
+  const PublicTree& tree = game.tree();
+  const std::size_t seats = static_cast<std::size_t>(game.num_seats());
+  std::size_t hands = 0;
+  for (int s = 0; s < game.num_seats(); ++s) {
+    hands = std::max(hands, static_cast<std::size_t>(game.num_hands(s)));
+  }
+  // Every vector's control block counts too: at a few hundred hands a
+  // std::vector header is ~2% of the payload it points at, and there are
+  // 2*seats + actions of them per node on top of the four inside the struct.
+  constexpr std::size_t kVec = sizeof(std::vector<float>);
+  // One red-black node per decision node: the value, the NodeId key, three
+  // links and the colour. Rounded up to a pointer-sized allowance rather
+  // than measured, because the node type is the allocator's business.
+  const std::size_t per_entry = sizeof(NodeExportData) + sizeof(NodeId) + 4 * sizeof(void*);
+  // Each of those vectors is its own heap block, and there are ~11 blocks per
+  // decision node here - on a flop tree the bookkeeping alone runs to tens of
+  // megabytes, enough on its own to leave this estimate below the measured
+  // peak commit with every payload counted correctly.
+
+  std::size_t total = 0;
+  for (const Node& n : tree.nodes) {
+    if (n.kind != NodeKind::Decision) continue;
+    const std::size_t actions = n.num_children;
+    // reach and ev_cond: one hand-wide vector per seat each. strategy: one
+    // hands x actions block. action_ev_cond: one hand-wide vector per action.
+    const std::size_t floats = 2 * seats * hands + 2 * actions * hands;
+    // Blocks: the four buffers the struct's own vectors own, the inner
+    // vectors' buffers, and the map node.
+    const std::size_t blocks = 4 + 2 * seats + actions + 1;
+    total += floats * sizeof(float) + (2 * seats + actions) * kVec + per_entry +
+             blocks * kHeapBlockOverhead;
+  }
+  return total;
+}
 
 std::uint8_t kind_byte(NodeKind k) { return static_cast<std::uint8_t>(k); }
 std::uint8_t action_byte(ActionKind a) { return static_cast<std::uint8_t>(a); }
@@ -277,6 +326,8 @@ void pad_to(ArtifactStore& store, std::uint64_t alignment) {
 
 }  // namespace
 
+std::size_t export_pass_bytes(const Game& game) { return export_map_bytes(game); }
+
 void write_artifact(ArtifactStore& store, const std::string& path, const Game& game,
                     const CfrSolver& solver, const SolveConfig& config,
                     const SolveStats& stats) {
@@ -360,6 +411,16 @@ void write_artifact(ArtifactStore& store, const std::string& path, const Game& g
     index.push_back({id, off, blob.size()});
   }
 
+  // Peak memory, sampled HERE and not by the caller. The export pass above is
+  // the high-water mark of the whole run on any tree big enough for memory to
+  // matter - a flop tree spends more on it than on regrets + strategy - so a
+  // sample taken when the solve loop ended (which is what stats carries)
+  // misses the largest allocation the process ever made. Everything still to
+  // be written from here is the metadata, the index and the header patch:
+  // kilobytes, not a new peak. Metadata is a free-form JSON object read by
+  // name, so the extra keys are additive - no format version bump.
+  const PeakMemory peak = peak_memory();
+
   // Metadata JSON.
   json meta;
   meta["solver_version"] = "0.1.0";
@@ -391,7 +452,9 @@ void write_artifact(ArtifactStore& store, const std::string& path, const Game& g
   meta["setup_time_s"] = stats.setup_time_s;
   meta["threads"] = stats.threads;
   meta["recalc_skips"] = stats.recalc_skips;
-  meta["peak_rss_bytes"] = stats.peak_rss_bytes;
+  meta["peak_rss_bytes"] = peak.working_set;
+  meta["peak_commit_bytes"] = peak.commit;
+  meta["solve_peak_rss_bytes"] = stats.peak_rss_bytes;
   meta["board"] = config.board;
   meta["chip_scale"] = config.chip_scale;
   meta["pot"] = config.pot;

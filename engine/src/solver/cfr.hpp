@@ -120,6 +120,12 @@ class CfrSolver {
   // Estimated bytes for regrets + strategy sums under this layout.
   static std::size_t state_bytes(const Game& game);
 
+  // Estimated bytes for the chance-child recalc schedule: the per-node base
+  // index, the slot array, and the value/reach caches the slots fill in.
+  // Lives here rather than in the estimator because RecalcSlot is private -
+  // the sizing has to sit next to the struct it sizes or it drifts from it.
+  static std::size_t recalc_state_bytes(const Game& game, bool enabled);
+
  private:
   // Scratch buffers for one in-flight traversal, keyed by (depth, slot).
   // A forked subtree gets its own arena: the parent holds references into
