@@ -12,6 +12,14 @@
 #include <utility>
 #include <vector>
 
+// __restrict is spelled the same on MSVC, clang-cl, Clang and GCC, which is
+// every compiler this project targets; the fallback keeps it portable anyway.
+#if defined(_MSC_VER) || defined(__GNUC__) || defined(__clang__)
+#define ENGINE_RESTRICT __restrict
+#else
+#define ENGINE_RESTRICT
+#endif
+
 namespace engine {
 
 namespace {
@@ -80,6 +88,57 @@ void row_from_action_major(const float* values, std::uint32_t hands, std::uint16
   } else {
     const float u = 1.0f / static_cast<float>(actions);
     for (std::uint16_t k = 0; k < actions; ++k) row[k] = u;
+  }
+}
+
+// The fold-in loops below take raw restrict-qualified pointers and their
+// loop invariants BY VALUE, and that shape is the point rather than a style
+// choice. As lambdas capturing std::vector references they compiled fully
+// scalar: the compiler could not prove the five arrays disjoint, and every
+// invariant was re-loaded through the capture block on each element.
+// regret_matched_action_major above vectorizes precisely because it takes
+// three plain float* parameters - the difference is pointer provenance, not
+// arithmetic.
+//
+// The disjointness restrict promises, which the compiler cannot check:
+// `out` at depth d is the CALLER's buffer - the parent's kSlotChild at depth
+// d-1, a parent-owned forked_out[c], or iterate()'s local `values`. It is
+// never an arena slot at depth d and never inside regrets_. `regret_col`
+// points into regrets_; `sigma_col` and `c` are depth-d arena slots
+// (kSlotSigma, kSlotCompat); `child_vals` is the depth-d kSlotChild or a
+// forked buffer. All five are distinct allocations. See the aliasing note in
+// traverse_impl for the same argument spelled out.
+void plain_fold_in(float* ENGINE_RESTRICT out, float* ENGINE_RESTRICT regret_col,
+                   const float* ENGINE_RESTRICT sigma_col,
+                   const float* ENGINE_RESTRICT child_vals, std::uint32_t hands) {
+  for (std::uint32_t h = 0; h < hands; ++h) {
+    out[h] += sigma_col[h] * child_vals[h];
+    // Defer subtracting v(h): R += cv now, R -= v after the action loop.
+    regret_col[h] += child_vals[h];
+  }
+}
+
+// The QRE reward transformation, per (hand, action). `c[h]` already carries
+// max(pi(h), 0) / lambda, folded once per node rather than once per cell.
+void qre_fold_in(float* ENGINE_RESTRICT out, float* ENGINE_RESTRICT regret_col,
+                 const float* ENGINE_RESTRICT sigma_col,
+                 const float* ENGINE_RESTRICT child_vals,
+                 const float* ENGINE_RESTRICT c, std::uint32_t hands,
+                 float prob_floor, float log_actions) {
+  for (std::uint32_t h = 0; h < hands; ++h) {
+    // The floor keeps log() finite - sigma is exactly 0 for any action whose
+    // cumulative regret is non-positive - and a hand the opponent cannot hold
+    // has c[h] == 0 and is charged nothing.
+    //
+    // This unconditional max-then-log is the FASTEST of five formulations
+    // measured; see docs/roadmap.md M7 for the four that lost. In particular
+    // do not "optimize" the shared log(prob_floor) out with a branch, and do
+    // not replace std::log with a vendored polynomial - both were tried and
+    // both are slower.
+    const float sp = sigma_col[h] > prob_floor ? sigma_col[h] : prob_floor;
+    const float v = child_vals[h] - c[h] * (std::log(sp) + log_actions);
+    out[h] += sigma_col[h] * v;
+    regret_col[h] += v;
   }
 }
 
@@ -709,39 +768,30 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
     // alone on the way down, so this is computed once for the whole node.
     const bool use_qre = qre_.enabled;
     std::vector<float>& compat = scratch(arena, depth, kSlotCompat);
-    float inv_lambda = 0.0f;
     float log_actions = 0.0f;
     const float prob_floor = qre_.min_prob;
     if (use_qre) {
       game_.compat_weights(actor, reach, compat);
-      inv_lambda = static_cast<float>(1.0 / qre_.lambda_at(t_, actor));
+      const float inv_lambda = static_cast<float>(1.0 / qre_.lambda_at(t_, actor));
       log_actions = static_cast<float>(std::log(static_cast<double>(actions)));
+      // Fold the unreachable-hand clamp and the 1/lambda scale into the buffer
+      // once per node instead of once per (hand, action). Inclusion-exclusion
+      // can land a hair below zero, hence the clamp. `w * inv_lambda * (...)`
+      // already associated this way, so this is bit-for-bit the per-cell form.
+      float* c = compat.data();
+      for (std::uint32_t h = 0; h < hands; ++h) {
+        c[h] = (c[h] > 0.0f ? c[h] : 0.0f) * inv_lambda;
+      }
     }
 
     const auto fold_in = [&](std::uint16_t k, const std::vector<float>& child_vals) {
       const std::size_t col = static_cast<std::size_t>(k) * hands;
-      float* regret_col = regrets_.data() + off + col;
-      const float* sigma_col = sigma.data() + col;
       if (use_qre) {
-        const float* pi = compat.data();
-        for (std::uint32_t h = 0; h < hands; ++h) {
-          // The floor keeps log() finite; the convergence argument needs a
-          // bounded gradient. A hand the opponent cannot hold has pi(h) == 0
-          // and is charged nothing, which is the unreachable-hand guard -
-          // inclusion-exclusion can land a hair below zero, hence the clamp.
-          const float w = pi[h] > 0.0f ? pi[h] : 0.0f;
-          const float sp = sigma_col[h] > prob_floor ? sigma_col[h] : prob_floor;
-          const float v = child_vals[h] - w * inv_lambda * (std::log(sp) + log_actions);
-          out[h] += sigma_col[h] * v;
-          // Defer subtracting v(h): R += cv now, R -= v after the loop.
-          regret_col[h] += v;
-        }
-        return;
-      }
-      for (std::uint32_t h = 0; h < hands; ++h) {
-        out[h] += sigma_col[h] * child_vals[h];
-        // Defer subtracting v(h): R += cv now, R -= v after the loop.
-        regret_col[h] += child_vals[h];
+        qre_fold_in(out.data(), regrets_.data() + off + col, sigma.data() + col,
+                    child_vals.data(), compat.data(), hands, prob_floor, log_actions);
+      } else {
+        plain_fold_in(out.data(), regrets_.data() + off + col, sigma.data() + col,
+                      child_vals.data(), hands);
       }
     };
 

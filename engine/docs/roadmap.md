@@ -174,6 +174,41 @@ The sweep's hardest board (`Ks Kd 4c 9h`, which has a usable s<->d permutation) 
 
   1.44x per iteration against a 1.31-1.41x iteration saving is why every wall-clock row is a wash or worse. **The `LPopenBBcall` outlier is unexplained**: its 2.25x iteration saving sits far outside the 1.3-1.4x band seen on 24 other boards. Its distinguishing features are 700-deep stacks, three bet sizes plus donks, and asymmetric ranges (which also disables suit isomorphism); none of that is obviously the cause, and one spot is not a result. The re-measurement was reproducible (36.4 / 36.9 s across two runs), so it is a real property of that spot rather than a mismeasurement.
 
+  ### The per-iteration cost, attacked (2026-08-28). One win, four losses, and a measured floor.
+
+  First, where the 1.44x actually lives. Same flop tree, 100 fixed iterations, recalc off, median of 5 interleaved runs - and a third arm with the `std::log` call replaced by its own argument, which keeps the memory traffic identical and removes only the transcendental:
+
+  | arm | wall | what it isolates |
+  |---|---|---|
+  | nash (QRE off) | 3.99 s | the floor |
+  | qre, log removed | 4.50 s | compat_weights + the transform's arithmetic |
+  | qre | 5.75 s | + the log |
+
+  So **the log is 71% of QRE's overhead** (1.25 s of 1.76 s) and everything else is 29%. The premise was right.
+
+  **What worked: the fold-in loops were scalar because of pointer provenance, not arithmetic.** As lambdas capturing `std::vector` references, MSVC could not prove the five arrays disjoint and re-loaded every loop invariant through the capture block per element; `regret_matched_action_major` vectorizes in the same file precisely because it takes plain `float*` parameters. Extracting `plain_fold_in` / `qre_fold_in` as free functions with `ENGINE_RESTRICT` pointers and by-value invariants, plus folding `max(pi,0) * (1/lambda)` into the compat buffer once per node instead of once per cell, is **bit-for-bit neutral** and worth:
+
+  | | before | after | |
+  |---|---|---|---|
+  | nash (every dcfr solve) | 4.23 s | **3.96 s** | -6.5% |
+  | qre | 5.83 s | 5.77 s | -1.1%, inside noise |
+
+  The Nash number is the real prize: it speeds up every solve the product runs, not just QRE.
+
+  **What did not work - four attempts to make the log cheaper, every one measured SLOWER than `std::log`:**
+
+  | attempt | qre wall |
+  |---|---|
+  | `std::log` (kept) | **5.75 s** |
+  | vendored `2*atanh((m-1)/(m+1))`, degree 4, before the restrict work | 6.01 s |
+  | the same, after it | 5.88 s |
+  | divide-free degree-7 polynomial, coefficients fitted rather than recalled | 6.15 s |
+  | branch skipping the log where sigma is exactly 0 (it shares one constant) | 6.02 s |
+
+  The polynomials vectorized - `dumpbin` confirms zero `call logf` and packed ops rising from 14 to 20 - and still lost. MSVC's `logf` beats a hand-rolled approximation here, and a long Horner dependency chain is worse than a well-tuned library call in a loop that is memory-latency-bound anyway. The zero-sigma branch loses because the misprediction costs more than the calls it skips.
+
+  **So the log cost is effectively irreducible by these means**, and the remaining levers are all things this repo has ruled out or that change the maths: SVML (compiler-specific, no GCC fallback, and its results are not stable across versions - a worse determinism story than what we have), `/fp:fast` (forbidden; it would invalidate the Pio gate), or swapping Shannon entropy for a Tsallis/L2 regularizer whose gradient is linear - which is a different equilibrium concept, not an optimization. `compat_weights`, the other 29%, has a serial `double` accumulation over the full universe per actor node; reassociating it would change every Nash solve and the golden fixture.
+
   **The actionable conclusion is the per-iteration cost, not the algorithm.** The iteration saving is already there and robust; only the 1.44x overhead stands between it and a genuine ~1.35x wall-clock win on every board. Both halves are reducible - fuse `log sigma` into `regret_matched_action_major` so the transcendental shares the pass that already computes sigma, and/or vendor a polynomial `log2f` (pure float ops, deterministic under `/fp:precise`, and vectorizable where `logf` is not). That is the experiment worth running next; it was skipped in this pass on the assumption QRE was a modelling feature rather than a speed one, which the iteration numbers now contradict.
 
   The conclusion to carry forward: **fixed lambda is a modelling feature and costs 3.7x. Annealed lambda reliably cuts iterations by ~1.35x but currently spends the saving on per-iteration overhead, so it is not yet a reason to prefer it over dcfr for a Nash answer.**
