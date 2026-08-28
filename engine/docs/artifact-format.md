@@ -48,7 +48,11 @@ One JSON object. Fields (all present unless marked optional):
 - `iterations`, `final_nashconv` (chips), `ev_chips` (per-seat root EVs; they sum to the root pot).
 - `partition` (seat->agent), `payoff_weights` (`null` = identity), `collusion` (`{mode, p}`).
 - `multiway_no_nash_guarantee` - `true` whenever the game has 3+ seats. CFR converges to the coarse correlated equilibrium set there, not necessarily Nash; consumers must not over-trust multiway results.
-- `wall_time_s` (the iterate + best-response loop only), `setup_time_s` (tree build and showdown tables, before the first iteration), `threads` (workers the solve actually ran on - a wall time is not comparable to another solver's without it), `peak_rss_bytes`.
+- `wall_time_s` (the iterate + best-response loop only), `setup_time_s` (tree build and showdown tables, before the first iteration), `threads` (workers the solve actually ran on - a wall time is not comparable to another solver's without it).
+- Memory, three numbers because they answer different questions:
+  - `peak_rss_bytes` - peak resident bytes for the WHOLE run, sampled after the export pass that builds this file. That pass holds one record per decision node alive at once, so on a flop tree it costs more than the solve did; this is the figure a box has to be able to hold.
+  - `peak_commit_bytes` - peak private commit for the same run, or 0 on platforms that do not expose it (POSIX). The OS trims a working set under memory pressure and commit does not, so where the two disagree this is the honest one.
+  - `solve_peak_rss_bytes` - peak resident bytes at the end of the solve loop, before anything is written. This is the number comparable against another solver's reported footprint (PioSolver's is read straight after its own solve) and against the solver terms of the memory estimate.
 - `board` (as configured, e.g. `"Qs Jh 2h 8d 6c"`), `chip_scale`, `pot`, `effective_stack` (optional), `seats` (labels, seat 0 = OOP first to act).
 - `node_count`, `decision_node_count`, `hand_universe` (`"nlhe_combos_1326"` or `"toy"`).
 - `sections`:

@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -24,8 +25,21 @@ struct SolveStats {
   // where this stays 0 on a multistreet tree means the schedule never
   // engaged (bad epsilons, or a spot that never settles).
   std::uint64_t recalc_skips = 0;
+  // Peak resident bytes at the END OF THE SOLVE LOOP, before the artifact is
+  // written. Deliberately not the whole-run peak: the export pass inside
+  // write_artifact is usually larger, and this is the number that is
+  // comparable against the memory estimate's solver terms (and against
+  // another solver's reported footprint). write_artifact samples the
+  // whole-run peak itself and writes both into the metadata.
   std::size_t peak_rss_bytes = 0;
 };
+
+// Bytes the export pass inside write_artifact holds live at its peak. It
+// keeps one per-node export record for EVERY decision node alive at once, so
+// on a flop tree it is the largest allocation of the whole run - the memory
+// estimator counts it (see MemoryEstimate::export_bytes) and the fail-fast
+// limit check depends on it. Pure sizing: allocates nothing, solves nothing.
+std::size_t export_pass_bytes(const Game& game);
 
 // Write a version-1 .hta artifact for a solved 2-seat game. Layout per
 // engine/docs/artifact-format.md: header, metadata JSON, node table, hand
