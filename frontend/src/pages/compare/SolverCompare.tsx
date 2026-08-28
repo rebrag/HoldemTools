@@ -1772,9 +1772,9 @@ const SolverCompare = () => {
                           <span className="max-w-[18rem] text-[10px] leading-relaxed text-slate-500">
                             Grows lambda toward Nash, then averages only over the iterations
                             after it settles, so the target goes back to plain
-                            exploitability. Measured 1.44x faster than dcfr to the same Nash
-                            target on one flop tree - promising, but one board and one
-                            schedule, so check it on yours.
+                            exploitability. Swept over 24 boards: about 1.35x fewer
+                            iterations, but roughly 1.44x more cost per iteration, so wall
+                            clock is a wash. Useful to experiment with, not yet a speed-up.
                           </span>
                         </div>
                       )}

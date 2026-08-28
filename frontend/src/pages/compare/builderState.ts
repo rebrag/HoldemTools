@@ -62,10 +62,10 @@ export interface BuilderState extends TreeConfigText {
   qreLambdaOop: string;
   qreLambdaIp: string;
   /** Grow lambda toward Nash over the solve instead of holding it fixed.
-   *  Fixed lambda is the bounded-rationality product; annealing is a
-   *  homotopy to Nash - measured at 1.44x dcfr's wall clock to the same Nash
-   *  target on one flop tree, on one hand-picked schedule. Promising rather
-   *  than settled; see engine/docs/roadmap.md M7. */
+   *  Fixed lambda is the bounded-rationality product; annealing is a homotopy
+   *  to Nash. Over a 24-board sweep it cuts iterations by a reliable ~1.35x
+   *  but costs ~1.44x per iteration, so wall clock comes out a wash - it is
+   *  not currently a reason to prefer it. See engine/docs/roadmap.md M7. */
   qreAnneal: boolean;
   /** Final lambda as a multiple of the values above. */
   qreAnnealFactor: string;

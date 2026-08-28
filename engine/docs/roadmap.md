@@ -155,18 +155,28 @@ The sweep's hardest board (`Ks Kd 4c 9h`, which has a usable s<->d permutation) 
   - **1.58x per iteration** (236 -> 372 ms). This is the `logf` per regret cell plus a `compat_weights` pass per actor node. It is the cost of the feature and roughly matches the 20-60% predicted up front. Fusing `log sigma` into the regret matcher (one pass producing both) and/or a vendored polynomial `log2f` would recover part of it; not attempted, since QRE is a modelling feature rather than a speed feature.
   - **2.3x the iterations.** At a soft lambda the QRE gap simply starts much higher and grinds down; the regularization is too mild here to buy the better conditioning that would pay for itself.
 
-  **But ANNEALED lambda is a real Nash speed-up, and that was the surprise.** Same tree, same **plain Nash** 0.3% target, lambda 0.2 annealed x50 (to 10/chip) by iteration 50, strategy average dropped at the anneal point so it covers only the near-Nash game:
+  **Annealed lambda saves iterations everywhere, and wall clock nowhere. Swept, not guessed.**
 
-  | | iterations | wall | reached |
-  |---|---|---|---|
-  | dcfr | 225 | 53.0 s | 0.30% plain exploitable |
-  | qre, annealed | **100** | **36.4 s** | 0.24% plain exploitable |
+  The first measurement of annealing was on `LPopenBBcall` alone and looked like a 1.44x wall-clock win (225 -> 100 iterations, 53.0 -> 36.4 s). **It did not survive the sweep.** `bench_boards.py` now has a `--no-pio` engine-only mode and a `--qre-lambda` / `--qre-anneal-*` arm precisely so this could be checked; run over 4 flop + 10 turn + 10 river boards at tight ranges, both arms to the same PLAIN Nash target:
 
-  **1.44x wall clock and 2.25x fewer iterations**, while still paying the 1.58x per-iteration cost - so the iteration saving is larger than it looks (3.5x on iterations-normalized work). Correctness cross-check: root EVs agree with dcfr's to 0.0013 chips (31.9765/68.0236 vs 31.9778/68.0222), so it is converging to the same game value rather than stopping somewhere else.
+  | family, target | dcfr iters | annealed iters | iteration saving | dcfr wall | annealed wall |
+  |---|---|---|---|---|---|
+  | flop, 0.3% | 260 | 185 | 1.41x | 17.5 s | 22.7 s (**1.29x slower**) |
+  | turn, 0.02% | 1250 | 900 | 1.39x | 0.63 s | 0.63 s (wash) |
+  | river, 0.02% | 700 | 500 | 1.40x | 0.04 s | 0.04 s (wash) |
+  | turn, 0.3% | 210 | 155 | 1.35x | 0.13 s | 0.17 s (1.3x slower) |
+  | river, 0.3% | 105 | 80 | 1.31x | 0.01 s | 0.01 s (wash) |
 
-  This is homotopy-to-Nash working as hoped: a soft lambda finds the neighbourhood cheaply, then annealing sharpens inside it. **Caveats, because this is one board and one schedule:** n=1, `anneal_full_at` was hand-picked at 50, and the post-anneal average covers only 50 iterations. Before this becomes a default it needs `bench_boards.py --ranges tight` across the 20-board sweep and some sensitivity analysis on `full_at` / `factor`. Recorded as promising, not as settled.
+  Two things are now solid, and they pull against each other:
 
-  The conclusion to carry forward: **fixed lambda is a modelling feature and costs 3.7x; annealed lambda is a Nash accelerator worth 1.44x on the one tree tested.** Do not conflate the two - they are different products of the same code path, and only the annealed one competes with dcfr.
+  - **The iteration saving is real and strikingly stable: 1.31-1.41x across every family and both accuracy targets.** Iteration counts are deterministic, so this is not a noise story.
+  - **QRE costs 1.44x per iteration**, measured directly rather than inferred: same flop tree, 100 fixed iterations, no accuracy stop, median of 5 interleaved runs - 4.28 s nash vs 6.17 s qre. That is one `logf` per regret cell plus a `compat_weights` pass per actor node.
+
+  1.44x per iteration against a 1.31-1.41x iteration saving is why every wall-clock row is a wash or worse. **The `LPopenBBcall` outlier is unexplained**: its 2.25x iteration saving sits far outside the 1.3-1.4x band seen on 24 other boards. Its distinguishing features are 700-deep stacks, three bet sizes plus donks, and asymmetric ranges (which also disables suit isomorphism); none of that is obviously the cause, and one spot is not a result. The re-measurement was reproducible (36.4 / 36.9 s across two runs), so it is a real property of that spot rather than a mismeasurement.
+
+  **The actionable conclusion is the per-iteration cost, not the algorithm.** The iteration saving is already there and robust; only the 1.44x overhead stands between it and a genuine ~1.35x wall-clock win on every board. Both halves are reducible - fuse `log sigma` into `regret_matched_action_major` so the transcendental shares the pass that already computes sigma, and/or vendor a polynomial `log2f` (pure float ops, deterministic under `/fp:precise`, and vectorizable where `logf` is not). That is the experiment worth running next; it was skipped in this pass on the assumption QRE was a modelling feature rather than a speed one, which the iteration numbers now contradict.
+
+  The conclusion to carry forward: **fixed lambda is a modelling feature and costs 3.7x. Annealed lambda reliably cuts iterations by ~1.35x but currently spends the saving on per-iteration overhead, so it is not yet a reason to prefer it over dcfr for a Nash answer.**
 
   **Bit-neutral on the Nash path, verified rather than assumed:** `validate_turn_fullrange` at 300 iterations still gives `nashconv 0.232074, ev 45.9951 54.0049`, and all 37 pre-existing tests pass with no tolerance loosened (`test_parallel` and `test_iso` compare exact floats).
 
