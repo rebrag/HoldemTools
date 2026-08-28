@@ -108,7 +108,7 @@ Both were found by chasing an iteration count that could not have moved if the e
 
   - **Fixed skip thresholds stall convergence at the threshold.** eps-value 5e-3 relative stalled a 0.02%-target solve at 0.025-0.05% of pot and burned the whole 20k cap; 2e-2 stalled at 0.2%. A frozen subtree biases the values it feeds upward by its own residual movement, full stop. Hence the annealed budget + controller.
   - **Catch-up weighting (weight a revisit's updates by the k skipped iterations) makes it WORSE.** Tried, measured, reverted: at aggressive settings it inflated iterations from 4500 to 7500 (and 6500 to 15250) - amplifying one stale sample by k overshoots under DCFR.
-  - **Freezing has a hard ceiling on hard boards, and it is low.** On this tree, ~100% skipping only doubles per-iteration speed (river subtrees are ~50-75% of iteration cost; per-child fold/drift overhead remains), and every frozen iteration is lost learning that inflates the iteration count nearly 1:1. Net ceiling ~1.25x; the landed default reaches ~1.1x. **Pio's sublinear scaling on hard boards is NOT explained by runout freezing** - closing the remaining 100%-range hard-board gap needs a genuinely different update rule (sampling, alternating schemes), which is M7+ scope, not schedule tuning.
+  - **Freezing has a hard ceiling on hard boards, and it is low.** On this tree, ~100% skipping only doubles per-iteration speed (river subtrees are ~50-75% of iteration cost; per-child fold/drift overhead remains), and every frozen iteration is lost learning that inflates the iteration count nearly 1:1. Net ceiling ~1.25x; the landed default reaches ~1.1x. **Pio's sublinear scaling on hard boards is NOT explained by runout freezing** - closing the remaining 100%-range hard-board gap needs a genuinely different update rule (sampling, alternating schemes), which was M7's job. It was tried there and it did not work either - see the M7 entry's rejected list.
 
 - **M6.11 - suit isomorphism over runouts.** Landed 2026-08-26, the CONTAINED design: **artifact format, C# reader, frontend and harness all unchanged.**
 
@@ -128,6 +128,103 @@ Both were found by chasing an iteration count that could not have moved if the e
 | river, 100% | **8.1x faster** (4.0-14.6x) | 7.1x | 9 MB | 38 MB |
 
 The sweep's hardest board (`Ks Kd 4c 9h`, which has a usable s<->d permutation) went 17.9 s -> 9.45 s at 100% ranges. Full-range turn boards remain the one family where Pio is still ahead (0.71x median, best board 0.93x - close to parity); per M6.10's negative results, closing that residual is an update-rule question, not further scheduling or collapsing.
+
+- **M7 - convergence work.** Landed 2026-08-27.
+  **Two small changes kept, four ideas measured and rejected, and the measurement method itself turned out to be the largest finding.**
+
+  Read this entry before proposing any further solver speedup: it closes off most of the obvious remaining ideas with numbers, and it changes how the next one has to be measured.
+
+  What landed:
+
+  1. **The traversal stopped zeroing and copying its value buffer at every node.**
+     `traverse_impl` zeroed `out` in its prologue before knowing which branch would run.
+     Two of the four branches overwrite every entry anyway, and the actor branch paid twice - it accumulated into a scratch slot and then copied the whole thing over `out`.
+     Terminals now only resize, which is load-bearing rather than removable: `terminal_values` fills `out` through `out.data()` without resizing it, so deleting the prologue outright wrote out of bounds.
+     This retired the per-level value arena slot, so `memory.cpp`'s `per_level` term dropped from `(3 + seats)` to `(2 + seats)`.
+  2. **Showdown evaluators resolve by node index, not by map descent.**
+     `terminal_values` reached its `RiverEvaluator` through `evaluators_.find(board_mask)` - a red-black descent on the hot path, once per showdown terminal per seat per iteration.
+     A flop tree has 106k terminals and 1176 distinct river boards, so that was millions of pointer chases per solve to recover something already known at build time.
+     They are now also indexed by the node's dense `terminal_index`, built alongside the map and immutable for the rest of the solve.
+  3. **Deterministic chance sampling, off by default** - see the rejected list below for why it is off, and the preflop note for why it exists at all.
+
+  ### The measurement finding, which invalidated most of this milestone's own first draft
+
+  **Block A/B timing does not work on this hardware, and everything measured that way at single-digit percentages was an artifact.**
+
+  The method that fails is the obvious one: build A, time it three or four times, rebuild as B, time it again.
+  A build takes minutes; CPU frequency and thermal state differ across that gap; the drift lands entirely on one arm.
+  Three separate changes were each "measured" at 1.8%, 2.1% and 3.8% that way during this milestone, and **all three vanished** when the same binaries were finally built first and then run alternately:
+
+  ```
+  origin/main vs change 1 vs change 1+2+3, one thread, p_flop, 6 interleaved rounds
+    base  8.000 7.759 7.974 7.782 7.736 7.767   median 7.775
+    s1    7.809 7.739 7.873 7.699 7.854 7.900   median 7.831
+    cur   7.937 7.909 7.886 7.915 7.853 7.756   median 7.898
+  ```
+
+  Per round the winner is `s1` three times, `base` twice, `cur` once.
+  There is no consistent ordering, and the within-arm spread is 2.6%.
+  **Treat roughly 3% as this benchmark's floor.**
+
+  Worse, the artifact is directional and therefore convincing: a 3.8% "regression" was chased through four separate attempted fixes (an early-out, a const capture, member reordering, a short-circuited predicate) before an interleaved run showed there had never been a regression at all.
+
+  Both kept changes stay regardless, because neither depended on the number - one removes a memset and a vector copy per node, the other removes a tree descent from the hot path, and strictly less work is worth doing whether or not the benchmark can see it.
+  What was withdrawn is the claim to have measured how much.
+
+  `engine/tools/bench_ab.py` is the fix and is now the only sanctioned way to compare two builds.
+  It builds both refs before timing either, alternates them run by run, alternates the ORDER between rounds (whichever arm runs first in a pair is systematically biased, by an amount comparable to the effects being measured), and reports the per-round paired difference.
+  Its verdict keys off whether the **sign** is consistent across rounds rather than off the median gap, and it refuses to print a percentage when it is not.
+
+  ```bash
+  python tools/bench_ab.py origin/main WORKTREE --config configs/_bench/d_dcfr_t1.json --rounds 8
+  ```
+
+  **Two consequences for numbers already in this file.**
+  Anything at 1.3x or above is far outside the noise band and stands: M6.8's 7.8x, M6.9's 1.23-1.45x, M6.11's 1.31-1.58x, the 20-board sweep ratios.
+  But the sub-15% figures here were produced in the same style and sit inside the band this benchmark cannot resolve - specifically **"the DCFR discount sweep is ~10%"** and **M6.10's ~6-10%**.
+  Treat those as unverified rather than as wrong; re-run them through `bench_ab.py` before relying on either.
+
+  **And a methodological rule that follows from all of it: prefer a deterministic counter to a stopwatch whenever the question allows it.**
+  Every conclusion below that was *counted* - iterations to target, prunable fraction, skip counts - survived intact.
+  Every conclusion that was *timed* below about 3% did not.
+
+  ### Rejected, with numbers, so nobody re-derives them
+
+  All iteration counts below are to 0.02% of pot on `9c 5d Jc 7s` at ~15% ranges (`configs/_bench/ttt_*.json`) and 0.05% on `9c 5d Jc` (`configs/_bench/ftt_*.json`), recalc off on every arm so the update rule is the only variable.
+  Iteration counts are deterministic, which is exactly why these verdicts held when the timings did not.
+
+  - **PCFR+ (predictive regret matching) is worse than DCFR here, not better.**
+    This was the milestone's main hypothesis, on the strength of M6.10's conclusion that closing the gap "needs a genuinely different update rule".
+    Turn: DCFR 1000 iterations, PCFR+ **1500**. Flop: DCFR 300, PCFR+ **400**. So 1.45-1.51x more iterations, plus about 9% more per iteration for the extra array.
+    Worth recording that the first implementation used *linear* strategy averaging and needed 2350 iterations; switching to the published *quadratic* averaging bought 2350 -> 1500 and still lost.
+    The bar was always high and is worth restating: CFR+ needs 2000 iterations on this board where DCFR needs 1000, so PCFR+ had to beat CFR+ by more than 2.1x merely to reach parity, and it roughly matched it.
+  - **Predictive DCFR (keep the discounting, add the prediction) is worse still**: turn **1900**, flop **500**, i.e. 1.89-1.96x DCFR.
+    This was the fallback for the above and it removes the last reason to keep the machinery.
+  - **Adding an unused rule variant to the hot loop is not free**, which is the reason the predictive work was reverted rather than kept behind a config flag.
+    It could not be shown to be free, and a permanently-carried cost on the path every solve takes is not worth an option that loses on every tree measured.
+  - **Zero-reach subtree pruning does not trigger often enough to be worth building.**
+    Skipping an opponent action whose regret-matched probability is zero for *every* hand is exactly sound - the child's actor reach is identically zero, every terminal below returns `+0.0f`, and no regret below changes.
+    But measured at the accuracy target, weighted by the decision nodes in the skipped subtree: **1.36%** of decision-node visits on the deep turn tree (4 actions per node) and **0.003%** on the flop tree (2 actions), against a 10% bar.
+    The condition needs several hundred hands to *simultaneously* want something else, and they do not.
+    Measured post-hoc through `current_strategy()` rather than by instrumenting the traversal, which is the cheap way to ask this question again on a different tree shape.
+  - **Chance sampling loses on flop and turn**, and is kept only as the preflop enabler.
+    Horvitz-Thompson over the representative children, annealing to exact enumeration.
+    Turn: 2300-3250 iterations against DCFR's 1000. Flop: 650-800 against 300. So 1.9-3.0x, in exchange for iterations that are only 11-15% cheaper.
+    It is correct rather than fast-and-wrong: the sampled turn solve lands on the same equilibrium value as the enumerated one (root EVs 45.9046 vs 45.9038).
+    The theoretical argument for it over freezing still holds and is the reason it survives - freezing is **biased** (a fixed recalc threshold was measured to floor exploitability at that threshold), while importance-weighted sampling is **unbiased**, trading bias for variance.
+    But this solver has an exact per-hand gradient and converges empirically like 1/T, and sampling moves that into MCCFR's 1/sqrt(T) regime, which at a tight accuracy target is a bad trade.
+    Preflop is the different problem: three chance levels, where enumeration is not expensive but impossible.
+  - **Fork-budget starvation was a wrong diagnosis.**
+    The suspicion was that `split_budget_ = threads * 4` divided by child count at each level leaves a deep tree's chance node unable to fork, since the flop benchmark (2 children per node) scales at 8.31x on 16 threads while the deep turn tree (4 children) manages only 5.87x.
+    Raising the budget 16x and doubling `kMaxSplitLevels` made it **worse**, 0.450 s -> 0.529 s.
+    The actual explanation is work per iteration, not depth: the *same* turn tree at 100% ranges (6x the hands, identical shape) scales at 8.03x.
+    A tree with 3.3 ms iterations has less to amortise the per-iteration join against than one with 134 ms iterations.
+    **There is nothing to recover here for flop trees, which already scale at the 8-physical-core ceiling.**
+
+  ### What this leaves
+
+  The performance ideas that were cheap to test are now tested, and the honest position is that **no further single-digit tuning is worth chasing on this benchmark, because it cannot see single digits.**
+  The remaining large levers are structural rather than incremental: lossless preflop collapsing (169 hand classes and 1755 strategically distinct flops, roughly 100x before anything lossy) and abstraction.
 
 ## Where the time goes: the chance-node cliff (measured 2026-08-26)
 
@@ -165,10 +262,11 @@ A tight range is roughly 190 live combos per seat against 1176 for a full range 
 
 ### Also measured, so nobody re-derives it
 
-- **DCFR is already the right update rule.** Iterations to 0.02% of pot on `9c 5d Jc 7s`: dcfr 1100 (6.07 s), cfr_plus 2000 (10.16 s), plain regret matching did not converge inside 20000 (100 s). There is no free win in swapping the rule.
+- **DCFR is already the right update rule, and this has now been tested twice.** Iterations to 0.02% of pot on `9c 5d Jc 7s`: dcfr 1100 (6.07 s), cfr_plus 2000 (10.16 s), plain regret matching did not converge inside 20000 (100 s). M7 then added PCFR+ (1.45-1.51x dcfr's iterations) and predictive DCFR (1.89-1.96x) to the list of rules that lose. There is no free win in swapping the rule.
+- **Wall-clock differences below about 3% are not measurable on this box**, and block-structured A/B timing manufactures them. Use `tools/bench_ab.py`, and prefer a deterministic counter to a stopwatch. See the M7 milestone entry.
 - **Best-response checkpoints cost nothing.** 1000 iterations with a BR pass every 100 vs every 1000: 5.229 s vs 5.226 s, 0.06%.
 - **Threading is done.** 8.0x on 16 threads (8 physical cores).
-- **The DCFR discount sweep is ~10%** of an iteration: dcfr 2.699 s vs plain rm 2.445 s over 500 iterations. Real, cheap to fix, not the gap.
+- **The DCFR discount sweep is ~10%** of an iteration: dcfr 2.699 s vs plain rm 2.445 s over 500 iterations. Real, cheap to fix, not the gap. **Caveat added 2026-08-27:** this was block-timed, and 10% sits inside the band M7 showed this benchmark cannot resolve. The fix landed in M6.9 either way, but treat the size as unverified.
 
 ### What would close it, in priority order
 
@@ -178,10 +276,14 @@ A tight range is roughly 190 live combos per seat against 1176 for a full range 
 4. ~~**Fold the DCFR discount into the per-node update.**~~ **LANDED 2026-08-26** - see "M6.9" above. The justification written here originally ("each traversal writes a disjoint set of nodes, so this is exactly equivalent") was **wrong**, and worth recording as a trap: a traversal for seat p *writes* only nodes where `actor == p`, but it *reads* every decision node, because regret matching runs at opponent nodes too. Discounting node N the moment seat 0 finishes with it would change what seat 1 reads there in the same iteration. The deferred-and-stamped scheme in M6.9 is what actually makes it equivalent.
 5. ~~**Stop traversing converged subtrees.**~~ **LANDED 2026-08-26 as M6.10, with a much smaller win than hoped (~10%)** - see the milestone entry and its negative results. The determinism invariant survived intact (the schedule is deterministic), but the slope hypothesis was wrong: freezing cannot reproduce Pio's sublinear scaling.
 6. ~~**Suit isomorphism over runouts.**~~ **LANDED 2026-08-26 as M6.11.** Two corrections to what this entry used to claim: the blast radius was designed away (the contained design touches nothing outside the engine), and the per-board arithmetic here was wrong - a usable permutation must fix every board card, so `9c 5d Jc 7s` collapses NOTHING, while ~69% of flops and ~40% of turn boards have at least one usable permutation and gain 1.3-1.6x.
+7. ~~**A different update rule (the item M6.10 said was needed).**~~ **TRIED AND REJECTED 2026-08-27 as M7** - PCFR+ and predictive DCFR both need more iterations than DCFR, not fewer. See the M7 entry.
+8. ~~**Skip zero-reach subtrees; sample chance nodes; retune the fork budget.**~~ **TRIED AND REJECTED 2026-08-27 as M7** - trigger rate 1.36%/0.003%, sampling 1.9-3.0x slower, and the fork-budget diagnosis was simply wrong. See the M7 entry.
+
+**This list is now exhausted.** Everything cheap enough to test has been tested, and M7's measurement finding says the benchmark cannot resolve what is left. The remaining levers are structural: lossless preflop collapsing, and abstraction.
 
 ### Sequencing call
 
-Items 1-4 are all pure engineering with no algorithmic risk and they compose: a conservative 3x from the compact universe and 2x from layout + SIMD puts a realistic-range turn spot near 0.9 s against Pio's 1.77 s. That is the "honestly faster" bar, reached without touching the determinism invariant, and it should come **before** M7.
+Items 1-4 are all pure engineering with no algorithmic risk and they compose: a conservative 3x from the compact universe and 2x from layout + SIMD puts a realistic-range turn spot near 0.9 s against Pio's 1.77 s. That is the "honestly faster" bar, reached without touching the determinism invariant, and it came before QRE as intended.
 
 Item 5 is what makes hard boards and flop trees scale, and it is the one to do deliberately and last of the performance work, because it changes what the engine promises about reproducibility.
 
@@ -189,10 +291,10 @@ Re-run `bench_boards.py --ranges tight` after each item; it is the only number t
 
 Next (config schema already carries the keys; do not re-plumb):
 
-- **M7 - QRE**: entropy-regularized CFR (`qre.mode`, per-player lambda, annealing schedules), `fit-lambda` subcommand (MLE from observed frequency counts). A QRE artifact must never be compared to Pio (the harness refuses).
-- **M8 - multiway (3+ players)**: N-seat public tree, fast side-pot terminal path (`showdown_share` is the correct-but-slow reference), NashConv already generalizes. `multiway_no_nash_guarantee` stays surfaced - CFR converges to coarse correlated equilibria with 3+ players.
-- **M9 - collusion, best-response mode first**: seat->agent partition + payoff-weight matrices, joint-range representation (1326x1225 - river-only on 16GB), frozen-opponent team best response.
-- **M10 - Bayesian unknown-collusion**: chance root over team type with probability p; opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.
+- **M8 - QRE**: entropy-regularized CFR (`qre.mode`, per-player lambda, annealing schedules), `fit-lambda` subcommand (MLE from observed frequency counts). A QRE artifact must never be compared to Pio (the harness refuses).
+- **M9 - multiway (3+ players)**: N-seat public tree, fast side-pot terminal path (`showdown_share` is the correct-but-slow reference), NashConv already generalizes. `multiway_no_nash_guarantee` stays surfaced - CFR converges to coarse correlated equilibria with 3+ players.
+- **M10 - collusion, best-response mode first**: seat->agent partition + payoff-weight matrices, joint-range representation (1326x1225 - river-only on 16GB), frozen-opponent team best response.
+- **M11 - Bayesian unknown-collusion**: chance root over team type with probability p; opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.
 
 Out of scope, permanently (do not build speculatively): GPU, hand abstraction/bucketing, TMECor / coordination-without-card-visibility, cloud SDKs inside the engine.
 

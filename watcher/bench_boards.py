@@ -17,11 +17,21 @@ OS counters (wall clock around the solve; peak working set of the process).
   python bench_boards.py --ranges tight   # realistic ranges instead of 100%
 
 Range width is a first-class knob because it is NOT neutral between the two
-solvers. htsolver's cost is independent of it - every array and every inner
-loop is the full 1326-combo universe no matter how narrow the range - while
-Pio's scales with the combos actually in play. A 100% range is therefore
-htsolver's most favourable case, and `--ranges tight` is the one that
-resembles a real spot.
+solvers, though no longer in the direction this docstring used to claim.
+Before M6.8 every htsolver array was the full 1326-combo universe regardless
+of the configured ranges, so a tight range bought it nothing while Pio's cost
+fell; a 100% range was htsolver's most favourable case. The compact hand
+universe inverted that. htsolver now sizes everything by the combos actually
+live in some starting range, and tight ranges are where it wins by the widest
+margin (turn 3.43x, river 18.2x) while 100% turn boards are the one family
+where Pio is still ahead. `--ranges tight` is both the realistic case and the
+flattering one now; run both if the question is about scaling.
+
+This script is for htsolver-vs-Pio comparison. For htsolver-vs-htsolver - two
+builds of the engine against each other - use engine/tools/bench_ab.py
+instead, and read the M7 entry in engine/docs/roadmap.md first: naive A/B
+timing on this hardware manufactures differences of a few percent that are not
+there.
 
 Writes bench_boards_results.json next to this file and prints a summary table.
 """

@@ -16,6 +16,14 @@ On Windows, **always** go through the wrapper - cl, cmake, and ninja are not on 
 Never invoke cl, cmake, or ninja directly on Windows.
 On Linux/CI, plain `cmake -B build -S engine && cmake --build build && ctest --test-dir build` is fine (the toolchain is on PATH there).
 
+## Benchmarking: interleave, or do not report a number
+
+**Wall-clock A/B below about 3% is not measurable on this box, and the obvious method manufactures results.**
+Build A, time it a few times, rebuild as B, time it again: a build takes minutes, CPU frequency and thermal state drift across the gap, and the drift lands entirely on one arm. Three separate changes were each "measured" at 1.8-3.8% that way in one session and all three vanished when the same binaries were run interleaved (full numbers in `docs/roadmap.md`, M7).
+
+Use `tools/bench_ab.py <ref-a> <ref-b>`, which builds both binaries before timing either, alternates them run by run, alternates the order between rounds, and refuses to print a percentage unless the sign of the paired difference is consistent across every round.
+**And prefer a deterministic counter to a stopwatch wherever the question allows it** - iterations-to-target, skip counts, node visits. Every counted conclusion in M7 survived; every timed one below ~3% did not.
+
 ## The dev box is more permissive than CI - expect green-here-red-there
 
 Two environment gaps have bitten already, both invisible locally:
@@ -96,4 +104,5 @@ The M5 acceptance gate passed 2026-08-25 on a real full-range river spot (`confi
 The harness's primary gate is cross-exploitability (engine strategy loaded into Pio via set_strategy), NOT per-hand L1 - per-hand strategies legitimately differ between equilibria; keep it that way.
 It is now **opt-in** (`engine_compare.py --cross-check`) and off in the queue path, because PioSolver is being retired and most /compare runs are engine-only: a validation sweep has to ask for it explicitly, and a run without it reports "no verdict" rather than a PASS.
 The reach-weighted per-hand L1/EV diagnostics were removed with the per-solver payload split - each solver writes its own `.htc` and agreement is judged by eye on the two grids.
-Deferred with schema/plumbing already in place: M7 QRE (`qre.mode`, per-player lambda, annealing, `fit-lambda`), M8 multiway + side-pot fast path, M9 collusion best-response, M10 Bayesian unknown-collusion (`agents.collusion.p`).
+M7 (convergence work) landed 2026-08-27 and is mostly a set of NEGATIVE results - PCFR+, predictive DCFR, zero-reach pruning and fork-budget retuning were all measured and rejected, chance sampling landed off by default, and the biggest finding was about the benchmark rather than the solver. Read that entry in `docs/roadmap.md` before proposing another speedup.
+Deferred with schema/plumbing already in place: M8 QRE (`qre.mode`, per-player lambda, annealing, `fit-lambda`), M9 multiway + side-pot fast path, M10 collusion best-response, M11 Bayesian unknown-collusion (`agents.collusion.p`).
