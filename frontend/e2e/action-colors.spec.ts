@@ -49,6 +49,53 @@ test("a bet label is read with its unit, not as a bare number", () => {
   expect(parseBetSize("ALLIN")).toBeNull();
 });
 
+test("a bare number reads as percent-of-pot when unitMode is 'pct'", () => {
+  // /compare's own labels ("Bet 50") are always bare - it has no big blind to
+  // suffix them with. sizeRef there is the pot facing the bet, in the same
+  // chips as the label, so "Bet 50" against a 100-chip pot is 50%.
+  expect(parseBetSize("Bet 50", 100, "pct")).toEqual({ value: 50, unit: "pct" });
+  expect(parseBetSize("Raise to 300", 100, "pct")).toEqual({ value: 300, unit: "pct" });
+  // The default stays "bb" - every call site that predates this change (every
+  // /solver view) passes no third argument and must read exactly as before.
+  expect(parseBetSize("Bet 50", 100)).toEqual({ value: 0.5, unit: "bb" });
+  // A "%"-suffixed label is unambiguous either way; unitMode never overrides it.
+  expect(parseBetSize("Bet 50%", 100, "pct")).toEqual({ value: 50, unit: "pct" });
+});
+
+test("/compare's chip-denominated bets ramp on percent of pot, and land where an explicit '%' label would", () => {
+  // The regression this exists for: /compare labels stay in chips ("Bet 33"),
+  // but the ramp has to read them as if they were "Bet 33%" - not as 33 big
+  // blinds, which is what happened before and pinned every bet to the darkest
+  // shade the ramp has (33 blew past BB_MAX=60... at chip_scale=100 it did not
+  // even reach that far, which was the OTHER half of the bug: a page whose
+  // sizeRef was accidentally too generous for its numbers).
+  const pot = 100;
+  const chipPalette = buildActionPalette(["Bet 33", "Bet 75", "Bet 200", "Fold"], pot, "pct");
+  const pctPalette = buildActionPalette(["Bet 33%", "Bet 75%", "Bet 200%", "Fold"]);
+
+  expect(chipPalette["Bet 33"]).toBe(pctPalette["Bet 33%"]);
+  expect(chipPalette["Bet 75"]).toBe(pctPalette["Bet 75%"]);
+  expect(chipPalette["Bet 200"]).toBe(pctPalette["Bet 200%"]);
+
+  // Darker is bigger, same as every other ramp.
+  expect(luminance(chipPalette["Bet 33"])).toBeGreaterThan(luminance(chipPalette["Bet 75"]));
+  expect(luminance(chipPalette["Bet 75"])).toBeGreaterThan(luminance(chipPalette["Bet 200"]));
+  // And tellable apart, which is the whole point of buildActionPalette over
+  // the single-label fallback.
+  expect(distance(chipPalette["Bet 33"], chipPalette["Bet 75"])).toBeGreaterThan(CLEARLY_DIFFERENT);
+  expect(distance(chipPalette["Bet 75"], chipPalette["Bet 200"])).toBeGreaterThan(CLEARLY_DIFFERENT);
+});
+
+test("percent-of-pot mode still reads the pot GROWING down a line the same way", () => {
+  // A turn bet of 100 against a 300-chip pot (grown from a flop bet-call) is a
+  // third-pot bet, not the "100% of the 100-chip ROOT pot" a flat page-wide
+  // reference would have read it as - which is why /compare recomputes the
+  // pot at every node rather than reusing one constant for the whole line.
+  const turnPalette = buildActionPalette(["Bet 100", "Check"], 300, "pct");
+  const explicitThird = buildActionPalette(["Bet 33.3%", "Check"]);
+  expect(turnPalette["Bet 100"]).toBe(explicitThird["Bet 33.3%"]);
+});
+
 test("the preflop percent raises are four distinct colours", () => {
   // The regression this whole change exists for: read as bare numbers, 54/75/
   // 100/125 all blew past a 40bb ceiling and rendered the identical darkest

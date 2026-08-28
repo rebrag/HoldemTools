@@ -3,6 +3,7 @@
 // from the same shared helpers the matrix cells and legend use.
 import { SUITS } from "@/lib/cards";
 import {
+  type BetUnit,
   type HandCellData,
   actionCategory,
   buildActionPalette,
@@ -97,13 +98,14 @@ export interface SlotSegment {
 /** Assign action weights (fractions 0..1) to the fixed slots as bar widths. */
 export const buildSegmentSlots = (
   weights: Record<string, number>,
-  sizeRef = 1
+  sizeRef = 1,
+  sizeUnit: BetUnit = "bb"
 ): SlotSegment[] => {
   const present = Object.keys(weights).filter((a) => a !== "Position");
   const ordered = orderActionKeys(present);
   /* One palette for the whole node, so bet sizes that appear together stay
      tellable apart and every view showing this node agrees. */
-  const palette = buildActionPalette(ordered, sizeRef);
+  const palette = buildActionPalette(ordered, sizeRef, sizeUnit);
   const bySlot: Partial<Record<SegmentSlot, { width: number; color: string }>> = {};
   let betIdx = 0;
   let otherIdx = 0;
@@ -129,7 +131,8 @@ export const buildSegmentSlots = (
 
 export const computeActionAggregates = (
   data: HandCellData[],
-  sizeRef = 1
+  sizeRef = 1,
+  sizeUnit: BetUnit = "bb"
 ): ActionAggregate[] => {
   /* Keep zero-weight actions: they are still navigable branches (clicking a
    * 0.0% panel shows reactions to that action, matching ColorKey). */
@@ -142,7 +145,7 @@ export const computeActionAggregates = (
     }
   }
   const ordered = orderActionKeys([...totals.keys()]);
-  const palette = buildActionPalette(ordered, sizeRef);
+  const palette = buildActionPalette(ordered, sizeRef, sizeUnit);
   /* The node's own reach: every hand's action weights sum to ~1, so this is
    * the weighted combo count that actually arrives here. Zero when the node is
    * unreachable, which is why the divide is guarded rather than assumed. */

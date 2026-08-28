@@ -12,6 +12,7 @@ import { ALL_ACTIONS } from "@/lib/solver/constants";
 import { HAND_ORDER } from "@/lib/solver/handOrder";
 import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
 import type { MatrixDisplayData } from "@/lib/solver/matrixDisplayMode";
+import type { BetUnit } from "@/lib/solver/utils";
 import { fmtMoney, type MoneyOpts } from "./boardDisplay";
 
 /* ---------- props ---------- */
@@ -27,6 +28,14 @@ interface DecisionMatrixProps extends HTMLAttributes<HTMLDivElement> {
   displayData?: MatrixDisplayData | null;
   /** Chips/bb display for the EV tooltip; absent for sims (big blinds). */
   money?: MoneyOpts | null;
+  /** Override for the colour ramp's size reference; defaults to money.bbSize.
+   *  Only needed alongside sizeUnit="pct", where money.bbSize means something
+   *  else entirely (display-money-per-bb) and cannot double as the pot. */
+  sizeRef?: number;
+  /** Unit the ramp reference is in; see getColorForAction. Defaults to "bb",
+   *  matching every /solver view - /compare is the one caller that passes
+   *  "pct", since its trees have no big blind to calibrate against. */
+  sizeUnit?: BetUnit;
   onMatrixClick?: () => void;
   /** The pinned hand class, ringed in the grid (study view's breakdown). */
   selectedHand?: string | null;
@@ -58,6 +67,8 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
   reachByHand,
   displayData,
   money,
+  sizeRef: sizeRefOverride,
+  sizeUnit = "bb",
   onMatrixClick,
   selectedHand,
   onHandSelect,
@@ -65,8 +76,10 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
   ...rest
 }) => {
   /* Bet labels carry the solve's money; the colour ramp is calibrated in
-   * big blinds, so tell it how much money makes one. */
-  const sizeRef = money?.bbSize && money.bbSize > 0 ? money.bbSize : 1;
+   * big blinds, so tell it how much money makes one - UNLESS the caller
+   * overrides both, which /compare does (see sizeUnit above). */
+  const sizeRef =
+    sizeRefOverride ?? (money?.bbSize && money.bbSize > 0 ? money.bbSize : 1);
   /* ---------------- ORDERED DATA  ----------------
    * Substitute the blank-cell fallback here (inside the memo) so every cell —
    * real or blank — keeps a stable object reference across re-renders. HandCell's
@@ -141,6 +154,7 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
         return (
           <HandCell
             sizeRef={sizeRef}
+            sizeUnit={sizeUnit}
             key={cellData.hand}
             data={cellData}
             randomFill={randomFill}

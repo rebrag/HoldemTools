@@ -89,10 +89,23 @@ export interface ParsedBetSize {
  * all rendered the identical darkest red - indistinguishable from each other
  * and nearly indistinguishable from all-in.
  *
- * A bare number is the hand's own money; `sizeRef` (money per big blind)
- * converts it, so "Bet 50" in a $5 game is 10bb.
+ * A label with an explicit "%" or "bb" suffix is unambiguous and always wins.
+ * A BARE number (no suffix - every /compare label, since its bets stay in the
+ * spot's own chips) is resolved by `unitMode`:
+ *   "bb"  (default) - `sizeRef` is display money per big blind, so "Bet 50" in
+ *         a $5 game is 10bb. This is every /solver view.
+ *   "pct" - `sizeRef` is the pot facing the bet, in the label's own chips, so
+ *         "Bet 50" against a 100-chip pot is 50%. This is /compare: its trees
+ *         are built as sizing lists in percent of pot (see the tree builder),
+ *         so calibrating the ramp on percent-of-pot is what "how the tree was
+ *         actually specified" means, and it is the same PCT_MIN..PCT_MAX band
+ *         a "%"-suffixed preflop raise already uses.
  */
-export function parseBetSize(label: string, sizeRef = 1): ParsedBetSize | null {
+export function parseBetSize(
+  label: string,
+  sizeRef = 1,
+  unitMode: BetUnit = "bb"
+): ParsedBetSize | null {
   if (!isBetOrRaise(label)) return null;
   const m = label.match(/(\d+(?:\.\d+)?)\s*(%|bb)?/i);
   if (!m) return null;
@@ -101,7 +114,10 @@ export function parseBetSize(label: string, sizeRef = 1): ParsedBetSize | null {
   const suffix = (m[2] ?? "").toLowerCase();
   if (suffix === "%") return { value, unit: "pct" };
   if (suffix === "bb") return { value, unit: "bb" };
-  return { value: value / (sizeRef > 0 ? sizeRef : 1), unit: "bb" };
+  const ref = sizeRef > 0 ? sizeRef : 1;
+  return unitMode === "pct"
+    ? { value: (value / ref) * 100, unit: "pct" }
+    : { value: value / ref, unit: "bb" };
 }
 
 /** The raw number in a bet/raise label, unit-blind. Kept for callers that only
@@ -206,13 +222,17 @@ const categoricalColor = (action: string): string | null => {
  * also what keeps them agreeing: a bet's color depends on the node's size set,
  * so two views that pass different sets would disagree.
  *
- * `sizeRef` is how much of the label's unit makes one big blind: 1 when the
- * label is already in big blinds (every preflop sim), the hand's big blind when
- * it is in a recorded hand's own money.
+ * `sizeRef` and `unitMode` together say how to read a BARE number (see
+ * parseBetSize): "bb" (default) treats `sizeRef` as money per big blind - 1
+ * when the label is already in big blinds (every preflop sim), the hand's big
+ * blind when it is in a recorded hand's own money. "pct" treats `sizeRef` as
+ * the pot facing the bet, which is what /compare uses since its trees have no
+ * big blind at all.
  */
 export const buildActionPalette = (
   actions: string[],
-  sizeRef = 1
+  sizeRef = 1,
+  unitMode: BetUnit = "bb"
 ): Record<string, string> => {
   const out: Record<string, string> = {};
 
@@ -226,7 +246,7 @@ export const buildActionPalette = (
       out[action] = flat;
       continue;
     }
-    const parsed = parseBetSize(action, sizeRef);
+    const parsed = parseBetSize(action, sizeRef, unitMode);
     if (!parsed) {
       out[action] = BET_LIGHT; // bet/raise with no parsable size
       continue;
@@ -254,10 +274,14 @@ export const buildActionPalette = (
  * close sizes will look close. Callers that know the node's full option list
  * should use buildActionPalette instead.
  */
-export const getColorForAction = (action: string, sizeRef = 1): string => {
+export const getColorForAction = (
+  action: string,
+  sizeRef = 1,
+  unitMode: BetUnit = "bb"
+): string => {
   const flat = categoricalColor(action);
   if (flat !== null) return flat;
-  const parsed = parseBetSize(action, sizeRef);
+  const parsed = parseBetSize(action, sizeRef, unitMode);
   return parsed ? betColorAt(betRampT(parsed)) : BET_LIGHT;
 };
 

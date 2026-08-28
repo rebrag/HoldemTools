@@ -56,6 +56,12 @@ export type PostflopSessionLineNode =
       /** Chips behind the seat when they faced this decision, in the solve's
        *  display money. */
       stackMoney: number | null;
+      /** Pot facing this decision - the root pot plus what both seats have
+       *  committed on completed streets, in the solve's display money. Only
+       *  read when the strip's ramp is calibrated in percent-of-pot (see
+       *  PostflopLine's sizeUnit); every /solver caller stays in big blinds
+       *  and never looks at this field. */
+      potMoney?: number | null;
       /** Display labels of every action available at the decision node. */
       options: string[];
       taken: string;
@@ -587,6 +593,13 @@ export function usePostflopSession() {
           // Stack as it was when the seat faced this decision (their bet on
           // this street is not deducted yet), matching the preflop Line.
           stackMoney: stackBehindMoney(seat, role, parent),
+          // Same formula as the card branch above: the streets that are
+          // COMPLETE as of this decision, both seats' share.
+          potMoney:
+            core.manifest.pot_chips == null
+              ? null
+              : (core.manifest.pot_chips + 2 * priorStreetCommitChips(parent)) /
+                chipScale,
           options: parentDoc
             ? displayActionMap(parentDoc, parent, eff, core.manifest.chip_scale).map(
                 (a) => a.display

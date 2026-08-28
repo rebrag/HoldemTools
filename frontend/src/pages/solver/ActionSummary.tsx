@@ -3,7 +3,7 @@
 // distribution bar. Clicking a panel navigates the tree, like ColorKey.
 import React, { useMemo } from "react";
 import { motion } from "framer-motion";
-import { HandCellData } from "@/lib/solver/utils";
+import { HandCellData, type BetUnit } from "@/lib/solver/utils";
 import {
   buildSegmentSlots,
   computeActionAggregates,
@@ -14,6 +14,8 @@ interface ActionSummaryProps {
   data: HandCellData[];
   /** Units of the bet labels per big blind; see getColorForAction. */
   sizeRef?: number;
+  /** Unit `sizeRef` is in; see getColorForAction. Defaults to "bb". */
+  sizeUnit?: BetUnit;
   loading?: boolean;
   onActionClick?: (action: string) => void;
   /** Shorter panels (mobile dock): the % drops a size and the combo line
@@ -43,6 +45,7 @@ const PANEL_MIN_H_COMPACT = 48;
 const ActionSummary: React.FC<ActionSummaryProps> = ({
   data,
   sizeRef = 1,
+  sizeUnit = "bb",
   loading,
   onActionClick = () => {},
   compact,
@@ -57,21 +60,21 @@ const ActionSummary: React.FC<ActionSummaryProps> = ({
     : "flex gap-1 w-full";
   const panelSizing = vertical ? "min-h-0 flex-1" : "flex-1 min-w-0";
   const aggregates = useMemo(
-    () => computeActionAggregates(data, sizeRef),
-    [data, sizeRef]
+    () => computeActionAggregates(data, sizeRef, sizeUnit),
+    [data, sizeRef, sizeUnit]
   );
 
   /* Distribution bar: normalize the per-action shares so the slots sum to 100
    * even when weights drift slightly from 1 per hand. */
   const barSegments = useMemo(() => {
     const total = aggregates.reduce((s, a) => s + a.combos, 0);
-    if (total <= 0) return buildSegmentSlots({}, sizeRef);
+    if (total <= 0) return buildSegmentSlots({}, sizeRef, sizeUnit);
     const shares: Record<string, number> = {};
     for (const a of aggregates) shares[a.action] = a.combos / total;
-    return buildSegmentSlots(shares, sizeRef);
-    // sizeRef belongs here: it decides how a bet label is read, so switching
-    // between money and big blinds re-colours the bar.
-  }, [aggregates, sizeRef]);
+    return buildSegmentSlots(shares, sizeRef, sizeUnit);
+    // sizeRef/sizeUnit belong here: they decide how a bet label is read, so
+    // switching between money and big blinds re-colours the bar.
+  }, [aggregates, sizeRef, sizeUnit]);
 
   const isLoading = (loading ?? false) || aggregates.length === 0;
 

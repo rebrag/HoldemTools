@@ -38,7 +38,7 @@ import {
 import { parseBoardCards, pioClipboardCodec } from "./treeConfigText";
 import { ALL_CARDS } from "@/components/treeBuildingView";
 import { displayLabelWith } from "./actionLabels";
-import { isCardSegment } from "@/lib/solver/postflopNode";
+import { isCardSegment, priorStreetCommitChips } from "@/lib/solver/postflopNode";
 import PostflopCardPicker from "@/components/PostflopCardPicker";
 import { pioRangeCodec } from "@/lib/solver/rangeTokens";
 import PipelineTimingPanel, {
@@ -608,7 +608,11 @@ const SolverCompare = () => {
 
   const chipScale = spot?.chip_scale ?? 100;
   // Everything on this page displays in chips (mode "money" = plain numbers,
-  // no bb suffix); bbSize still calibrates the bet-label color ramp.
+  // no bb suffix). The colour ramp does NOT read bbSize any more - this page
+  // has no big blind to calibrate against, so every ramp consumer below is
+  // given an explicit sizeRef={currentPot} sizeUnit="pct" instead (see
+  // currentPot). money.bbSize survives only as PostflopLine's fallback pot
+  // reference for a node that somehow lacks its own potMoney.
   const money: MoneyOpts = useMemo(
     () => ({ mode: "money", bbSize: chipScale }),
     [chipScale]
@@ -682,6 +686,23 @@ const SolverCompare = () => {
   const line = useMemo(
     () => buildCompareLine(currentNodeId, nodeById, displayLabel, spot?.pot ?? 0),
     [currentNodeId, nodeById, displayLabel, spot?.pot]
+  );
+
+  /**
+   * Pot facing the CURRENT node - the root pot plus what both seats have
+   * committed on completed streets. This is the colour ramp's reference for
+   * every grid/panel/card that renders the current node's OWN options
+   * (DecisionMatrix, ActionSummary, HandBreakdown, and the line strip's
+   * active card); a visited node further back in the strip carries its own
+   * potMoney instead, since the pot at THAT point was smaller.
+   *
+   * /compare calibrates the ramp on percent of this pot rather than on big
+   * blinds - unlike every /solver view, its trees have no big blind at all,
+   * and percent of pot is literally how the tree builder specifies sizes.
+   */
+  const currentPot = useMemo(
+    () => (spot ? spot.pot + 2 * priorStreetCommitChips(currentNodeId) : 0),
+    [spot, currentNodeId]
   );
 
   /** The board as it stood at the ROOT. A 5-card board is a river solve, so
@@ -852,6 +873,8 @@ const SolverCompare = () => {
             reachByHand={solverView.reachByHand}
             displayData={solverDisplay}
             money={money}
+            sizeRef={currentPot}
+            sizeUnit="pct"
             selectedHand={selectedHand}
             onHandSelect={onSelect}
             onHandHover={setHoverHand}
@@ -861,7 +884,8 @@ const SolverCompare = () => {
       <div className="shrink-0">
         <ActionSummary
           data={solverView.grid}
-          sizeRef={chipScale}
+          sizeRef={currentPot}
+          sizeUnit="pct"
           onActionClick={onActionClick}
           compact
         />
@@ -1360,6 +1384,8 @@ const SolverCompare = () => {
                 rootCards={board}
                 potMoney={spot.pot}
                 money={money}
+                sizeUnit="pct"
+                actorPotMoney={currentPot}
                 lineNodes={line.lineNodes}
                 notice={null}
                 onJump={jumpToNode}
@@ -1405,7 +1431,8 @@ const SolverCompare = () => {
                         displayMode={displayMode}
                         evRange={evRange}
                         chipEv={false}
-                        sizeRef={chipScale}
+                        sizeRef={currentPot}
+                        sizeUnit="pct"
                         className="h-full"
                       />
                     </div>

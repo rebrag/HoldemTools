@@ -12,7 +12,7 @@
 import React from "react";
 import { X } from "lucide-react";
 import PlayingCard from "@/components/PlayingCard";
-import { buildActionPalette, stringToColor } from "@/lib/solver/utils";
+import { buildActionPalette, stringToColor, type BetUnit } from "@/lib/solver/utils";
 import type { PostflopSessionLineNode } from "@/hooks/usePostflopSession";
 import type { PreflopLineNode } from "./usePreflopLineNodes";
 import { fmtMoneyValue, type MoneyOpts } from "./boardDisplay";
@@ -72,6 +72,21 @@ export interface PostflopLineProps {
   rootLabel?: string;
   rootCards?: string[];
   /**
+   * Unit the ramp reference (sizeRef, derived from money.bbSize) is in.
+   * Defaults to "bb" - every /solver call is in big blinds. /compare passes
+   * "pct": its trees are specified as sizing lists in percent of pot, not big
+   * blinds, so calibrating the ramp on percent-of-pot is what "how the tree
+   * was actually specified" means. See getColorForAction for the mechanics.
+   */
+  sizeUnit?: BetUnit;
+  /**
+   * Pot facing the CURRENT (to-act) node, in the strip's display money. Only
+   * read when sizeUnit is "pct" - a visited node's own options already carry
+   * their pot on `node.potMoney` (see PostflopSessionLineNode), but the
+   * active card has no lineNode of its own to carry one.
+   */
+  actorPotMoney?: number | null;
+  /**
    * Show the "Preflop" exit control when there are no preflop cards to click.
    * Defaults on, preserving the solver's behaviour. /compare turns it off: its
    * trees have no preflop half at all, so there is nowhere to exit to.
@@ -85,8 +100,12 @@ export interface PostflopLineProps {
 /* Colours for one node's whole option list. Built per card rather than per
  * label so two close bet sizes stay tellable apart, and so these dots agree
  * with the matrix segments for the same node. */
-const nodePalette = (options: string[], sizeRef = 1): Record<string, string> => {
-  const palette = buildActionPalette(options, sizeRef);
+const nodePalette = (
+  options: string[],
+  sizeRef = 1,
+  unitMode: BetUnit = "bb"
+): Record<string, string> => {
+  const palette = buildActionPalette(options, sizeRef, unitMode);
   for (const option of options) palette[option] ||= stringToColor(option);
   return palette;
 };
@@ -200,14 +219,21 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
   rootLabel = "FLOP",
   rootCards,
   showExit = true,
+  sizeUnit = "bb",
+  actorPotMoney,
 }) => {
   /* Postflop labels are in the solve's money; the colour ramp is calibrated
-   * in big blinds, so tell it how much money makes one. */
+   * in big blinds by default, so tell it how much money makes one. In "pct"
+   * mode this doubles as the fallback pot reference for a node that (for
+   * whatever reason) was not given its own potMoney. */
   const sizeRef = money?.bbSize && money.bbSize > 0 ? money.bbSize : 1;
-  /* The seat-to-act card's own palette, from the options it actually offers. */
+  /* The seat-to-act card's own palette, from the options it actually offers,
+   * against the pot IT faces - not a page-wide constant, since the pot grows
+   * down the line. */
   const activePalette = nodePalette(
     (actions ?? []).map((a) => a.display),
-    sizeRef
+    sizeUnit === "pct" ? (actorPotMoney ?? sizeRef) : sizeRef,
+    sizeUnit
   );
   const preflopSummary =
     !handSolve && preflopLine && preflopLine.length > 1
@@ -361,7 +387,13 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
                     <OptionRow
                       key={action}
                       action={action}
-                      color={nodePalette(all, sizeRef)[action]}
+                      color={
+                        nodePalette(
+                          all,
+                          sizeUnit === "pct" ? (node.potMoney ?? sizeRef) : sizeRef,
+                          sizeUnit
+                        )[action]
+                      }
                       taken={action === node.taken}
                       disabled={actionsDisabled}
                       onClick={

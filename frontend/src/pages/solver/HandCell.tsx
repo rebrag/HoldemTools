@@ -5,6 +5,7 @@ import {
   actionCategory,
   buildActionPalette,
   orderActionKeys,
+  type BetUnit,
 } from "@/lib/solver/utils";
 import "./App.css";
 
@@ -48,6 +49,9 @@ interface HandCellProps {
   onLeave?: () => void;
   /** Units of the bet labels per big blind; see getColorForAction. */
   sizeRef?: number;
+  /** Unit `sizeRef` is in; see getColorForAction. Defaults to "bb", the only
+   *  unit any /solver view has ever used. */
+  sizeUnit?: BetUnit;
 }
 
 const HandCell: React.FC<HandCellProps> = ({
@@ -60,6 +64,7 @@ const HandCell: React.FC<HandCellProps> = ({
   selected,
   onSelect,
   sizeRef = 1,
+  sizeUnit = "bb",
   onHover,
   onLeave,
 }) => {
@@ -104,7 +109,7 @@ const HandCell: React.FC<HandCellProps> = ({
     const ordered = orderActionKeys(Object.keys(data.actions));
     /* One palette per node, so two close bet sizes stay tellable apart and the
        cell agrees with the legend above it. */
-    const palette = buildActionPalette(ordered, sizeRef);
+    const palette = buildActionPalette(ordered, sizeRef, sizeUnit);
 
     // Assign each present action to its stable slot.
     const bySlot: Partial<Record<SlotName, { width: number; color: string }>> = {};
@@ -138,7 +143,7 @@ const HandCell: React.FC<HandCellProps> = ({
         backgroundColor: bySlot[slot]?.color ?? "transparent",
       },
     }));
-  }, [data.actions, isRandomFill, randomizedAction, sizeRef]);
+  }, [data.actions, isRandomFill, randomizedAction, sizeRef, sizeUnit]);
 
   /* ───────── pocket-pair border style ───────── */
   const isPair = data.hand.length === 2 && data.hand[0] === data.hand[1];
@@ -255,6 +260,7 @@ function areEqual(prev: HandCellProps, next: HandCellProps) {
     prev.stripes === next.stripes &&
     prev.solidColor === next.solidColor &&
     prev.sizeRef === next.sizeRef &&
+    prev.sizeUnit === next.sizeUnit &&
     prev.data.actions === next.data.actions &&
     prev.data.evs === next.data.evs
   );

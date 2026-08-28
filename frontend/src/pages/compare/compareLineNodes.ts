@@ -124,6 +124,12 @@ export const buildCompareLine = (
         // A .htc header carries no per-seat stacks, so the card shows none
         // rather than inventing one.
         stackMoney: null,
+        // Pot facing THIS decision - same formula as the card branch, but
+        // rooted at `prefix` (the decision node itself) rather than at the
+        // deal. Consumed by PostflopLine's ramp when sizeUnit="pct": /compare
+        // colours each visited node's bets against the pot IT faced, not a
+        // single page-wide constant, since the pot grows down the line.
+        potMoney: rootPot + 2 * priorStreetCommitChips(prefix),
         options: decision.actions.map((s) => label(s, prefix)),
         taken: label(segment, prefix),
       });

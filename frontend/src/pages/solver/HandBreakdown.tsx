@@ -15,7 +15,7 @@
 // The grid never scrolls: tiles split the panel height evenly, and their
 // content steps down through density tiers as rows get short.
 import React, { useMemo } from "react";
-import { HandCellData, orderActionKeys } from "@/lib/solver/utils";
+import { HandCellData, orderActionKeys, type BetUnit } from "@/lib/solver/utils";
 import {
   buildSegmentSlots,
   combosForHand,
@@ -56,6 +56,8 @@ interface HandBreakdownProps {
   money?: Pick<MoneyDisplay, "mode" | "bbSize">;
   /** Units of the bet labels per big blind; see getColorForAction. */
   sizeRef?: number;
+  /** Unit `sizeRef` is in; see getColorForAction. Defaults to "bb". */
+  sizeUnit?: BetUnit;
   loading?: boolean;
   className?: string;
 }
@@ -243,6 +245,7 @@ const TILE_MIN_W = 150; // px per grid column before adding another
 
 const HandBreakdown: React.FC<HandBreakdownProps> = ({
   sizeRef = 1,
+  sizeUnit = "bb",
   data,
   hand,
   board,
@@ -315,7 +318,7 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
             value: fmtPct(classMix[action] || 0),
           }));
     const classSegments =
-      mode === "strategy" ? buildSegmentSlots(classMix, sizeRef) : [];
+      mode === "strategy" ? buildSegmentSlots(classMix, sizeRef, sizeUnit) : [];
     const classBg =
       mode === "ev" && evRange
         ? (() => {
@@ -407,7 +410,7 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
           action,
           value: fmtPct(mix[action]),
         })),
-        segments: buildSegmentSlots(mix, sizeRef),
+        segments: buildSegmentSlots(mix, sizeRef, sizeUnit),
         bg: null,
         weight: detail.weight,
       };
@@ -425,6 +428,7 @@ const HandBreakdown: React.FC<HandBreakdownProps> = ({
     chipEv,
     chipScale,
     sizeRef,
+    sizeUnit,
     money?.mode,
     money?.bbSize,
   ]);
