@@ -259,8 +259,8 @@ TEST_CASE("qre composes with suit isomorphism") {
   const NlhePostflopGame on_game(config(true));
   CfrSolver off(off_game, UpdateConfig{}, 1, recalc_off, {}, qre_at(2.0));
   CfrSolver on(on_game, UpdateConfig{}, 1, recalc_off, {}, qre_at(2.0));
-  off.run(2400);
-  on.run(2400);
+  off.run(4800);
+  on.run(4800);
 
   REQUIRE(off_game.tree().size() == on_game.tree().size());
   std::vector<float> a, b;
@@ -278,9 +278,20 @@ TEST_CASE("qre composes with suit isomorphism") {
   }
   CHECK(compared > 0);
   INFO("worst per-cell strategy difference ", worst);
-  // Convergence residual, not bias: measured 0.053 at 600 iterations, 0.028 at
-  // 2400 and 0.0085 at 9600, i.e. going to zero as both solves approach the
-  // same unique QRE. A relabeling bug would leave a floor here instead.
+  // Convergence residual, not bias: re-measured under the gamma-3 strategy
+  // discount (the default since the DCFR exponent sweep), 0.063 at 2400
+  // iterations, 0.027 at 4800, 0.0097 at 9600 and 0.0087 at 19200 - going to
+  // zero as both solves approach the same unique QRE. A relabeling bug would
+  // leave a floor here instead.
+  //
+  // The count doubled from 2400 with that default change, and the reason is
+  // worth keeping: a heavier strategy discount makes the running average
+  // YOUNGER, so at a fixed iteration count it carries more of the still-moving
+  // recent iterates and two equivalent-but-differently-accumulated solves
+  // agree less closely. That is not slower convergence - the same sweep shows
+  // gamma 3 reaching a QRE-gap target in 440 iterations against gamma 1's 595
+  // - it is the difference between measuring an accuracy target and measuring
+  // agreement at a fixed t.
   CHECK(worst < 0.05);
 }
 

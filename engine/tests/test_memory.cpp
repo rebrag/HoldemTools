@@ -56,7 +56,14 @@ TEST_CASE("memory estimate matches the sizing rule") {
   // actions, and 3 levels deep from the root. Asserted exactly, not just
   // "> 0" - the term this test used to wave through is the one the
   // fail-fast check leans on.
-  const std::size_t per_level = 3 * 2 + (2 + 2) * 3;
+  //
+  // The three non-sigma slots are kSlotChild, kSlotHandScratch and
+  // kSlotCompat, then one saved-reach slot per seat. kSlotCompat holds the
+  // QRE dilation weights and is counted whether or not QRE is on, because the
+  // arena is sized by kSlotsPerLevel and not by a runtime flag - this test
+  // read (2 + seats) until that slot landed, which made it the one red case
+  // in the suite.
+  const std::size_t per_level = 3 * 2 + (3 + 2) * 3;
   const std::size_t arena = (3 + 2) * per_level * sizeof(float);
   CHECK(estimate.workspace_bytes == arena * max_live_arenas(1));
 

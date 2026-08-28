@@ -129,6 +129,8 @@ Both were found by chasing an iteration count that could not have moved if the e
 
 The sweep's hardest board (`Ks Kd 4c 9h`, which has a usable s<->d permutation) went 17.9 s -> 9.45 s at 100% ranges. Full-range turn boards remain the one family where Pio is still ahead (0.71x median, best board 0.93x - close to parity); per M6.10's negative results, closing that residual is an update-rule question, not further scheduling or collapsing.
 
+**That last sentence was right, and M7.1 answered it.** The DCFR gamma sweep closed the family outright: re-run after the default change, 100%-range turn boards are **1.17x faster than Pio** (median over the same 10 boards, range 0.93-1.66x), all 10 passing the cross-exploitability gate. Only `Ks Kd 4c 9h` is still behind, at 0.93x. **htsolver is now ahead of PioSolver in every family it has been swept on.** The prediction that it would take an update-rule change rather than more scheduling held exactly - it just turned out to be a parameter of the rule already in use, not a different rule.
+
 - **M7 - QRE (quantal response equilibrium).** Landed 2026-08-28. **The first differentiator over Pio to actually ship.**
 
   Entropy-regularized CFR, implemented as a **reward transformation inside the traversal** rather than as a replacement for regret matching. At an actor's decision node each action's counterfactual value is charged the dilated KL of the current strategy to uniform:
@@ -243,6 +245,52 @@ The sweep's hardest board (`Ks Kd 4c 9h`, which has a usable s<->d permutation) 
 
   Not built, deliberately: `fit-lambda` (MLE from observed frequency counts) needs hand-history frequency plumbing that does not exist yet.
 
+- **M7.1 - the DCFR strategy-discount exponent.** Landed 2026-08-28.
+  **A ~2x wall-clock win on every family, from a constant that had never been swept.**
+
+  `UpdateConfig::gamma` is the exponent on the strategy-sum discount `(t/(t+1))^gamma`.
+  It was 1.0 - plain linear averaging - since M3.
+  The DCFR paper's value is 2 and the reference Rust implementation (`b-inary/postflop-solver`) ships 3.
+  Nobody had checked, because "DCFR is already the right update rule" (measured, and still true) was read as "the update rule is settled" and the rule's own parameters went with it.
+
+  Iterations to the same accuracy target, medians over the standard board sets at tight ranges, via the new `bench_boards.py --dcfr-gamma`:
+
+  | family, target | gamma 1 | gamma 2 | gamma 3 | gamma 4 | gamma 5 | best saving |
+  |---|---|---|---|---|---|---|
+  | river, 0.02% | 675 | 435 | 425 | 425 | 455 | 1.59x |
+  | turn, 0.02% | 1225 | 675 | 585 | 590 | 590 | **2.09x** |
+  | flop SPR 4, 0.3% | 260 | 155 | 135 | 125 | - | **2.08x** |
+  | flop SPR 7, 0.3% | 565 | - | 255 | 235 | 230 | **2.46x** |
+  | flop SPR 10, 0.3% | 900 | - | 405 | 395 | - | **2.28x** |
+
+  Wall clock follows exactly, because **gamma is a pure iteration-count lever**: the discount is one multiply per cell either way, so per-iteration cost does not move.
+  Flop trees at SPR 10 went 94.1 s -> 44.9 s; at SPR 7, 40.5 s -> 18.0 s; turn trees 0.70 s -> 0.36 s.
+
+  **The saving does NOT decay with stack depth**, which is what separates this from the annealed-QRE result directly above it.
+  QRE's iteration saving collapsed 1.41x -> 1.13x -> 1.07x across SPR 4/7/10 while its per-iteration cost climbed; gamma's is 2.08x -> 2.46x -> 2.28x with no per-iteration cost at all.
+  That asymmetry is the reason one is the default now and the other is a modelling feature.
+
+  **Why 3 and not 4.** The curve is flat from 3 to 5 and degrades by 8 (turn 625, river 485), so 3 sits at the knee with margin on both sides.
+  4 is a few checkpoints better on flop trees and equal-or-worse on turn and river, and most of those gaps are inside the `--checkpoint-every 5` resolution.
+  3 is also the value postflop-solver independently converged on.
+  If flop trees ever become the only thing that matters, 4 is defensible; do not go past 5.
+
+  **Gated, not assumed.** `configs/validate_turn_fullrange.json` through `engine_compare.py --solve-pio --cross-check`: Pio's own evaluator rates the engine strategy **0.016 chips** exploitable against **0.019** for Pio's own solve of the same tree. The strategy is not merely cheaper to reach, it is at least as good.
+
+  **Two baselines moved, and this is the note that stops a future session calling it a regression.**
+  Neither is a bit-neutrality failure - gamma legitimately changes the numbers, and everything above was verified bit-neutral against the gamma-1 defaults of its own day.
+
+  - `validate_turn_fullrange` at 300 iterations now gives **`nashconv 0.106929, ev 46.0018 53.9982`**, where the M6.8/M6.9/M7 entries above record `nashconv 0.232074, ev 45.9951 54.0049`. Same iterations, 2.17x lower exploitability. Use the new numbers as the refactor reference from here.
+  - The committed fixture pair `backend/Tests/Fixtures/engine/tiny_river.{hta,golden.json}` was regenerated; its `final_nashconv` went from `3.9826105587081884e-4` to `2.4049526814451383e-9` at the same 500 iterations.
+
+  `tests/test_qre.cpp`'s isomorphism case went from 2400 to 4800 iterations.
+  Not a convergence regression - the same sweep has gamma 3 reaching a QRE-gap target in 440 iterations against gamma 1's 595.
+  A heavier strategy discount makes the running average *younger*, so at a **fixed iteration count** it carries more of the still-moving recent iterates and two equivalent-but-differently-accumulated solves (iso on vs off) agree less closely.
+  Re-measured residual under gamma 3: 0.063 at 2400, 0.027 at 4800, 0.0097 at 9600, 0.0087 at 19200 - going to zero, which is what rules out a relabeling bug.
+  Measuring an accuracy target and measuring agreement at fixed `t` are different questions and gamma moves them in opposite directions.
+
+  Also fixed here because the suite was red: `tests/test_memory.cpp`'s hand-computed workspace mirror still read `(2 + seats)` hands-wide scratch slots per level after M7 added `kSlotCompat`, so it expected 360 bytes where the estimator correctly said 420. The estimator was right; the test had not been updated with it.
+
 ## Where the time goes: the chance-node cliff (measured 2026-08-26)
 
 `watcher/bench_boards.py` swept 10 turn boards and 10 river boards through both solvers - same ranges, pot, stacks and betting structure, same 0.02%-of-pot accuracy target, so the only variable is whether the tree contains a chance node. All 20 passed the cross-exploitability gate.
@@ -299,6 +347,7 @@ sweep would not move any ratio in the tables; it would add a second, larger colu
 ### Also measured, so nobody re-derives it
 
 - **DCFR is already the right update rule.** Iterations to 0.02% of pot on `9c 5d Jc 7s`: dcfr 1100 (6.07 s), cfr_plus 2000 (10.16 s), plain regret matching did not converge inside 20000 (100 s). There is no free win in swapping the rule.
+  **Corrected 2026-08-28: there was a free win in its EXPONENTS.** The conclusion above is about which *rule* to use and it still holds; it was read for years as "the update rule is settled", which stopped anyone from sweeping DCFR's own parameters. `gamma` had been sitting at 1.0 the whole time. See M7.1.
 - **Best-response checkpoints cost nothing.** 1000 iterations with a BR pass every 100 vs every 1000: 5.229 s vs 5.226 s, 0.06%.
 - **Threading is done.** 8.0x on 16 threads (8 physical cores).
 - **The DCFR discount sweep is ~10%** of an iteration: dcfr 2.699 s vs plain rm 2.445 s over 500 iterations. Real, cheap to fix, not the gap.

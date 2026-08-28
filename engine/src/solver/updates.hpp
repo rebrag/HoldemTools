@@ -172,11 +172,39 @@ struct QreConfig {
 
 struct UpdateConfig {
   UpdateRule rule = UpdateRule::Dcfr;
-  // DCFR discount exponents. Defaults: alpha 1.5, beta 0 (negative regrets
-  // decay immediately), gamma 1.0 = linear strategy averaging.
+  // DCFR discount exponents. alpha 1.5 / beta 0 (negative regrets decay
+  // immediately) are the paper's values.
+  //
+  // gamma is the exponent on the STRATEGY-sum discount (t/(t+1))^gamma, and 3
+  // is measured rather than inherited. It used to be 1.0 - plain linear
+  // averaging - which was costing roughly HALF of every solve: the running
+  // average kept early, badly-wrong iterations at a weight the equilibrium
+  // never justifies, so exploitability spent hundreds of iterations grinding
+  // them back out. Iterations to the same accuracy target, medians over the
+  // standard board sets at tight ranges (`bench_boards.py --dcfr-gamma`):
+  //
+  //   family              gamma 1   gamma 3   gamma 4
+  //   river,    0.02%         675       425       425
+  //   turn,     0.02%        1225       585       590
+  //   flop SPR 4, 0.3%        260       135       125
+  //   flop SPR 7, 0.3%        565       255       235
+  //   flop SPR 10, 0.3%       900       405       395
+  //
+  // Two properties decided the value. The saving does NOT decay with stack
+  // depth the way the QRE homotopy's did - it is 2.1x at SPR 4 and 2.2x at
+  // SPR 10 - and the curve is flat from 3 to 5 before degrading by 8, so 3
+  // sits at the knee with margin on both sides. 4 is a few checkpoints better
+  // on flop trees and slightly worse on rivers; 3 is also the value
+  // postflop-solver independently ships, which is the tie-breaker.
+  //
+  // gamma is a pure iteration-count lever: the discount is one multiply per
+  // cell either way, so per-iteration cost does not move and the wall-clock
+  // win is exactly the iteration win. That is why the numbers above are
+  // quoted as iterations - they are deterministic, and no A/B noise argument
+  // applies to them.
   double alpha = 1.5;
   double beta = 0.0;
-  double gamma = 1.0;
+  double gamma = 3.0;
 
   // Weight applied to this iteration's strategy-sum contribution.
   // CFR+ uses linear weighting; DCFR handles averaging via discounting.
