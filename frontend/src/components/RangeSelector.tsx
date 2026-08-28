@@ -11,8 +11,17 @@
 //   - Saved: their own ranges, in folders they nest however they like.
 //   - Built-in: canned charts from lib/solver/defaultRanges, read-only. These
 //     are what a signed-out user gets, so the picker is never empty.
-//   - Paste: Pio shorthand ("TT+,ATs+,KQo") or weighted tokens
-//     ("AA:1,AKs:0.5"), for a range that already exists somewhere else.
+//   - Paste: one click. It reads the clipboard and loads whatever range is on
+//     it - Pio shorthand ("TT+,ATs+,KQo") or weighted tokens ("AA:1,AKs:0.5").
+//     A textarea is kept as a FALLBACK only, revealed when the browser refuses
+//     the clipboard read (Firefox has no readText for ordinary pages, and
+//     Chrome needs the tab focused) or when what came back does not parse.
+//     Without that fallback Paste would simply be unusable in Firefox - the
+//     same lesson TreeBuilding's config paste already learned.
+//
+// The grid and the library sit side by side from `sm` up. Stacked, the panel
+// was taller than the drawer hosting it; beside each other, the library is
+// visible while painting, which is the point of having one.
 //
 // Saving needs an account; everything else works signed out.
 import { useMemo, useState } from "react";
@@ -193,14 +202,38 @@ const RangeSelector = ({ weights, onChange, codec, disabled }: RangeSelectorProp
       flash("ok", `Deleted "${range.name}".`);
     });
 
-  const onPaste = () => {
-    const parsed = parseRangeInput(pasteText, expandRange);
+  /** Parse and load, or explain why not. `fallback` is what to show in the
+   *  textarea when it fails, so a clipboard read that came back as something
+   *  unparseable is visible and editable rather than silently discarded. */
+  const loadPasted = (text: string, fallback = text): boolean => {
+    const parsed = parseRangeInput(text, expandRange);
     if (Object.keys(parsed).length === 0) {
+      setTab("paste");
+      setPasteText(fallback);
       flash("error", 'Nothing recognisable in there - try "TT+,ATs+,KQo".');
-      return;
+      return false;
     }
     loadWeights(parsed, "the pasted range");
     setPasteText("");
+    return true;
+  };
+
+  /** The Paste control: clipboard straight into the grid, no intermediate
+   *  step. Falls back to the manual textarea when the browser says no. */
+  const onPasteFromClipboard = async () => {
+    let text = "";
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      setTab("paste");
+      flash("error", "This browser will not hand over the clipboard - paste below.");
+      return;
+    }
+    if (!text.trim()) {
+      flash("error", "The clipboard is empty.");
+      return;
+    }
+    loadPasted(text);
   };
 
   /* ---------- rows ---------- */
@@ -336,15 +369,37 @@ const RangeSelector = ({ weights, onChange, codec, disabled }: RangeSelectorProp
     folders.find((f) => f.id === saveFolderId)?.name ?? "the top level";
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2">
+    <div className="flex h-full min-h-0 flex-col gap-3 sm:flex-row">
       {/* The grid stays the centre of this panel: the library is a shortcut to
-          a starting point, not a replacement for painting one. */}
-      <RangeEditorGrid weights={weights} onChange={onChange} disabled={disabled} />
+          a starting point, not a replacement for painting one. Its cells are
+          aspect-square, so this column's width is what sets its height - hence
+          self-start, which stops it stretching to the library's height. */}
+      <div className="min-w-0 sm:flex-1 sm:self-start">
+        <RangeEditorGrid weights={weights} onChange={onChange} disabled={disabled} />
+      </div>
 
+      {/* The library column. Fixed width so the grid takes the slack, and a
+          min-h-0 flex column so only the list scrolls, never the panel. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-2 sm:w-64 sm:flex-none">
       <div className="flex items-center gap-1">
         {tabButton("saved", "Saved")}
         {tabButton("builtin", "Built-in")}
-        {tabButton("paste", "Paste")}
+        {/* Not a tab: this one acts. See onPasteFromClipboard - a click reads
+            the clipboard and loads the range, and only a browser that refuses
+            the read (or text that will not parse) opens the manual pane. */}
+        <button
+          type="button"
+          onClick={() => void onPasteFromClipboard()}
+          disabled={disabled}
+          title="Read a range off the clipboard and load it straight into the grid"
+          className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+            tab === "paste"
+              ? "bg-emerald-600 text-white"
+              : "bg-slate-800/70 text-slate-300 hover:bg-slate-700/70"
+          }`}
+        >
+          Paste
+        </button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950/40 p-1.5">
@@ -399,22 +454,29 @@ const RangeSelector = ({ weights, onChange, codec, disabled }: RangeSelectorProp
 
         {tab === "paste" && (
           <div className="flex flex-col gap-1.5 p-0.5">
+            <p className="text-[10px] leading-snug text-slate-500">
+              Paste here when the Paste button cannot reach the clipboard itself.
+            </p>
             <textarea
               value={pasteText}
               onChange={(e) => setPasteText(e.target.value)}
               rows={4}
+              autoFocus
               placeholder="TT+,ATs+,KQo   or   AA:1,AKs:0.5"
               aria-label="Range to import"
               className={`${inputCls} font-mono leading-snug`}
             />
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={onPaste}
+                onClick={() => loadPasted(pasteText)}
                 disabled={!pasteText.trim() || disabled}
                 className={buttonCls}
               >
                 Load range
+              </button>
+              <button type="button" onClick={() => setTab("saved")} className={buttonCls}>
+                Cancel
               </button>
               <span className="text-[10px] text-slate-600">
                 Pio shorthand or weighted tokens
@@ -494,6 +556,7 @@ const RangeSelector = ({ weights, onChange, codec, disabled }: RangeSelectorProp
           {notice.text}
         </p>
       )}
+      </div>
     </div>
   );
 };

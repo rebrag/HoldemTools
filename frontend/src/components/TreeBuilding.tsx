@@ -168,7 +168,7 @@ const StreetCard = ({
 
   return (
     <div
-      className={`flex flex-col gap-1.5 rounded-lg border p-2 transition-colors ${
+      className={`flex flex-col gap-1 rounded-lg border p-1.5 transition-colors ${
         inTree ? "border-slate-700/80 bg-slate-800/40" : "border-slate-800/60 bg-slate-900/30"
       }`}
     >
@@ -658,7 +658,7 @@ const TreeBuilding = ({
       )}
 
       {pickerOpen && (
-        <div className="max-h-[220px] overflow-y-auto rounded-lg border border-slate-800 bg-slate-950/40 p-1.5">
+        <div className="max-h-[160px] overflow-y-auto rounded-lg border border-slate-800 bg-slate-950/40 p-1.5">
           <CardPicker
             used={usedCards}
             onPick={onPickCard}
@@ -671,8 +671,11 @@ const TreeBuilding = ({
         </div>
       )}
 
-      {/* Sizing - IP first, matching PioViewer */}
-      <div className="space-y-2">
+      {/* Sizing - IP first, matching PioViewer.
+          Side by side from xl up, which puts all six street cards on one row
+          and roughly halves the panel's height on a desktop workbench; the two
+          stacked blocks of three come back below that for phones. */}
+      <div className="grid gap-2 xl:grid-cols-2">
         {seatBlock(
           "ip",
           <button type="button" onClick={copyIpToOop} className={buttonCls} disabled={disabled}>
@@ -689,9 +692,11 @@ const TreeBuilding = ({
         )}
       </div>
 
-      {/* Thresholds */}
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        <label className="flex flex-col gap-1">
+      {/* Thresholds, and the clipboard controls on the same line when there is
+          room for them - together they were two full-width rows for six short
+          fields. */}
+      <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
+        <label className="flex w-32 flex-col gap-1">
           <span
             className={labelCls}
             title="A bet computed at or above this share of the effective stack becomes a jam instead."
@@ -710,7 +715,7 @@ const TreeBuilding = ({
             <span className="shrink-0 text-[10px] text-slate-500">% stack</span>
           </div>
         </label>
-        <label className="flex flex-col gap-1">
+        <label className="flex w-32 flex-col gap-1">
           <span
             className={labelCls}
             title="Carried in the copied config for PioViewer, which applies it per node."
@@ -730,7 +735,7 @@ const TreeBuilding = ({
           </div>
         </label>
         {showMaxRaises && (
-          <label className="flex flex-col gap-1">
+          <label className="flex w-24 flex-col gap-1">
             <span
               className={labelCls}
               title="Bets plus raises allowed on one street, counted across both seats."
@@ -748,7 +753,7 @@ const TreeBuilding = ({
           </label>
         )}
         {showPreflopAggressor && (
-          <label className="flex flex-col gap-1">
+          <label className="flex w-32 flex-col gap-1">
             <span
               className={labelCls}
               title="Aggressor on the street before the root; gates whether OOP's first-in uses donk sizes."
@@ -769,27 +774,32 @@ const TreeBuilding = ({
             </select>
           </label>
         )}
-      </div>
 
-      {/* Clipboard interop */}
-      {clipboard && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-slate-800 pt-2">
-          <button type="button" onClick={onCopy} className={buttonCls} disabled={disabled}>
-            {copied ? "Copied" : "Copy to clipboard"}
-          </button>
-          <button type="button" onClick={onPaste} className={buttonCls} disabled={disabled}>
-            Paste
-          </button>
-          <Check
-            label="Change only betting structure when loading"
-            checked={value.betStructureOnly}
-            disabled={disabled}
-            onChange={(v) => set("betStructureOnly", v)}
-            title="With this on, Paste replaces the six sizing cards and leaves ranges, board, pot and stacks as they are."
-          />
-          <span className="ml-auto text-[10px] text-slate-600">PioViewer tree-config format</span>
-        </div>
-      )}
+        {/* Clipboard interop, sharing the thresholds' row. */}
+        {clipboard && (
+          <div className="flex flex-wrap items-center gap-2 border-l border-slate-800 pl-3">
+            <button type="button" onClick={onCopy} className={buttonCls} disabled={disabled}>
+              {copied ? "Copied" : "Copy"}
+            </button>
+            <button type="button" onClick={onPaste} className={buttonCls} disabled={disabled}>
+              Paste
+            </button>
+            <Check
+              label="Betting structure only"
+              checked={value.betStructureOnly}
+              disabled={disabled}
+              onChange={(v) => set("betStructureOnly", v)}
+              title="With this on, Paste replaces the six sizing cards and leaves ranges, board, pot and stacks as they are."
+            />
+            <span
+              className="text-[10px] text-slate-600"
+              title="Copy and Paste speak PioViewer's own tree-config clipboard format, so a spot moves between the two without retyping."
+            >
+              PioViewer format
+            </span>
+          </div>
+        )}
+      </div>
 
       {notice && (
         <p
@@ -842,7 +852,7 @@ const TreeBuilding = ({
           open
           onClose={() => setEditingRange(null)}
           scrollMode="custom"
-          desktopMaxWidthClassName="sm:max-w-lg"
+          desktopMaxWidthClassName="sm:max-w-3xl"
           zClassName="z-[90]"
           ariaLabel="Edit starting range"
         >

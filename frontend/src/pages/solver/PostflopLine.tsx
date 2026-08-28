@@ -1,9 +1,14 @@
 // Postflop line, GTO Wizard style: one card per visited node of the game
 // tree. Preflop cards show each seat's options with the taken action
-// highlighted, and clicking one leaves the board for that preflop node; a
-// FLOP card carries the pot + board; postflop decision cards let you jump
-// along the line or branch to a different action; the node to act renders as
-// the active (emerald) card.
+// highlighted, and clicking one leaves the board for that preflop node; a root
+// card carries the pot + the board as it stood there (FLOP by default, see
+// rootLabel); postflop decision cards let you jump along the line or branch to
+// a different action; the node to act renders as the active (emerald) card.
+//
+// Two callers: the solver's postflop session, and /compare, which feeds it
+// synthesized line nodes built straight from a .htc node directory (see
+// pages/compare/compareLineNodes.ts). Both speak the same Pio colon node ids,
+// which is what lets one component serve them.
 import React from "react";
 import { X } from "lucide-react";
 import PlayingCard from "@/components/PlayingCard";
@@ -17,9 +22,10 @@ export interface PostflopLineProps {
   preflopLine: string[] | null;
   /** Reconstructed preflop nodes (seat, stack, options, taken). */
   preflopNodes?: PreflopLineNode[] | null;
-  /** Full board at the current node; the FLOP card shows the first three. */
+  /** Full board at the current node; the root card shows `rootCards`, which
+   *  defaults to the first three. */
   board: string[];
-  /** Pot at flop start, in the solve's display money. */
+  /** Pot at the root, in the solve's display money. */
   potMoney?: number | null;
   /** Chips/bb display; absent for sims, which always read as big blinds. */
   money?: MoneyOpts | null;
@@ -56,6 +62,24 @@ export interface PostflopLineProps {
   playedAction?: string | null;
   /** Disable all action buttons (e.g. while a street extraction is pending). */
   actionsDisabled?: boolean;
+  /**
+   * Label and cards on the root card. Defaults to "FLOP" and the first three
+   * board cards, which is right for the solver: its trees are always rooted at
+   * a flop. /compare solves a 3, 4 or 5 card board, so a turn- or river-rooted
+   * tree has to say so and show every card that was already out at the root -
+   * otherwise the strip claims a flop decision that is not in the tree.
+   */
+  rootLabel?: string;
+  rootCards?: string[];
+  /**
+   * Show the "Preflop" exit control when there are no preflop cards to click.
+   * Defaults on, preserving the solver's behaviour. /compare turns it off: its
+   * trees have no preflop half at all, so there is nowhere to exit to.
+   *
+   * Deliberately NOT folded into `handSolve`, which means something else
+   * entirely (see above) and happens to suppress the same control.
+   */
+  showExit?: boolean;
 }
 
 /* Colours for one node's whole option list. Built per card rather than per
@@ -173,6 +197,9 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
   onActionClick,
   actionsDisabled,
   playedAction,
+  rootLabel = "FLOP",
+  rootCards,
+  showExit = true,
 }) => {
   /* Postflop labels are in the solve's money; the colour ramp is calibrated
    * in big blinds, so tell it how much money makes one. */
@@ -186,12 +213,15 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
     !handSolve && preflopLine && preflopLine.length > 1
       ? preflopLine.slice(1).join(" · ")
       : null;
-  const flop = board.slice(0, 3);
+  /* The cards already out at the root. Defaults to the flop, which is where
+   * every solver tree starts; /compare passes the whole pre-root board. */
+  const rootBoard = rootCards ?? board.slice(0, 3);
   /* Every preflop card leaves the board, so no separate exit control is
    * needed. The button only comes back when a sim line could not be rebuilt
-   * into cards; hand solves never show it (see handSolve above). */
+   * into cards; hand solves never show it (see handSolve above), and neither
+   * does a screen that has no preflop tree behind it (see showExit). */
   const preflopCards = !!preflopNodes && preflopNodes.length > 0 && !!onPreflopJump;
-  const exitButton = !preflopCards && !handSolve;
+  const exitButton = showExit && !preflopCards && !handSolve;
 
   return (
     <div className={`w-full mx-auto select-none${fillHeight ? " h-full" : ""}`}>
@@ -275,11 +305,11 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
               if (e.key === "Enter" || e.key === " ") onJump("r:0");
             }}
             className={`${cardClass(false)} cursor-pointer hover:bg-white/10`}
-            title="Back to the flop decision"
+            title={`Back to the ${rootLabel.toLowerCase()} decision`}
           >
-            <CardHeader label="FLOP" stack={potMoney ?? undefined} money={money} />
+            <CardHeader label={rootLabel} stack={potMoney ?? undefined} money={money} />
             <div className="flex items-center gap-0.5 mt-auto">
-              {flop.map((code) => (
+              {rootBoard.map((code) => (
                 <PlayingCard key={code} code={code} width="clamp(20px, 3.6vw, 30px)" />
               ))}
             </div>

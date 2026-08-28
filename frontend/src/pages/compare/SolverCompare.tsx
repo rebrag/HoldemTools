@@ -16,7 +16,16 @@ import { HAND_ORDER } from "@/lib/solver/handOrder";
 import { authedFetch } from "@/lib/api";
 import type { MoneyOpts } from "@/pages/solver/boardDisplay";
 import ResponsiveDrawer from "@/components/ResponsiveDrawer";
+import PostflopLine from "@/pages/solver/PostflopLine";
 import TreeBuilding, { Check, inputCls } from "@/components/TreeBuilding";
+import { useLocalStorageState } from "@/hooks/useLocalStorageState";
+import {
+  buildChildIndex,
+  buildCompareLine,
+  segmentForLabel,
+  ROOT_ID,
+} from "./compareLineNodes";
+import TreeLibrary from "./TreeLibrary";
 import {
   applyViewToBuilder,
   buildEngineConfig,
@@ -27,7 +36,6 @@ import {
   type EngineConfigResult,
 } from "./builderState";
 import { parseBoardCards, pioClipboardCodec } from "./treeConfigText";
-import { ENGINE_PRESETS } from "./enginePresets";
 import { pioRangeCodec } from "@/lib/solver/rangeTokens";
 import PipelineTimingPanel, {
   secs,
@@ -37,11 +45,9 @@ import PipelineTimingPanel, {
 } from "./PipelineTimingPanel";
 import {
   decodeNode,
-  joinHands,
   parseHtc,
   type DecodedNode,
   type HtcDoc,
-  type JoinedHand,
 } from "./htcDecode";
 
 /**
@@ -136,18 +142,29 @@ interface Loaded {
 
 /* ---------- helpers ---------- */
 
-/** Raw harness labels -> readable labels, amounts in chips ("Bet 50",
- *  "Raise to 400") - the harness's unit, matching the bNNN node ids. */
-const displayLabels = (node: CompareNode): string[] => {
-  const lastSeg = node.id.split(":").pop() ?? "";
-  const facing = lastSeg.startsWith("b");
-  return node.actions.map((a) => {
-    if (a === "f") return "Fold";
-    if (a === "c") return facing ? "Call" : "Check";
-    const amount = Number(a.slice(1));
-    return facing ? `Raise to ${amount}` : `Bet ${amount}`;
-  });
+/**
+ * One raw action segment -> its readable label, given the node it is taken AT.
+ * Amounts stay in chips ("Bet 50", "Raise to 400") - the harness's own unit,
+ * matching the bNNN in the node ids.
+ *
+ * THE page's single action-label authority, and it has to stay that way: the
+ * output doubles as the key the two solvers' action columns are joined on (see
+ * the grids below, which match by label and never by index) and as the key
+ * DecisionMatrix and ActionSummary colour by. lib/solver/postflopNode's
+ * formatPioAction is a DIFFERENT formatter - it nets out prior-street commits
+ * and adds an ALLIN case - so introducing it here would give one page two
+ * disagreeing vocabularies.
+ */
+const displayLabel = (segment: string, parentId: string): string => {
+  const facing = (parentId.split(":").pop() ?? "").startsWith("b");
+  if (segment === "f") return "Fold";
+  if (segment === "c") return facing ? "Call" : "Check";
+  const amount = Number(segment.slice(1));
+  return facing ? `Raise to ${amount}` : `Bet ${amount}`;
 };
+
+const displayLabels = (node: CompareNode): string[] =>
+  node.actions.map((a) => displayLabel(a, node.id));
 
 interface SolverView {
   labels: string[];
@@ -314,7 +331,6 @@ const solutionsUrl = (job: CompareJob): string =>
 
 /* ---------- page ---------- */
 
-type SortKey = "evDiff" | "l1" | "reach" | "hand";
 type DisplayMode = "strategy" | "ev";
 
 const SolverCompare = () => {
@@ -323,8 +339,17 @@ const SolverCompare = () => {
   const [nodeIndex, setNodeIndex] = useState(0);
   const [selectedHand, setSelectedHand] = useState<string | null>(null);
   const [hoverHand, setHoverHand] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<SortKey>("evDiff");
   const [displayMode, setDisplayMode] = useState<DisplayMode>("strategy");
+  /* The cost panels are reference material, not the thing being looked at.
+   * Collapsed they are one line, which is what buys the grids the vertical
+   * space to fit a screen; the choice is remembered because a workbench that
+   * forgets how you set it up is a worse workbench. */
+  const [metricsOpen, setMetricsOpen] = useLocalStorageState<boolean>(
+    "compareMetricsOpen",
+    false,
+    (raw) => raw === "1",
+    (v) => (v ? "1" : "0")
+  );
   const [builder, setBuilder] = useState<BuilderState>(() => cloneBuilder(DEFAULT_BUILDER));
   const [builderOpen, setBuilderOpen] = useState(false);
   const [solving, setSolving] = useState(false);
@@ -584,6 +609,10 @@ const SolverCompare = () => {
       (loaded?.ht ?? loaded?.pio)?.header.nodes.map((n) => ({
         id: n.id,
         position: n.position,
+        // Carried so the line strip can list a node's options without
+        // re-deriving them from the directory, which cannot see a chance-node
+        // child. See compareLineNodes.CompareNodeRef.
+        actions: n.actions,
       })) ?? [],
     [loaded]
   );
@@ -632,60 +661,80 @@ const SolverCompare = () => {
 
   const breakdownHand = hoverHand ?? selectedHand;
 
-  /** A sort that needs Pio is meaningless without it; coerce rather than
-   *  syncing state in an effect. */
-  const effectiveSortKey: SortKey =
-    !hasPioDetail && (sortKey === "evDiff" || sortKey === "l1") ? "reach" : sortKey;
-
-  /** The per-combo table's rows: the two solvers joined by hand string. */
-  const tableRows = useMemo(() => {
-    const rows = joinHands(htNode, pioNode).filter(
-      (h) =>
-        !selectedHand ||
-        handClassOf(h.hand.slice(0, 2), h.hand.slice(2, 4)) === selectedHand
-    );
-    const evDiff = (h: JoinedHand) =>
-      h.ht?.ev == null || h.pio?.ev == null ? 0 : Math.abs(h.ht.ev - h.pio.ev);
-    const sorted = [...rows];
-    if (effectiveSortKey === "evDiff") sorted.sort((a, b) => evDiff(b) - evDiff(a));
-    else if (effectiveSortKey === "l1")
-      sorted.sort((a, b) => (b.l1 ?? 0) * b.reach - (a.l1 ?? 0) * a.reach);
-    else if (effectiveSortKey === "reach") sorted.sort((a, b) => b.reach - a.reach);
-    else sorted.sort((a, b) => a.hand.localeCompare(b.hand));
-    return sorted;
-  }, [htNode, pioNode, selectedHand, effectiveSortKey]);
-
-  const shownRows = tableRows.slice(0, 200);
-  /** Column labels come from whichever solver's node is loaded; the join
-   *  matches Pio's actions to these by label, never by position. */
-  const tableLabels = htView?.labels ?? pioView?.labels ?? [];
   const chips = (v: number | null | undefined): string => (v == null ? "-" : v.toFixed(2));
   const megabytes = (v: number | null | undefined): string =>
     v == null ? "n/a" : v >= 1024 ** 3 ? `${(v / 1024 ** 3).toFixed(2)} GB` : `${Math.round(v / 1024 ** 2)} MB`;
-  const pct = (f: number | null | undefined): string =>
-    f == null ? "-" : `${Math.round(f * 1000) / 10}`;
+
+  /* ---------- the line strip ----------
+   * All of it comes off the node directory the header already carries: a node
+   * id IS its own line (see compareLineNodes.ts), so browsing the tree needs
+   * no extra state beyond the nodeIndex the page already had. */
+
+  const nodeById = useMemo(
+    () => new Map(nodeDir.map((n) => [n.id, n])),
+    [nodeDir]
+  );
+  const childIndex = useMemo(() => buildChildIndex(nodeDir), [nodeDir]);
+  const currentNodeId = nodeDir[nodeIndex]?.id ?? ROOT_ID;
+  const line = useMemo(
+    () => buildCompareLine(currentNodeId, nodeById, displayLabel),
+    [currentNodeId, nodeById]
+  );
+
+  /** The board as it stood at the ROOT. A 5-card board is a river solve, so
+   *  the strip's first card has to say RIVER and show all five - calling it
+   *  FLOP would name a decision the tree does not contain. */
+  const rootLabel =
+    board.length >= 5 ? "RIVER" : board.length === 4 ? "TURN" : "FLOP";
+
+  const jumpToNode = useCallback(
+    (id: string) => {
+      const idx = nodeDir.findIndex((n) => n.id === id);
+      if (idx < 0) return;
+      setNodeIndex(idx);
+      setSelectedHand(null);
+      setHoverHand(null);
+    },
+    [nodeDir]
+  );
+
+  /** Branch: take a different action at an earlier decision. When the child is
+   *  a chance node - the action closed the street - it has no header row of
+   *  its own, so land on its first runout rather than doing nothing. */
+  const branchTo = useCallback(
+    (parentId: string, display: string) => {
+      const segment = segmentForLabel(nodeById.get(parentId), display, displayLabel);
+      if (!segment) return;
+      const childId = `${parentId}:${segment}`;
+      if (nodeById.has(childId)) {
+        jumpToNode(childId);
+        return;
+      }
+      const runout = childIndex.get(childId)?.[0];
+      if (runout) jumpToNode(`${childId}:${runout}`);
+    },
+    [childIndex, nodeById, jumpToNode]
+  );
 
   const onSelect = useCallback(
     (hand: string) => setSelectedHand((cur) => (cur === hand ? null : hand)),
     []
   );
 
+  /**
+   * Take an action at the CURRENT node - the action panels under each grid,
+   * and the to-act card on the line strip.
+   *
+   * Delegates to branchTo rather than repeating the descent, which is what
+   * gives it the chance-node fallback. It did not have one before, so on any
+   * multi-street tree the action that CLOSED a street - a call, or the check
+   * that checks it through - silently did nothing: its child is the deal, and
+   * a chance node has no strategy and therefore no row in the header. Those
+   * are exactly the trees this page exists to compare.
+   */
   const onActionClick = useCallback(
-    (label: string) => {
-      const view = htView ?? pioView;
-      const node = htNode ?? pioNode;
-      if (!node || !view) return;
-      const k = view.labels.indexOf(label);
-      if (k < 0) return;
-      const childId = `${node.id}:${node.actions[k]}`;
-      const idx = nodeDir.findIndex((n) => n.id === childId);
-      if (idx >= 0) {
-        setNodeIndex(idx);
-        setSelectedHand(null);
-        setHoverHand(null);
-      }
-    },
-    [htNode, pioNode, htView, pioView, nodeDir]
+    (label: string) => branchTo(currentNodeId, label),
+    [branchTo, currentNodeId]
   );
 
   /** Pio's cost divided by htsolver's: > 1 means htsolver won. Null whenever
@@ -695,55 +744,255 @@ const SolverCompare = () => {
   const speedup = ratioOf(timing.ht_solve_s, timing.pio_solve_s);
   const memRatio = ratioOf(memory.ht_peak_bytes, memory.pio_peak_bytes);
 
+  /* Everything the collapsed metrics line says, as chips. Same values the
+   * expanded panels use - this is a projection of them, never a second
+   * derivation. */
+  const metricChips: { key: string; label: string; tone?: "good" | "bad" }[] = [];
+  if (spot) {
+    if (timing?.ht_solve_s != null) {
+      metricChips.push({
+        key: "ht",
+        label: `htsolver ${secs(timing.ht_solve_s)}${
+          memory?.ht_peak_bytes != null ? ` · ${megabytes(memory.ht_peak_bytes)}` : ""
+        }`,
+      });
+    }
+    if (hasPio && timing?.pio_solve_s != null) {
+      metricChips.push({
+        key: "pio",
+        label: `Pio ${secs(timing.pio_solve_s)}${
+          memory?.pio_peak_bytes != null ? ` · ${megabytes(memory.pio_peak_bytes)}` : ""
+        }`,
+      });
+    }
+    if (speedup != null) {
+      metricChips.push({
+        key: "speedup",
+        label: `${(speedup >= 1 ? speedup : 1 / speedup).toFixed(1)}x ${
+          speedup >= 1 ? "faster" : "slower"
+        }`,
+        tone: speedup >= 1 ? "good" : "bad",
+      });
+    }
+    if (htSummary) {
+      metricChips.push({
+        key: "nashconv",
+        label: `NashConv ${htSummary.ht.nashconv.toFixed(3)} · ${
+          htSummary.ht.iterations
+        } iters`,
+      });
+    }
+    metricChips.push({
+      key: "nodes",
+      label: `${htSummary?.decision_nodes ?? nodeDir.length} nodes`,
+    });
+  }
+
+  /** One solver's column: name, grid sized off the available HEIGHT, actions.
+   *
+   *  The max-width is what stops an engine-only run leaving a wide band of
+   *  dead space beside a square grid: the grid can never be taller than the
+   *  row, so a column wider than the row is tall is width the breakdown rail
+   *  should have instead. The 19rem is the page's non-grid chrome (header,
+   *  runs, cost line, line strip, footer) - an approximation on purpose, since
+   *  it only decides how much leftover width the column keeps. The grid itself
+   *  is sized exactly, by the wrapper below. */
+  const solverColumn = (
+    name: string,
+    solverView: SolverView,
+    solverDisplay: MatrixDisplayData | null,
+    color: string
+  ) => (
+    <div
+      key={name}
+      className="flex min-h-0 min-w-0 max-w-[calc(100dvh-19rem)] flex-1 flex-col gap-1.5"
+    >
+      <div className={`shrink-0 text-xs font-medium ${color}`}>{name}</div>
+      {/* DecisionMatrix is w-full aspect-square and its className cannot be
+          overridden through the spread, so the only way to bound it by height
+          is a wrapper whose width comes FROM its height. That is what keeps
+          the page on one screen at any window size. */}
+      <div className="flex min-h-0 flex-1 justify-center">
+        <div className="h-full min-h-[200px] max-w-full aspect-square">
+          <DecisionMatrix
+            gridData={solverView.grid}
+            heightMode="normalized"
+            reachByHand={solverView.reachByHand}
+            displayData={solverDisplay}
+            money={money}
+            selectedHand={selectedHand}
+            onHandSelect={onSelect}
+            onHandHover={setHoverHand}
+          />
+        </div>
+      </div>
+      <div className="shrink-0">
+        <ActionSummary
+          data={solverView.grid}
+          sizeRef={chipScale}
+          onActionClick={onActionClick}
+          compact
+        />
+      </div>
+    </div>
+  );
+
+  const loadedSolvers = (
+    [
+      ["htsolver", htView, displayData.ht, "text-emerald-400"],
+      ["PioSolver", pioView, displayData.pio, "text-sky-400"],
+    ] as const
+  ).filter(([, solverView]) => solverView != null);
+
   return (
-    <div className="mx-auto max-w-7xl px-3 py-6 text-slate-200">
-      <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold text-white">Solver comparison</h1>
-        <span className="text-xs text-slate-500">
+    /* A workbench, not a document: the page owns the viewport below the 3rem
+       navbar and lays itself out inside it, so the grids never push the
+       controls off screen. Deliberately not max-w-7xl - the width is the whole
+       point on a wide monitor. */
+    <div className="flex h-[calc(100dvh-48px)] w-full flex-col gap-2 overflow-hidden px-3 py-2 text-slate-200">
+      {/* ---------- header: identity, spot, view controls, actions ---------- */}
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+        <h1 className="text-sm font-semibold tracking-tight text-white">
+          Solver comparison
+        </h1>
+        <span className="text-[11px] text-slate-500">
           {hasPio ? (
             <>
               <span className="font-medium text-emerald-400">htsolver</span> vs{" "}
-              <span className="font-medium text-sky-400">PioSolver</span>, same tree
+              <span className="font-medium text-sky-400">PioSolver</span>
             </>
           ) : (
             <>
-              <span className="font-medium text-emerald-400">htsolver</span>, engine-only run
+              <span className="font-medium text-emerald-400">htsolver</span> only
             </>
           )}
         </span>
-        <button
-          type="button"
-          onClick={() => setBuilderOpen(true)}
-          className="ml-auto rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-emerald-500"
-        >
-          Tree builder
-        </button>
-        <button
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition-colors hover:border-slate-500 hover:bg-slate-800/60"
-        >
-          Load payload
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".htc,application/octet-stream"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            if (e.target.files?.length) loadFiles(e.target.files);
-            e.target.value = "";
-          }}
-        />
+
+        {spot && (
+          <>
+            <span className="flex items-center gap-1">
+              {board.map((c) => (
+                <PlayingCard key={c} code={c} width={22} />
+              ))}
+            </span>
+            <span className="text-[11px] tabular-nums text-slate-400">
+              pot {spot.pot}
+            </span>
+            {pioSummary?.source && (
+              <span className="text-[11px] text-slate-600">{pioSummary.source}</span>
+            )}
+
+            {!hasPio ? (
+              <span
+                className="rounded-full bg-slate-700/40 px-2 py-0.5 text-[11px] font-semibold text-slate-300"
+                title="PioSolver was not run for this spot, so there is nothing to compare against and no correctness gate."
+              >
+                no gate
+              </span>
+            ) : cross?.gate === "none" || cross?.pass == null ? (
+              <span
+                className="rounded-full bg-slate-700/40 px-2 py-0.5 text-[11px] font-semibold text-slate-300"
+                title="The cross-exploitability gate was not requested for this run, so no correctness verdict was produced. Root EVs are still directly comparable."
+              >
+                no gate (cross-check off)
+              </span>
+            ) : (
+              <span
+                className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                  cross.pass
+                    ? "bg-emerald-500/15 text-emerald-400"
+                    : "bg-red-500/15 text-red-400"
+                }`}
+                title={
+                  cross.gate === "root_ev"
+                    ? "Sampled tree: gate is root-EV agreement (cross-exploitability needs a full strategy upload)"
+                    : "Pio's own evaluator rating the htsolver strategy's exploitability"
+                }
+              >
+                {cross.gate === "root_ev"
+                  ? `root-EV ${cross.pass ? "PASS" : "FAIL"} · Δ ${
+                      cross.root_ev_diff ?? "?"
+                    }`
+                  : `cross-check ${cross.pass ? "PASS" : "FAIL"} · ${
+                      cross.ht_exploitable_per_pio ?? "?"
+                    }`}
+              </span>
+            )}
+
+            <div className="flex overflow-hidden rounded-lg border border-slate-700 text-[11px]">
+              {(["strategy", "ev"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setDisplayMode(mode)}
+                  className={`px-2.5 py-0.5 transition-colors ${
+                    displayMode === mode
+                      ? "bg-emerald-600 text-white"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  {mode === "strategy" ? "Strategy" : "EV heat"}
+                </button>
+              ))}
+            </div>
+
+            {selectedHand && (
+              <button
+                type="button"
+                onClick={() => setSelectedHand(null)}
+                className="rounded-lg bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-300"
+              >
+                {selectedHand} · clear
+              </button>
+            )}
+          </>
+        )}
+
+        <div className="ml-auto flex items-center gap-2">
+          {spot && (
+            <button
+              type="button"
+              onClick={() => setMetricsOpen((open) => !open)}
+              aria-expanded={metricsOpen}
+              className="rounded-lg border border-slate-700 px-2 py-1 text-[11px] text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
+            >
+              {metricsOpen ? "Hide cost" : "Show cost"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setBuilderOpen(true)}
+            className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-emerald-500"
+          >
+            Tree builder
+          </button>
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300 transition-colors hover:border-slate-500 hover:bg-slate-800/60"
+          >
+            Load payload
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".htc,application/octet-stream"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files?.length) loadFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+        </div>
       </div>
 
-      {/* Recent runs stay on the page: they are how a previous comparison
-          gets re-opened, which belongs next to the results rather than
-          inside the builder. */}
+      {/* Recent runs stay on the page: they are how a previous comparison gets
+          re-opened, which belongs next to the results rather than inside the
+          builder. One line that scrolls, rather than a block that wraps. */}
       {jobs.length > 0 && (
-        <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] font-medium text-slate-500">Recent runs</span>
+        <div className="no-scrollbar flex shrink-0 items-center gap-1.5 overflow-x-auto">
+          <span className="shrink-0 text-[11px] font-medium text-slate-500">Recent</span>
           {jobs.slice(0, 12).map((job) => {
             // A compare job is openable only if its htsolver payload is
             // actually pointed at from the row. A job whose watcher uploaded
@@ -753,35 +1002,35 @@ const SolverCompare = () => {
               job.status === "Done" &&
               (job.mode === "publish" || job.hasHtResult || job.legacyResult);
             return (
-            <button
-              key={job.id}
-              type="button"
-              disabled={!openable}
-              title={
-                job.status === "Failed"
-                  ? job.error ?? "failed"
-                  : job.mode === "publish"
-                    ? "Published solve - opens /solutions"
-                    : job.status === "Done" && !openable
-                      ? "No payload recorded for this run - re-run the spot"
-                      : "Load this comparison"
-              }
-              onClick={() => {
-                if (!openable) return;
-                if (job.mode === "publish") window.location.href = solutionsUrl(job);
-                else void loadJobResult(job);
-              }}
-              className={`rounded-md border px-2 py-0.5 text-[11px] transition-colors ${
-                openable
-                  ? "border-slate-600 text-slate-200 hover:border-emerald-500 hover:bg-emerald-500/10"
-                  : job.status === "Failed"
-                    ? "border-red-900 text-red-400"
-                    : "border-slate-700 text-slate-500"
-              }`}
-            >
-              {job.board ?? "?"} · {job.mode === "publish" ? "publish" : "compare"} ·{" "}
-              {job.status === "Done" && !openable ? "no payload" : job.status}
-            </button>
+              <button
+                key={job.id}
+                type="button"
+                disabled={!openable}
+                title={
+                  job.status === "Failed"
+                    ? job.error ?? "failed"
+                    : job.mode === "publish"
+                      ? "Published solve - opens /solutions"
+                      : job.status === "Done" && !openable
+                        ? "No payload recorded for this run - re-run the spot"
+                        : "Load this comparison"
+                }
+                onClick={() => {
+                  if (!openable) return;
+                  if (job.mode === "publish") window.location.href = solutionsUrl(job);
+                  else void loadJobResult(job);
+                }}
+                className={`shrink-0 whitespace-nowrap rounded-md border px-2 py-0.5 text-[11px] transition-colors ${
+                  openable
+                    ? "border-slate-600 text-slate-200 hover:border-emerald-500 hover:bg-emerald-500/10"
+                    : job.status === "Failed"
+                      ? "border-red-900 text-red-400"
+                      : "border-slate-700 text-slate-500"
+                }`}
+              >
+                {job.board ?? "?"} · {job.mode === "publish" ? "publish" : "compare"} ·{" "}
+                {job.status === "Done" && !openable ? "no payload" : job.status}
+              </button>
             );
           })}
         </div>
@@ -790,7 +1039,7 @@ const SolverCompare = () => {
       {/* A queued job outlives the modal, so its status has to live on the
           page too - closing the builder must not look like it stopped. */}
       {solving && !builderOpen && (
-        <p className="mt-3 flex items-center gap-2 rounded-lg bg-slate-800/60 px-3 py-2 text-xs text-slate-300">
+        <p className="flex shrink-0 items-center gap-2 rounded-lg bg-slate-800/60 px-3 py-1.5 text-xs text-slate-300">
           <span
             aria-hidden="true"
             className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-500 border-t-emerald-400"
@@ -800,370 +1049,59 @@ const SolverCompare = () => {
         </p>
       )}
       {publishedJob && (
-        <p className="mt-3 text-xs text-emerald-300">
+        <p className="shrink-0 text-xs text-emerald-300">
           Published to the solutions library:{" "}
           <a className="underline" href={solutionsUrl(publishedJob)}>
             open {publishedJob.board} in /solutions
           </a>
         </p>
       )}
+      {/* A publish run loads no payload, so `spot` stays null and this would be
+          unreachable from inside the spot-gated cost panel below. A compare
+          run's waterfall lives there instead, with the rest of the cost. */}
       {pipeline && pipeline.job.mode === "publish" && (
-        <PipelineTimingPanel job={pipeline.job} marks={pipeline.marks} />
-      )}
-
-      {/* ---------- tree builder (PioViewer-style), in a modal so opening it
-           does not push the comparison down the page ---------- */}
-      <ResponsiveDrawer
-        open={builderOpen}
-        onClose={() => setBuilderOpen(false)}
-        scrollMode="custom"
-        desktopMaxWidthClassName="sm:max-w-5xl"
-        zClassName="z-[70]"
-        ariaLabel="Tree building parameters"
-      >
-        <div className="flex max-h-[90vh] flex-col">
-          <div className="border-b border-slate-800 px-4 py-3">
-            <h2 className="text-sm font-semibold tracking-tight text-white">
-              Tree building parameters
-            </h2>
-            <p className="text-[11px] text-slate-500">
-              htsolver solves this tree; when PioSolver is enabled it gets the identical
-              tree, node for node.
-            </p>
-          </div>
-
-          <div className="flex-1 overflow-y-auto px-4 py-3">
-            <TreeBuilding
-              value={builderToView(builder)}
-              onChange={(v) => setBuilder((cur) => applyViewToBuilder(cur, v))}
-              disabled={solving}
-              boardMaxCards={5}
-              boardVariant="inline"
-              showNoThreeBet
-              showMaxRaises
-              showPreflopAggressor
-              showClearAllSizes
-              clipboard={pioClipboardCodec}
-              rangeCodec={pioRangeCodec}
-            />
-
-            {/* Solve settings - ours, not PioViewer's tree builder. */}
-            <div className="mt-3 flex flex-wrap items-start gap-x-8 gap-y-3 border-t border-slate-800 pt-3">
-              <fieldset>
-                <legend className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
-                  Stop when this accuracy is reached
-                </legend>
-                <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-slate-300">
-                  {(["pct", "chips"] as const).map((mode) => (
-                    <label
-                      key={mode}
-                      className="flex cursor-pointer items-center gap-1.5 transition-colors hover:text-slate-100"
-                    >
-                      <input
-                        type="radio"
-                        name="accuracy-mode"
-                        checked={builder.accuracyMode === mode}
-                        onChange={() => setB("accuracyMode", mode)}
-                        className="accent-emerald-500"
-                      />
-                      <input
-                        className={`${inputCls} w-16 tabular-nums`}
-                        value={builder.accuracyMode === mode ? builder.accuracy : ""}
-                        onChange={(e) => {
-                          setB("accuracyMode", mode);
-                          setB("accuracy", e.target.value);
-                        }}
-                        aria-label={mode === "pct" ? "Accuracy, % of pot" : "Accuracy, chips"}
-                      />
-                      {mode === "pct" ? "% of the pot" : "chips"}
-                    </label>
-                  ))}
-                </div>
-                <p className="mt-1 max-w-md text-[10px] leading-relaxed text-slate-500">
-                  The real target, applied to both solvers - htsolver stops once its
-                  self-reported per-player exploitability drops below it, and Pio solves
-                  the same tree to the same number. It is what makes the two solve times
-                  and memory peaks comparable.
-                </p>
-              </fieldset>
-
-              <label className="flex flex-col gap-1">
-                <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
-                  Max iterations (safety cap)
-                </span>
-                <input
-                  className={`${inputCls} w-24 tabular-nums`}
-                  value={builder.maxIterations}
-                  onChange={(e) => setB("maxIterations", e.target.value)}
-                />
-                <span className="max-w-[15rem] text-[10px] leading-relaxed text-slate-500">
-                  Not a target - a stop-loss. If a tree never reaches the accuracy above,
-                  this ends the run instead of letting it grind forever.
-                </span>
-              </label>
-
-              <fieldset>
-                <legend className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
-                  htsolver settings
-                </legend>
-                <div className="mt-1.5 flex flex-col gap-2">
-                  <label className="flex flex-col gap-1">
-                    <span className="text-[10px] text-slate-400">Benchmark spot</span>
-                    <select
-                      className={`${inputCls} w-56`}
-                      value=""
-                      disabled={solving}
-                      onChange={(e) => {
-                        const preset = ENGINE_PRESETS.find((p) => p.id === e.target.value);
-                        if (preset) setBuilder((b) => ({ ...b, ...preset.patch }));
-                      }}
-                      title="Load one of the trees the engine is benchmarked on, so a run here is comparable to a recorded result and to the same spot on another build."
-                    >
-                      <option value="">Load a preset spot...</option>
-                      {ENGINE_PRESETS.map((p) => (
-                        <option key={p.id} value={p.id} title={p.note}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="flex flex-col gap-1">
-                    <span className="text-[10px] text-slate-400">Update rule</span>
-                    <select
-                      className={`${inputCls} w-40`}
-                      value={builder.updateRule}
-                      disabled={solving}
-                      onChange={(e) =>
-                        setB("updateRule", e.target.value as BuilderState["updateRule"])
-                      }
-                    >
-                      <option value="dcfr">dcfr (default)</option>
-                      <option value="cfr_plus">cfr_plus</option>
-                      <option value="rm">rm</option>
-                    </select>
-                    {builder.updateRule !== "dcfr" && (
-                      <span className="max-w-[16rem] text-[10px] leading-relaxed text-amber-500/80">
-                        {builder.updateRule === "cfr_plus"
-                          ? "Measured at about 2x dcfr's iterations on the turn reference."
-                          : "Plain regret matching did not reach 0.02% of pot inside 20000 iterations on the turn reference."}
-                      </span>
-                    )}
-                  </label>
-
-                  <Check
-                    label="Suit isomorphism"
-                    checked={builder.isomorphism}
-                    disabled={solving}
-                    onChange={(v) => setB("isomorphism", v)}
-                    title="Collapse suit-equivalent runout subtrees. Lossless, and worth 1.3-1.6x on boards with a usable permutation. Turn off only to reproduce a pre-isomorphism result."
-                  />
-                  <Check
-                    label="Recalc schedule"
-                    checked={builder.recalc && !builder.sampling}
-                    disabled={solving || builder.sampling}
-                    onChange={(v) => setB("recalc", v)}
-                    title="Stop re-traversing runout subtrees whose values have stopped moving. On by default; disabled automatically while chance sampling is on."
-                  />
-                  <Check
-                    label="Chance sampling"
-                    checked={builder.sampling}
-                    disabled={solving}
-                    onChange={(v) => setB("sampling", v)}
-                    title="Traverse only some of each chance node's children per iteration, scaled by n/m. Unbiased, but slower here - it exists for preflop trees."
-                  />
-                  {builder.sampling && (
-                    <div className="ml-4 flex flex-col gap-1.5">
-                      <label className="flex items-center gap-2 text-[11px] text-slate-300">
-                        <span className="text-[10px] text-slate-400">runouts</span>
-                        <input
-                          className={`${inputCls} w-16 tabular-nums`}
-                          value={builder.samplingRunouts}
-                          onChange={(e) => setB("samplingRunouts", e.target.value)}
-                        />
-                        <span className="text-[10px] text-slate-400">anneal by</span>
-                        <input
-                          className={`${inputCls} w-20 tabular-nums`}
-                          value={builder.samplingAnnealAt}
-                          onChange={(e) => setB("samplingAnnealAt", e.target.value)}
-                        />
-                      </label>
-                      <span className="max-w-[16rem] text-[10px] leading-relaxed text-amber-500/80">
-                        Measured 1.9-3.0x SLOWER than full enumeration on flop and turn
-                        trees. It turns the recalc schedule off, and the accuracy stop
-                        cannot fire until it has annealed to exact enumeration.
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </fieldset>
-
-              <fieldset>
-                <legend className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
-                  PioSolver comparison
-                </legend>
-                <div className="mt-1.5 flex flex-col gap-1.5">
-                  <Check
-                    label="Run PioSolver"
-                    checked={!builder.disablePio}
-                    disabled={solving}
-                    onChange={setRunPio}
-                    title="Build and solve the identical tree in Pio. Off by default: an htsolver-only run needs no Pio process at all and is much faster."
-                  />
-                  <div className="ml-4 flex flex-col gap-1.5">
-                    <Check
-                      label="Pio per-hand results"
-                      checked={!builder.disableCompare}
-                      disabled={solving || builder.disablePio}
-                      onChange={(v) => setB("disableCompare", !v)}
-                      title="Extract Pio's strategy and EVs node by node over UPI, so its grid can sit beside htsolver's. This is the slow part of a comparison run."
-                    />
-                    <Check
-                      label="Cross-exploitability gate"
-                      checked={!builder.disableCrossCheck}
-                      disabled={solving || builder.disablePio}
-                      onChange={(v) => setB("disableCrossCheck", !v)}
-                      title="Load the htsolver strategy into Pio and let Pio rate how exploitable it is. The primary correctness statement; full trees only."
-                    />
-                  </div>
-                  <span className="max-w-[16rem] text-[10px] leading-relaxed text-slate-500">
-                    Off by default: htsolver alone is the fast loop. Turn Pio on when you
-                    want an accuracy check.
-                  </span>
-                </div>
-              </fieldset>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 border-t border-slate-800 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-            <button
-              type="button"
-              onClick={downloadConfig}
-              className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition-colors hover:border-slate-500 hover:bg-slate-800/60"
-              title="Save the htsolver config to run manually"
-            >
-              Download config
-            </button>
-            <button
-              type="button"
-              onClick={() => void submitJob("publish")}
-              disabled={solving}
-              title="htsolver only: publish the solve to the Solutions library (admin)"
-              className="rounded-lg border border-emerald-700 px-3 py-1.5 text-xs font-semibold text-emerald-300 transition-colors hover:border-emerald-500 hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Solve & Publish
-            </button>
-            <button
-              type="button"
-              onClick={() => void submitJob("compare")}
-              disabled={solving}
-              className="ml-auto inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {solving && (
-                <span
-                  aria-hidden="true"
-                  className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white"
-                />
-              )}
-              {solving ? "Working..." : "Solve & Compare"}
-            </button>
-          </div>
-          {solving && (
-            <p className="px-4 pb-3 text-[11px] text-slate-500">
-              Queued for the compare watcher (the machine with both solvers). Closing this
-              does not stop it - the result lands in Recent runs.
-            </p>
-          )}
+        <div className="max-h-[40vh] shrink-0 overflow-y-auto">
+          <PipelineTimingPanel job={pipeline.job} marks={pipeline.marks} />
         </div>
-      </ResponsiveDrawer>
-
+      )}
       {error && (
-        <p className="mt-3 whitespace-pre-wrap rounded-lg bg-red-500/10 p-3 text-sm text-red-400">
+        <p className="max-h-24 shrink-0 overflow-y-auto whitespace-pre-wrap rounded-lg bg-red-500/10 p-2 text-xs text-red-400">
           {error}
         </p>
       )}
 
-      {/* ---------- empty state: drop zone ---------- */}
-      {!spot && (
-        <button
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            if (e.dataTransfer.files?.length) loadFiles(e.dataTransfer.files);
-          }}
-          className="mt-6 flex w-full flex-col items-center rounded-2xl border-2 border-dashed border-slate-700 bg-slate-800/30 px-6 py-10 text-slate-400 transition-colors hover:border-emerald-500"
-        >
-          <span className="font-medium">
-            ...or drop one or two .htc payloads here
-          </span>
-          <span className="mt-1 text-[11px] text-slate-500">
-            engine_compare.py --ht-out / --pio-out
-          </span>
-        </button>
-      )}
-
-      {/* ---------- loaded state ----------
-           Gated on the SPOT, not on a Pio gate result: an engine-only run has
-           no cross_check at all and must still render. */}
-      {spot && (
-        <>
-          <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-3">
-            <div className="flex items-center gap-1.5">
-              {board.map((c) => (
-                <PlayingCard key={c} code={c} width={34} />
-              ))}
-            </div>
-            <div className="text-sm text-slate-300">
-              Pot {spot.pot} chips
-              {pioSummary?.source && (
-                <>
-                  <span className="mx-2 text-slate-600">·</span>
-                  <span className="text-slate-500">{pioSummary.source}</span>
-                </>
-              )}
-            </div>
-            {!hasPio ? (
+      {/* ---------- cost, collapsed to one line by default ---------- */}
+      {spot && !metricsOpen && metricChips.length > 0 && (
+        <div className="no-scrollbar flex shrink-0 items-center gap-2 overflow-x-auto rounded-lg border border-slate-800 bg-slate-900/50 px-2.5 py-1 text-[11px]">
+          {metricChips.map((chip, i) => (
+            <span key={chip.key} className="flex shrink-0 items-center gap-2">
+              {i > 0 && <span className="text-slate-700">·</span>}
               <span
-                className="ml-auto rounded-full bg-slate-700/40 px-3 py-1 text-xs font-semibold text-slate-300"
-                title="PioSolver was not run for this spot, so there is nothing to compare against and no correctness gate."
-              >
-                htsolver only
-              </span>
-            ) : cross?.gate === "none" || cross?.pass == null ? (
-              <span
-                className="ml-auto rounded-full bg-slate-700/40 px-3 py-1 text-xs font-semibold text-slate-300"
-                title="The cross-exploitability gate was not requested for this run, so no correctness verdict was produced. Root EVs above are still directly comparable."
-              >
-                no gate (cross-check off)
-              </span>
-            ) : (
-              <span
-                className={`ml-auto rounded-full px-3 py-1 text-xs font-semibold ${
-                  cross.pass ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"
-                }`}
-                title={
-                  cross.gate === "root_ev"
-                    ? "Sampled tree: gate is root-EV agreement (cross-exploitability needs a full strategy upload)"
-                    : "Pio's own evaluator rating the htsolver strategy's exploitability"
+                className={
+                  chip.tone === "good"
+                    ? "font-semibold text-emerald-300"
+                    : chip.tone === "bad"
+                      ? "font-semibold text-amber-300"
+                      : "tabular-nums text-slate-400"
                 }
               >
-                {cross.gate === "root_ev"
-                  ? `root-EV gate ${cross.pass ? "PASS" : "FAIL"} · Δ ${
-                      cross.root_ev_diff ?? "?"
-                    } chips (sampled ${htSummary?.runouts ?? "?"} runouts)`
-                  : `cross-check ${cross.pass ? "PASS" : "FAIL"} · ${
-                      cross.ht_exploitable_per_pio ?? "?"
-                    } chips exploitable per Pio`}
+                {chip.label}
               </span>
-            )}
-          </div>
+            </span>
+          ))}
+          <span className="ml-auto shrink-0 text-[10px] text-slate-600">
+            root EV {chips(htSummary?.ht.ev[0])} / {chips(htSummary?.ht.ev[1])}
+          </span>
+        </div>
+      )}
 
+      {/* ---------- cost, expanded ---------- */}
+      {spot && metricsOpen && (
+        <div className="max-h-[45vh] shrink-0 overflow-y-auto">
           {/* What the tree COST each solver: the headline when the point is
               comparing the two on one tree at one accuracy target. */}
           {(timing?.ht_solve_s != null || memory?.ht_peak_bytes != null) && (
-            <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900/50 p-3">
+            <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3">
               <div className="grid gap-x-6 gap-y-2 sm:grid-cols-[auto_1fr_1fr_auto]">
                 {(
                   [
@@ -1343,103 +1281,90 @@ const SolverCompare = () => {
             </div>
           </div>
 
-          {/* node picker + display mode */}
-          <div className="mt-5 flex flex-wrap items-center gap-2">
-            <label className="text-xs text-slate-500" htmlFor="compare-node">
-              Node
-            </label>
-            <select
-              id="compare-node"
-              value={nodeIndex}
-              onChange={(e) => {
-                setNodeIndex(Number(e.target.value));
-                setSelectedHand(null);
-                setHoverHand(null);
-              }}
-              className={inputCls}
-            >
-              {nodeDir.map((n, i) => (
-                <option key={n.id} value={i}>
-                  {n.id} — {n.position} to act
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              disabled={nodeIndex === 0}
-              onClick={() => setNodeIndex((i) => Math.max(0, i - 1))}
-              className="rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-400 disabled:opacity-40"
-            >
-              Prev
-            </button>
-            <button
-              type="button"
-              disabled={nodeIndex >= nodeDir.length - 1}
-              onClick={() => setNodeIndex((i) => Math.min(nodeDir.length - 1, i + 1))}
-              className="rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-400 disabled:opacity-40"
-            >
-              Next
-            </button>
-            <div className="ml-2 flex overflow-hidden rounded-lg border border-slate-700 text-xs">
-              {(["strategy", "ev"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => setDisplayMode(mode)}
-                  className={`px-3 py-1 ${
-                    displayMode === mode
-                      ? "bg-emerald-600 text-white"
-                      : "text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  {mode === "strategy" ? "Strategy" : "EV heat"}
-                </button>
-              ))}
-            </div>
-            {selectedHand && (
-              <button
-                type="button"
-                onClick={() => setSelectedHand(null)}
-                className="rounded-lg bg-emerald-500/15 px-2.5 py-1 text-xs text-emerald-300"
-              >
-                {selectedHand} · clear filter
-              </button>
-            )}
-          </div>
+          {runLog && (
+            <details className="mt-3 text-xs text-slate-500">
+              <summary className="cursor-pointer">Solver run log</summary>
+              <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-slate-900/70 p-3 text-[11px]">
+                {runLog}
+              </pre>
+            </details>
+          )}
+        </div>
+      )}
 
-          {/* One grid per loaded solver: an engine-only run gets the full
-              width rather than a half-empty row. */}
-          {(htView || pioView) && (
-            <div className={`mt-3 grid gap-4 ${htView && pioView ? "lg:grid-cols-2" : ""}`}>
-              {(
-                [
-                  ["htsolver", htView, displayData.ht, "text-emerald-400"],
-                  ["PioSolver", pioView, displayData.pio, "text-sky-400"],
-                ] as const
-              )
-                .filter(([, solverView]) => solverView != null)
-                .map(([name, solverView, solverDisplay, color]) => (
-                  <div key={name}>
-                    <div className={`mb-1 text-sm font-medium ${color}`}>{name}</div>
-                    <DecisionMatrix
-                      gridData={solverView!.grid}
-                      heightMode="normalized"
-                      reachByHand={solverView!.reachByHand}
-                      displayData={solverDisplay}
-                      money={money}
-                      selectedHand={selectedHand}
-                      onHandSelect={onSelect}
-                      onHandHover={setHoverHand}
-                    />
-                    <div className="mt-2">
-                      <ActionSummary
-                        data={solverView!.grid}
-                        sizeRef={chipScale}
-                        onActionClick={onActionClick}
-                        compact
-                      />
+      {/* ---------- empty state: drop zone ---------- */}
+      {!spot && (
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            if (e.dataTransfer.files?.length) loadFiles(e.dataTransfer.files);
+          }}
+          className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-700 bg-slate-800/30 px-6 text-slate-400 transition-colors hover:border-emerald-500"
+        >
+          <span className="font-medium">...or drop one or two .htc payloads here</span>
+          <span className="mt-1 text-[11px] text-slate-500">
+            engine_compare.py --ht-out / --pio-out
+          </span>
+        </button>
+      )}
+
+      {/* ---------- loaded state ----------
+           Gated on the SPOT, not on a Pio gate result: an engine-only run has
+           no cross_check at all and must still render. */}
+      {spot && (
+        <>
+          {/* The line: one card per visited node, above the grids. Clicking a
+              card walks back to that decision; clicking an option on it
+              branches. Same node ids htsolver and Pio both emit. */}
+          {nodeDir.length > 0 && (
+            <div className="shrink-0">
+              <PostflopLine
+                preflopLine={null}
+                board={board}
+                rootLabel={rootLabel}
+                rootCards={board}
+                potMoney={spot.pot}
+                money={money}
+                lineNodes={line.lineNodes}
+                notice={null}
+                onJump={jumpToNode}
+                onPickAction={branchTo}
+                onExit={() => {}}
+                showExit={false}
+                actorSeat={nodeDir[nodeIndex]?.position}
+                actions={(htView?.labels ?? pioView?.labels ?? []).map((display) => ({
+                  display,
+                }))}
+                onActionClick={onActionClick}
+              />
+            </div>
+          )}
+
+          {/* One column per loaded solver, plus a shared breakdown rail. The
+              rail is where the per-hand detail went when it left the columns:
+              side by side it costs the grids no height, and the two solvers'
+              breakdowns for the same hand end up stacked, which is the
+              comparison being made. */}
+          {loadedSolvers.length > 0 && (
+            <div className="flex min-h-0 flex-1 gap-3 overflow-auto">
+              {loadedSolvers.map(([name, solverView, solverDisplay, color]) =>
+                solverColumn(name, solverView!, solverDisplay, color)
+              )}
+              {/* The rail takes whatever the square grids do not, so an
+                  engine-only run spends the spare width on per-hand detail
+                  rather than on background. Floored so it stays readable when
+                  two grids are competing for the same row. */}
+              <div className="flex min-w-[16rem] flex-1 flex-col gap-2">
+                {loadedSolvers.map(([name, solverView, , color]) => (
+                  <div key={name} className="flex min-h-0 flex-1 flex-col">
+                    <div className={`shrink-0 text-[11px] font-medium ${color}`}>
+                      {name}
+                      {breakdownHand ? ` · ${breakdownHand}` : ""}
                     </div>
-                    <div className="mt-2 h-64">
+                    <div className="min-h-0 flex-1">
                       <HandBreakdown
                         data={solverView!.grid}
                         hand={breakdownHand}
@@ -1454,129 +1379,318 @@ const SolverCompare = () => {
                     </div>
                   </div>
                 ))}
-            </div>
-          )}
-          <p className="mt-1 text-[11px] text-slate-600">
-            Each grid's cell heights use that solver's own reach at this node
-            {hasPioDetail ? "; EV heat shares one color scale across both" : ""}. Click an
-            action panel to walk into that line; hover or click a hand class for its combos.
-          </p>
-
-          {/* per-combo table */}
-          {(htNode || pioNode) && (
-            <div className="mt-5">
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-medium text-slate-300">
-                  Per-combo{hasPioDetail ? " comparison" : ""}
-                  {selectedHand ? ` — ${selectedHand}` : ""}
-                </h2>
-                <select
-                  value={effectiveSortKey}
-                  onChange={(e) => setSortKey(e.target.value as SortKey)}
-                  className={`ml-auto ${inputCls} text-xs`}
-                  aria-label="Sort combos"
-                >
-                  {hasPioDetail && <option value="evDiff">Sort by |ΔEV|</option>}
-                  {hasPioDetail && <option value="l1">Sort by reach·L1</option>}
-                  <option value="reach">Sort by reach</option>
-                  <option value="hand">Sort by combo</option>
-                </select>
               </div>
-              <div className="mt-2 overflow-x-auto rounded-xl border border-slate-800">
-                <table className="w-full min-w-[720px] text-right text-xs tabular-nums">
-                  <thead className="bg-slate-800/80 text-slate-400">
-                    <tr>
-                      <th className="px-2 py-1.5 text-left">Combo</th>
-                      <th className="px-2 py-1.5">Reach</th>
-                      {tableLabels.map((label) => (
-                        <th key={label} className="px-2 py-1.5">
-                          {label}
-                          <span className="block font-normal text-slate-600">
-                            {hasPioDetail ? "ht% / pio%" : "ht%"}
-                          </span>
-                        </th>
-                      ))}
-                      <th className="px-2 py-1.5">
-                        EV chips
-                        <span className="block font-normal text-slate-600">
-                          {hasPioDetail ? "ht / pio" : "ht"}
-                        </span>
-                      </th>
-                      {hasPioDetail && <th className="px-2 py-1.5">ΔEV chips</th>}
-                      {hasPioDetail && <th className="px-2 py-1.5">L1</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {shownRows.map((h) => {
-                      const diff =
-                        h.ht?.ev == null || h.pio?.ev == null ? null : h.ht.ev - h.pio.ev;
-                      const diffBad =
-                        diff != null && spot != null && Math.abs(diff) > spot.pot * 0.02;
-                      return (
-                        <tr key={h.hand} className="border-t border-slate-800/70">
-                          <td className="px-2 py-1 text-left font-medium text-slate-200">
-                            {h.hand}
-                          </td>
-                          <td className="px-2 py-1 text-slate-400">{h.reach.toFixed(3)}</td>
-                          {tableLabels.map((label, k) => (
-                            <td key={label} className="px-2 py-1">
-                              <span className="text-emerald-300">{pct(h.ht?.freq[k])}</span>
-                              {hasPioDetail && (
-                                <>
-                                  <span className="text-slate-600"> / </span>
-                                  <span className="text-sky-300">{pct(h.pio?.freq[k])}</span>
-                                </>
-                              )}
-                            </td>
-                          ))}
-                          <td className="px-2 py-1">
-                            <span className="text-emerald-300">{chips(h.ht?.ev)}</span>
-                            {hasPioDetail && (
-                              <>
-                                <span className="text-slate-600"> / </span>
-                                <span className="text-sky-300">{chips(h.pio?.ev)}</span>
-                              </>
-                            )}
-                          </td>
-                          {hasPioDetail && (
-                            <td
-                              className={`px-2 py-1 ${
-                                diffBad ? "font-semibold text-amber-400" : "text-slate-400"
-                              }`}
-                            >
-                              {diff == null ? "-" : diff.toFixed(2)}
-                            </td>
-                          )}
-                          {hasPioDetail && (
-                            <td className="px-2 py-1 text-slate-500">
-                              {h.l1 == null ? "-" : h.l1.toFixed(3)}
-                            </td>
-                          )}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              {tableRows.length > shownRows.length && (
-                <p className="mt-1 text-[11px] text-slate-600">
-                  Showing {shownRows.length} of {tableRows.length} combos - narrow with the
-                  sort or a hand-class filter.
-                </p>
-              )}
             </div>
           )}
 
-          {runLog && (
-            <details className="mt-4 text-xs text-slate-500">
-              <summary className="cursor-pointer">Solver run log</summary>
-              <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-slate-900/70 p-3 text-[11px]">
-                {runLog}
-              </pre>
-            </details>
-          )}
+          {/* Footer: the flat node picker, kept for jumps the strip cannot
+              reach (a sibling subtree it never walked into). */}
+          <div className="flex shrink-0 flex-wrap items-center gap-2 text-[11px] text-slate-500">
+            <label htmlFor="compare-node">Node</label>
+            <select
+              id="compare-node"
+              value={nodeIndex}
+              onChange={(e) => {
+                setNodeIndex(Number(e.target.value));
+                setSelectedHand(null);
+                setHoverHand(null);
+              }}
+              className={`${inputCls} max-w-[22rem]`}
+            >
+              {nodeDir.map((n, i) => (
+                <option key={n.id} value={i}>
+                  {n.id} — {n.position} to act
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={nodeIndex === 0}
+              onClick={() => setNodeIndex((i) => Math.max(0, i - 1))}
+              className="rounded-lg border border-slate-700 px-2 py-0.5 text-slate-400 disabled:opacity-40"
+            >
+              Prev
+            </button>
+            <button
+              type="button"
+              disabled={nodeIndex >= nodeDir.length - 1}
+              onClick={() => setNodeIndex((i) => Math.min(nodeDir.length - 1, i + 1))}
+              className="rounded-lg border border-slate-700 px-2 py-0.5 text-slate-400 disabled:opacity-40"
+            >
+              Next
+            </button>
+            <span className="text-slate-600">
+              Cell heights use each solver's own reach at this node
+              {hasPioDetail ? "; EV heat shares one colour scale across both" : ""}. Click
+              an action panel or a line card to walk the tree; hover or click a hand class
+              for its combos.
+            </span>
+          </div>
         </>
       )}
+
+      {/* ---------- tree builder (PioViewer-style), in a modal so opening it
+           does not push the comparison down the page ---------- */}
+      <ResponsiveDrawer
+        open={builderOpen}
+        onClose={() => setBuilderOpen(false)}
+        scrollMode="custom"
+        desktopMaxWidthClassName="sm:max-w-[80rem]"
+        zClassName="z-[70]"
+        ariaLabel="Tree building parameters"
+      >
+        <div className="flex h-[88vh] max-h-[88vh] flex-col">
+          <div className="border-b border-slate-800 px-4 py-3">
+            <h2 className="text-sm font-semibold tracking-tight text-white">
+              Tree building parameters
+            </h2>
+            <p className="text-[11px] text-slate-500">
+              htsolver solves this tree; when PioSolver is enabled it gets the identical
+              tree, node for node.
+            </p>
+          </div>
+
+          {/* Two columns: the form, and the tree library beside it. The
+              library has to stay visible while the form is being edited - the
+              whole point of it is loading a spot and then tweaking it. */}
+          <div className="flex min-h-0 flex-1 gap-4 px-4 py-3">
+            <div className="min-w-0 flex-1 overflow-y-auto pr-1">
+            <TreeBuilding
+              value={builderToView(builder)}
+              onChange={(v) => setBuilder((cur) => applyViewToBuilder(cur, v))}
+              disabled={solving}
+              boardMaxCards={5}
+              boardVariant="inline"
+              showNoThreeBet
+              showMaxRaises
+              showPreflopAggressor
+              showClearAllSizes
+              clipboard={pioClipboardCodec}
+              rangeCodec={pioRangeCodec}
+            />
+
+            {/* Solve settings - ours, not PioViewer's tree builder. */}
+            <div className="mt-3 flex flex-wrap items-start gap-x-8 gap-y-3 border-t border-slate-800 pt-3">
+              <fieldset>
+                <legend className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                  Stop when this accuracy is reached
+                </legend>
+                <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-slate-300">
+                  {(["pct", "chips"] as const).map((mode) => (
+                    <label
+                      key={mode}
+                      className="flex cursor-pointer items-center gap-1.5 transition-colors hover:text-slate-100"
+                    >
+                      <input
+                        type="radio"
+                        name="accuracy-mode"
+                        checked={builder.accuracyMode === mode}
+                        onChange={() => setB("accuracyMode", mode)}
+                        className="accent-emerald-500"
+                      />
+                      <input
+                        className={`${inputCls} w-16 tabular-nums`}
+                        value={builder.accuracyMode === mode ? builder.accuracy : ""}
+                        onChange={(e) => {
+                          setB("accuracyMode", mode);
+                          setB("accuracy", e.target.value);
+                        }}
+                        aria-label={mode === "pct" ? "Accuracy, % of pot" : "Accuracy, chips"}
+                      />
+                      {mode === "pct" ? "% of the pot" : "chips"}
+                    </label>
+                  ))}
+                </div>
+                <p className="mt-1 max-w-md text-[10px] leading-relaxed text-slate-500">
+                  The real target, applied to both solvers - htsolver stops once its
+                  self-reported per-player exploitability drops below it, and Pio solves
+                  the same tree to the same number. It is what makes the two solve times
+                  and memory peaks comparable.
+                </p>
+              </fieldset>
+
+              <label className="flex flex-col gap-1">
+                <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                  Max iterations (safety cap)
+                </span>
+                <input
+                  className={`${inputCls} w-24 tabular-nums`}
+                  value={builder.maxIterations}
+                  onChange={(e) => setB("maxIterations", e.target.value)}
+                />
+                <span className="max-w-[15rem] text-[10px] leading-relaxed text-slate-500">
+                  Not a target - a stop-loss. If a tree never reaches the accuracy above,
+                  this ends the run instead of letting it grind forever.
+                </span>
+              </label>
+
+              <fieldset>
+                <legend className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                  htsolver settings
+                </legend>
+                <div className="mt-1.5 flex flex-col gap-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] text-slate-400">Update rule</span>
+                    <select
+                      className={`${inputCls} w-40`}
+                      value={builder.updateRule}
+                      disabled={solving}
+                      onChange={(e) =>
+                        setB("updateRule", e.target.value as BuilderState["updateRule"])
+                      }
+                    >
+                      <option value="dcfr">dcfr (default)</option>
+                      <option value="cfr_plus">cfr_plus</option>
+                      <option value="rm">rm</option>
+                    </select>
+                    {builder.updateRule !== "dcfr" && (
+                      <span className="max-w-[16rem] text-[10px] leading-relaxed text-amber-500/80">
+                        {builder.updateRule === "cfr_plus"
+                          ? "Measured at about 2x dcfr's iterations on the turn reference."
+                          : "Plain regret matching did not reach 0.02% of pot inside 20000 iterations on the turn reference."}
+                      </span>
+                    )}
+                  </label>
+
+                  <Check
+                    label="Suit isomorphism"
+                    checked={builder.isomorphism}
+                    disabled={solving}
+                    onChange={(v) => setB("isomorphism", v)}
+                    title="Collapse suit-equivalent runout subtrees. Lossless, and worth 1.3-1.6x on boards with a usable permutation. Turn off only to reproduce a pre-isomorphism result."
+                  />
+                  <Check
+                    label="Recalc schedule"
+                    checked={builder.recalc && !builder.sampling}
+                    disabled={solving || builder.sampling}
+                    onChange={(v) => setB("recalc", v)}
+                    title="Stop re-traversing runout subtrees whose values have stopped moving. On by default; disabled automatically while chance sampling is on."
+                  />
+                  <Check
+                    label="Chance sampling"
+                    checked={builder.sampling}
+                    disabled={solving}
+                    onChange={(v) => setB("sampling", v)}
+                    title="Traverse only some of each chance node's children per iteration, scaled by n/m. Unbiased, but slower here - it exists for preflop trees."
+                  />
+                  {builder.sampling && (
+                    <div className="ml-4 flex flex-col gap-1.5">
+                      <label className="flex items-center gap-2 text-[11px] text-slate-300">
+                        <span className="text-[10px] text-slate-400">runouts</span>
+                        <input
+                          className={`${inputCls} w-16 tabular-nums`}
+                          value={builder.samplingRunouts}
+                          onChange={(e) => setB("samplingRunouts", e.target.value)}
+                        />
+                        <span className="text-[10px] text-slate-400">anneal by</span>
+                        <input
+                          className={`${inputCls} w-20 tabular-nums`}
+                          value={builder.samplingAnnealAt}
+                          onChange={(e) => setB("samplingAnnealAt", e.target.value)}
+                        />
+                      </label>
+                      <span className="max-w-[16rem] text-[10px] leading-relaxed text-amber-500/80">
+                        Measured 1.9-3.0x SLOWER than full enumeration on flop and turn
+                        trees. It turns the recalc schedule off, and the accuracy stop
+                        cannot fire until it has annealed to exact enumeration.
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                  PioSolver comparison
+                </legend>
+                <div className="mt-1.5 flex flex-col gap-1.5">
+                  <Check
+                    label="Run PioSolver"
+                    checked={!builder.disablePio}
+                    disabled={solving}
+                    onChange={setRunPio}
+                    title="Build and solve the identical tree in Pio. Off by default: an htsolver-only run needs no Pio process at all and is much faster."
+                  />
+                  <div className="ml-4 flex flex-col gap-1.5">
+                    <Check
+                      label="Pio per-hand results"
+                      checked={!builder.disableCompare}
+                      disabled={solving || builder.disablePio}
+                      onChange={(v) => setB("disableCompare", !v)}
+                      title="Extract Pio's strategy and EVs node by node over UPI, so its grid can sit beside htsolver's. This is the slow part of a comparison run."
+                    />
+                    <Check
+                      label="Cross-exploitability gate"
+                      checked={!builder.disableCrossCheck}
+                      disabled={solving || builder.disablePio}
+                      onChange={(v) => setB("disableCrossCheck", !v)}
+                      title="Load the htsolver strategy into Pio and let Pio rate how exploitable it is. The primary correctness statement; full trees only."
+                    />
+                  </div>
+                  <span className="max-w-[16rem] text-[10px] leading-relaxed text-slate-500">
+                    Off by default: htsolver alone is the fast loop. Turn Pio on when you
+                    want an accuracy check.
+                  </span>
+                </div>
+              </fieldset>
+            </div>
+            </div>
+
+            {/* The tree library: built-in benchmark spots and the user's own
+                saved trees, one click each. Replaces the write-only
+                "Benchmark spot" dropdown, whose per-preset notes were only
+                ever reachable as an <option title>. */}
+            <div className="flex w-64 shrink-0 flex-col border-l border-slate-800 pl-4">
+              <h3 className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                Trees
+              </h3>
+              <div className="min-h-0 flex-1">
+                <TreeLibrary value={builder} onChange={setBuilder} disabled={solving} />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-slate-800 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            <button
+              type="button"
+              onClick={downloadConfig}
+              className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition-colors hover:border-slate-500 hover:bg-slate-800/60"
+              title="Save the htsolver config to run manually"
+            >
+              Download config
+            </button>
+            <button
+              type="button"
+              onClick={() => void submitJob("publish")}
+              disabled={solving}
+              title="htsolver only: publish the solve to the Solutions library (admin)"
+              className="rounded-lg border border-emerald-700 px-3 py-1.5 text-xs font-semibold text-emerald-300 transition-colors hover:border-emerald-500 hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Solve & Publish
+            </button>
+            <button
+              type="button"
+              onClick={() => void submitJob("compare")}
+              disabled={solving}
+              className="ml-auto inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {solving && (
+                <span
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white"
+                />
+              )}
+              {solving ? "Working..." : "Solve & Compare"}
+            </button>
+          </div>
+          {solving && (
+            <p className="px-4 pb-3 text-[11px] text-slate-500">
+              Queued for the compare watcher (the machine with both solvers). Closing this
+              does not stop it - the result lands in Recent runs.
+            </p>
+          )}
+        </div>
+      </ResponsiveDrawer>
     </div>
   );
 };

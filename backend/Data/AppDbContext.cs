@@ -27,6 +27,10 @@ namespace PokerRangeAPI2.Data
 
         public DbSet<SavedRange> SavedRanges { get; set; } = default!;
 
+        public DbSet<TreeFolder> TreeFolders { get; set; } = default!;
+
+        public DbSet<SavedTree> SavedTrees { get; set; } = default!;
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -182,6 +186,39 @@ namespace PokerRangeAPI2.Data
                 // losing a painted range to a mis-clicked folder delete is a far
                 // worse outcome than an untidy root.
                 entity.HasOne<RangeFolder>()
+                    .WithMany()
+                    .HasForeignKey(e => e.FolderId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // The saved-tree library mirrors the saved-range one exactly - same
+            // bounds, same self-referencing Restrict, same "a deleted folder's
+            // contents fall back to the root" contract. See the RangeFolder /
+            // SavedRange blocks above for why each of those is the way it is.
+            modelBuilder.Entity<TreeFolder>(entity =>
+            {
+                entity.Property(e => e.UserId).HasMaxLength(128);
+                entity.Property(e => e.Name).HasMaxLength(100);
+
+                entity.HasIndex(e => e.UserId);
+
+                entity.HasOne<TreeFolder>()
+                    .WithMany()
+                    .HasForeignKey(e => e.ParentId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<SavedTree>(entity =>
+            {
+                entity.Property(e => e.UserId).HasMaxLength(128);
+                entity.Property(e => e.Name).HasMaxLength(100);
+                // Two full 169-class ranges serialize to a few KB of Pio tokens;
+                // this is well clear of that and is never indexed.
+                entity.Property(e => e.Config).HasMaxLength(16000);
+
+                entity.HasIndex(e => e.UserId);
+
+                entity.HasOne<TreeFolder>()
                     .WithMany()
                     .HasForeignKey(e => e.FolderId)
                     .OnDelete(DeleteBehavior.Restrict);
