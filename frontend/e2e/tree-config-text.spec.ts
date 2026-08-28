@@ -267,3 +267,82 @@ test("htsolver algorithm settings reach the config, and sampling disables recalc
     sampling: { mode: "chance", runouts: 12, anneal_full_at: 2000 },
   });
 });
+
+test("qre drives the qre block, not algorithm.update, and forces only the gate off", () => {
+  const base: BuilderState = {
+    ...DEFAULT_BUILDER,
+    oopRange: { AA: 1 },
+    ipRange: { QQ: 1 },
+    board: "Ah Kd 9c 2s",
+  };
+
+  const qre = buildEngineConfig({
+    ...base,
+    updateRule: "qre",
+    qreLambdaOop: "20",
+    qreLambdaIp: "5",
+    // Explicitly false, not left at the default. DEFAULT_BUILDER has all
+    // three disabled, so asserting "still true" below would pass whether or
+    // not QRE forces them and would prove nothing.
+    disablePio: false,
+    disableCompare: false,
+    disableCrossCheck: false,
+  });
+  const config = qre.config as Record<string, unknown>;
+
+  // QRE is qre.mode layered over a base update rule. algorithm.update has no
+  // "qre" value in the engine - sending one would be rejected outright - so
+  // the picker leaves dcfr underneath and the qre block carries the choice.
+  expect(config.algorithm).toEqual({ update: "dcfr", recalc: { enabled: true } });
+  // Lambda is entered per pot and divided by it here, so the number the user
+  // typed means the same thing on any tree. Default pot is 100.
+  expect(config.qre).toEqual({ mode: "qre", lambda: [0.2, 0.05] });
+
+  // Pio MAY run alongside a QRE solve - it solves the identical tree for Nash
+  // and the point is to see how the two grids differ - so these follow the
+  // user rather than being forced.
+  expect(qre.disablePio).toBe(false);
+  expect(qre.disableCompare).toBe(false);
+  // Only the cross-exploitability gate is meaningless for a QRE: it would rate
+  // how far from Nash the strategy is, which is the feature. Forced off here
+  // so the form cannot queue a job the harness will refuse.
+  expect(qre.disableCrossCheck).toBe(true);
+
+  // ...and a Nash run leaves all three exactly as the user set them.
+  const nashRun = buildEngineConfig({
+    ...base,
+    updateRule: "dcfr",
+    disablePio: false,
+    disableCompare: false,
+    disableCrossCheck: false,
+  });
+  expect(nashRun.disableCrossCheck).toBe(false);
+
+  // Annealing is opt-in and omitted entirely when off, so a fixed-lambda
+  // config hashes the same as one written before annealing existed.
+  const annealed = buildEngineConfig({
+    ...base,
+    updateRule: "qre",
+    qreLambdaOop: "10",
+    qreLambdaIp: "10",
+    qreAnneal: true,
+    qreAnnealFactor: "50",
+    qreAnnealAt: "3000",
+  }).config as Record<string, unknown>;
+  expect(annealed.qre).toEqual({
+    mode: "qre",
+    lambda: [0.1, 0.1],
+    anneal: { factor: 50, full_at: 3000 },
+  });
+
+  // Lambda 0 is uniform-random play, not a solve, and the engine divides by
+  // it. Reject in the form rather than after the job is queued.
+  expect(() =>
+    buildEngineConfig({ ...base, updateRule: "qre", qreLambdaOop: "0" })
+  ).toThrow(/positive/);
+
+  // And every other update rule still emits the Nash block untouched.
+  const nash = buildEngineConfig({ ...base, updateRule: "dcfr" })
+    .config as Record<string, unknown>;
+  expect(nash.qre).toEqual({ mode: "nash" });
+});

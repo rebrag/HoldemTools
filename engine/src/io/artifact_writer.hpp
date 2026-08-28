@@ -32,6 +32,12 @@ struct SolveStats {
   // another solver's reported footprint). write_artifact samples the
   // whole-run peak itself and writes both into the metadata.
   std::size_t peak_rss_bytes = 0;
+  // QRE only: exploitability in the entropy-augmented game, the quantity a
+  // QRE solve actually drives to zero. `nashconv` above stays the PLAIN
+  // (unregularized) number for the same solve, which plateaus by design -
+  // both are recorded so the plateau is visible rather than mistaken for a
+  // stall. Zero when qre.mode is "nash".
+  double qre_gap = 0.0;
 };
 
 // Bytes the export pass inside write_artifact holds live at its peak. It

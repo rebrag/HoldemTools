@@ -83,6 +83,49 @@ import {
 
 type CompareNode = DecodedNode;
 
+/* ---------- QRE rationality, explained in the units a player thinks in ----
+ *
+ * Lambda is entered POT-NORMALIZED: buildEngineConfig divides by the pot to
+ * get the engine's raw 1/chips value, so the nominal frequency ratio between
+ * two actions differing by `edge` (as a fraction of the pot) is
+ * exp(lambda * edge).
+ *
+ * The readable anchor is therefore the "e-fold edge": the EV edge that makes
+ * one action about 2.7x more likely is 100/lambda percent of the pot. That
+ * framing stays interpretable at every lambda, where a raw frequency ratio
+ * does not - at lambda 150 a 20%-of-pot edge is nominally 10^13 to 1, which
+ * tells a user nothing.
+ *
+ * Approximate on purpose: the engine solves the DILATED (soft) QRE, whose
+ * continuation values carry their own entropy bonuses, and measured ratios
+ * come out consistently softer than this nominal figure. */
+const LAMBDA_PRESETS = [
+  { label: "Very loose", lambda: 3, hint: "a 33%-of-pot edge is only ~3x more likely" },
+  { label: "Loose", lambda: 8, hint: "a 12%-of-pot edge is ~3x more likely" },
+  { label: "Typical", lambda: 20, hint: "a 5%-of-pot edge is ~3x more likely" },
+  { label: "Sharp", lambda: 50, hint: "a 2%-of-pot edge is ~3x more likely" },
+  { label: "Near-GTO", lambda: 150, hint: "a 0.7%-of-pot edge is ~3x more likely" },
+] as const;
+
+const describeLambda = (oop: string, ip: string): string => {
+  const a = Number(oop);
+  const b = Number(ip);
+  const say = (l: number) =>
+    `an action worth about ${(100 / l).toFixed(l >= 100 ? 1 : 0)}% of the pot more is ` +
+    `taken roughly 3x as often`;
+  if (!(a > 0) || !(b > 0)) return "Enter a positive rationality for each seat.";
+  if (a === b) return `At lambda ${a}, ${say(a)}.`;
+  return `OOP ${a}: ${say(a)}. IP ${b}: ${say(b)}. The lower one plays looser.`;
+};
+
+const describeAnneal = (lambda: string, factor: string, at: string): string => {
+  const l = Number(lambda);
+  const f = Number(factor);
+  const t = Number(at);
+  if (!(l > 0) || !(f > 1) || !(t > 0)) return "";
+  return `lambda ${l} reaches ${l * f} by iteration ${t}, which is effectively GTO.`;
+};
+
 /** htsolver's payload header. Everything here comes from the artifact, so it
  *  exists whether or not Pio ran. */
 interface HtSummary {
@@ -93,6 +136,14 @@ interface HtSummary {
     exploitable_chips?: number;
     exploitable_pct_pot?: number | null;
     ev: number[];
+    /* QRE solves only. `exploitable_*` above stays the PLAIN measurement,
+     * which on a QRE solve plateaus at a lambda-dependent floor by design -
+     * the gap is what such a solve converges on and stops against. Both
+     * travel so the plateau reads as intended rather than as a stall. */
+    mode?: "nash" | "qre";
+    lambda?: number[] | null;
+    qre_gap_chips?: number | null;
+    qre_gap_pct_pot?: number | null;
   };
   timing?: {
     ht_solve_s?: number | null;
@@ -174,6 +225,8 @@ const buildSolverView = (
     freqPlain: number[];
     evW: number;
     evWSum: number;
+    actionEvW: number[];
+    actionEvWSum: number[];
   }
   const byClass = new Map<string, Agg>();
   const byCombo = new Map<string, ComboRow>();
@@ -193,6 +246,11 @@ const buildSolverView = (
         freqPlain: Array(nActions).fill(0),
         evW: 0,
         evWSum: 0,
+        // Per-action EV, reach-weighted per action: a hand can carry an EV
+        // for one action and null for another, so each needs its own
+        // denominator rather than sharing the node EV's.
+        actionEvW: Array(nActions).fill(0),
+        actionEvWSum: Array(nActions).fill(0),
       };
       byClass.set(cls, agg);
     }
@@ -210,6 +268,11 @@ const buildSolverView = (
     for (let k = 0; k < nActions; k++) {
       agg.freqW[k] += hand.reach * hand.freq[k];
       agg.freqPlain[k] += hand.freq[k];
+      const aev = hand.action_ev?.[k];
+      if (aev != null) {
+        agg.actionEvW[k] += hand.reach * aev;
+        agg.actionEvWSum[k] += hand.reach;
+      }
     }
     const actions: ComboRow["actions"] = {};
     for (let k = 0; k < nActions; k++) {
@@ -238,7 +301,16 @@ const buildSolverView = (
     const ev = agg.evWSum > 0 ? agg.evW / agg.evWSum : null;
     for (let k = 0; k < nActions; k++) {
       actions[labels[k]] = agg.w > 0 ? agg.freqW[k] / agg.w : agg.freqPlain[k] / agg.n;
-      if (ev != null) evs[labels[k]] = ev;
+      // The EV of TAKING this action, not the node's strategy-weighted value.
+      // Assigning the node EV to every action made the tooltip read as though
+      // every action were worth the same - actively wrong, and most visibly so
+      // on a QRE solve, where actions are deliberately NOT equalized (a Nash
+      // solve makes in-support actions indifferent, which is what hid this).
+      if (agg.actionEvWSum[k] > 0) {
+        evs[labels[k]] = agg.actionEvW[k] / agg.actionEvWSum[k];
+      } else if (ev != null) {
+        evs[labels[k]] = ev;
+      }
     }
     grid.push({ hand: cls, actions, evs });
   }
@@ -582,6 +654,12 @@ const SolverCompare = () => {
 
   const htSummary = (loaded?.ht?.header.summary ?? null) as HtSummary | null;
   const pioSummary = (loaded?.pio?.header.summary ?? null) as PioSummary | null;
+  // The form is asking for a QRE solve. Pio is not applicable to one, and the
+  // accuracy target means the QRE gap rather than plain exploitability.
+  const qreSelected = builder.updateRule === "qre";
+  // The loaded RESULT was a QRE solve. Not the same question as the one above:
+  // the form can have moved on since the run.
+  const htIsQre = htSummary?.ht.mode === "qre";
   const spot = loaded?.ht?.header.spot ?? loaded?.pio?.header.spot ?? null;
   const cross = pioSummary?.cross_check ?? null;
   /** Both halves' timing/memory merged: each file carries only its own. */
@@ -834,6 +912,22 @@ const SolverCompare = () => {
           htSummary.ht.iterations
         } iters`,
       });
+      // A QRE solve stopped on the gap, not on NashConv, so showing NashConv
+      // alone would look like a run that never converged.
+      if (htIsQre) {
+        const lam = htSummary.ht.lambda;
+        // Show lambda back on the pot-normalized scale the form uses, not the
+        // engine's raw 1/chips.
+        const spotPot = spot?.pot ?? 0;
+        metricChips.push({
+          key: "qre",
+          label: `QRE gap ${(htSummary.ht.qre_gap_chips ?? 0).toFixed(3)}${
+            lam && lam.length === 2 && spotPot > 0
+              ? ` · lambda ${lam.map((l) => (l * spotPot).toFixed(0)).join("/")}`
+              : ""
+          }`,
+        });
+      }
     }
     metricChips.push({
       key: "nodes",
@@ -895,8 +989,13 @@ const SolverCompare = () => {
 
   const loadedSolvers = (
     [
-      ["htsolver", htView, displayData.ht, "text-emerald-400"],
-      ["PioSolver", pioView, displayData.pio, "text-sky-400"],
+      [htIsQre ? "htsolver (QRE)" : "htsolver", htView, displayData.ht, "text-emerald-400"],
+      // Naming the Pio column for what it is on a QRE run. Pio always solves
+      // for Nash, so beside a QRE strategy it is a GTO reference rather than a
+      // second opinion on the same question - and the grids differing is the
+      // thing being looked at, not a disagreement.
+      [htIsQre ? "PioSolver (Nash reference)" : "PioSolver", pioView, displayData.pio,
+       "text-sky-400"],
     ] as const
   ).filter(([, solverView]) => solverView != null);
 
@@ -1256,6 +1355,15 @@ const SolverCompare = () => {
                   : ""}
                 . Time excludes tree building on both sides; memory is the peak working
                 set of each solver process, which does include it.
+                {htIsQre && (
+                  <span className="mt-1 block text-amber-500/80">
+                    On a QRE run these solve times are not like for like: that one number
+                    means the <strong>QRE gap</strong> to htsolver and{" "}
+                    <strong>Nash exploitability</strong> to Pio, so the two solvers stopped
+                    on different conditions. Read the cost side as rough context, not as a
+                    head-to-head.
+                  </span>
+                )}
               </p>
             </div>
           )}
@@ -1598,6 +1706,15 @@ const SolverCompare = () => {
                   the same tree to the same number. It is what makes the two solve times
                   and memory peaks comparable.
                 </p>
+                {qreSelected && !builder.qreAnneal && (
+                  <p className="mt-1 max-w-md text-[10px] leading-relaxed text-amber-500/80">
+                    For a QRE solve this is the <strong>QRE gap</strong> - exploitability
+                    measured against the same bounded-rationality objective the solve is
+                    minimizing. Plain exploitability is reported too, but it plateaus by
+                    design and will not reach this target: the strategy is deliberately
+                    not Nash. Raise lambda if you want it to.
+                  </p>
+                )}
               </fieldset>
 
               <label className="flex flex-col gap-1">
@@ -1633,15 +1750,139 @@ const SolverCompare = () => {
                       <option value="dcfr">dcfr (default)</option>
                       <option value="cfr_plus">cfr_plus</option>
                       <option value="rm">rm</option>
+                      <option value="qre">qre (bounded rationality)</option>
                     </select>
                     {builder.updateRule !== "dcfr" && (
                       <span className="max-w-[16rem] text-[10px] leading-relaxed text-amber-500/80">
                         {builder.updateRule === "cfr_plus"
                           ? "Measured at about 2x dcfr's iterations on the turn reference."
-                          : "Plain regret matching did not reach 0.02% of pot inside 20000 iterations on the turn reference."}
+                          : builder.updateRule === "rm"
+                            ? "Plain regret matching did not reach 0.02% of pot inside 20000 iterations on the turn reference."
+                            : "Solves for a quantal response equilibrium, not Nash: players pick better actions more often, not always. Turn PioSolver on below to solve the same tree for GTO alongside it and see the difference."}
                       </span>
                     )}
                   </label>
+
+                  {builder.updateRule === "qre" && (
+                    <fieldset className="rounded border border-slate-800 p-2">
+                      <legend className="px-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                        Rationality (lambda)
+                      </legend>
+                      <div className="flex flex-wrap items-end gap-3">
+                        {(
+                          [
+                            ["qreLambdaOop", "OOP"],
+                            ["qreLambdaIp", "IP"],
+                          ] as const
+                        ).map(([field, label]) => (
+                          <label key={field} className="flex flex-col gap-1">
+                            <span className="text-[10px] text-slate-400">{label}</span>
+                            <input
+                              className={`${inputCls} w-20 tabular-nums`}
+                              value={builder[field]}
+                              disabled={solving}
+                              onChange={(e) => setB(field, e.target.value)}
+                              aria-label={`${label} rationality lambda`}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {LAMBDA_PRESETS.map((preset) => (
+                          <button
+                            key={preset.label}
+                            type="button"
+                            disabled={solving}
+                            onClick={() => {
+                              setB("qreLambdaOop", String(preset.lambda));
+                              setB("qreLambdaIp", String(preset.lambda));
+                            }}
+                            className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-300 hover:border-emerald-500 hover:text-emerald-400 disabled:opacity-40"
+                            title={`lambda ${preset.lambda} - ${preset.hint}`}
+                          >
+                            {preset.label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="mt-1.5 max-w-[18rem] text-[10px] leading-relaxed text-slate-500">
+                        {describeLambda(builder.qreLambdaOop, builder.qreLambdaIp)}
+                      </p>
+                      <p className="mt-1 max-w-[18rem] text-[10px] leading-relaxed text-slate-500">
+                        The scale has no maximum and is entered <strong>per pot</strong>, so
+                        the same number means the same thing on any tree.{" "}
+                        <strong className="text-slate-400">Towards 0</strong> every action
+                        becomes equally likely regardless of EV - a coin-flip player (0
+                        itself is rejected: the maths divides by it).{" "}
+                        <strong className="text-slate-400">Towards infinity</strong> the best
+                        action is always taken - that is Nash. Useful values run about 3 to
+                        150. Set OOP and IP differently to solve a sharp player against a
+                        loose one, which is the case Nash cannot express.
+                      </p>
+                      <p className="mt-1 max-w-[18rem] text-[10px] leading-relaxed text-slate-500">
+                        Lambda is the dial; the number that actually says how far from GTO
+                        the result landed is the run{"'"}s own{" "}
+                        <strong className="text-slate-400">exploitability</strong>, reported
+                        as a % of pot when it finishes.
+                      </p>
+                      <label className="mt-2 flex items-center gap-2 text-[11px] text-slate-300">
+                        <input
+                          type="checkbox"
+                          className="accent-emerald-500"
+                          checked={builder.qreAnneal}
+                          disabled={solving}
+                          onChange={(e) => setB("qreAnneal", e.target.checked)}
+                        />
+                        Anneal lambda toward Nash
+                      </label>
+                      {builder.qreAnneal && (
+                        <div className="mt-1.5 flex flex-wrap items-end gap-3">
+                          <label className="flex flex-col gap-1">
+                            <span className="text-[10px] text-slate-400">x factor</span>
+                            <input
+                              className={`${inputCls} w-16 tabular-nums`}
+                              value={builder.qreAnnealFactor}
+                              disabled={solving}
+                              onChange={(e) => setB("qreAnnealFactor", e.target.value)}
+                              aria-label="Anneal factor"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className="text-[10px] text-slate-400">by iteration</span>
+                            <input
+                              className={`${inputCls} w-20 tabular-nums`}
+                              value={builder.qreAnnealAt}
+                              disabled={solving}
+                              onChange={(e) => setB("qreAnnealAt", e.target.value)}
+                              aria-label="Anneal by iteration"
+                            />
+                          </label>
+                          <span className="max-w-[18rem] text-[10px] leading-relaxed text-slate-500">
+                            <strong className="text-slate-400">x factor</strong> is what the
+                            starting lambda is multiplied by:{" "}
+                            {describeAnneal(
+                              builder.qreLambdaOop,
+                              builder.qreAnnealFactor,
+                              builder.qreAnnealAt
+                            )}{" "}
+                            <strong className="text-slate-400">by iteration</strong> is where
+                            it gets there - and, the part worth knowing, the strategy average
+                            is <em>thrown away</em> at that point and only starts
+                            accumulating afterwards, so it is also how many iterations you
+                            spend warming up.
+                          </span>
+                          <span className="max-w-[18rem] text-[10px] leading-relaxed text-amber-500/80">
+                            Annealing ends at a near-GTO strategy, so this is a speed
+                            experiment rather than a way to model a player - the accuracy
+                            target reverts to plain exploitability. Measured on flop trees
+                            it does not pay: at 100bb-ish depth it saves only ~7% of
+                            iterations and costs ~2x per iteration, so it comes out 1.3x to
+                            1.9x slower than dcfr, and worse the deeper the stacks. If you
+                            want a Nash answer, leave this off and use dcfr.
+                          </span>
+                        </div>
+                      )}
+                    </fieldset>
+                  )}
 
                   <Check
                     label="Suit isomorphism"
@@ -1700,7 +1941,11 @@ const SolverCompare = () => {
                     checked={!builder.disablePio}
                     disabled={solving}
                     onChange={setRunPio}
-                    title="Build and solve the identical tree in Pio. Off by default: an htsolver-only run needs no Pio process at all and is much faster."
+                    title={
+                      qreSelected
+                        ? "Solve the identical tree in Pio for NASH, as a reference to compare the QRE strategy against. The two are supposed to differ - that difference is what you are looking at."
+                        : "Build and solve the identical tree in Pio. Off by default: an htsolver-only run needs no Pio process at all and is much faster."
+                    }
                   />
                   <div className="ml-4 flex flex-col gap-1.5">
                     <Check
@@ -1708,19 +1953,24 @@ const SolverCompare = () => {
                       checked={!builder.disableCompare}
                       disabled={solving || builder.disablePio}
                       onChange={(v) => setB("disableCompare", !v)}
-                      title="Extract Pio's strategy and EVs node by node over UPI, so its grid can sit beside htsolver's. This is the slow part of a comparison run."
+                      title="Extract Pio's strategy and EVs node by node over UPI, so its grid can sit beside htsolver's. This is the slow part of a comparison run, and the one that gives you a second grid to eyeball."
                     />
                     <Check
                       label="Cross-exploitability gate"
-                      checked={!builder.disableCrossCheck}
-                      disabled={solving || builder.disablePio}
+                      checked={!builder.disableCrossCheck && !qreSelected}
+                      disabled={solving || builder.disablePio || qreSelected}
                       onChange={(v) => setB("disableCrossCheck", !v)}
-                      title="Load the htsolver strategy into Pio and let Pio rate how exploitable it is. The primary correctness statement; full trees only."
+                      title={
+                        qreSelected
+                          ? "Not applicable to a QRE solve: Pio would be rating how exploitable a deliberately non-Nash strategy is, which measures the feature rather than a defect. The harness refuses it."
+                          : "Load the htsolver strategy into Pio and let Pio rate how exploitable it is. The primary correctness statement; full trees only."
+                      }
                     />
                   </div>
                   <span className="max-w-[16rem] text-[10px] leading-relaxed text-slate-500">
-                    Off by default: htsolver alone is the fast loop. Turn Pio on when you
-                    want an accuracy check.
+                    {qreSelected
+                      ? "Pio solves the same tree for Nash, so you can see how the QRE strategy differs from GTO. No gate is run - the difference is the point, not an error."
+                      : "Off by default: htsolver alone is the fast loop. Turn Pio on when you want an accuracy check."}
                   </span>
                 </div>
               </fieldset>

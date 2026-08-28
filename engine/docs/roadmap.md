@@ -9,7 +9,7 @@ htsolver replaces PioSolver in the HoldemTools pipeline.
 
 - The watcher picks up a gametree job, solves it with **htsolver**, uploads schema-4 bundles, and frontend users browse the result in `/solutions` - exactly today's flow with Pio swapped out. The plumbing already exists: publish-mode `EngineCompareJob`s do this for river spots now.
 - Pio is retired once htsolver is trusted **as much or more than Pio**. Trust is earned through the `/compare` loop: every spot solvable by both, compared per hand, gated on cross-exploitability.
-- htsolver's differentiators over Pio/Monker (the reason it exists): **QRE** (per-player rationality, lambda fitting), **3+ players** (NashConv, side pots), **configurable cooperation/collusion** (seat->agent partitions, payoff weights, Bayesian unknown-collusion). Everything else is table stakes.
+- htsolver's differentiators over Pio/Monker (the reason it exists): **QRE** (per-player rationality - *shipped, M7*; lambda fitting still to come), **3+ players** (NashConv, side pots), **configurable cooperation/collusion** (seat->agent partitions, payoff weights, Bayesian unknown-collusion). Everything else is table stakes.
 - Hard boundaries that never change: the engine is a headless CLI with zero cloud/Firebase/GUI dependencies; artifacts are local files; upload/index/serving is the backend + watcher's job; Firebase is auth-only.
 
 ## Milestones
@@ -129,6 +129,120 @@ Both were found by chasing an iteration count that could not have moved if the e
 
 The sweep's hardest board (`Ks Kd 4c 9h`, which has a usable s<->d permutation) went 17.9 s -> 9.45 s at 100% ranges. Full-range turn boards remain the one family where Pio is still ahead (0.71x median, best board 0.93x - close to parity); per M6.10's negative results, closing that residual is an update-rule question, not further scheduling or collapsing.
 
+- **M7 - QRE (quantal response equilibrium).** Landed 2026-08-28. **The first differentiator over Pio to actually ship.**
+
+  Entropy-regularized CFR, implemented as a **reward transformation inside the traversal** rather than as a replacement for regret matching. At an actor's decision node each action's counterfactual value is charged the dilated KL of the current strategy to uniform:
+
+  `vt(h,a) = v(h,a) - pi(h) * (1/lambda) * (log sigma(h,a) + log A)`
+
+  whose fixed point is the logit QRE. `pi(h)` is `Game::compat_weights` - the compatible-opponent-reach the counterfactual values already carry - and it is load-bearing rather than cosmetic: softmax is not scale-invariant, so regularizing the raw counterfactual value would make effective rationality vary with how often the opponent can hold a compatible hand. Scaling by `pi(h)` is what makes one lambda mean the same thing at every infoset.
+
+  **Why the transformation and not a softmax policy.** Because only the values fed into the regrets change, `regret_matched_action_major`, the cold-path `row_from_action_major`, `average_strategy()`, `current_strategy()`, the schema-4 exporter, the C# reader and the frontend are all untouched, and the average strategy is still the answer. A softmax-over-regrets design would have had to mirror itself in both regret-matching implementations and would have changed what `current_strategy()` means. Config is `qre.mode: "qre"` plus a per-seat `qre.lambda` (1/chips; a scalar broadcasts), with optional `qre.anneal: {factor, full_at}`.
+
+  **The stop criterion is the interesting part, and it is a correction to the obvious plan.** A fixed-lambda QRE is not Nash: perturbing a payoff by at most eps makes the perturbed equilibrium a 2*eps-Nash of the true game, so plain exploitability plateaus around `2*D*log(A)/lambda` chips and **can never reach a tight accuracy target, however long the solve runs**. `compute_qre_best_response` therefore measures exploitability in the entropy-augmented game - a smooth (log-sum-exp) maximum against an on-profile value charged the same KL - which does converge and is chip-denominated, so `budget.target_exploitable_pct` works unchanged. Charging the `ev` side too is the easy thing to miss; regularizing only the best-response side leaves a gap that never closes. Both numbers are printed and land in artifact metadata, and solve start warns when the configured lambda cannot reach the configured target.
+
+  Measured on `configs/validate_turn_fullrange.json` at lambda 0.1 (= 10 per pot) with a 0.3%-of-pot target: the QRE gap reaches 0.235% in 500 iterations while plain exploitability sits at 6.89% and stays there. That separation is the feature, not a failure.
+
+  **QRE is NOT faster than DCFR, and the hope that it might be is now measured and dead.** On the `LPopenBBcall` flop tree (`3s Kd Js`, pot 100, stacks 700, ~30% ranges, 414110 decision nodes), both to a 0.3%-of-pot target:
+
+  | | iterations | wall | ms/iteration | what it reached |
+  |---|---|---|---|---|
+  | dcfr | 225 | **53.0 s** | 236 | 0.30% plain exploitable |
+  | qre, lambda 20/pot | 525 | **195.5 s** | 372 | 0.30% QRE gap; plain exploitability plateaued at **4.09%** |
+
+  So QRE cost **3.7x the wall clock** for a strategy that is 13.6x more exploitable in the Nash sense. Two independent factors, worth separating because only one is fixable:
+
+  - **1.58x per iteration** (236 -> 372 ms). This is the `logf` per regret cell plus a `compat_weights` pass per actor node. It is the cost of the feature and roughly matches the 20-60% predicted up front. Fusing `log sigma` into the regret matcher (one pass producing both) and/or a vendored polynomial `log2f` would recover part of it; not attempted, since QRE is a modelling feature rather than a speed feature.
+  - **2.3x the iterations.** At a soft lambda the QRE gap simply starts much higher and grinds down; the regularization is too mild here to buy the better conditioning that would pay for itself.
+
+  **Annealed lambda saves iterations everywhere, and wall clock nowhere. Swept, not guessed.**
+
+  The first measurement of annealing was on `LPopenBBcall` alone and looked like a 1.44x wall-clock win (225 -> 100 iterations, 53.0 -> 36.4 s). **It did not survive the sweep.** `bench_boards.py` now has a `--no-pio` engine-only mode and a `--qre-lambda` / `--qre-anneal-*` arm precisely so this could be checked; run over 4 flop + 10 turn + 10 river boards at tight ranges, both arms to the same PLAIN Nash target:
+
+  | family, target | dcfr iters | annealed iters | iteration saving | dcfr wall | annealed wall |
+  |---|---|---|---|---|---|
+  | flop, 0.3% | 260 | 185 | 1.41x | 17.5 s | 22.7 s (**1.29x slower**) |
+  | turn, 0.02% | 1250 | 900 | 1.39x | 0.63 s | 0.63 s (wash) |
+  | river, 0.02% | 700 | 500 | 1.40x | 0.04 s | 0.04 s (wash) |
+  | turn, 0.3% | 210 | 155 | 1.35x | 0.13 s | 0.17 s (1.3x slower) |
+  | river, 0.3% | 105 | 80 | 1.31x | 0.01 s | 0.01 s (wash) |
+
+  Two things are now solid, and they pull against each other:
+
+  - **The iteration saving is real and strikingly stable: 1.31-1.41x across every family and both accuracy targets.** Iteration counts are deterministic, so this is not a noise story.
+  - **QRE costs 1.44x per iteration**, measured directly rather than inferred: same flop tree, 100 fixed iterations, no accuracy stop, median of 5 interleaved runs - 4.28 s nash vs 6.17 s qre. That is one `logf` per regret cell plus a `compat_weights` pass per actor node.
+
+  1.44x per iteration against a 1.31-1.41x iteration saving is why every wall-clock row is a wash or worse. **The `LPopenBBcall` outlier is unexplained**: its 2.25x iteration saving sits far outside the 1.3-1.4x band seen on 24 other boards. Its distinguishing features are 700-deep stacks, three bet sizes plus donks, and asymmetric ranges (which also disables suit isomorphism); none of that is obviously the cause, and one spot is not a result. The re-measurement was reproducible (36.4 / 36.9 s across two runs), so it is a real property of that spot rather than a mismeasurement.
+
+  ### The per-iteration cost, attacked (2026-08-28). One win, four losses, and a measured floor.
+
+  First, where the 1.44x actually lives. Same flop tree, 100 fixed iterations, recalc off, median of 5 interleaved runs - and a third arm with the `std::log` call replaced by its own argument, which keeps the memory traffic identical and removes only the transcendental:
+
+  | arm | wall | what it isolates |
+  |---|---|---|
+  | nash (QRE off) | 3.99 s | the floor |
+  | qre, log removed | 4.50 s | compat_weights + the transform's arithmetic |
+  | qre | 5.75 s | + the log |
+
+  So **the log is 71% of QRE's overhead** (1.25 s of 1.76 s) and everything else is 29%. The premise was right.
+
+  **What worked: the fold-in loops were scalar because of pointer provenance, not arithmetic.** As lambdas capturing `std::vector` references, MSVC could not prove the five arrays disjoint and re-loaded every loop invariant through the capture block per element; `regret_matched_action_major` vectorizes in the same file precisely because it takes plain `float*` parameters. Extracting `plain_fold_in` / `qre_fold_in` as free functions with `ENGINE_RESTRICT` pointers and by-value invariants, plus folding `max(pi,0) * (1/lambda)` into the compat buffer once per node instead of once per cell, is **bit-for-bit neutral** and worth:
+
+  | | before | after | |
+  |---|---|---|---|
+  | nash (every dcfr solve) | 4.23 s | **3.96 s** | -6.5% |
+  | qre | 5.83 s | 5.77 s | -1.1%, inside noise |
+
+  The Nash number is the real prize: it speeds up every solve the product runs, not just QRE.
+
+  **What did not work - four attempts to make the log cheaper, every one measured SLOWER than `std::log`:**
+
+  | attempt | qre wall |
+  |---|---|
+  | `std::log` (kept) | **5.75 s** |
+  | vendored `2*atanh((m-1)/(m+1))`, degree 4, before the restrict work | 6.01 s |
+  | the same, after it | 5.88 s |
+  | divide-free degree-7 polynomial, coefficients fitted rather than recalled | 6.15 s |
+  | branch skipping the log where sigma is exactly 0 (it shares one constant) | 6.02 s |
+
+  The polynomials vectorized - `dumpbin` confirms zero `call logf` and packed ops rising from 14 to 20 - and still lost. MSVC's `logf` beats a hand-rolled approximation here, and a long Horner dependency chain is worse than a well-tuned library call in a loop that is memory-latency-bound anyway. The zero-sigma branch loses because the misprediction costs more than the calls it skips.
+
+  **So the log cost is effectively irreducible by these means**, and the remaining levers are all things this repo has ruled out or that change the maths: SVML (compiler-specific, no GCC fallback, and its results are not stable across versions - a worse determinism story than what we have), `/fp:fast` (forbidden; it would invalidate the Pio gate), or swapping Shannon entropy for a Tsallis/L2 regularizer whose gradient is linear - which is a different equilibrium concept, not an optimization. `compat_weights`, the other 29%, has a serial `double` accumulation over the full universe per actor node; reassociating it would change every Nash solve and the golden fixture.
+
+  **The actionable conclusion is the per-iteration cost, not the algorithm.** The iteration saving is already there and robust; only the 1.44x overhead stands between it and a genuine ~1.35x wall-clock win on every board. Both halves are reducible - fuse `log sigma` into `regret_matched_action_major` so the transcendental shares the pass that already computes sigma, and/or vendor a polynomial `log2f` (pure float ops, deterministic under `/fp:precise`, and vectorizable where `logf` is not). That is the experiment worth running next; it was skipped in this pass on the assumption QRE was a modelling feature rather than a speed one, which the iteration numbers now contradict.
+
+  ### Flop trees at real stack depths, which is where solve time actually hurts (2026-08-28)
+
+  The 1.31-1.41x iteration saving above was measured on turn and river trees plus one shallow flop family, all at SPR 4. Re-run on the flop family across the stack depths a player actually plays - `bench_boards.py --only flop --spr 4|7|10`, 4 boards, tight ranges, both arms to the same plain Nash 0.3% target:
+
+  | SPR | decision nodes | dcfr iters | dcfr | qre iters | qre | iteration saving | wall |
+  |---|---|---|---|---|---|---|---|
+  | 4 | 170,528 | 260 | 16.5 s | 185 | 21.8 s | 1.41x | 1.32x slower |
+  | 7 | 213,356 | 565 | 41.1 s | 500 | 70.0 s | **1.13x** | 1.70x slower |
+  | 10 | 345,656 | 900 | 95.7 s | 845 | 182.5 s | **1.07x** | 1.91x slower |
+
+  **The iteration saving collapses with stack depth** - 1.41x, 1.13x, 1.07x - while the per-iteration cost climbs:
+
+  | SPR | dcfr | qre | overhead |
+  |---|---|---|---|
+  | 4 | 63.6 ms/iter | 117.9 | 1.85x |
+  | 7 | 72.8 | 140.1 | 1.92x |
+  | 10 | 106.3 | 215.9 | 2.03x |
+
+  Both trends have the same cause. A deeper stack means more of the actor's own decision points per line, so the regularizer is charged at more nodes per iteration (cost up), while the homotopy's fixed head start becomes a smaller fraction of a solve that now needs 900 iterations instead of 260 (saving down). The QRE overhead on flop trees is **1.85-2.03x**, not the 1.38x measured on the small fixed-iteration A/B - that tree was SPR 4 and shallow.
+
+  This settles it for the case that matters: **on flop trees at SPR 4-10, annealed QRE is not an accelerator. It is 1.3x to 1.9x SLOWER, and worse the deeper the stacks.** It also retires the `LPopenBBcall` outlier for good - that spot is SPR 7, where this sweep measures a 1.13x iteration saving against the 2.25x it showed.
+
+  The conclusion to carry forward: **fixed lambda is a modelling feature and costs 3.7x. Annealed lambda is not a Nash accelerator on flop trees at any realistic stack depth - it saves 7-13% of iterations at SPR 7-10 and pays about 2x per iteration for them.** Use QRE because you want a boundedly-rational strategy. For a Nash answer, dcfr, every time.
+
+  **Bit-neutral on the Nash path, verified rather than assumed:** `validate_turn_fullrange` at 300 iterations still gives `nashconv 0.232074, ev 45.9951 54.0049`, and all 37 pre-existing tests pass with no tolerance loosened (`test_parallel` and `test_iso` compare exact floats).
+
+  Interactions, each tested rather than argued: the deferred DCFR discount is untouched (the transform runs inside the traversal, after `pay_discount`); the recalc schedule is fed the **regularized** gap, because feeding it a plateauing number would make its feedback controller quarter its aggressiveness on nothing; suit isomorphism composes, and the QRE test asserts something stronger than the Nash one can - the regularized solution is **unique**, so iso-on and iso-off must agree on the strategy itself, not merely the game value (measured residual 0.053 -> 0.028 -> 0.0085 at 600 -> 2400 -> 9600 iterations, i.e. going to zero); and 1 vs 8 threads stay bitwise identical.
+
+  **Annealing is available but is a research bet, not a result.** With a moving lambda the strategy average would span different games, so the solver drops the average once at the moment lambda settles and the accuracy target reverts to plain Nash exploitability, gated on annealing having finished. Whether it beats plain DCFR to a Nash target is unmeasured; M6.10's negative results are the precedent for expecting little.
+
+  Not built, deliberately: `fit-lambda` (MLE from observed frequency counts) needs hand-history frequency plumbing that does not exist yet.
+
 ## Where the time goes: the chance-node cliff (measured 2026-08-26)
 
 `watcher/bench_boards.py` swept 10 turn boards and 10 river boards through both solvers - same ranges, pot, stacks and betting structure, same 0.02%-of-pot accuracy target, so the only variable is whether the tree contains a chance node. All 20 passed the cross-exploitability gate.
@@ -208,7 +322,6 @@ Re-run `bench_boards.py --ranges tight` after each item; it is the only number t
 
 Next (config schema already carries the keys; do not re-plumb):
 
-- **M7 - QRE**: entropy-regularized CFR (`qre.mode`, per-player lambda, annealing schedules), `fit-lambda` subcommand (MLE from observed frequency counts). A QRE artifact must never be compared to Pio (the harness refuses).
 - **M8 - multiway (3+ players)**: N-seat public tree, fast side-pot terminal path (`showdown_share` is the correct-but-slow reference), NashConv already generalizes. `multiway_no_nash_guarantee` stays surfaced - CFR converges to coarse correlated equilibria with 3+ players.
 - **M9 - collusion, best-response mode first**: seat->agent partition + payoff-weight matrices, joint-range representation (1326x1225 - river-only on 16GB), frozen-opponent team best response.
 - **M10 - Bayesian unknown-collusion**: chance root over team type with probability p; opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.

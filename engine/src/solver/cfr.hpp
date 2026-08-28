@@ -65,7 +65,7 @@ class CfrSolver {
   // happens serially in child order after the join. Same config, same
   // thread count or not, same numbers.
   CfrSolver(const Game& game, UpdateConfig update, int threads = 1,
-            RecalcConfig recalc = {}, SamplingConfig sampling = {});
+            RecalcConfig recalc = {}, SamplingConfig sampling = {}, QreConfig qre = {});
 
   // Run `iterations` full iterations (one traversal per seat each) and leave
   // the solver readable: any deferred DCFR discount is settled before this
@@ -88,6 +88,14 @@ class CfrSolver {
 
   const InfosetLayout& layout() const { return layout_; }
   const Game& game() const { return game_; }
+  // The regularization in force. Read by the best-response pass, which needs
+  // the same lambda schedule to measure the QRE gap the solve is minimizing.
+  const QreConfig& qre() const { return qre_; }
+
+  // Has lambda finished annealing? A caller stopping on plain (unregularized)
+  // exploitability must not fire while this is false - the strategy being
+  // rated is still on its way to a different lambda. Mirrors sampling_exact().
+  bool qre_annealed() const { return qre_.annealed(t_); }
   // Shared with the best-response pass so one solve owns one set of threads.
   ThreadPool& pool() const { return *pool_; }
   // Fan-out budget handed to the root of a traversal; 1 disables splitting.
@@ -158,6 +166,7 @@ class CfrSolver {
 
   const Game& game_;
   UpdateConfig update_;
+  QreConfig qre_;
   InfosetLayout layout_;
   std::vector<float> regrets_;
   std::vector<float> strat_sum_;

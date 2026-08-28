@@ -44,8 +44,35 @@ export interface BuilderState extends TreeConfigText {
    * exactly the config /compare sent before it existed. */
 
   /** Regret update rule. dcfr is the default and, on every tree measured so
-   *  far, the fastest: cfr_plus needs about twice its iterations. */
-  updateRule: "dcfr" | "cfr_plus" | "rm";
+   *  far, the fastest: cfr_plus needs about twice its iterations.
+   *
+   *  "qre" is not an update rule in the engine - it is `qre.mode`, layered on
+   *  top of dcfr - but it belongs in the same picker because it is the same
+   *  decision: what is this solve converging to? Nash, or a quantal response
+   *  equilibrium at a chosen rationality. */
+  updateRule: "dcfr" | "cfr_plus" | "rm" | "qre";
+  /** Per-seat rationality for QRE, on a POT-NORMALIZED scale: lambda 10 means
+   *  an action worth 10% more of the pot is taken about e times as often.
+   *  Normalizing is what makes one number mean the same thing on a 20-chip
+   *  pot and a 500-chip one; `buildEngineConfig` divides by the pot to get
+   *  the engine's raw 1/chips lambda.
+   *
+   *  Two of them because modelling a good player against a weak one is the
+   *  case Nash cannot express, and is most of the point of having QRE. */
+  qreLambdaOop: string;
+  qreLambdaIp: string;
+  /** Grow lambda toward Nash over the solve instead of holding it fixed.
+   *  Fixed lambda is the bounded-rationality product; annealing is a homotopy
+   *  to Nash, and on flop trees it does NOT pay: the iteration saving collapses
+   *  with stack depth (1.41x at SPR 4, 1.07x at SPR 10) while the per-iteration
+   *  cost climbs to ~2x, netting 1.3-1.9x slower than dcfr. Kept because it is
+   *  the same code path and worth re-measuring if the overhead ever drops.
+   *  See engine/docs/roadmap.md M7. */
+  qreAnneal: boolean;
+  /** Final lambda as a multiple of the values above. */
+  qreAnnealFactor: string;
+  /** Iteration at which lambda reaches that multiple. */
+  qreAnnealAt: string;
   /** Collapse suit-equivalent runout subtrees. Lossless, and worth 1.3-1.6x
    *  on boards that have a usable permutation. Disable only to reproduce a
    *  pre-isomorphism result. */
@@ -96,6 +123,13 @@ export const DEFAULT_BUILDER: BuilderState = {
   disableCompare: true,
   disableCrossCheck: true,
   updateRule: "dcfr",
+  // Soft enough to look clearly human on a normal pot without collapsing to
+  // random. Only read when updateRule is "qre".
+  qreLambdaOop: "20",
+  qreLambdaIp: "20",
+  qreAnneal: false,
+  qreAnnealFactor: "50",
+  qreAnnealAt: "2000",
   isomorphism: true,
   recalc: true,
   sampling: false,
@@ -235,11 +269,31 @@ export const buildEngineConfig = (b: BuilderState): EngineConfigResult => {
 
   const iterations = Math.max(100, Number(b.maxIterations) || 20000);
 
+  const qre = b.updateRule === "qre";
+  // The engine's lambda is in 1/chips; the form's is per pot. Divide once,
+  // here, so the number the user typed keeps its meaning on any tree.
+  const lambdaFor = (raw: string, label: string) => {
+    const v = Number(raw);
+    if (!(v > 0)) {
+      throw new Error(
+        `${label} rationality must be a positive number. Lambda 0 is uniform-random ` +
+          `play, not a solve; use a small value instead.`
+      );
+    }
+    return v / pot;
+  };
+
   return {
     pioAccuracyPct: accuracyPct,
+    // Pio may run alongside a QRE solve: it solves the identical tree for
+    // Nash, and seeing how the two grids differ is the whole point of looking
+    // at a boundedly-rational strategy. Only the cross-exploitability GATE is
+    // meaningless - it would rate how far from Nash the strategy is, which is
+    // the feature rather than a defect - so that one stays forced off, and the
+    // harness refuses it independently.
     disablePio: b.disablePio,
     disableCompare: b.disableCompare,
-    disableCrossCheck: b.disableCrossCheck,
+    disableCrossCheck: qre ? true : b.disableCrossCheck,
     config: {
       schema: 1,
       game: "nlhe",
@@ -257,7 +311,10 @@ export const buildEngineConfig = (b: BuilderState): EngineConfigResult => {
       // so sampling wins here rather than sending a config that will be
       // rejected after the job has already been queued.
       algorithm: {
-        update: b.updateRule,
+        // QRE is `qre.mode`, not an update rule: it layers on top of one, and
+        // the engine's algorithm.update enum has no such value. dcfr stays the
+        // base rule underneath it.
+        update: qre ? "dcfr" : b.updateRule,
         recalc: { enabled: b.sampling ? false : b.recalc },
         ...(b.sampling
           ? {
@@ -270,7 +327,23 @@ export const buildEngineConfig = (b: BuilderState): EngineConfigResult => {
           : {}),
       },
       isomorphism: b.isomorphism,
-      qre: { mode: "nash" },
+      qre: qre
+        ? {
+            mode: "qre",
+            lambda: [
+              lambdaFor(b.qreLambdaOop, "OOP"),
+              lambdaFor(b.qreLambdaIp, "IP"),
+            ],
+            ...(b.qreAnneal
+              ? {
+                  anneal: {
+                    factor: Math.max(1, Number(b.qreAnnealFactor) || 50),
+                    full_at: Math.max(1, Number(b.qreAnnealAt) || 2000),
+                  },
+                }
+              : {}),
+          }
+        : { mode: "nash" },
       budget: {
         iterations,
         target_exploitable_pct: accuracyPct,

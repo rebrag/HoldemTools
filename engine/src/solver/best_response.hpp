@@ -23,4 +23,18 @@ struct BrResult {
 
 BrResult compute_best_response(const Game& game, const CfrSolver& solver);
 
+// The same measurement taken in the ENTROPY-AUGMENTED game a QRE solve is
+// actually minimizing: the best response is a smooth (log-sum-exp) maximum and
+// the on-profile value is charged the same dilated KL the traversal charges.
+//
+// The distinction matters because a fixed-lambda QRE is not a Nash
+// equilibrium. Its plain exploitability plateaus at roughly
+// 2 * D * log(A) / lambda chips (D = the actor's own remaining decision
+// points) and never reaches a tight accuracy target, no matter how long it
+// runs. `nashconv()` on THIS result does go to zero at the QRE, is chip
+// denominated the same way, and is what an accuracy stop should watch.
+//
+// Falls back to the plain best response when the solver has no QRE configured.
+BrResult compute_qre_best_response(const Game& game, const CfrSolver& solver);
+
 }  // namespace engine

@@ -428,8 +428,11 @@ void write_artifact(ArtifactStore& store, const std::string& path, const Game& g
   meta["config_hash"] = config_hash(config);
   meta["config"] = config.raw;
   meta["game"] = config.game;
-  meta["mode"] = config.qre_mode;  // "nash"; QRE artifacts must be distinguishable
-  meta["lambda"] = nullptr;        // per-player lambda, QRE solves only (M7)
+  // "nash" | "qre". Downstream refusals key off this: the Pio harness will not
+  // rate a QRE solve against Pio, and the solutions exporter will not publish
+  // one. Both are correct - a QRE deliberately is not a Nash equilibrium.
+  meta["mode"] = config.qre_mode;
+  meta["lambda"] = config.qre.enabled ? json(config.qre.lambda) : json(nullptr);
   meta["iterations"] = stats.iterations;
   meta["final_nashconv"] = stats.nashconv;
   // Pio-comparable convergence: per-player "exploitable for", in chips and
@@ -440,6 +443,25 @@ void write_artifact(ArtifactStore& store, const std::string& path, const Game& g
       config.pot > 0
           ? json(exploitable_chips / static_cast<double>(config.pot) * 100.0)
           : json(nullptr);
+  // QRE only: exploitability in the entropy-augmented game. This is the number
+  // a QRE solve drives to zero and stops on; `final_nashconv` above is the
+  // PLAIN measurement of the same strategy, which plateaus at a
+  // lambda-dependent floor by construction. Both travel so a consumer can show
+  // the plateau instead of reporting it as a failure to converge. Null for a
+  // Nash solve. Metadata is a free-form JSON object and every reader (C# and
+  // Python alike) picks fields by name, so adding keys is additive - no format
+  // version bump, no fixture regeneration.
+  if (config.qre.enabled) {
+    const double qre_per_player = stats.qre_gap / game.num_seats();
+    meta["final_qre_gap_chips"] = qre_per_player;
+    meta["final_qre_gap_pct_pot"] =
+        config.pot > 0
+            ? json(qre_per_player / static_cast<double>(config.pot) * 100.0)
+            : json(nullptr);
+  } else {
+    meta["final_qre_gap_chips"] = nullptr;
+    meta["final_qre_gap_pct_pot"] = nullptr;
+  }
   meta["ev_chips"] = {stats.ev_seat0, stats.ev_seat1};
   meta["partition"] = json::array({{0}, {1}});
   meta["payoff_weights"] = nullptr;

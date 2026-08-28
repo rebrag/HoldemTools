@@ -44,6 +44,13 @@ interface SavedTreeEnvelope {
   accuracy: string;
   maxIterations: string;
   updateRule: BuilderState["updateRule"];
+  /* QRE settings. Additive: `pick()` below leaves an older envelope's
+   * builder values alone, so no SCHEMA bump and no migration. */
+  qreLambdaOop?: string;
+  qreLambdaIp?: string;
+  qreAnneal?: boolean;
+  qreAnnealFactor?: string;
+  qreAnnealAt?: string;
   isomorphism: boolean;
   recalc: boolean;
   sampling: boolean;
@@ -71,6 +78,11 @@ export const serializeSavedTree = (b: BuilderState): string => {
     accuracy: b.accuracy,
     maxIterations: b.maxIterations,
     updateRule: b.updateRule,
+    qreLambdaOop: b.qreLambdaOop,
+    qreLambdaIp: b.qreLambdaIp,
+    qreAnneal: b.qreAnneal,
+    qreAnnealFactor: b.qreAnnealFactor,
+    qreAnnealAt: b.qreAnnealAt,
     isomorphism: b.isomorphism,
     recalc: b.recalc,
     sampling: b.sampling,
@@ -131,6 +143,11 @@ export const applySavedTree = (prev: BuilderState, stored: string): BuilderState
     accuracy: pick(envelope.accuracy, prev.accuracy),
     maxIterations: pick(envelope.maxIterations, prev.maxIterations),
     updateRule: pick(envelope.updateRule, DEFAULT_BUILDER.updateRule),
+    qreLambdaOop: pick(envelope.qreLambdaOop, DEFAULT_BUILDER.qreLambdaOop),
+    qreLambdaIp: pick(envelope.qreLambdaIp, DEFAULT_BUILDER.qreLambdaIp),
+    qreAnneal: pick(envelope.qreAnneal, DEFAULT_BUILDER.qreAnneal),
+    qreAnnealFactor: pick(envelope.qreAnnealFactor, DEFAULT_BUILDER.qreAnnealFactor),
+    qreAnnealAt: pick(envelope.qreAnnealAt, DEFAULT_BUILDER.qreAnnealAt),
     isomorphism: pick(envelope.isomorphism, DEFAULT_BUILDER.isomorphism),
     recalc: pick(envelope.recalc, DEFAULT_BUILDER.recalc),
     sampling: pick(envelope.sampling, DEFAULT_BUILDER.sampling),

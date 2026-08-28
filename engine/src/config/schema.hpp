@@ -43,7 +43,11 @@ struct SolveConfig {
   // automatically when the ranges are not suit-symmetric.
   bool isomorphism = true;
 
-  std::string qre_mode = "nash";  // nash | qre (qre lands in M7)
+  // "nash" | "qre". The mode string is kept separate from the parsed config
+  // because it is what the artifact metadata records and what every
+  // downstream refusal (the Pio harness, the solutions exporter) keys off.
+  std::string qre_mode = "nash";
+  QreConfig qre;  // qre.lambda / qre.anneal - only read when qre_mode == "qre"
 
   std::vector<std::vector<int>> partition;  // seat indices per agent
   std::string collusion_mode = "none";
