@@ -1,10 +1,13 @@
 #include "config/schema.hpp"
 
 #include <bit>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 #include "cards/cards.hpp"
 #include "config/sha256.hpp"
@@ -220,10 +223,65 @@ SolveConfig load_config(const std::string& path_text) {
   }
 
   if (j.contains("qre")) {
-    config.qre_mode = j.at("qre").value("mode", "nash");
-    if (config.qre_mode != "nash") {
-      fail("qre.mode '" + config.qre_mode + "' is not available yet: QRE lands in a later "
-           "pass (M7). Use \"nash\".");
+    const json& q = j.at("qre");
+    config.qre_mode = q.value("mode", "nash");
+    if (config.qre_mode != "nash" && config.qre_mode != "qre") {
+      fail("qre.mode must be nash | qre, got '" + config.qre_mode + "'");
+    }
+    if (config.qre_mode == "nash" && (q.contains("lambda") || q.contains("anneal"))) {
+      // Refuse rather than solve a Nash equilibrium under a config that looks
+      // like it asked for a QRE. Silently ignoring lambda would produce a
+      // perfectly plausible artifact answering the wrong question.
+      fail("qre.lambda / qre.anneal are set but qre.mode is \"nash\", so they would be "
+           "silently ignored. Set qre.mode to \"qre\", or remove them.");
+    }
+    if (config.qre_mode == "qre") {
+      config.qre.enabled = true;
+      // Two seats for now; multiway is M8. Sized off the seat count rather
+      // than hardcoded so the array check below moves with it.
+      const std::size_t seats = 2;
+      if (!q.contains("lambda") || q.at("lambda").is_null()) {
+        fail("qre.mode \"qre\" needs qre.lambda: the per-seat rationality, in units of "
+             "1/chips. A scalar applies to both seats; an array gives one per seat.");
+      }
+      const json& lam = q.at("lambda");
+      if (lam.is_array()) {
+        if (lam.size() != seats) {
+          fail("qre.lambda must have one entry per seat (" + std::to_string(seats) +
+               "), got " + std::to_string(lam.size()));
+        }
+        config.qre.lambda = lam.get<std::vector<double>>();
+      } else if (lam.is_number()) {
+        config.qre.lambda.assign(seats, lam.get<double>());
+      } else {
+        fail("qre.lambda must be a number or an array of numbers");
+      }
+      for (double l : config.qre.lambda) {
+        // Not >= 0: the regularizer is (1/lambda) * KL, so 0 is a division by
+        // zero rather than the uniform-random limit it looks like. Ask for a
+        // small lambda instead.
+        if (!(l > 0.0)) {
+          fail("every qre.lambda must be strictly positive (lambda -> 0 is the "
+               "uniform-random limit; use a small value, not 0)");
+        }
+      }
+      if (q.contains("anneal")) {
+        const json& a = q.at("anneal");
+        config.qre.anneal_factor = a.value("factor", config.qre.anneal_factor);
+        config.qre.anneal_full_at = a.value("full_at", config.qre.anneal_full_at);
+        if (config.qre.anneal_factor < 1.0) {
+          fail("qre.anneal.factor must be at least 1 (lambda anneals upward, toward Nash)");
+        }
+        if (config.qre.anneal_factor > 1.0 && config.qre.anneal_full_at == 0) {
+          fail("qre.anneal.factor without qre.anneal.full_at would never finish annealing; "
+               "set full_at to the iteration lambda should reach its final value");
+        }
+      }
+      config.qre.min_prob = q.value("min_prob", config.qre.min_prob);
+      if (!(config.qre.min_prob > 0.0f) || config.qre.min_prob > 0.1f) {
+        fail("qre.min_prob is the probability floor applied before log(); it must be in "
+             "(0, 0.1]");
+      }
     }
   }
 

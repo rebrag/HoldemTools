@@ -106,6 +106,7 @@ add_executable(engine_tests
   tests/test_parallel.cpp
   tests/test_recalc.cpp
   tests/test_iso.cpp
+  tests/test_qre.cpp
 )
 target_link_libraries(engine_tests PRIVATE engine_core doctest::doctest)
 add_test(NAME engine_tests COMMAND engine_tests)

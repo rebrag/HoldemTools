@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
@@ -67,12 +68,58 @@ int run_solve(const SolveConfig& config, bool dry_run) {
 
   std::cout << "setup " << setup_s << " s (tree + showdown tables) on " << threads
             << " thread" << (threads == 1 ? "" : "s") << "\n";
-  CfrSolver solver(*game, config.update, config.threads, config.recalc, config.sampling);
+  CfrSolver solver(*game, config.update, config.threads, config.recalc, config.sampling,
+                   config.qre);
   const auto start = std::chrono::steady_clock::now();
   double nashconv = 0.0;
+  double qre_gap = 0.0;
   BrResult br;
   std::uint64_t done = 0;
   const double pot = static_cast<double>(config.pot);
+
+  // A fixed-lambda QRE is not a Nash equilibrium, and its PLAIN exploitability
+  // floors out at roughly 2 * D * log(A) / lambda chips (D = a player's own
+  // remaining decision points, A = actions per node). Someone who sets a tight
+  // accuracy target on a soft lambda is asking for something arithmetically
+  // unreachable, so say so up front rather than after they have waited out the
+  // iteration cap. The stop itself uses the QRE gap, which does converge.
+  if (config.qre.enabled) {
+    std::cout << "QRE mode: lambda";
+    for (double l : config.qre.lambda) std::cout << " " << l;
+    if (config.qre.anneal_full_at != 0 && config.qre.anneal_factor > 1.0) {
+      std::cout << ", annealing x" << config.qre.anneal_factor << " by iteration "
+                << config.qre.anneal_full_at;
+    }
+    std::cout << "\n";
+    if (config.target_exploitable_pct > 0.0 && pot > 0.0 && !config.qre.lambda.empty()) {
+      // DECISION nodes only. A chance node's 48 runouts are not actions
+      // anybody chooses between, and counting them inflates the bound wildly.
+      int max_actions = 0;
+      for (const Node& n : game->tree().nodes) {
+        if (n.kind != NodeKind::Decision) continue;
+        max_actions = std::max(max_actions, static_cast<int>(n.num_children));
+      }
+      const double smallest = *std::min_element(config.qre.lambda.begin(),
+                                                config.qre.lambda.end());
+      // 2 * D * log(A) / lambda, with D = a player's own remaining decision
+      // points. A LOOSE UPPER BOUND on the floor, not the floor itself - the
+      // realized plateau is typically well under it. It is here to answer one
+      // question only: can this lambda reach this target at all?
+      const double d = 3.0;
+      const double bound =
+          2.0 * d * std::log(static_cast<double>(std::max(2, max_actions))) / smallest;
+      const double target_chips = config.target_exploitable_pct / 100.0 * pot;
+      if (bound > target_chips) {
+        std::cout << "  note: at this lambda the strategy is deliberately not Nash, so "
+                     "plain exploitability will PLATEAU rather than reach the "
+                  << config.target_exploitable_pct << "%-of-pot target ("
+                  << target_chips << " chips). The solve stops on the QRE gap instead, "
+                     "which does converge. Raise lambda if you wanted a near-Nash "
+                     "strategy - the plateau is bounded above by roughly "
+                  << bound << " chips.\n";
+      }
+    }
+  }
   while (done < config.iterations) {
     const std::uint64_t step =
         std::min<std::uint64_t>(config.checkpoint_every, config.iterations - done);
@@ -80,15 +127,31 @@ int run_solve(const SolveConfig& config, bool dry_run) {
     done += step;
     br = compute_best_response(*game, solver);
     nashconv = br.nashconv();
+    // Under QRE this is the number the solve is actually minimizing; the plain
+    // one above is kept as the diagnostic that shows the lambda-dependent
+    // plateau. Best-response checkpoints were measured at 0.06% of solve time,
+    // so running both costs nothing worth optimizing.
+    const bool qre_on = config.qre.enabled;
+    if (qre_on) qre_gap = compute_qre_best_response(*game, solver).nashconv();
+    const double driving = qre_on ? qre_gap : nashconv;
     // "exploitable" follows Pio's convention: the per-player average gain
     // from best-responding = NashConv / num_seats for 2 players.
     const double exploitable = nashconv / game->num_seats();
+    const double qre_exploitable = driving / game->num_seats();
     // Feed the recalc schedule its annealing budget: subtrees may be frozen
-    // only while their movement is small against CURRENT exploitability.
-    solver.set_recalc_budget(exploitable);
+    // only while their movement is small against CURRENT exploitability. Under
+    // QRE that has to be the REGULARIZED number - the plain one plateaus, and
+    // the schedule's feedback controller reads a plateau as "frozen subtrees
+    // are stalling the solve" and quarters its aggressiveness on nothing.
+    solver.set_recalc_budget(qre_exploitable);
     std::cout << "iter " << done << "  nashconv " << nashconv
               << "  exploitable " << exploitable;
     if (pot > 0.0) std::cout << " (" << 100.0 * exploitable / pot << "% of pot)";
+    if (qre_on) {
+      std::cout << "  qre_gap " << qre_gap << " (" << qre_exploitable;
+      if (pot > 0.0) std::cout << ", " << 100.0 * qre_exploitable / pot << "% of pot";
+      std::cout << " per player)";
+    }
     std::cout << "  ev";
     for (double ev : br.ev) std::cout << " " << ev;
     std::cout << "\n";
@@ -96,14 +159,27 @@ int run_solve(const SolveConfig& config, bool dry_run) {
     // runouts. Exploitability itself is honest (best response always
     // enumerates), but the average strategy it is rating is still noisy, so a
     // lucky checkpoint could stop the solve at a strategy that is not there.
-    const bool may_stop = solver.sampling_exact();
-    if (may_stop && config.target_nashconv > 0.0 && nashconv <= config.target_nashconv) {
-      std::cout << "target_nashconv reached\n";
+    //
+    // Lambda annealing gets the same guard for the same reason: while lambda
+    // is still moving the strategy is on its way to a different game, so a
+    // Nash target must not be allowed to fire early on the way past.
+    const bool may_stop = solver.sampling_exact() && solver.qre_annealed();
+    // Which number the target refers to. Plain Nash for a nash solve; the QRE
+    // gap for a fixed-lambda QRE solve, whose plain exploitability cannot
+    // reach a tight target at all; and back to plain Nash once lambda has
+    // annealed, because that is the point of annealing.
+    const bool annealing = qre_on && config.qre.anneal_full_at != 0 &&
+                           config.qre.anneal_factor > 1.0;
+    const double target_metric = (qre_on && !annealing) ? qre_exploitable : exploitable;
+    const double target_conv = (qre_on && !annealing) ? qre_gap : nashconv;
+    const char* metric_name = (qre_on && !annealing) ? "qre gap" : "exploitability";
+    if (may_stop && config.target_nashconv > 0.0 && target_conv <= config.target_nashconv) {
+      std::cout << "target_nashconv reached (" << metric_name << ")\n";
       break;
     }
     if (may_stop && config.target_exploitable_pct > 0.0 && pot > 0.0 &&
-        exploitable <= config.target_exploitable_pct / 100.0 * pot) {
-      std::cout << "target_exploitable_pct reached\n";
+        target_metric <= config.target_exploitable_pct / 100.0 * pot) {
+      std::cout << "target_exploitable_pct reached (" << metric_name << ")\n";
       break;
     }
   }
@@ -120,6 +196,7 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   stats.threads = threads;
   stats.recalc_skips = solver.recalc_skips();
   stats.peak_rss_bytes = peak_rss_bytes();
+  stats.qre_gap = qre_gap;
 
   LocalStore store;
   write_artifact(store, config.output_path, *game, solver, config, stats);

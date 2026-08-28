@@ -25,6 +25,12 @@ struct SolveStats {
   // engaged (bad epsilons, or a spot that never settles).
   std::uint64_t recalc_skips = 0;
   std::size_t peak_rss_bytes = 0;
+  // QRE only: exploitability in the entropy-augmented game, the quantity a
+  // QRE solve actually drives to zero. `nashconv` above stays the PLAIN
+  // (unregularized) number for the same solve, which plateaus by design -
+  // both are recorded so the plateau is visible rather than mistaken for a
+  // stall. Zero when qre.mode is "nash".
+  double qre_gap = 0.0;
 };
 
 // Write a version-1 .hta artifact for a solved 2-seat game. Layout per

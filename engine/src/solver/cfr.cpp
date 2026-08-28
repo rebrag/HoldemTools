@@ -6,7 +6,11 @@
 #include <array>
 #include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace engine {
 
@@ -18,7 +22,11 @@ constexpr int kSlotChild = 1;
 // regret-matching row sums, then the strategy-averaging reach weights.
 // They never overlap in time, and an arena slot is not free.
 constexpr int kSlotHandScratch = 2;
-constexpr int kSlotSavedBase = 3;  // + seat index
+// Compatible-opponent-reach pi(h) at an actor decision node. Only allocated
+// work when QRE is on; the slot exists unconditionally so the arena sizing
+// (and memory.cpp's per_level term) does not depend on a runtime flag.
+constexpr int kSlotCompat = 3;
+constexpr int kSlotSavedBase = 4;  // + seat index
 constexpr int kSlotsPerLevel = kSlotSavedBase + kMaxSeats;
 // There is deliberately no per-level "value" slot: an actor decision node
 // accumulates its node value directly into the caller's `out` buffer, so the
@@ -116,9 +124,15 @@ InfosetLayout InfosetLayout::build(const Game& game) {
 }
 
 CfrSolver::CfrSolver(const Game& game, UpdateConfig update, int threads, RecalcConfig recalc,
-                     SamplingConfig sampling)
-    : game_(game), update_(update), layout_(InfosetLayout::build(game)),
+                     SamplingConfig sampling, QreConfig qre)
+    : game_(game), update_(update), qre_(std::move(qre)), layout_(InfosetLayout::build(game)),
       recalc_config_(recalc), sampling_(sampling) {
+  // A QRE solve needs one lambda per seat. Defaulting a missing entry would
+  // silently solve a different game than the config asked for.
+  if (qre_.enabled &&
+      qre_.lambda.size() != static_cast<std::size_t>(game.num_seats())) {
+    throw std::runtime_error("QreConfig::lambda must have one entry per seat");
+  }
   // Sampling and the recalc schedule cannot both run: the cache holds
   // full-enumeration values while a sampled iteration produces n/m-scaled
   // ones, and recalc's movement metric would be reading sampling noise.
@@ -222,6 +236,19 @@ std::vector<float>& CfrSolver::scratch(Arena& arena, int depth, int slot) {
 
 void CfrSolver::iterate() {
   ++t_;
+  // Annealing lambda changes the game being solved every iteration, so a
+  // strategy average spanning the anneal would be an average over DIFFERENT
+  // games and the convergence argument would not apply to any of them. Drop
+  // it once at the moment lambda reaches its final value; from here on the
+  // average is over one fixed game, which is the thing that converges.
+  //
+  // Deterministic (a pure function of t_) and safe against the deferred
+  // discount: a node that has not been visited since the reset still owes its
+  // factors, and multiplying zero by them is still zero.
+  if (qre_.enabled && qre_.anneal_full_at != 0 && qre_.anneal_factor > 1.0 &&
+      t_ == qre_.anneal_full_at) {
+    std::fill(strat_sum_.begin(), strat_sum_.end(), 0.0f);
+  }
   const int seats = game_.num_seats();
   std::vector<std::vector<float>> reach(seats);
   std::vector<float> values;
@@ -664,10 +691,53 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
     // scratch slot that then had to be copied over it. hands == my_hands
     // here, because actor == seat and node_hands is num_hands(actor).
     out.assign(hands, 0.0f);
+
+    // QRE reward transformation (see QreConfig). Each action's counterfactual
+    // value is charged the dilated KL of the current strategy to uniform,
+    //
+    //     vt(h,a) = v(h,a) - pi(h) * (1/lambda) * (log sigma(h,a) + log A)
+    //
+    // which makes the fixed point the logit QRE instead of Nash. Everything
+    // downstream - regret matching, the DCFR discount, strategy averaging,
+    // both strategy accessors - is untouched; only what gets accumulated
+    // changes.
+    //
+    // pi(h) = the opponent-profile weight compatible with hand h, which is
+    // exactly the factor the counterfactual values already carry. Without it
+    // one lambda would mean a different rationality at every infoset, because
+    // softmax is not scale-invariant. Own actions leave every seat's reach
+    // alone on the way down, so this is computed once for the whole node.
+    const bool use_qre = qre_.enabled;
+    std::vector<float>& compat = scratch(arena, depth, kSlotCompat);
+    float inv_lambda = 0.0f;
+    float log_actions = 0.0f;
+    const float prob_floor = qre_.min_prob;
+    if (use_qre) {
+      game_.compat_weights(actor, reach, compat);
+      inv_lambda = static_cast<float>(1.0 / qre_.lambda_at(t_, actor));
+      log_actions = static_cast<float>(std::log(static_cast<double>(actions)));
+    }
+
     const auto fold_in = [&](std::uint16_t k, const std::vector<float>& child_vals) {
       const std::size_t col = static_cast<std::size_t>(k) * hands;
       float* regret_col = regrets_.data() + off + col;
       const float* sigma_col = sigma.data() + col;
+      if (use_qre) {
+        const float* pi = compat.data();
+        for (std::uint32_t h = 0; h < hands; ++h) {
+          // The floor keeps log() finite; the convergence argument needs a
+          // bounded gradient. A hand the opponent cannot hold has pi(h) == 0
+          // and is charged nothing, which is the unreachable-hand guard -
+          // inclusion-exclusion can land a hair below zero, hence the clamp.
+          const float w = pi[h] > 0.0f ? pi[h] : 0.0f;
+          const float sp = sigma_col[h] > prob_floor ? sigma_col[h] : prob_floor;
+          const float v = child_vals[h] - w * inv_lambda * (std::log(sp) + log_actions);
+          out[h] += sigma_col[h] * v;
+          // Defer subtracting v(h): R += cv now, R -= v after the loop.
+          regret_col[h] += v;
+        }
+        return;
+      }
       for (std::uint32_t h = 0; h < hands; ++h) {
         out[h] += sigma_col[h] * child_vals[h];
         // Defer subtracting v(h): R += cv now, R -= v after the loop.

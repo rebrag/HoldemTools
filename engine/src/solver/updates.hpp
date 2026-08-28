@@ -1,7 +1,9 @@
 #pragma once
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace engine {
 
@@ -96,6 +98,75 @@ struct SamplingConfig {
   // not actually there.
   bool exact_at(std::uint64_t t) const {
     return !enabled || (anneal_full_at != 0 && t >= anneal_full_at);
+  }
+};
+
+// Entropy-regularized CFR: the logit quantal response equilibrium (M7).
+//
+// A QRE is what you get when a player is only boundedly rational: instead of
+// always taking the best action, they take action a with probability
+// proportional to exp(lambda * Q(a)), where Q is the action's value in CHIPS.
+// lambda = 0 is uniform random, lambda -> infinity recovers Nash. Per-seat
+// lambda is the point of the feature - solving a good player against a weak
+// one is the case Nash cannot express.
+//
+// It is implemented as a REWARD TRANSFORMATION rather than by replacing regret
+// matching. The logit QRE is the saddle point of the entropy-regularized game
+//
+//     u(s0, s1) + (1/lambda0) H(s0) - (1/lambda1) H(s1)
+//
+// which is convex-concave over the sequence-form polytopes, so ordinary
+// CFR/DCFR machinery applies unchanged and the AVERAGE strategy is still the
+// answer. Concretely: each action's counterfactual value gets the regularizer
+// added before regrets are accumulated, and nothing else in the solver moves.
+// The alternative - deriving the strategy as a softmax over cumulative regrets
+// - would have had to change both regret-matching implementations and every
+// consumer of average_strategy()/current_strategy(); this does not.
+//
+// The regularizer is DILATED, i.e. scaled by the actor's compatible opponent
+// reach pi(h) (Game::compat_weights). Counterfactual values carry pi(h) and
+// softmax is not scale-invariant, so regularizing the raw counterfactual value
+// would make effective rationality vary with opponent reach - hands the
+// opponent rarely holds would drift toward uniform for no reason. Scaling by
+// pi(h) is what makes one lambda mean the same thing at every infoset.
+struct QreConfig {
+  bool enabled = false;
+  // Per-seat rationality in units of 1/chips. Empty when disabled; the parser
+  // requires a strictly positive entry per seat when it is not.
+  std::vector<double> lambda;
+
+  // Annealing turns QRE into a candidate Nash accelerator: lambda grows
+  // geometrically from its configured value to lambda * anneal_factor by
+  // iteration anneal_full_at, then holds. 0 = never anneal (the fixed-lambda
+  // bounded-rationality product), which is the default.
+  //
+  // Same shape, and the same reason, as SamplingConfig::runouts_at: a pure
+  // function of t, so it cannot introduce thread-order dependence.
+  double anneal_factor = 1.0;
+  std::uint64_t anneal_full_at = 0;
+
+  // Floor applied to a strategy probability before log(). The regularizer's
+  // gradient is -(1/lambda) log s, which diverges at the simplex boundary;
+  // the convergence argument needs it finite. The consequence, stated rather
+  // than hidden: the solve targets the QRE of a problem truncated at this
+  // probability. At 1e-6 that is far below anything the artifact can even
+  // represent (strategies quantize to u8), but it is an approximation.
+  float min_prob = 1e-6f;
+
+  double lambda_at(std::uint64_t t, int seat) const {
+    const double base = lambda[static_cast<std::size_t>(seat)];
+    if (anneal_full_at == 0 || anneal_factor <= 1.0) return base;
+    if (t >= anneal_full_at) return base * anneal_factor;
+    const double frac = static_cast<double>(t) / static_cast<double>(anneal_full_at);
+    return base * std::pow(anneal_factor, frac);
+  }
+
+  // Has lambda stopped moving? The caller's NASH accuracy stop must not fire
+  // while this is false - the same guarantee SamplingConfig::exact_at gives,
+  // for the same reason: the strategy being rated is still on its way
+  // somewhere else.
+  bool annealed(std::uint64_t t) const {
+    return !enabled || anneal_full_at == 0 || anneal_factor <= 1.0 || t >= anneal_full_at;
   }
 };
 
