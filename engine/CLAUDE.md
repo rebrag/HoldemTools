@@ -95,6 +95,7 @@ GPU code, hand abstraction/bucketing, TMECor / coordination-without-card-visibil
 ## Milestone state
 
 The durable roadmap (goal product, milestone status, next steps) is `docs/roadmap.md` - keep it updated when milestones move.
+`docs/perf-plan.md` is the standing argument behind the performance milestones: what jesolver and GTO Wizard actually do differently (they are fast for unrelated reasons), the ranked ladder of what is left, and what is ruled out with the reason. Read it before proposing a speed change, and in particular before proposing hand abstraction - that is the wrong door, and the entry says why.
 
 M0-M6 delivered (Kuhn, Leduc + CI, HU NLHE river Nash, artifact + C# reader, Pio harness, render path).
 The M5 acceptance gate passed 2026-08-25 on a real full-range river spot (`configs/validate_river_fullrange.json`): Pio's own evaluator rated the engine strategy exploitable for 0.0 chips.
