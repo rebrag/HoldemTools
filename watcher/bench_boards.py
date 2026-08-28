@@ -32,6 +32,30 @@ and deterministic, while wall clock on this box moves by tens of percent when
 anything else is running. Watch --checkpoint-every too - the stop can only fire
 on a checkpoint, so it is the resolution of the number being compared.
 
+For FLOP solve time specifically, which is where the remaining cost lives, the
+axis that matters is stack depth. `--spr` sets the stacks (the pot is always
+100), and flop trees grow sharply with it:
+
+  SPR  4 -> 170528 decision nodes    SPR  7 -> 213356    SPR 10 -> 345656
+
+  python bench_boards.py --no-pio --only flop --spr 7 --ranges tight       --accuracy-pct 0.3 --checkpoint-every 5
+
+`--spr` defaults to 4, which is what every number recorded before the flag
+existed used, so old invocations still reproduce. The flop family also
+defaults to 4 boards rather than 10, because its spots cost orders of
+magnitude more than a turn or river one.
+
+To benchmark a REAL saved tree with the flop as the only variable, download
+its config from /compare and pass it as `--template`. Ranges, sizings, stacks
+and the accuracy target then come from that config, and only the board moves:
+
+  python bench_boards.py --no-pio --only flop --template ~/Downloads/htsolver_config.json
+
+Ranges in a template must be inline (a downloaded config always is): the
+engine resolves `@file:` relative to the config's own directory, and the bench
+rewrites configs into engine/configs/_bench/ where such a path would not
+resolve. The bench refuses rather than silently mis-resolving.
+
 Range width is a first-class knob because it is NOT neutral between the two
 solvers. htsolver's cost is independent of it - every array and every inner
 loop is the full 1326-combo universe no matter how narrow the range - while
@@ -124,9 +148,44 @@ STREET_SIZING = {
 RANGE_FILES = {"full": "@file:../ranges/full.txt", "tight": "@file:../ranges/tight15.txt"}
 
 
+def load_template(path: str) -> dict:
+    """A config to sweep boards over, instead of the built-in shape.
+
+    The intended source is /compare's "Download config" button, which is how a
+    saved tree - LPopenBBcall, say - becomes a benchmark fixture with the flop
+    as the only variable. Ranges, sizings, stacks and the accuracy target all
+    come from the template; only the board and the output path are replaced.
+    """
+    with open(path, "r", encoding="utf8") as f:
+        config = json.load(f)
+    for player in config.get("players", []):
+        if str(player.get("range", "")).startswith("@file:"):
+            raise SystemExit(
+                f"--template {path}: ranges must be inline, not '@file:'. The engine "
+                "resolves @file: relative to the config's own directory, and the bench "
+                "rewrites configs into engine/configs/_bench/ where that path would not "
+                "resolve. A config downloaded from /compare already has inline ranges.")
+    return config
+
+
 def build_config(board: str, name: str, iterations: int, accuracy_pct: float,
                  threads: int, ranges: str, qre: dict | None = None,
-                 checkpoint_every: int = 100) -> str:
+                 checkpoint_every: int = 100, spr: float = 4.0,
+                 template: dict | None = None) -> str:
+    if template is not None:
+        # Everything except the board is the template's business - including
+        # its own accuracy target and budget, which is the point of pinning a
+        # real spot rather than re-deriving one.
+        config = json.loads(json.dumps(template))
+        config["board"] = board
+        config["output"] = dict(config.get("output") or {})
+        config["output"]["path"] = f"out/_bench/{name}.hta"
+        if qre is not None:
+            config["qre"] = qre
+        path = os.path.join(BENCH_DIR, f"{name}.json")
+        with open(path, "w", encoding="utf8") as f:
+            json.dump(config, f, indent=2)
+        return path
     cards = board.split()
     bet_sizing = {"river": STREET_SIZING}
     if len(cards) <= 4:
@@ -140,8 +199,8 @@ def build_config(board: str, name: str, iterations: int, accuracy_pct: float,
         "pot": 100,
         "chip_scale": 100,
         "players": [
-            {"seat": "OOP", "stack": 400, "range": RANGE_FILES[ranges]},
-            {"seat": "IP", "stack": 400, "range": RANGE_FILES[ranges]},
+            {"seat": "OOP", "stack": round(100 * spr), "range": RANGE_FILES[ranges]},
+            {"seat": "IP", "stack": round(100 * spr), "range": RANGE_FILES[ranges]},
         ],
         "bet_sizing": bet_sizing,
         "algorithm": {"update": "dcfr"},
@@ -254,7 +313,24 @@ def main() -> int:
                         help="one family only. flop is opt-in rather than part of the "
                              "default run: it is two chance levels deep and costs orders "
                              "of magnitude more per board than turn or river")
-    parser.add_argument("--boards", type=int, default=10, help="boards per family")
+    parser.add_argument("--boards", type=int, default=None,
+                        help="boards per family (default 10, or 4 for the flop family, "
+                             "whose spots cost orders of magnitude more)")
+    parser.add_argument("--spr", type=float, default=4.0,
+                        help="stack-to-pot ratio; the pot is always 100, so this sets the "
+                             "stacks. Default 4 reproduces every number recorded before "
+                             "this flag existed. Flop trees grow sharply with it - 170k "
+                             "decision nodes at 4, 346k at 10 - so it is the axis worth "
+                             "sweeping when flop solve time is the question")
+    parser.add_argument("--template", help="a config JSON to sweep boards over instead of "
+                                           "the built-in shape (e.g. downloaded from "
+                                           "/compare, which pins a real saved tree and "
+                                           "leaves the flop as the only variable). Ranges "
+                                           "must be inline. The template owns everything "
+                                           "except the board, so --ranges, --spr, "
+                                           "--accuracy-pct, --iterations and "
+                                           "--checkpoint-every are all ignored - pinning a "
+                                           "real spot means pinning its budget too")
     parser.add_argument("--accuracy-pct", type=float, default=0.02,
                         help="target per-player exploitability, %% of the pot (both solvers)")
     parser.add_argument("--iterations", type=int, default=100000,
@@ -295,6 +371,10 @@ def main() -> int:
     if args.qre_lambda is not None:
         if not (args.qre_lambda > 0):
             parser.error("--qre-lambda must be positive")
+        # Not because the harness refuses it - it will now solve the same tree
+        # in Pio beside a QRE artifact - but because a benchmark wants the
+        # engine's own cost, and a Pio solve on every board would dominate the
+        # runtime while measuring a different solver.
         args.no_pio = True
         # The bench pot is always 100, so pot-normalized -> the engine's 1/chips.
         raw = args.qre_lambda / 100.0
@@ -307,6 +387,16 @@ def main() -> int:
 
     os.makedirs(BENCH_DIR, exist_ok=True)
     os.makedirs(OUT_DIR, exist_ok=True)
+
+    template = load_template(args.template) if args.template else None
+    if args.boards is None:
+        args.boards = 4 if args.only == "flop" else 10
+    if template is not None:
+        print(f"template {args.template}: pot {template.get('pot')}, "
+              f"stacks {[p.get('stack') for p in template.get('players', [])]}, "
+              f"board becomes the sweep variable", flush=True)
+    else:
+        print(f"SPR {args.spr:g} (pot 100, stacks {round(100 * args.spr)})", flush=True)
 
     families = []
     if args.only == "flop":
@@ -324,10 +414,12 @@ def main() -> int:
             print(f"\n=== {name}: {board} ===", flush=True)
             config_path = build_config(board, name, args.iterations,
                                        args.accuracy_pct, args.threads, args.ranges, qre,
-                                       args.checkpoint_every)
+                                       args.checkpoint_every, args.spr, template)
             artifact = os.path.join(ENGINE_DIR, "out", "_bench", f"{name}.hta")
             out_prefix = os.path.join(OUT_DIR, f"{name}.compare")
-            row = {"family": family, "board": board, "name": name, "ranges": args.ranges}
+            row = {"family": family, "board": board, "name": name, "ranges": args.ranges,
+                   "spr": None if template is not None else args.spr,
+                   "template": args.template}
             try:
                 row.update(run_engine(config_path))
                 if args.no_pio:

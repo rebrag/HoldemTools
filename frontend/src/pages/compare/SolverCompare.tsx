@@ -1873,9 +1873,11 @@ const SolverCompare = () => {
                           <span className="max-w-[18rem] text-[10px] leading-relaxed text-amber-500/80">
                             Annealing ends at a near-GTO strategy, so this is a speed
                             experiment rather than a way to model a player - the accuracy
-                            target reverts to plain exploitability. Swept over 24 boards it
-                            gives about 1.35x fewer iterations but costs about 1.4x more per
-                            iteration, so wall clock comes out a wash.
+                            target reverts to plain exploitability. Measured on flop trees
+                            it does not pay: at 100bb-ish depth it saves only ~7% of
+                            iterations and costs ~2x per iteration, so it comes out 1.3x to
+                            1.9x slower than dcfr, and worse the deeper the stacks. If you
+                            want a Nash answer, leave this off and use dcfr.
                           </span>
                         </div>
                       )}

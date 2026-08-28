@@ -211,7 +211,29 @@ The sweep's hardest board (`Ks Kd 4c 9h`, which has a usable s<->d permutation) 
 
   **The actionable conclusion is the per-iteration cost, not the algorithm.** The iteration saving is already there and robust; only the 1.44x overhead stands between it and a genuine ~1.35x wall-clock win on every board. Both halves are reducible - fuse `log sigma` into `regret_matched_action_major` so the transcendental shares the pass that already computes sigma, and/or vendor a polynomial `log2f` (pure float ops, deterministic under `/fp:precise`, and vectorizable where `logf` is not). That is the experiment worth running next; it was skipped in this pass on the assumption QRE was a modelling feature rather than a speed one, which the iteration numbers now contradict.
 
-  The conclusion to carry forward: **fixed lambda is a modelling feature and costs 3.7x. Annealed lambda reliably cuts iterations by ~1.35x but currently spends the saving on per-iteration overhead, so it is not yet a reason to prefer it over dcfr for a Nash answer.**
+  ### Flop trees at real stack depths, which is where solve time actually hurts (2026-08-28)
+
+  The 1.31-1.41x iteration saving above was measured on turn and river trees plus one shallow flop family, all at SPR 4. Re-run on the flop family across the stack depths a player actually plays - `bench_boards.py --only flop --spr 4|7|10`, 4 boards, tight ranges, both arms to the same plain Nash 0.3% target:
+
+  | SPR | decision nodes | dcfr iters | dcfr | qre iters | qre | iteration saving | wall |
+  |---|---|---|---|---|---|---|---|
+  | 4 | 170,528 | 260 | 16.5 s | 185 | 21.8 s | 1.41x | 1.32x slower |
+  | 7 | 213,356 | 565 | 41.1 s | 500 | 70.0 s | **1.13x** | 1.70x slower |
+  | 10 | 345,656 | 900 | 95.7 s | 845 | 182.5 s | **1.07x** | 1.91x slower |
+
+  **The iteration saving collapses with stack depth** - 1.41x, 1.13x, 1.07x - while the per-iteration cost climbs:
+
+  | SPR | dcfr | qre | overhead |
+  |---|---|---|---|
+  | 4 | 63.6 ms/iter | 117.9 | 1.85x |
+  | 7 | 72.8 | 140.1 | 1.92x |
+  | 10 | 106.3 | 215.9 | 2.03x |
+
+  Both trends have the same cause. A deeper stack means more of the actor's own decision points per line, so the regularizer is charged at more nodes per iteration (cost up), while the homotopy's fixed head start becomes a smaller fraction of a solve that now needs 900 iterations instead of 260 (saving down). The QRE overhead on flop trees is **1.85-2.03x**, not the 1.38x measured on the small fixed-iteration A/B - that tree was SPR 4 and shallow.
+
+  This settles it for the case that matters: **on flop trees at SPR 4-10, annealed QRE is not an accelerator. It is 1.3x to 1.9x SLOWER, and worse the deeper the stacks.** It also retires the `LPopenBBcall` outlier for good - that spot is SPR 7, where this sweep measures a 1.13x iteration saving against the 2.25x it showed.
+
+  The conclusion to carry forward: **fixed lambda is a modelling feature and costs 3.7x. Annealed lambda is not a Nash accelerator on flop trees at any realistic stack depth - it saves 7-13% of iterations at SPR 7-10 and pays about 2x per iteration for them.** Use QRE because you want a boundedly-rational strategy. For a Nash answer, dcfr, every time.
 
   **Bit-neutral on the Nash path, verified rather than assumed:** `validate_turn_fullrange` at 300 iterations still gives `nashconv 0.232074, ev 45.9951 54.0049`, and all 37 pre-existing tests pass with no tolerance loosened (`test_parallel` and `test_iso` compare exact floats).
 

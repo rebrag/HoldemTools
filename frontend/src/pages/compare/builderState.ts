@@ -63,9 +63,11 @@ export interface BuilderState extends TreeConfigText {
   qreLambdaIp: string;
   /** Grow lambda toward Nash over the solve instead of holding it fixed.
    *  Fixed lambda is the bounded-rationality product; annealing is a homotopy
-   *  to Nash. Over a 24-board sweep it cuts iterations by a reliable ~1.35x
-   *  but costs ~1.44x per iteration, so wall clock comes out a wash - it is
-   *  not currently a reason to prefer it. See engine/docs/roadmap.md M7. */
+   *  to Nash, and on flop trees it does NOT pay: the iteration saving collapses
+   *  with stack depth (1.41x at SPR 4, 1.07x at SPR 10) while the per-iteration
+   *  cost climbs to ~2x, netting 1.3-1.9x slower than dcfr. Kept because it is
+   *  the same code path and worth re-measuring if the overhead ever drops.
+   *  See engine/docs/roadmap.md M7. */
   qreAnneal: boolean;
   /** Final lambda as a multiple of the values above. */
   qreAnnealFactor: string;
