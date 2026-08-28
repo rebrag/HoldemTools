@@ -32,6 +32,14 @@ export interface HtcSpot {
   board: string;
   pot: number;
   chip_scale?: number;
+  /**
+   * Effective stack, in the same units as the bNNN amounts in the node ids -
+   * so a bet that reaches it is a jam. Written by engine_compare.py straight
+   * off the artifact metadata (the engine emits it at
+   * io/artifact_writer.cpp), and absent from payloads produced before that,
+   * which simply never label ALLIN.
+   */
+  effective_stack?: number | null;
   config_hash: string;
 }
 

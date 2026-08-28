@@ -22,6 +22,7 @@ import {
   isCardSegment,
   parentOf,
   preflopCommitChips,
+  priorStreetCommitChips,
   stackBehindChips,
   toSuffix,
 } from "@/lib/solver/postflopNode";
@@ -35,7 +36,16 @@ export type PostflopLineItem = {
 /** A visited node of the postflop line, enriched for the Line display:
  *  dealt-card markers, or decisions with the options that were available. */
 export type PostflopSessionLineNode =
-  | { kind: "card"; nodeId: string; label: string }
+  | {
+      kind: "card";
+      nodeId: string;
+      label: string;
+      /** Pot after the street that this card ended, in the solve's display
+       *  money. Computed by the caller rather than by the strip, because the
+       *  two callers disagree about the unit `bNNN` node segments are in and
+       *  only they know the conversion. */
+      potMoney?: number | null;
+    }
   | {
       kind: "action";
       /** Child node reached by taking the action (jump target). */
@@ -550,7 +560,19 @@ export function usePostflopSession() {
       let parent = "r:0";
       for (const item of core.line) {
         if (item.kind === "card") {
-          lineNodes.push({ kind: "card", nodeId: item.nodeId, label: item.label });
+          /* Pot as the card was dealt: the flop-start pot plus what BOTH seats
+           * committed on the streets that are now complete. priorStreetCommitChips
+           * returns one seat's share, and a street only completes matched. */
+          const potChips = core.manifest.pot_chips;
+          lineNodes.push({
+            kind: "card",
+            nodeId: item.nodeId,
+            label: item.label,
+            potMoney:
+              potChips == null
+                ? null
+                : (potChips + 2 * priorStreetCommitChips(item.nodeId)) / chipScale,
+          });
           parent = item.nodeId;
           continue;
         }

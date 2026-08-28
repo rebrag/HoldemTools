@@ -21,7 +21,7 @@
 // chance node - the point where a street's card is dealt - has no strategy and
 // so no header row, which is exactly how a card segment is recognised: its
 // parent prefix is absent from the directory.
-import { isCardSegment } from "@/lib/solver/postflopNode";
+import { isCardSegment, priorStreetCommitChips } from "@/lib/solver/postflopNode";
 import type { PostflopSessionLineNode } from "@/hooks/usePostflopSession";
 
 /** The projection of HtcNodeMeta that the strip needs.
@@ -84,7 +84,10 @@ export interface CompareLine {
 export const buildCompareLine = (
   nodeId: string,
   byId: Map<string, CompareNodeRef>,
-  label: (segment: string, parentId: string) => string
+  label: (segment: string, parentId: string) => string,
+  /** Pot at the root, in the page's display units. Card tiles carry the pot as
+   *  it stood when they were dealt, which needs this as the base. */
+  rootPot = 0
 ): CompareLine => {
   const segments = nodeId.split(":");
   const lineNodes: PostflopSessionLineNode[] = [];
@@ -98,7 +101,15 @@ export const buildCompareLine = (
 
     if (isCardSegment(segment)) {
       dealtCards.push(segment);
-      lineNodes.push({ kind: "card", nodeId: childId, label: segment });
+      lineNodes.push({
+        kind: "card",
+        nodeId: childId,
+        label: segment,
+        /* priorStreetCommitChips is one seat's share of the completed streets,
+         * and a street only completes matched - so both seats put that in.
+         * bNNN here is already in the page's display units, so no scaling. */
+        potMoney: rootPot + 2 * priorStreetCommitChips(childId),
+      });
       prefix = childId;
       continue;
     }

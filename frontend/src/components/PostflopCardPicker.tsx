@@ -1,16 +1,34 @@
-// Turn/river card picker: highlighted cards have an extracted street and open
-// instantly; dimmed cards are extracted on demand by the local solver.
+// Turn/river card picker: highlighted cards are the ones the caller can open,
+// and anything in `usedCards` is dimmed and inert.
+//
+// Two callers with different meanings for that split:
+//   - /solver: highlighted = already extracted (instant); the rest are pulled
+//     from the full solve on demand, so they stay pickable.
+//   - /compare: a .htc payload is fixed, so anything it does not contain goes
+//     into `usedCards` and cannot be picked at all. See the `hint` prop.
+//
+// Deliberately decoupled from usePostflopSession: it takes the street rather
+// than the whole StreetPicker, and declares its own structural pending type, so
+// a page with no extraction pipeline can use it without inventing session
+// objects to satisfy the props.
 import React from "react";
 import { X } from "lucide-react";
 import CardPicker from "@/components/CardPicker";
 import PlayingCard from "@/components/PlayingCard";
-import type { PendingStreet, StreetPicker } from "@/hooks/usePostflopSession";
+
+/** Structural, so usePostflopSession's PendingStreet stays assignable. */
+export interface PickerPendingStreet {
+  card: string;
+  startedAt: number;
+  /** True once the watcher reports an evicted-cfr re-solve (minutes). */
+  resolving: boolean;
+}
 
 export interface PostflopCardPickerProps {
-  picker: StreetPicker;
+  street: "turn" | "river";
   usedCards: Set<string>;
   extractedCards: Set<string>;
-  pendingStreet: PendingStreet | null;
+  pendingStreet: PickerPendingStreet | null;
   onPick: (card: string) => void;
   onClose: () => void;
   onCancelPending: () => void;
@@ -19,9 +37,16 @@ export interface PostflopCardPickerProps {
    *  hand that never got this far, or once the viewer has branched off the
    *  runout the hand actually took. */
   playedCard?: string | null;
+  /**
+   * Replaces the default "the rest are pulled from the full solve on demand"
+   * line. /compare passes its own, because on that page nothing can be pulled
+   * on demand and a grid of mostly-dimmed cards otherwise reads as broken
+   * rather than as "this payload sampled its runouts".
+   */
+  hint?: React.ReactNode;
 }
 
-const PendingFlip = ({ pending }: { pending: PendingStreet }) => {
+const PendingFlip = ({ pending }: { pending: PickerPendingStreet }) => {
   const [now, setNow] = React.useState(Date.now());
   React.useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -58,7 +83,7 @@ const PendingFlip = ({ pending }: { pending: PendingStreet }) => {
 };
 
 const PostflopCardPicker: React.FC<PostflopCardPickerProps> = ({
-  picker,
+  street,
   usedCards,
   extractedCards,
   pendingStreet,
@@ -66,8 +91,9 @@ const PostflopCardPicker: React.FC<PostflopCardPickerProps> = ({
   onClose,
   onCancelPending,
   playedCard,
+  hint,
 }) => {
-  const streetLabel = picker.street === "turn" ? "turn" : "river";
+  const streetLabel = street;
   const showPlayed = !!playedCard && !usedCards.has(playedCard);
 
   return (
@@ -110,13 +136,15 @@ const PostflopCardPicker: React.FC<PostflopCardPickerProps> = ({
         ) : (
           <>
             <p className="text-xs text-gray-300 mb-3">
-              {extractedCards.size > 0 ? (
-                <>
-                  Glowing cards open instantly; the rest are pulled from the full
-                  solve on demand{picker.street === "river" ? " (a few seconds)" : ""}.
-                </>
-              ) : (
-                <>Any card is pulled from the full solve on demand (a few seconds).</>
+              {hint ?? (
+                extractedCards.size > 0 ? (
+                  <>
+                    Glowing cards open instantly; the rest are pulled from the full
+                    solve on demand{street === "river" ? " (a few seconds)" : ""}.
+                  </>
+                ) : (
+                  <>Any card is pulled from the full solve on demand (a few seconds).</>
+                )
               )}
             </p>
             {showPlayed && (

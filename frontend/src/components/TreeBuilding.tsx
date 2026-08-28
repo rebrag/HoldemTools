@@ -856,7 +856,13 @@ const TreeBuilding = ({
           zClassName="z-[90]"
           ariaLabel="Edit starting range"
         >
-          <div className="flex h-full flex-col px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3">
+          {/* A DEFINITE height, not h-full. ResponsiveDrawer's panel carries
+              only max-h-[92vh], and a percentage height resolves to auto
+              against a parent that has no definite height of its own - so
+              h-full here left every min-h-0/flex-1 below it unbounded and the
+              range library grew with its content instead of scrolling. 80vh
+              sits inside the panel's cap on any viewport. */}
+          <div className="flex h-[80vh] flex-col px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3">
             <div className="mb-2 flex items-center justify-between">
               <h3 className="text-sm font-semibold">
                 Starting range - {editingRange === "oop" ? oopLabel : ipLabel}

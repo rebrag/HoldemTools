@@ -75,7 +75,7 @@ import {
 import PostflopLine from "./PostflopLine";
 import { preflopNodeFiles, usePreflopLineNodes } from "./usePreflopLineNodes";
 import PostflopLibrary from "./PostflopLibrary";
-import PostflopCardPicker from "./PostflopCardPicker";
+import PostflopCardPicker from "@/components/PostflopCardPicker";
 import { Library } from "lucide-react";
 import { fmtMoney, type MoneyDisplay } from "./boardDisplay";
 import type { PokerTableSeatData } from "@/components/PokerTable";
@@ -1656,7 +1656,7 @@ const Solver = ({ user }: SolverProps) => {
       {/* TURN / RIVER CARD PICKER */}
       {pf.view?.picker && (
         <PostflopCardPicker
-          picker={pf.view.picker}
+          street={pf.view.picker.street}
           usedCards={pf.view.usedCards}
           extractedCards={pf.view.extractedCards}
           pendingStreet={pf.view.pendingStreet}

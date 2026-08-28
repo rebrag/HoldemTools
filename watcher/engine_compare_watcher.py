@@ -36,7 +36,8 @@ import sys
 import tempfile
 import threading
 import time
-from typing import Any, Dict, Optional
+from collections import deque
+from typing import Any, Dict, List, Optional, Sequence
 
 import requests
 
@@ -141,6 +142,75 @@ def upload_result(job_id: str, result_path: str, solver: str) -> str:
     return rel_path
 
 
+class ChildResult:
+    """What a streamed child produced: its exit code and a bounded tail."""
+
+    def __init__(self, returncode: int, tail: Sequence[str]) -> None:
+        self.returncode = returncode
+        self.tail: List[str] = list(tail)
+
+    @property
+    def text(self) -> str:
+        return "\n".join(self.tail)
+
+    def last_line(self) -> str:
+        for line in reversed(self.tail):
+            if line.strip():
+                return line.strip()
+        return ""
+
+
+def run_streamed(cmd: Sequence[str], *, timeout: float, prefix: str,
+                 cwd: Optional[str] = None, tail_lines: int = 60) -> ChildResult:
+    """Run a child, printing its output AS IT ARRIVES, and keep a bounded tail.
+
+    subprocess.run(capture_output=True) only drains the pipes once the child
+    has exited, so a solve that takes ten minutes produced ten minutes of
+    silence in this terminal and then one summary line - even though htsolver
+    prints a progress line every `budget.checkpoint_every` iterations the whole
+    way through. Streaming is the only change needed to surface it; nothing in
+    the engine had to be touched.
+
+    The tail is still retained because the failure path needs it for the
+    RuntimeError message and the success path wants the last line, so this
+    tees rather than simply inheriting stdout.
+
+    The pipe is drained on a THREAD rather than in this one, so the deadline is
+    enforced by proc.wait() no matter what the child does. Reading inline looks
+    simpler and is wrong: a child that produces no output blocks the readline
+    loop until it exits on its own, so a hung solve would never be killed - the
+    exact guarantee subprocess.run(timeout=...) was giving before.
+    """
+    proc = subprocess.Popen(
+        list(cmd), cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
+    )
+    tail: deque = deque(maxlen=tail_lines)
+
+    def drain() -> None:
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            line = raw.rstrip("\n")
+            tail.append(line)
+            if line.strip():
+                print(f"    {prefix}| {line}", flush=True)
+
+    reader = threading.Thread(target=drain, name=f"{prefix}-stdout", daemon=True)
+    reader.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        reader.join(timeout=5)
+        raise
+    # The child is gone; let the reader finish whatever is still buffered.
+    reader.join(timeout=10)
+    if proc.stdout is not None:
+        proc.stdout.close()
+    return ChildResult(proc.returncode, tail)
+
+
 def run_engine(config: Dict[str, Any], run_dir: str) -> str:
     """Solve with htsolver; returns the artifact path."""
     artifact = os.path.join(run_dir, "solve.hta")
@@ -149,12 +219,12 @@ def run_engine(config: Dict[str, Any], run_dir: str) -> str:
     config_path = os.path.join(run_dir, "config.json")
     with open(config_path, "w", encoding="utf8") as f:
         json.dump(config, f)
-    out = subprocess.run([ENGINE_EXE, "solve", config_path],
-                         capture_output=True, text=True, timeout=600)
+    out = run_streamed([ENGINE_EXE, "solve", config_path],
+                       timeout=600, prefix="ht")
     if out.returncode != 0 or not os.path.exists(artifact):
         raise RuntimeError(f"htsolver solve failed (exit {out.returncode}): "
-                           f"{(out.stdout + out.stderr)[-1500:]}")
-    log(f"  htsolver: {out.stdout.strip().splitlines()[-1] if out.stdout.strip() else 'done'}")
+                           f"{out.text[-1500:]}")
+    log(f"  htsolver: {out.last_line() or 'done'}")
     return artifact
 
 
@@ -189,14 +259,13 @@ def handle_compare(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) -
         f"{'' if disable_compare else ' + per-hand'}"
         f"{'' if disable_cross else ' + cross-check'}")
     phase_start = time.perf_counter()
-    out = subprocess.run(cmd, cwd=WATCHER_DIR, capture_output=True, text=True, timeout=1800)
+    out = run_streamed(cmd, cwd=WATCHER_DIR, timeout=1800, prefix="cmp")
     timings["compare_total_s"] = round(time.perf_counter() - phase_start, 3)
     if not os.path.exists(ht_out):
         raise RuntimeError(f"engine_compare failed (exit {out.returncode}): "
-                           f"{(out.stdout + out.stderr)[-1500:]}")
-    for line in out.stdout.splitlines():
-        if any(k in line for k in ("exploitability", "PASS", "FAIL", "no verdict")):
-            log(f"  {line.strip()}")
+                           f"{out.text[-1500:]}")
+    # No keyword filter any more: every line already reached the terminal as it
+    # was produced, so re-printing a chosen four here would only duplicate them.
     # Harvest each payload's per-phase numbers so the whole breakdown rides
     # one job row. Never fail the job on a harvest problem - the results
     # themselves are already good.

@@ -129,7 +129,7 @@ const ActionSummary: React.FC<ActionSummaryProps> = ({
               {compact ? (
                 <span className="flex items-baseline justify-between gap-1">
                   <span className="block text-sm font-bold tabular-nums text-white leading-tight">
-                    {agg.pctOfRange.toFixed(1)}%
+                    {agg.pctOfNode.toFixed(1)}%
                   </span>
                   <span className="block truncate text-[9px] tabular-nums text-white/75 leading-tight">
                     {agg.combos.toFixed(1)}c
@@ -138,7 +138,7 @@ const ActionSummary: React.FC<ActionSummaryProps> = ({
               ) : (
                 <>
                   <span className="block text-lg font-bold tabular-nums text-white leading-tight">
-                    {agg.pctOfRange.toFixed(1)}%
+                    {agg.pctOfNode.toFixed(1)}%
                   </span>
                   <span className="block truncate text-[10px] tabular-nums text-white/75 leading-tight">
                     {agg.combos.toFixed(2)} combos

@@ -338,7 +338,11 @@ def solve_in_pio(solver, dump: dict, meta: dict, accuracy_chips: float,
 
     solver.set_accuracy(accuracy_chips)
     solve_start = time.perf_counter()
-    solver.go(quiet=True)
+    # quiet=False so Pio's own solve output reaches the watcher terminal
+    # alongside htsolver's. Note this is NOT live: pyosolver accumulates the
+    # whole pipe and prints it in one blob when go() returns, so it arrives at
+    # end-of-solve. Making it live means changing the vendored pyosolver.
+    solver.go(quiet=False)
     solve_s = time.perf_counter() - solve_start
     # Read the peak BEFORE the cross-check uploads a strategy into Pio: this
     # is meant to be the cost of building and solving the tree, not of the
@@ -632,6 +636,12 @@ def main() -> int:
         "board": meta["board"],
         "pot": pot,
         "chip_scale": meta.get("chip_scale", 100),
+        # Same units as the bNNN amounts in the node ids, so a bet that reaches
+        # it is a jam. /compare needs this to label ALLIN at all - without it a
+        # jam renders as an ordinary bet, and (because the colour ramp spreads
+        # itself across whatever is in it) every other bet at that node gets
+        # the wrong shade too.
+        "effective_stack": meta.get("effective_stack"),
         "config_hash": meta["config_hash"],
     }
     exploit_threshold = max(pot * args.exploit_threshold_frac, 1e-4)

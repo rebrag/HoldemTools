@@ -49,8 +49,18 @@ export interface ActionAggregate {
   color: string;
   /** Weighted combo count: sum over hands of weight * combosForHand(hand). */
   combos: number;
-  /** combos / 1326 * 100. */
-  pctOfRange: number;
+  /**
+   * This action's share of the node, 0..100 - the actions at a node sum to
+   * 100 by construction.
+   *
+   * Deliberately NOT a share of the 1326-combo universe, which is what this
+   * was until it read as a frequency was wanted. That form made a deep node's
+   * actions sum to whatever the range's reach happened to be (~13% is normal),
+   * and it contradicted the distribution bar directly underneath it in
+   * ActionSummary, which has always normalized this way. `combos` still
+   * carries the absolute size, so nothing was lost in the change.
+   */
+  pctOfNode: number;
 }
 
 /**
@@ -133,13 +143,17 @@ export const computeActionAggregates = (
   }
   const ordered = orderActionKeys([...totals.keys()]);
   const palette = buildActionPalette(ordered, sizeRef);
+  /* The node's own reach: every hand's action weights sum to ~1, so this is
+   * the weighted combo count that actually arrives here. Zero when the node is
+   * unreachable, which is why the divide is guarded rather than assumed. */
+  const total = ordered.reduce((sum, action) => sum + (totals.get(action) ?? 0), 0);
   return ordered.map((action) => {
     const combos = totals.get(action) ?? 0;
     return {
       action,
       color: palette[action],
       combos,
-      pctOfRange: (combos / TOTAL_COMBOS) * 100,
+      pctOfNode: total > 0 ? (combos / total) * 100 : 0,
     };
   });
 };

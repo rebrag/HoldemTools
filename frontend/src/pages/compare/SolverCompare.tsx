@@ -36,6 +36,10 @@ import {
   type EngineConfigResult,
 } from "./builderState";
 import { parseBoardCards, pioClipboardCodec } from "./treeConfigText";
+import { ALL_CARDS } from "@/components/treeBuildingView";
+import { displayLabelWith } from "./actionLabels";
+import { isCardSegment } from "@/lib/solver/postflopNode";
+import PostflopCardPicker from "@/components/PostflopCardPicker";
 import { pioRangeCodec } from "@/lib/solver/rangeTokens";
 import PipelineTimingPanel, {
   secs,
@@ -142,30 +146,6 @@ interface Loaded {
 
 /* ---------- helpers ---------- */
 
-/**
- * One raw action segment -> its readable label, given the node it is taken AT.
- * Amounts stay in chips ("Bet 50", "Raise to 400") - the harness's own unit,
- * matching the bNNN in the node ids.
- *
- * THE page's single action-label authority, and it has to stay that way: the
- * output doubles as the key the two solvers' action columns are joined on (see
- * the grids below, which match by label and never by index) and as the key
- * DecisionMatrix and ActionSummary colour by. lib/solver/postflopNode's
- * formatPioAction is a DIFFERENT formatter - it nets out prior-street commits
- * and adds an ALLIN case - so introducing it here would give one page two
- * disagreeing vocabularies.
- */
-const displayLabel = (segment: string, parentId: string): string => {
-  const facing = (parentId.split(":").pop() ?? "").startsWith("b");
-  if (segment === "f") return "Fold";
-  if (segment === "c") return facing ? "Call" : "Check";
-  const amount = Number(segment.slice(1));
-  return facing ? `Raise to ${amount}` : `Bet ${amount}`;
-};
-
-const displayLabels = (node: CompareNode): string[] =>
-  node.actions.map((a) => displayLabel(a, node.id));
-
 interface SolverView {
   labels: string[];
   grid: HandCellData[];
@@ -180,8 +160,11 @@ interface SolverView {
 /** One solver's 169-class grid + ComboDetail from its own per-hand rows.
  *  Aggregation is range-weighted with a plain-mean fallback - the same rule
  *  as the schema-4 pipeline. */
-const buildSolverView = (node: CompareNode): SolverView => {
-  const labels = displayLabels(node);
+const buildSolverView = (
+  node: CompareNode,
+  label: (segment: string, parentId: string) => string
+): SolverView => {
+  const labels = node.actions.map((a) => label(a, node.id));
   const nActions = labels.length;
 
   interface Agg {
@@ -340,6 +323,12 @@ const SolverCompare = () => {
   const [selectedHand, setSelectedHand] = useState<string | null>(null);
   const [hoverHand, setHoverHand] = useState<string | null>(null);
   const [displayMode, setDisplayMode] = useState<DisplayMode>("strategy");
+  /** The open runout picker, when an action closed a street and the payload
+   *  carries more than one card for it. */
+  const [picker, setPicker] = useState<{
+    chanceNodeId: string;
+    street: "turn" | "river";
+  } | null>(null);
   /* The cost panels are reference material, not the thing being looked at.
    * Collapsed they are one line, which is what buys the grids the vertical
    * space to fit a screen; the choice is remembered because a workbench that
@@ -639,8 +628,22 @@ const SolverCompare = () => {
     return at >= 0 ? decodeNode(loaded.pio, at) : null;
   }, [loaded, htNode, nodeDir, nodeIndex]);
 
-  const htView = useMemo(() => (htNode ? buildSolverView(htNode) : null), [htNode]);
-  const pioView = useMemo(() => (pioNode ? buildSolverView(pioNode) : null), [pioNode]);
+  /** This payload's action formatter. One instance for the whole page: every
+   *  grid, panel and line tile has to agree, and the two solvers' columns are
+   *  joined on its output. */
+  const displayLabel = useMemo(
+    () => displayLabelWith(spot?.effective_stack),
+    [spot?.effective_stack]
+  );
+
+  const htView = useMemo(
+    () => (htNode ? buildSolverView(htNode, displayLabel) : null),
+    [htNode, displayLabel]
+  );
+  const pioView = useMemo(
+    () => (pioNode ? buildSolverView(pioNode, displayLabel) : null),
+    [pioNode, displayLabel]
+  );
   const board = useMemo(() => (spot ? parseBoardCards(spot.board) : []), [spot]);
 
   /** Shared across whichever grids are shown, so EV heat stays comparable. */
@@ -677,8 +680,8 @@ const SolverCompare = () => {
   const childIndex = useMemo(() => buildChildIndex(nodeDir), [nodeDir]);
   const currentNodeId = nodeDir[nodeIndex]?.id ?? ROOT_ID;
   const line = useMemo(
-    () => buildCompareLine(currentNodeId, nodeById, displayLabel),
-    [currentNodeId, nodeById]
+    () => buildCompareLine(currentNodeId, nodeById, displayLabel, spot?.pot ?? 0),
+    [currentNodeId, nodeById, displayLabel, spot?.pot]
   );
 
   /** The board as it stood at the ROOT. A 5-card board is a river solve, so
@@ -710,11 +713,40 @@ const SolverCompare = () => {
         jumpToNode(childId);
         return;
       }
-      const runout = childIndex.get(childId)?.[0];
-      if (runout) jumpToNode(`${childId}:${runout}`);
+      /* The action closed the street, so the child is the deal. A chance node
+       * has no strategy and therefore no header row of its own - what IS in
+       * the directory is its runouts, so offer them. */
+      const runouts = (childIndex.get(childId) ?? []).filter(isCardSegment);
+      if (runouts.length === 0) return;
+      if (runouts.length === 1) {
+        // A picker with one legal card is a dialog that asks nothing.
+        jumpToNode(`${childId}:${runouts[0]}`);
+        return;
+      }
+      setPicker({
+        chanceNodeId: childId,
+        // Cards already out at this point decide which street is being dealt.
+        street:
+          board.length + childId.split(":").filter(isCardSegment).length === 3
+            ? "turn"
+            : "river",
+      });
     },
-    [childIndex, nodeById, jumpToNode]
+    [childIndex, nodeById, jumpToNode, displayLabel, board.length]
   );
+
+  /** Runouts this payload actually carries at the open picker, and the 52-card
+   *  complement it cannot offer. `usedCards` is what PostflopCardPicker dims
+   *  and refuses, so the complement going in there is what makes an absent
+   *  runout unpickable without the component needing to know why. */
+  const pickerCards = useMemo(() => {
+    if (!picker) return null;
+    const available = new Set(
+      (childIndex.get(picker.chanceNodeId) ?? []).filter(isCardSegment)
+    );
+    const used = new Set(ALL_CARDS.filter((c) => !available.has(c)));
+    return { available, used };
+  }, [picker, childIndex]);
 
   const onSelect = useCallback(
     (hand: string) => setSelectedHand((cur) => (cur === hand ? null : hand)),
@@ -1427,6 +1459,38 @@ const SolverCompare = () => {
             </span>
           </div>
         </>
+      )}
+
+      {/* ---------- runout picker ----------
+           Opens when an action closed a street, instead of silently landing on
+           the first card in the payload. A .htc carries only the runouts it was
+           written with, so anything absent is dimmed and inert rather than
+           offered and then failing. */}
+      {picker && pickerCards && (
+        <PostflopCardPicker
+          street={picker.street}
+          usedCards={pickerCards.used}
+          extractedCards={pickerCards.available}
+          pendingStreet={null}
+          onPick={(card) => {
+            jumpToNode(`${picker.chanceNodeId}:${card}`);
+            setPicker(null);
+          }}
+          onClose={() => setPicker(null)}
+          onCancelPending={() => setPicker(null)}
+          hint={
+            <>
+              This payload carries {pickerCards.available.size}{" "}
+              {pickerCards.available.size === 1 ? "runout" : "runouts"} for this
+              street
+              {htSummary?.runouts != null
+                ? ` - the solve sampled ${htSummary.runouts} evenly spaced cards per
+                   chance node, because the tree was too big to dump in full`
+                : ""}
+              . The rest are not in the file, so they cannot be opened.
+            </>
+          }
+        />
       )}
 
       {/* ---------- tree builder (PioViewer-style), in a modal so opening it

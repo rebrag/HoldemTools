@@ -316,17 +316,35 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
           </div>
 
           {/* Visited postflop nodes */}
-          {lineNodes.map((node) => {
+          {lineNodes.map((node, i) => {
             if (node.kind === "card") {
+              /* Which street this card opened, from its position in the line:
+                 the n-th dealt card puts rootBoard.length + n + 1 cards out.
+                 Derived rather than passed so a flop-, turn- or river-rooted
+                 tree all label correctly without the caller saying which. */
+              const cardsOut =
+                rootBoard.length +
+                lineNodes.slice(0, i + 1).filter((n) => n.kind === "card").length;
+              const streetLabel = cardsOut === 4 ? "TURN" : "RIVER";
               return (
                 <button
                   key={node.nodeId}
                   type="button"
                   onClick={() => onJump(node.nodeId)}
-                  className={`${cardClass(false)} items-center justify-center cursor-pointer hover:bg-white/10`}
+                  className={`${cardClass(false)} cursor-pointer hover:bg-white/10`}
                   title={`Jump to the ${node.label} deal`}
                 >
-                  <PlayingCard code={node.label} width="clamp(20px, 3.6vw, 30px)" />
+                  {/* Same header as the root tile: a dealt card should say
+                      which street it opened and what was in the middle, not
+                      float on its own. */}
+                  <CardHeader
+                    label={streetLabel}
+                    stack={node.potMoney ?? undefined}
+                    money={money}
+                  />
+                  <div className="mt-auto flex items-center justify-center gap-0.5">
+                    <PlayingCard code={node.label} width="clamp(20px, 3.6vw, 30px)" />
+                  </div>
                 </button>
               );
             }
