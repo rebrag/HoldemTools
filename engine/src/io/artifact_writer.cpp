@@ -1,6 +1,7 @@
 #include "io/artifact_writer.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -42,7 +43,13 @@ static_assert(sizeof(NodeExportData) == 4 * sizeof(std::vector<float>),
 struct ExportPass {
   const Game& game;
   const CfrSolver& solver;
-  std::map<NodeId, NodeExportData> exports;
+  // Indexed by Node::decision_index, which is dense over EVERY decision node
+  // including suit-isomorphic members (they carry a valid index; only their
+  // solver storage is redirected). This was a std::map<NodeId, ...>: one
+  // red-black allocation per node - 248536 of them on a real flop tree - plus
+  // an O(log n) lookup for each one in the write loop below, to hold a key
+  // that is already a dense array index.
+  std::vector<NodeExportData> exports;
 
   // Returns counterfactual values per seat.
   std::vector<std::vector<float>> visit(NodeId id, std::vector<std::vector<float>>& reach) {
@@ -149,14 +156,14 @@ struct ExportPass {
         }
       }
     }
-    exports.emplace(id, std::move(data));
+    exports[node.decision_index] = std::move(data);
     return values;
   }
 };
 
-// Live bytes of the ExportPass map at its peak, which is the moment the last
-// decision node is inserted: nothing is erased until write_artifact returns.
-std::size_t export_map_bytes(const Game& game) {
+// Live bytes of the ExportPass store at its peak, which is the moment the last
+// decision node is filled in: nothing is released until write_artifact returns.
+std::size_t export_store_bytes(const Game& game) {
   const PublicTree& tree = game.tree();
   const std::size_t seats = static_cast<std::size_t>(game.num_seats());
   std::size_t hands = 0;
@@ -167,10 +174,11 @@ std::size_t export_map_bytes(const Game& game) {
   // std::vector header is ~2% of the payload it points at, and there are
   // 2*seats + actions of them per node on top of the four inside the struct.
   constexpr std::size_t kVec = sizeof(std::vector<float>);
-  // One red-black node per decision node: the value, the NodeId key, three
-  // links and the colour. Rounded up to a pointer-sized allowance rather
-  // than measured, because the node type is the allocator's business.
-  const std::size_t per_entry = sizeof(NodeExportData) + sizeof(NodeId) + 4 * sizeof(void*);
+  // The store is one contiguous std::vector<NodeExportData> indexed by
+  // decision_index, so an entry costs exactly the struct - no key, no links,
+  // and no per-node heap block. It used to be a std::map, which charged all
+  // three.
+  const std::size_t per_entry = sizeof(NodeExportData);
   // Each of those vectors is its own heap block, and there are ~11 blocks per
   // decision node here - on a flop tree the bookkeeping alone runs to tens of
   // megabytes, enough on its own to leave this estimate below the measured
@@ -183,9 +191,9 @@ std::size_t export_map_bytes(const Game& game) {
     // reach and ev_cond: one hand-wide vector per seat each. strategy: one
     // hands x actions block. action_ev_cond: one hand-wide vector per action.
     const std::size_t floats = 2 * seats * hands + 2 * actions * hands;
-    // Blocks: the four buffers the struct's own vectors own, the inner
-    // vectors' buffers, and the map node.
-    const std::size_t blocks = 4 + 2 * seats + actions + 1;
+    // Blocks: the four buffers the struct's own vectors own plus the inner
+    // vectors' buffers. No map node any more - the store is one allocation.
+    const std::size_t blocks = 4 + 2 * seats + actions;
     total += floats * sizeof(float) + (2 * seats + actions) * kVec + per_entry +
              blocks * kHeapBlockOverhead;
   }
@@ -326,21 +334,22 @@ void pad_to(ArtifactStore& store, std::uint64_t alignment) {
 
 }  // namespace
 
-std::size_t export_pass_bytes(const Game& game) { return export_map_bytes(game); }
+std::size_t export_pass_bytes(const Game& game) { return export_store_bytes(game); }
 
-void write_artifact(ArtifactStore& store, const std::string& path, const Game& game,
+double write_artifact(ArtifactStore& store, const std::string& path, const Game& game,
                     const CfrSolver& solver, const SolveConfig& config,
                     const SolveStats& stats) {
   if (game.num_seats() != 2) {
     throw std::runtime_error("artifact writer supports 2-seat games in this pass");
   }
+  const auto export_start = std::chrono::steady_clock::now();
   const PublicTree& tree = game.tree();
   const bool rollups = config.rollups_169 && config.game == "nlhe";
   const bool strategy_u8 = config.strategy_quantize_u8;
   const bool ev_f16 = !config.ev_float32;
 
   // Export pass under the average strategy.
-  ExportPass pass{game, solver, {}};
+  ExportPass pass{game, solver, std::vector<NodeExportData>(tree.num_decision_nodes)};
   {
     std::vector<std::vector<float>> reach(game.num_seats());
     for (int s = 0; s < game.num_seats(); ++s) reach[s] = game.initial_range(s);
@@ -405,7 +414,7 @@ void write_artifact(ArtifactStore& store, const std::string& path, const Game& g
     if (node.kind != NodeKind::Decision) continue;
     pad_to(store, 64);
     const std::uint64_t off = store.tell();
-    const auto blob = encode_node_blob(game, node, pass.exports.at(id), dicts,
+    const auto blob = encode_node_blob(game, node, pass.exports[node.decision_index], dicts,
                                        strategy_u8, ev_f16, rollups);
     store.write(blob.data(), blob.size());
     index.push_back({id, off, blob.size()});
@@ -472,6 +481,12 @@ void write_artifact(ArtifactStore& store, const std::string& path, const Game& g
   meta["multiway_no_nash_guarantee"] = game.num_seats() > 2;
   meta["wall_time_s"] = stats.wall_time_s;
   meta["setup_time_s"] = stats.setup_time_s;
+  // The export pass and file write, which wall_time_s excludes by design.
+  // Recorded here rather than by the caller because only this function knows
+  // when its own work started; the caller's clock has already stopped.
+  const double export_s =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - export_start).count();
+  meta["export_time_s"] = export_s;
   meta["threads"] = stats.threads;
   meta["recalc_skips"] = stats.recalc_skips;
   meta["peak_rss_bytes"] = peak.working_set;
@@ -533,6 +548,7 @@ void write_artifact(ArtifactStore& store, const std::string& path, const Game& g
   store.seek(0);
   store.write(header.data(), header.size());
   store.close_write();
+  return export_s;
 }
 
 }  // namespace engine

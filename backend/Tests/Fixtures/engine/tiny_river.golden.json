@@ -87,6 +87,7 @@
       61.363636361231414,
       38.63636537031694
     ],
+    "export_time_s": 0.0011754,
     "final_exploitable_chips": 1.2024763407225691e-09,
     "final_exploitable_pct_pot": 1.2024763407225691e-09,
     "final_nashconv": 2.4049526814451383e-09,
@@ -109,8 +110,8 @@
       ]
     ],
     "payoff_weights": null,
-    "peak_commit_bytes": 1572864,
-    "peak_rss_bytes": 7335936,
+    "peak_commit_bytes": 1556480,
+    "peak_rss_bytes": 7323648,
     "pot": 100,
     "recalc_skips": 0,
     "seats": [
@@ -139,11 +140,11 @@
         "record_size": 80
       }
     },
-    "setup_time_s": 0.0010294,
-    "solve_peak_rss_bytes": 7163904,
+    "setup_time_s": 0.001548,
+    "solve_peak_rss_bytes": 7127040,
     "solver_version": "0.1.0",
     "threads": 16,
-    "wall_time_s": 0.0165017
+    "wall_time_s": 0.0183164
   },
   "nodes": {
     "0": {

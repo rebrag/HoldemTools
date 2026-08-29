@@ -401,7 +401,15 @@ So the remaining gap on wide-range multi-size flop trees is the per-iteration wo
   2. **Wall clock** - 24% of the run, single-threaded.
   3. **Reporting** - it is excluded from the only timing number the pipeline records.
 
-  And there is a free win inside it: `exports` is a `std::map<NodeId, NodeExportData>` - a red-black tree with a heap allocation per entry, 248536 of them, with O(log n) lookups in the write loop. Indexing a `std::vector` by `decision_index` costs nothing and removes all of it.
+  #### Two of those fixed, and the map swap was a dud (2026-08-29)
+
+  **The timing is now reported.** `write_artifact` returns its own elapsed seconds, `export_time_s` lands in artifact metadata, and `solve` prints `total N s (setup + solve + artifact export, single-threaded)`. `wall_time_s` deliberately keeps its old meaning - it is what `engine_compare.py` rates against Pio's solve time, and redefining it would silently move every ratio ever recorded - so the export is surfaced beside it rather than folded into it.
+
+  **`exports` went from `std::map<NodeId, NodeExportData>` to a `std::vector` indexed by `decision_index`, and it bought essentially nothing: 18.2 s -> 18.5 s (noise), 4.43 GB -> 4.42 GB.** Worth recording as a dud so nobody tries it again. The reasoning was sound - a red-black node per entry, 248536 of them, O(log n) lookups - but the arithmetic was not: those map nodes are ~16 MB against 4.4 GB of payload, and 248536 lookups are nothing against the traversal itself. The change stays because a dense array index has no business being a map key, not because it is faster.
+
+  **What the timing number then made obvious is that the export is not slow - it is SERIAL.** 18.5 s single-threaded against a solve loop that does ~558 ms per iteration on 16 threads. In core-seconds the export is about 18.5 against an iteration's ~8.9, so it is roughly two iterations' worth of work - entirely reasonable for a full tree traversal that copies both seats' reach per node, calls `compat_weights` per seat per node, and divides per hand. It only looks pathological because it runs on one core while everything around it uses sixteen.
+
+  **So the fix is to parallelize it, not to micro-optimize it.** Sibling subtrees are independent in the export exactly as they are in `CfrSolver::traverse_impl`, and the same fork-onto-the-pool treatment applies. At the solver's measured 8x on 16 threads that is 18.5 s -> ~2.3 s, taking this spot's end-to-end from 74 s to ~58 s. The remaining ~2.5M small vector allocations (about ten per decision node) are the other half, and streaming the blobs during the traversal removes both those and the 4.4 GB at once.
 
   ### The pattern across all three attacks
 

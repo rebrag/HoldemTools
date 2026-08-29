@@ -218,7 +218,8 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   stats.qre_gap = qre_gap;
 
   LocalStore store;
-  write_artifact(store, config.output_path, *game, solver, config, stats);
+  const double export_s =
+      write_artifact(store, config.output_path, *game, solver, config, stats);
   const PeakMemory peak = peak_memory();
   std::cout << "solve time " << wall_s << " s (" << done << " iters on " << threads
             << " thread" << (threads == 1 ? "" : "s") << ", "
@@ -231,6 +232,12 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   // closely, and when they do not the commit figure is the honest one.
   if (peak.commit > 0) std::cout << ", commit " << peak.commit / (1024.0 * 1024.0) << " MB";
   std::cout << "; solve phase " << stats.peak_rss_bytes / (1024.0 * 1024.0) << " MB)\n";
+  // The export pass used to be invisible: `wall` above stops before it, so a
+  // flop solve reporting 56 s was really 74 s, and the missing quarter ran on
+  // ONE core. Print the total the process actually took, and the split.
+  std::cout << "total " << wall_s + setup_s + export_s << " s (setup " << setup_s
+            << " + solve " << wall_s << " + artifact export " << export_s
+            << " s, single-threaded)\n";
   return 0;
 }
 
