@@ -333,7 +333,22 @@ So the remaining gap on wide-range multi-size flop trees is the per-iteration wo
 
   **The vectorization finding is the durable part, and it is a new instance of a trap this file has hit twice.** Writing f32 regrets and u16 strategy sums in ONE loop makes MSVC give up entirely: `dumpbin` showed **zero packed ymm ops against the f32 version's seven**, and 37 scalar `ss` ops. It scalarised the regret half too, which is why the loss was bigger than the strategy array's share of traffic could explain. Splitting restored 12 ymm ops in each half. **Mixing output widths in one loop silently costs the whole loop its vectorization** - alongside the lambda-capture provenance trap in M7 and the hand-major scatter in M6.8.
 
-  **Do not attempt the regret half on the strength of jesolver's changelog.** The ratio is strictly worse: regrets carry ~3x the traffic but would pay the float/int conversion about FIVE times per cell per iteration (regret matching reads them, `plain_fold_in` read-modify-writes, the update read-modify-writes) against the strategy array's one - so roughly one conversion per 15% of traffic saved, where one conversion per 25% already came out neutral. The numerics are also far harder: signed values, a sign-dependent discount that cannot be folded into the scale, and no free normalization on read.
+  **On the regret half - and this is a CORRECTION to the first version of this entry, which said flatly "do not attempt it".** That was argued from conversion counts rather than measured, and `tools/qbench.cpp` (written afterwards, at the user's prompting) measures the thing directly. Same action-major layout, 536 hands x 5 actions x 25000 nodes = 268 MB of f32 cells, far past the 96 MB V-Cache:
+
+  | variant | time | packed ymm | vs f32 |
+  |---|---|---|---|
+  | A: f32 store, f32 math (what the solver does) | 0.0131 s | 16 | - |
+  | B: u16 store, **f32 math** (naive quantized regrets) | 0.0341 s | **0** | **0.39x - 2.6x SLOWER** |
+  | C: u16 store, **u16 integer math** | 0.0051 s | 12 | **2.56x FASTER** |
+
+  So both halves of the folk wisdom are true at once, and which one you get depends entirely on where the conversion sits:
+
+  - **Naive u16 regrets are much worse than doing nothing.** Reading u16, converting to float to subtract a float counterfactual value, converting back and storing u16 is a round trip MSVC refuses to vectorize at all (0 ymm ops), and it lands at 0.39x. This is the same mixed-width failure as the fused loop above, and it is the version anyone would write first.
+  - **A pure 16-bit integer inner loop is 2.56x faster than f32**, which is better than the 2x that halving the bytes alone would predict - the extra is 16-wide integer lanes against 8-wide float. The prize is real.
+
+  Reaching C is a **fixed-point** design, not a storage change: the per-node value vector `out[]` would be quantized once per node (H conversions) instead of per cell (H x A), leaving the update loop pure integer. That is the same hoisting trick that already paid for the strategy scale. The unsolved part is `regret_matched_action_major`, which reads H x A regrets and must emit float sigma because sigma multiplies float child values - so it cannot obviously be made integer, and a partially-integer loop reintroduces exactly the mixed-width pattern that measures 0.39x.
+
+  **Verdict: not "never", but not on faith either.** The next person to try this should start from `tools/qbench.cpp`, add a variant modelling regret matching's integer-in/float-out step, and only write solver code if that variant stays vectorized. The naive version is measured and dead.
 
   **The likely reason this diverges from jesolver**, stated as a hypothesis rather than a finding: compression pays there because it removes stalls that this engine has already removed by other means - the action-major layout (M6.8), the compact hand universe (M6.8), and the restrict-pointer fold-in work (M7). That win can only be spent once.
 
