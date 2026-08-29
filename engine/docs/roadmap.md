@@ -348,7 +348,21 @@ So the remaining gap on wide-range multi-size flop trees is the per-iteration wo
 
   Reaching C is a **fixed-point** design, not a storage change: the per-node value vector `out[]` would be quantized once per node (H conversions) instead of per cell (H x A), leaving the update loop pure integer. That is the same hoisting trick that already paid for the strategy scale. The unsolved part is `regret_matched_action_major`, which reads H x A regrets and must emit float sigma because sigma multiplies float child values - so it cannot obviously be made integer, and a partially-integer loop reintroduces exactly the mixed-width pattern that measures 0.39x.
 
-  **Verdict: not "never", but not on faith either.** The next person to try this should start from `tools/qbench.cpp`, add a variant modelling regret matching's integer-in/float-out step, and only write solver code if that variant stays vectorized. The naive version is measured and dead.
+  **That experiment was then run.** `tools/qbench.cpp` now models all three ways the traversal touches the regret array, and the answer is that each one behaves differently:
+
+  | touch | f32 baseline | best i16 form | |
+  |---|---|---|---|
+  | the update (`r -= out[h]`) | - | **2.35x faster** | pure integer, if `out[]` is quantized once per node |
+  | regret matching (pass 1) | - | **1.21x faster** | widen i16 -> f32 scratch in its OWN loop, then the existing all-float kernel |
+  | `plain_fold_in` (`r += cv`) | - | **0.76x - still a loss** | even with every loop single-width |
+
+  **The governing rule, which explains all eleven variants measured: MSVC vectorizes a loop whose streaming array is touched at ONE width, and scalarises it the moment the streaming array has to be widened or narrowed inside the loop.** Pure f32 and pure integer loops get 12-20 packed ymm ops; every fused mixed-width variant gets exactly zero. Splitting the widening into a loop of its own is what rescues regret matching (`j_widen`, 17 ymm ops), and it is the same fix that rescued `strat_accum_q16` in the solver. Fold-in cannot be rescued the same way because it needs a float multiply, a narrowing, and an integer accumulate, and the cheap cache-resident half stays scalar and dominates.
+
+  Weighting the three touches equally puts the whole regret quantization at about **1.16x on this array alone**, which is a few percent of a solve - far too little for signed quantization, per-node scale management, and a sign-dependent discount that cannot be folded into the scale.
+
+  **And the reason it is that small is the genuinely useful finding, because it explains why jesolver's compression does not transfer.** A twelfth variant merged `plain_fold_in` and the update into ONE streaming pass over the regrets, which halves the bytes moved and needs no quantization at all. It measured **0.99x - exactly nothing**. The regret rows for a single node are H x A x 4 bytes = about 10.7 KB at these sizes, so they are **L1-resident for the whole time the node is being processed**. The array streams from DRAM roughly ONCE per node per iteration and every subsequent touch is a cache hit. So the traffic that quantization would halve is already small, while the conversion cost is paid on every cell.
+
+  **Verdict: do not quantize regrets.** Not because narrow cells are slow - variant C is 2.35x - but because this engine's hot data is already mostly in L1 within a node, so there is little streaming traffic left to save. The action-major layout and compact hand universe from M6.8 are what made that true; compression pays for jesolver because it is buying something this engine already has.
 
   **The likely reason this diverges from jesolver**, stated as a hypothesis rather than a finding: compression pays there because it removes stalls that this engine has already removed by other means - the action-major layout (M6.8), the compact hand universe (M6.8), and the restrict-pointer fold-in work (M7). That win can only be spent once.
 
