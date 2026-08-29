@@ -379,6 +379,30 @@ So the remaining gap on wide-range multi-size flop trees is the per-iteration wo
 
   Scope, stated honestly: this models the opening totals pass of `showdown_2p` and `compat_reach`, not the group sweep below it. What it does establish is that the *gather* is not the problem, which is what the perf plan claimed.
 
+  ### The artifact export is 24% of the run, single-threaded, and INVISIBLE in every number we report (measured 2026-08-29)
+
+  Found by chasing a user observation that `engine.exe` sits at ~30% CPU in Task Manager while PioSolver sits at ~70%. Both halves of that turned out to be the same thing.
+
+  On the `8d 4c 2c` user spot, one run:
+
+  | | |
+  |---|---|
+  | printed `solve time` | 56.15 s |
+  | printed `wall ... including setup` | 56.29 s |
+  | **actual process wall** | **74.49 s** |
+
+  `wall_s` is captured in `main.cpp` **before** `write_artifact` is called, so the 18.2 s export pass is in neither the console line nor `wall_time_s` in the artifact metadata. `watcher/engine_compare.py` reads `wall_time_s` for the htsolver-vs-Pio comparison, which means **every ratio this project has published understates htsolver's end-to-end cost on flop trees by about a quarter**. The solve-loop-to-solve-loop comparison is still the fair one for the solver, but it is not what a `/compare` user experiences: end to end this spot is 74.5 s against Pio's 14.1 s.
+
+  `ExportPass::visit` is a plain recursive call (`artifact_writer.cpp`) with no `parallel_for` anywhere, so those 18.2 s run on ONE core. That is the CPU number: the solve loop reaches ~8x on 16 threads (50% efficiency, measured in M6.7), then a quarter of the run drops to 1/16 of the machine, and the average lands near 30%. Pio has no equivalent serial tail.
+
+  Three separate problems now point at the same code, which makes it the highest-value target in the engine:
+
+  1. **Memory** - the export holds one record per decision node for ALL of them at once: 4.43 GB against the solver's own 1.40 GB, and 9.58 GB on the config that could not run at all.
+  2. **Wall clock** - 24% of the run, single-threaded.
+  3. **Reporting** - it is excluded from the only timing number the pipeline records.
+
+  And there is a free win inside it: `exports` is a `std::map<NodeId, NodeExportData>` - a red-black tree with a heap allocation per entry, 248536 of them, with O(log n) lookups in the write loop. Indexing a `std::vector` by `decision_index` costs nothing and removes all of it.
+
   ### The pattern across all three attacks
 
   Three independent per-iteration ideas were measured this session - i16 regret storage, merging the fold-in and update passes, and de-gathering the showdown sweep - and all three came back **neutral or negative**. The common cause is the same each time: the data these loops touch is already cache-resident, because M6.8's action-major layout and compact hand universe removed the structural problem that made it otherwise.
