@@ -131,6 +131,27 @@ The sweep's hardest board (`Ks Kd 4c 9h`, which has a usable s<->d permutation) 
 
 **That last sentence was right, and M7.1 answered it.** The DCFR gamma sweep closed the family outright: re-run after the default change, 100%-range turn boards are **1.17x faster than Pio** (median over the same 10 boards, range 0.93-1.66x), all 10 passing the cross-exploitability gate. Only `Ks Kd 4c 9h` is still behind, at 0.93x. **htsolver is now ahead of PioSolver in every family it has been swept on.** The prediction that it would take an update-rule change rather than more scheduling held exactly - it just turned out to be a parameter of the rule already in use, not a different rule.
 
+**Do not over-read that sentence: the swept families are turn and river, at tight and 100% ranges, on a two-size tree. A real user flop spot measured 2026-08-28 is still 3.8x behind Pio**, and it is worth recording exactly because it is the shape the sweep does not cover.
+
+`8d 4c 2c`, pot 100, stacks 700 (SPR 7), ~50-60% asymmetric ranges, flop/turn/river sizes of 30/80/all-in plus raises, `max_raises` 3: **648732 nodes (248536 decision), 536-hand universe**. Same tree built node-for-node in Pio via `--solve-pio`, both to a 0.3%-of-pot target.
+
+| | htsolver | pio |
+|---|---|---|
+| solve | **53.85 s** | **14.13 s** (+0.59 s tree build) |
+| reached | 0.237% of pot | 0.250% |
+| iterations | 100 | - |
+| solve-phase peak | 1951 MB | 1818 MB |
+| root EV (OOP) | 30.992 | 30.977 |
+
+**The loss is entirely per-iteration cost, not convergence.** 100 iterations is all it needs - post-gamma convergence is excellent - but each costs **538 ms**, against ~49 ms for the 213356-node SPR 7 bench tree. Only 17% more nodes for 11x the cost. Roughly 5x of that is honest arithmetic (536 hands vs ~190 at tight ranges, and 5-6 actions per node vs 3-4); the rest is cache behaviour at a 1.4 GB regret+strategy working set.
+
+Two things measured on this spot rather than assumed:
+
+- **Suit isomorphism IS active here and worth 1.57x** (53.85 s on, 84.69 s off). "Asymmetric range" in the collapse rule means a range that is not suit-symmetric - one carrying an explicit combo token like `AdQd` - **not** "the two seats' ranges differ". Ranges written in class notation with weights (`AJs:0.75`) stay suit-symmetric and collapse fine. That lever is already spent on spots like this, not available.
+- **`checkpoint_every` was most of the earlier user-visible complaint.** This solve stops at iteration 100, so the old hardcoded 250 could not have stopped before 250 and would have cost ~134 s - 9.5x Pio instead of 3.8x.
+
+So the remaining gap on wide-range multi-size flop trees is the per-iteration work, and the ladder in `docs/perf-plan.md` is pointed at exactly it: i16 regret/strategy storage halves the dominant memory traffic, and the terminal-evaluator gather is the other half. Neither is convergence work, and no further update-rule tuning will touch this.
+
 - **M7 - QRE (quantal response equilibrium).** Landed 2026-08-28. **The first differentiator over Pio to actually ship.**
 
   Entropy-regularized CFR, implemented as a **reward transformation inside the traversal** rather than as a replacement for regret matching. At an actor's decision node each action's counterfactual value is charged the dilated KL of the current strategy to uniform:
