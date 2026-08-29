@@ -364,6 +364,27 @@ So the remaining gap on wide-range multi-size flop trees is the per-iteration wo
 
   **Verdict: do not quantize regrets.** Not because narrow cells are slow - variant C is 2.35x - but because this engine's hot data is already mostly in L1 within a node, so there is little streaming traffic left to save. The action-major layout and compact hand universe from M6.8 are what made that true; compression pays for jesolver because it is buying something this engine already has.
 
+  ### The showdown gather, measured the same way (2026-08-29) - also refuted
+
+  `docs/perf-plan.md` listed the `for (int i : sorted_)` gather in `RiverEvaluator` as the next lever, on the reasoning that an indirect gather in the hottest loop cannot autovectorize. `tools/qbench.cpp` models its totals sweep four ways, at 500 valid hands:
+
+  | variant | vs today |
+  |---|---|
+  | N: gather + 52-bin scatter (today) | - |
+  | O: `hi`/`lo` pre-permuted at construction, reach pre-gathered, contiguous sweep | **0.82x - SLOWER** |
+  | Q: contiguous plus a 4-bank scatter (the standard histogram fix) | **0.76x** |
+  | P: contiguous with the scatter removed entirely (the ceiling) | **1.12x** |
+
+  **The premise was wrong twice over.** A 536-hand reach vector is ~2 KB, so it and the permutation are **L1-resident** - a gather out of L1 is cheap, and there is no bandwidth problem to fix. And the loop is latency-bound on the dependent `double` accumulation rather than on its loads, so a pre-gather pass adds a whole extra traversal to save something that was not costing much. **Even deleting the scatter completely only reaches 1.12x**, so the sweep is already within ~12% of its own floor and every standard fix overshoots that budget.
+
+  Scope, stated honestly: this models the opening totals pass of `showdown_2p` and `compat_reach`, not the group sweep below it. What it does establish is that the *gather* is not the problem, which is what the perf plan claimed.
+
+  ### The pattern across all three attacks
+
+  Three independent per-iteration ideas were measured this session - i16 regret storage, merging the fold-in and update passes, and de-gathering the showdown sweep - and all three came back **neutral or negative**. The common cause is the same each time: the data these loops touch is already cache-resident, because M6.8's action-major layout and compact hand universe removed the structural problem that made it otherwise.
+
+  **Treat "the per-iteration cost has headroom" as disproven until someone profiles the real solve and shows where the time actually goes.** The wins this session came from iterations (M7.1's gamma sweep, ~2x) and from not wasting them (the `checkpoint_every` fix). The remaining credible levers are algorithmic - fewer iterations, fewer nodes (bet-size pruning, regret-based pruning), or depth-limiting - not narrower cells or tighter loops.
+
   **The likely reason this diverges from jesolver**, stated as a hypothesis rather than a finding: compression pays there because it removes stalls that this engine has already removed by other means - the action-major layout (M6.8), the compact hand universe (M6.8), and the restrict-pointer fold-in work (M7). That win can only be spent once.
 
   Memory-wise the result is also out-scaled by its neighbour: on the same spot the ARTIFACT EXPORT is 4.43 GB against regrets+strategy's 1.40 GB, so streaming the export saves ~12x what i16 does.

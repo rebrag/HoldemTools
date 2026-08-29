@@ -200,6 +200,93 @@ void m_merged_f32(float* RESTRICT r, const float* RESTRICT cvs, const float* RES
   }
 }
 
+// ------------------------------------------------ the showdown totals sweep
+// RiverEvaluator::showdown_2p and compat_reach both open with this loop:
+//
+//   for (int i : sorted_) {
+//     const double r = opp_reach[i];
+//     total += r;
+//     per_card[combos[i].hi] += r;
+//     per_card[combos[i].lo] += r;
+//   }
+//
+// Two separate problems live in it. `sorted_` is a permutation, so opp_reach
+// and combos are GATHERED; and per_card is a read-modify-write SCATTER into
+// 52 bins, which serializes whenever consecutive hands share a card.
+//
+// Unlike the regret array, every input here is L1-resident (536 hands is
+// ~2 KB of reach, ~2 KB of indices), so this is a pure latency/ILP question
+// with no bandwidth component at all.
+constexpr int kValid = 500;   // hands not blocked by the 5-card board
+constexpr int kCards = 52;
+
+// N: exactly what the engine does today.
+double n_totals_gather(const float* RESTRICT reach, const int* RESTRICT sorted,
+                       const std::uint8_t* RESTRICT hi, const std::uint8_t* RESTRICT lo,
+                       double* RESTRICT per_card, int n) {
+  for (int c = 0; c < kCards; ++c) per_card[c] = 0.0;
+  double total = 0.0;
+  for (int s = 0; s < n; ++s) {
+    const int i = sorted[s];
+    const double r = reach[i];
+    total += r;
+    per_card[hi[i]] += r;
+    per_card[lo[i]] += r;
+  }
+  return total;
+}
+
+// O: hi/lo pre-permuted into sorted order (STATIC - the constructor could do
+// this once and never again), and the reach pre-gathered in its own pass.
+// The scatter remains.
+double o_totals_contig(const float* RESTRICT reach, const int* RESTRICT sorted,
+                       float* RESTRICT r_sorted, const std::uint8_t* RESTRICT hi_s,
+                       const std::uint8_t* RESTRICT lo_s, double* RESTRICT per_card, int n) {
+  for (int s = 0; s < n; ++s) r_sorted[s] = reach[sorted[s]];
+  for (int c = 0; c < kCards; ++c) per_card[c] = 0.0;
+  double total = 0.0;
+  for (int s = 0; s < n; ++s) {
+    const double r = r_sorted[s];
+    total += r;
+    per_card[hi_s[s]] += r;
+    per_card[lo_s[s]] += r;
+  }
+  return total;
+}
+
+// P: contiguous and NO scatter - the ceiling, showing what the 52-bin
+// read-modify-write costs on its own.
+double p_totals_noscatter(const float* RESTRICT reach, const int* RESTRICT sorted,
+                          float* RESTRICT r_sorted, int n) {
+  for (int s = 0; s < n; ++s) r_sorted[s] = reach[sorted[s]];
+  double total = 0.0;
+  for (int s = 0; s < n; ++s) total += r_sorted[s];
+  return total;
+}
+
+// Q: contiguous, scatter kept, but four private accumulator banks so
+// consecutive hands sharing a card do not chain through one location.
+// Merged at the end. This is the standard fix for a short-histogram scatter.
+double q_totals_banked(const float* RESTRICT reach, const int* RESTRICT sorted,
+                       float* RESTRICT r_sorted, const std::uint8_t* RESTRICT hi_s,
+                       const std::uint8_t* RESTRICT lo_s, double* RESTRICT banks, int n) {
+  for (int s = 0; s < n; ++s) r_sorted[s] = reach[sorted[s]];
+  for (int c = 0; c < kCards * 4; ++c) banks[c] = 0.0;
+  double total = 0.0;
+  int b = 0;
+  for (int s = 0; s < n; ++s) {
+    const double r = r_sorted[s];
+    total += r;
+    banks[b * kCards + hi_s[s]] += r;
+    banks[b * kCards + lo_s[s]] += r;
+    b = (b + 1) & 3;
+  }
+  for (int c = 0; c < kCards; ++c) {
+    banks[c] += banks[kCards + c] + banks[2 * kCards + c] + banks[3 * kCards + c];
+  }
+  return total;
+}
+
 template <typename F>
 double timed(const char* name, std::size_t bytes, F&& fn) {
   double t[5];
@@ -337,6 +424,42 @@ int main() {
     }
   });
 
+  // ---- the showdown totals sweep (all L1-resident, latency-bound) ----
+  std::printf("\n-- showdown totals sweep (RiverEvaluator, %d valid hands) --\n", kValid);
+  std::vector<int> sorted(kValid);
+  std::vector<std::uint8_t> hi(kHands), lo(kHands), hi_s(kValid), lo_s(kValid);
+  std::vector<float> reach(kHands, 0.01f), r_sorted(kValid, 0.0f);
+  std::vector<double> per_card(kCards, 0.0), banks(kCards * 4, 0.0);
+  // A permutation that is NOT the identity - sorted_ is by hand strength, so
+  // it scrambles the reach access pattern exactly like this.
+  for (int s = 0; s < kValid; ++s) sorted[s] = (s * 397 + 11) % static_cast<int>(kHands);
+  for (std::uint32_t i = 0; i < kHands; ++i) {
+    hi[i] = static_cast<std::uint8_t>((i * 7 + 3) % kCards);
+    lo[i] = static_cast<std::uint8_t>((i * 13 + 29) % kCards);
+  }
+  for (int s = 0; s < kValid; ++s) { hi_s[s] = hi[sorted[s]]; lo_s[s] = lo[sorted[s]]; }
+  constexpr int kCalls = 200000;
+  double keep = 0.0;
+  const double tn = timed("N  gather + scatter (today)", 0, [&] {
+    for (int c = 0; c < kCalls; ++c)
+      keep += n_totals_gather(reach.data(), sorted.data(), hi.data(), lo.data(),
+                              per_card.data(), kValid);
+  });
+  const double to = timed("O  contiguous + scatter", 0, [&] {
+    for (int c = 0; c < kCalls; ++c)
+      keep += o_totals_contig(reach.data(), sorted.data(), r_sorted.data(), hi_s.data(),
+                              lo_s.data(), per_card.data(), kValid);
+  });
+  const double tp = timed("P  contiguous, no scatter (ceiling)", 0, [&] {
+    for (int c = 0; c < kCalls; ++c)
+      keep += p_totals_noscatter(reach.data(), sorted.data(), r_sorted.data(), kValid);
+  });
+  const double tq = timed("Q  contiguous + banked scatter", 0, [&] {
+    for (int c = 0; c < kCalls; ++c)
+      keep += q_totals_banked(reach.data(), sorted.data(), r_sorted.data(), hi_s.data(),
+                              lo_s.data(), banks.data(), kValid);
+  });
+
   std::printf("\n== speedup vs the f32 baseline for that touch ==\n");
   std::printf("update        B roundtrip %.2fx   C pure-int  %.2fx\n", ta / tb, ta / tc);
   std::printf("regret match  F i16       %.2fx   J widen+f32 %.2fx\n", te / tf, te / tj);
@@ -344,6 +467,9 @@ int main() {
               "   L 3-func %.2fx\n", tg / th, tg / ti, tg / tk, tg / tl);
   std::printf("MERGED PASS   %.2fx faster than today's two passes (f32, no quantization)\n",
               tga / tm);
+  std::printf("showdown      O contiguous %.2fx   Q banked %.2fx   P no-scatter %.2fx\n",
+              tn / to, tn / tq, tn / tp);
+  std::printf("              (keep %.1f)\n", keep);
   std::printf("\n(sums[0] %.3f out[0] %.3f - keeps the work live)\n", sums[0], outv[0]);
   return 0;
 }

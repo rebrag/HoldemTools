@@ -87,7 +87,13 @@ So `tests/test_parallel.cpp` can keep asserting exact equality in either mode.
 Ship it as `precision: {f32 | i16}` with f32 as the gated validation path and the fixture untouched, and give i16 its own acceptance test (agreement with the f32 solve to within a stated exploitability delta).
 That is exactly the shape jesolver uses, and its adaptivity means precision *rises* automatically as the target tightens.
 
-**Tier 2 - the terminal-evaluator gather.**
+**Tier 2 - the terminal-evaluator gather. MEASURED 2026-08-29 AND REFUTED. The fix proposed below is 0.82x - it makes things SLOWER.**
+`tools/qbench.cpp` models the totals sweep both ways: gather-in-place as the engine does it today, against pre-permuting into contiguous order (with `hi`/`lo` pre-permuted at construction, which is free) and sweeping.
+Contiguous measured **0.82x**, a banked-histogram variant **0.76x**, and removing the 52-bin scatter *entirely* only reaches **1.12x**.
+The premise was wrong in two ways: a 536-hand reach vector is ~2 KB, so it and the index permutation are **L1-resident** and a gather from L1 is cheap; and the loop is latency-bound on the dependent double-precision accumulation rather than on its loads, so adding a pre-gather pass costs more iterations than the contiguous access saves.
+Its ceiling is 1.12x and the standard fixes overshoot it. Left below as written because the reasoning is a good example of a plausible optimization that measurement kills.
+
+**Tier 2 (original, refuted) - the terminal-evaluator gather.**
 `RiverEvaluator::compat_reach` and `showdown_2p` in `src/eval/terminal.cpp` run `for (int i : sorted_)`, an indirect gather through a permutation, in the hottest loop in the solver.
 It cannot autovectorize, and this engine has no explicit SIMD anywhere - it relies entirely on `/arch:AVX2` autovectorization, which succeeds in `plain_fold_in` and fails here.
 The fix is the standard one: permute `opp_reach` into strength order once per call, sweep contiguously, permute back.
