@@ -47,9 +47,10 @@ std::string MemoryEstimate::to_string() const {
   return out.str();
 }
 
-MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc) {
+MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc,
+                               Precision precision) {
   MemoryEstimate est;
-  est.regret_strategy_bytes = CfrSolver::state_bytes(game);
+  est.regret_strategy_bytes = CfrSolver::state_bytes(game, precision);
   est.tree_bytes = game.tree().size() * sizeof(Node);
   est.showdown_bytes = game.auxiliary_bytes();
   est.export_bytes = export_pass_bytes(game);

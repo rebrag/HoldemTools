@@ -312,6 +312,33 @@ So the remaining gap on wide-range multi-size flop trees is the per-iteration wo
 
   Also fixed here because the suite was red: `tests/test_memory.cpp`'s hand-computed workspace mirror still read `(2 + seats)` hands-wide scratch slots per level after M7 added `kSlotCompat`, so it expected 360 bytes where the estimator correctly said 420. The estimator was right; the test had not been updated with it.
 
+- **M7.2 - i16 strategy sums (`algorithm.precision`).** Landed 2026-08-28.
+  **A 25% memory win and NO speed win, which is a negative result against the jesolver evidence and the reason it is written up in full.**
+
+  Strategy sums store as u16 with a per-node f32 scale; regrets stay f32. `precision: "f32" | "i16"`, f32 the default and the Pio-gated path, verified bit-identical (`validate_turn_fullrange` at 300 iterations still `nashconv 0.106929, ev 46.0018 53.9982`, all 47 tests pass).
+
+  The strategy half was chosen first because it is the safe half, and none of its properties carry over to regrets: sums are accumulate-only from non-negative terms, their discount is a single sign-independent factor (so it is charged to the SCALE, deleting that memory pass rather than narrowing it), they are never read inside the traversal, and `row_from_action_major` normalizes every row by its own sum - **so the per-node scale cancels on read and there is no dequantization step anywhere**. Overflow is a per-node bound, not a per-cell check: sigma is a probability, so no cell can grow by more than `max(rw)` per visit, and that number is free in the loop that already builds `rw`.
+
+  On the user flop spot above (248536 decision nodes, 536 hands), regrets+strategy **1.40 GB -> 1.05 GB**, root EVs matching f32 to four decimals and nashconv 0.472781 against 0.473739. The quantization is numerically sound.
+
+  Wall clock, three interleaved rounds, 100 iterations each:
+
+  | attempt | i16 vs f32 | why |
+  |---|---|---|
+  | fused update loop | **-4.3%** (consistent sign) | the loop compiled SCALAR |
+  | split into two loops | **-2.75%** (consistent sign) | vectorized again |
+  | + scale hoisted per node | **+0.45%, +3.5%, -2.4%** | sign flips: not resolved |
+
+  **The final answer is "indistinguishable from f32".** Within-arm spread was 10.6% against an effect under 1.5%, which is well inside the box's documented ~3% wall-clock noise floor, so no percentage should be quoted from it in either direction.
+
+  **The vectorization finding is the durable part, and it is a new instance of a trap this file has hit twice.** Writing f32 regrets and u16 strategy sums in ONE loop makes MSVC give up entirely: `dumpbin` showed **zero packed ymm ops against the f32 version's seven**, and 37 scalar `ss` ops. It scalarised the regret half too, which is why the loss was bigger than the strategy array's share of traffic could explain. Splitting restored 12 ymm ops in each half. **Mixing output widths in one loop silently costs the whole loop its vectorization** - alongside the lambda-capture provenance trap in M7 and the hand-major scatter in M6.8.
+
+  **Do not attempt the regret half on the strength of jesolver's changelog.** The ratio is strictly worse: regrets carry ~3x the traffic but would pay the float/int conversion about FIVE times per cell per iteration (regret matching reads them, `plain_fold_in` read-modify-writes, the update read-modify-writes) against the strategy array's one - so roughly one conversion per 15% of traffic saved, where one conversion per 25% already came out neutral. The numerics are also far harder: signed values, a sign-dependent discount that cannot be folded into the scale, and no free normalization on read.
+
+  **The likely reason this diverges from jesolver**, stated as a hypothesis rather than a finding: compression pays there because it removes stalls that this engine has already removed by other means - the action-major layout (M6.8), the compact hand universe (M6.8), and the restrict-pointer fold-in work (M7). That win can only be spent once.
+
+  Memory-wise the result is also out-scaled by its neighbour: on the same spot the ARTIFACT EXPORT is 4.43 GB against regrets+strategy's 1.40 GB, so streaming the export saves ~12x what i16 does.
+
 ## Where the time goes: the chance-node cliff (measured 2026-08-26)
 
 `watcher/bench_boards.py` swept 10 turn boards and 10 river boards through both solvers - same ranges, pot, stacks and betting structure, same 0.02%-of-pot accuracy target, so the only variable is whether the tree contains a chance node. All 20 passed the cross-exploitability gate.

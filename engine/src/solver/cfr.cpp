@@ -92,7 +92,7 @@ void row_from_action_major(const float* values, std::uint32_t hands, std::uint16
   }
 }
 
-// The fold-in loops below take raw restrict-qualified pointers and their
+// The update and fold-in loops below take raw restrict-qualified pointers and their
 // loop invariants BY VALUE, and that shape is the point rather than a style
 // choice. As lambdas capturing std::vector references they compiled fully
 // scalar: the compiler could not prove the five arrays disjoint, and every
@@ -109,6 +109,53 @@ void row_from_action_major(const float* values, std::uint32_t hands, std::uint16
 // (kSlotSigma, kSlotCompat); `child_vals` is the depth-d kSlotChild or a
 // forked buffer. All five are distinct allocations. See the aliasing note in
 // traverse_impl for the same argument spelled out.
+// The end-of-node update, fused so regrets and strategy sums are walked once
+// between them rather than once each. Templated on the clamp rather than
+// branching inside, for the same reason the clamp was hoisted originally:
+// two branch-free bodies vectorize, one predicated body does not.
+template <bool Clamp>
+void update_row_f32(float* ENGINE_RESTRICT regret_col, float* ENGINE_RESTRICT strat_col,
+                    const float* ENGINE_RESTRICT sigma_col, const float* ENGINE_RESTRICT out,
+                    const float* ENGINE_RESTRICT rw, std::uint32_t hands) {
+  for (std::uint32_t h = 0; h < hands; ++h) {
+    const float r = regret_col[h] - out[h];
+    // `r < 0 ? 0 : r` rather than std::max, which keeps -0.0f as -0.0f.
+    regret_col[h] = Clamp ? (r < 0.0f ? 0.0f : r) : r;
+    strat_col[h] += rw[h] * sigma_col[h];
+  }
+}
+
+// The u16 path, split in two rather than fused. Fusing them (one loop doing
+// the f32 regret update and the u16 accumulate together) compiles fully
+// SCALAR on MSVC - dumpbin shows zero packed ymm ops against the f32
+// version's seven - because the mixed output widths defeat the vectorizer.
+// Splitting lets the regret half keep the same vector code the f32 path has.
+template <bool Clamp>
+void update_regret_row(float* ENGINE_RESTRICT regret_col, const float* ENGINE_RESTRICT out,
+                       std::uint32_t hands) {
+  for (std::uint32_t h = 0; h < hands; ++h) {
+    const float r = regret_col[h] - out[h];
+    regret_col[h] = Clamp ? (r < 0.0f ? 0.0f : r) : r;
+  }
+}
+
+// The caller has already guaranteed via strat_reserve_headroom that q plus
+// the largest possible addition stays inside the range, which is what keeps
+// this loop free of any per-cell overflow check.
+// `rw` arrives PRE-SCALED by 1/scale: the caller folds it into the hands-wide
+// buffer once per node rather than once per cell, which is `actions - 1`
+// multiplies per hand saved and matches how the QRE transform already folds
+// its own per-node constant into the compat buffer.
+void strat_accum_q16(std::uint16_t* ENGINE_RESTRICT q_col, const float* ENGINE_RESTRICT sigma_col,
+                     const float* ENGINE_RESTRICT rw_scaled, std::uint32_t hands) {
+  for (std::uint32_t h = 0; h < hands; ++h) {
+    // Both factors are non-negative, so the +0.5f truncation is a correct
+    // round-to-nearest and cannot go below zero.
+    const float d = rw_scaled[h] * sigma_col[h] + 0.5f;
+    q_col[h] = static_cast<std::uint16_t>(q_col[h] + static_cast<unsigned>(d));
+  }
+}
+
 void plain_fold_in(float* ENGINE_RESTRICT out, float* ENGINE_RESTRICT regret_col,
                    const float* ENGINE_RESTRICT sigma_col,
                    const float* ENGINE_RESTRICT child_vals, std::uint32_t hands) {
@@ -200,7 +247,13 @@ CfrSolver::CfrSolver(const Game& game, UpdateConfig update, int threads, RecalcC
   // a programmatic caller cannot construct the broken pairing.
   if (sampling_.enabled) recalc_config_.enabled = false;
   regrets_.assign(layout_.total, 0.0f);
-  strat_sum_.assign(layout_.total, 0.0f);
+  if (update_.precision == Precision::I16) {
+    strat_q_.assign(layout_.total, 0);
+    strat_scale_.assign(layout_.node_offset.size(), 1.0f);
+    strat_bound_.assign(layout_.node_offset.size(), 0.0f);
+  } else {
+    strat_sum_.assign(layout_.total, 0.0f);
+  }
   pool_ = std::make_unique<ThreadPool>(resolve_thread_count(threads));
   // Aim for a few subtrees per worker so a slow branch cannot strand the
   // pool; the budget divides among children at each fork, which is what
@@ -262,11 +315,21 @@ CfrSolver::CfrSolver(const Game& game, UpdateConfig update, int threads, RecalcC
   }
 }
 
-std::size_t CfrSolver::state_bytes(const Game& game) {
+std::size_t CfrSolver::state_bytes(const Game& game, Precision precision) {
   const InfosetLayout layout = InfosetLayout::build(game);
-  // Regrets + strategy sums, plus the per-node "discount paid at" stamp.
-  return layout.total * 2 * sizeof(float) +
-         layout.node_offset.size() * sizeof(std::uint32_t);
+  // Regrets, plus the per-node "discount paid at" stamp.
+  std::size_t bytes = layout.total * sizeof(float) +
+                      layout.node_offset.size() * sizeof(std::uint32_t);
+  // Strategy sums: f32 per cell, or u16 per cell plus a per-node scale and
+  // range bound. The two per-node floats are counted because the solver
+  // allocates them, and at hundreds of thousands of nodes they are not noise.
+  if (precision == Precision::I16) {
+    bytes += layout.total * sizeof(std::uint16_t) +
+             layout.node_offset.size() * 2 * sizeof(float);
+  } else {
+    bytes += layout.total * sizeof(float);
+  }
+  return bytes;
 }
 
 std::size_t CfrSolver::recalc_state_bytes(const Game& game, bool enabled) {
@@ -343,6 +406,9 @@ void CfrSolver::iterate() {
   if (qre_.enabled && qre_.anneal_full_at != 0 && qre_.anneal_factor > 1.0 &&
       t_ == qre_.anneal_full_at) {
     std::fill(strat_sum_.begin(), strat_sum_.end(), 0.0f);
+    std::fill(strat_q_.begin(), strat_q_.end(), std::uint16_t{0});
+    std::fill(strat_scale_.begin(), strat_scale_.end(), 1.0f);
+    std::fill(strat_bound_.begin(), strat_bound_.end(), 0.0f);
   }
   const int seats = game_.num_seats();
   std::vector<std::vector<float>> reach(seats);
@@ -387,11 +453,49 @@ void CfrSolver::pay_discount(std::uint32_t decision_index, std::uint32_t upto) {
   const std::size_t n = static_cast<std::size_t>(layout_.node_hands[decision_index]) *
                         layout_.node_actions[decision_index];
   float* r = regrets_.data() + off;
+  if (update_.precision == Precision::I16) {
+    for (std::size_t i = 0; i < n; ++i) r[i] *= (r[i] > 0.0f ? pos : neg);
+    // The strategy discount is ONE sign-independent factor, so it can be
+    // charged to the scale instead of to 65536 stored cells - the whole pass
+    // disappears. Doing the same for regrets is not available: pos and neg
+    // differ, so their discount has to touch the data.
+    //
+    // Folding it into the scale rather than the data is also what keeps the
+    // accumulator's range stable. Discounting the DATA would shrink stored
+    // values every iteration while the additions stayed the same size, so
+    // the u16 range would drift toward the top end and force a rescale pass
+    // that costs exactly what was just saved.
+    strat_scale_[decision_index] *= strat;
+    strat_bound_[decision_index] *= strat;
+    return;
+  }
   float* s = strat_sum_.data() + off;
   for (std::size_t i = 0; i < n; ++i) {
     r[i] *= (r[i] > 0.0f ? pos : neg);
     s[i] *= strat;
   }
+}
+
+void CfrSolver::strat_reserve_headroom(std::uint32_t decision_index, float max_add) {
+  // Keep (bound + max_add) / scale inside the u16 range with margin. kQCeil
+  // is below 65535 so the per-cell truncating round cannot cross the top.
+  constexpr float kQCeil = 64000.0f;
+  float scale = strat_scale_[decision_index];
+  const float bound = strat_bound_[decision_index] + max_add;
+  if (bound <= kQCeil * scale) {
+    strat_bound_[decision_index] = bound;
+    return;
+  }
+  const std::size_t off = layout_.node_offset[decision_index];
+  const std::size_t n = static_cast<std::size_t>(layout_.node_hands[decision_index]) *
+                        layout_.node_actions[decision_index];
+  std::uint16_t* q = strat_q_.data() + off;
+  do {
+    for (std::size_t i = 0; i < n; ++i) q[i] = static_cast<std::uint16_t>(q[i] >> 1);
+    scale *= 2.0f;
+  } while (bound > kQCeil * scale);
+  strat_scale_[decision_index] = scale;
+  strat_bound_[decision_index] = bound;
 }
 
 void CfrSolver::flush_discounts() {
@@ -849,28 +953,44 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
     // The regret-matching sums are done with; the buffer becomes the reach
     // weights, hoisted out of the action loop below.
     float* rw = hand_scratch.data();
-    for (std::uint32_t h = 0; h < hands; ++h) rw[h] = reach[actor][h] * sw;
+    // sigma is a probability, so no cell can grow by more than max(rw) this
+    // visit. That single number is the whole overflow argument for the u16
+    // path, and it is free here because rw is being built anyway.
+    float max_rw = 0.0f;
+    for (std::uint32_t h = 0; h < hands; ++h) {
+      const float w = reach[actor][h] * sw;
+      rw[h] = w;
+      if (w > max_rw) max_rw = w;
+    }
+    const bool quantized = update_.precision == Precision::I16;
+    if (quantized) {
+      strat_reserve_headroom(node.decision_index, max_rw);
+      // Fold 1/scale into rw once per node. rw is not read by anything else
+      // on this path - the f32 branch below is the only other consumer and
+      // the two are mutually exclusive.
+      const float inv_scale = 1.0f / strat_scale_[node.decision_index];
+      for (std::uint32_t h = 0; h < hands; ++h) rw[h] *= inv_scale;
+    }
     // Action-outer so all four arrays are walked contiguously. Every (hand,
     // action) cell is independent, so this is the same arithmetic the
     // hand-outer version did, in a different visiting order.
     for (std::uint16_t k = 0; k < actions; ++k) {
       const std::size_t col = static_cast<std::size_t>(k) * hands;
       float* regret_col = regrets_.data() + off + col;
-      float* strat_col = strat_sum_.data() + off + col;
       const float* sigma_col = sigma.data() + col;
-      // The clamp is loop-invariant; hoisting it leaves two branch-free
-      // bodies. `r < 0 ? 0 : r` (not std::max) keeps -0.0f as -0.0f, which
-      // is what the branch did.
-      if (clamp) {
-        for (std::uint32_t h = 0; h < hands; ++h) {
-          const float r = regret_col[h] - out[h];
-          regret_col[h] = r < 0.0f ? 0.0f : r;
-          strat_col[h] += rw[h] * sigma_col[h];
+      if (quantized) {
+        if (clamp) {
+          update_regret_row<true>(regret_col, out.data(), hands);
+        } else {
+          update_regret_row<false>(regret_col, out.data(), hands);
         }
+        strat_accum_q16(strat_q_.data() + off + col, sigma_col, rw, hands);
       } else {
-        for (std::uint32_t h = 0; h < hands; ++h) {
-          regret_col[h] -= out[h];
-          strat_col[h] += rw[h] * sigma_col[h];
+        float* strat_col = strat_sum_.data() + off + col;
+        if (clamp) {
+          update_row_f32<true>(regret_col, strat_col, sigma_col, out.data(), rw, hands);
+        } else {
+          update_row_f32<false>(regret_col, strat_col, sigma_col, out.data(), rw, hands);
         }
       }
     }
@@ -931,7 +1051,21 @@ void CfrSolver::strategy_rows(NodeId id, bool current, std::vector<float>& out) 
   const std::uint16_t actions = layout_.node_actions[node.decision_index];
   const std::size_t off = layout_.node_offset[node.decision_index];
   out.resize(static_cast<std::size_t>(hands) * actions);
-  const float* values = (current ? regrets_ : strat_sum_).data() + off;
+  // The u16 strategy sums are widened into a scratch buffer rather than
+  // dequantized: row_from_action_major normalizes every row by its own sum,
+  // so the per-node scale cancels and only the ratios matter. Cold path
+  // (export + best response), so the extra buffer is free.
+  std::vector<float> widened;
+  const float* values;
+  if (!current && update_.precision == Precision::I16) {
+    const std::uint16_t* q = strat_q_.data() + off;
+    const std::size_t n = static_cast<std::size_t>(hands) * actions;
+    widened.resize(n);
+    for (std::size_t i = 0; i < n; ++i) widened[i] = static_cast<float>(q[i]);
+    values = widened.data();
+  } else {
+    values = (current ? regrets_ : strat_sum_).data() + off;
+  }
   for (std::uint32_t h = 0; h < hands; ++h) {
     row_from_action_major(values, hands, actions, h, /*positive_part=*/current,
                           out.data() + static_cast<std::size_t>(h) * actions);

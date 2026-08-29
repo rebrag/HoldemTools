@@ -34,7 +34,7 @@ std::unique_ptr<Game> make_game(const SolveConfig& config) {
 
 int check_memory(const Game& game, const SolveConfig& config, bool print_always) {
   const MemoryEstimate estimate =
-      estimate_memory(game, config.threads, config.recalc.enabled);
+      estimate_memory(game, config.threads, config.recalc.enabled, config.update.precision);
   if (print_always) std::cout << estimate.to_string() << "\n";
   const double limit_bytes = config.memory_limit_gb * 1024.0 * 1024.0 * 1024.0;
   if (static_cast<double>(estimate.total()) > limit_bytes) {
@@ -56,7 +56,7 @@ int run_solve(const SolveConfig& config, bool dry_run) {
 
   if (dry_run) {
     const MemoryEstimate estimate =
-        estimate_memory(*game, config.threads, config.recalc.enabled);
+        estimate_memory(*game, config.threads, config.recalc.enabled, config.update.precision);
     std::cout << estimate.to_string() << "\n";
     std::cout << "tree: " << game->tree().size() << " nodes ("
               << game->tree().num_decision_nodes << " decision, "

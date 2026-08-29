@@ -126,7 +126,7 @@ class CfrSolver {
   void set_recalc_budget(double exploitable_chips);
 
   // Estimated bytes for regrets + strategy sums under this layout.
-  static std::size_t state_bytes(const Game& game);
+  static std::size_t state_bytes(const Game& game, Precision precision = Precision::F32);
 
   // Estimated bytes for the chance-child recalc schedule: the per-node base
   // index, the slot array, and the value/reach caches the slots fill in.
@@ -169,7 +169,23 @@ class CfrSolver {
   QreConfig qre_;
   InfosetLayout layout_;
   std::vector<float> regrets_;
+  // Strategy sums, in exactly one of two representations (see Precision).
+  // F32: strat_sum_ holds true values, strat_q_ is empty.
+  // I16: strat_q_ holds true/strat_scale_[node], strat_sum_ is empty.
   std::vector<float> strat_sum_;
+  std::vector<std::uint16_t> strat_q_;
+  // Per decision node. `strat_scale_` is chosen only to keep the accumulator
+  // in range - it never has to be accurate, because every consumer goes
+  // through row_from_action_major, which normalizes each row by its own sum
+  // and cancels it. `strat_bound_` is an upper bound on the node's largest
+  // true cell, maintained in O(1) per visit, and is what lets the hot loop
+  // add without any per-cell overflow check.
+  std::vector<float> strat_scale_;
+  std::vector<float> strat_bound_;
+  // Halve every stored cell and double the scale until this iteration's
+  // largest possible addition cannot overflow. Amortized O(1): each call
+  // doubles the headroom, and the discounted sum it tracks is bounded.
+  void strat_reserve_headroom(std::uint32_t decision_index, float max_add);
   std::uint64_t t_ = 0;
   std::unique_ptr<ThreadPool> pool_;
   int split_budget_ = 1;

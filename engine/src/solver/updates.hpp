@@ -9,6 +9,24 @@ namespace engine {
 
 enum class UpdateRule : std::uint8_t { RegretMatching, CfrPlus, Dcfr };
 
+// Storage width for the two big per-(node, hand, action) arrays.
+//
+// CFR is memory-latency-bound with poor locality, so bytes per cell buys
+// speed directly - this is the single biggest structural difference between
+// this engine and jesolver, whose compression mode is on by DEFAULT and is
+// sometimes faster than storing uncompressed. F32 is the reference and the
+// Pio-gated path; I16 is opt-in.
+//
+// I16 applies to the STRATEGY SUMS only so far. That half is the safe half,
+// and the reasons are worth stating because they do not carry over to
+// regrets: strategy sums are accumulate-only from non-negative terms (so
+// unsigned, and monotone between discounts), their DCFR discount is a single
+// sign-independent factor, they are never read inside the traversal, and
+// `row_from_action_major` normalizes every row by its own sum - which means
+// a per-node scale CANCELS on read and no dequantization step exists at all.
+// Regrets have none of those properties and are a separate pass.
+enum class Precision : std::uint8_t { F32, I16 };
+
 // The chance-child recalc schedule: stop re-traversing runout subtrees whose
 // values have stopped moving, revisiting them on a doubling period instead.
 // This is what makes solve cost sublinear in iterations on multistreet trees
@@ -172,6 +190,10 @@ struct QreConfig {
 
 struct UpdateConfig {
   UpdateRule rule = UpdateRule::Dcfr;
+  // Storage width for regrets and strategy sums. Lives here rather than in a
+  // constructor parameter so it threads through every existing call site
+  // unchanged; it is an algorithm-level knob like the exponents below.
+  Precision precision = Precision::F32;
   // DCFR discount exponents. alpha 1.5 / beta 0 (negative regrets decay
   // immediately) are the paper's values.
   //

@@ -87,6 +87,10 @@ UpdateConfig parse_algorithm(const json& j) {
     update.beta = d.value("beta", update.beta);
     update.gamma = d.value("gamma", update.gamma);
   }
+  const std::string precision = j.value("precision", "f32");
+  if (precision == "f32") update.precision = Precision::F32;
+  else if (precision == "i16") update.precision = Precision::I16;
+  else fail("algorithm.precision must be f32 | i16, got '" + precision + "'");
   return update;
 }
 

@@ -71,7 +71,9 @@ Those were 3.43x / 18.2x / 8.1x before the gamma change and can only have improv
 
 ### Next
 
-**Tier 1 - i16 regrets and strategy sums with a per-node f32 scale.**
+**Tier 1 - i16 storage. PARTLY MEASURED 2026-08-28, and the result is a wash - read M7.2 in `roadmap.md` before spending more on this.** The strategy-sum half shipped as `algorithm.precision: "i16"`: 25% less solver memory, speed indistinguishable from f32 over three interleaved rounds. The regret half is now argued AGAINST on the measurement, not merely unstarted - it would pay the float/int conversion ~5x per cell against the strategy array's 1x, for 3x the traffic saved. What follows is the original reasoning, kept because the mechanism is still right and only its size was wrong here.
+
+**Tier 1 (original) - i16 regrets and strategy sums with a per-node f32 scale.**
 The flagship, and the largest remaining structural gap against jesolver.
 `regrets_` and `strat_sum_` are both f32 today, so the `actor_hands x actions x 8` sizing rule becomes `x4`.
 postflop-solver measures 1.25 GB -> 660 MB doing exactly this.
