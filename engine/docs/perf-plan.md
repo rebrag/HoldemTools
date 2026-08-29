@@ -3,6 +3,10 @@
 Why jesolver and GTO Wizard are faster than PioSolver, what of it applies to htsolver, and in what order.
 Written 2026-08-28 after a research pass; `docs/roadmap.md` stays the milestone record and this is the standing argument behind the next few performance milestones.
 
+> **Direction, settled 2026-08-29.** The target is **GTO Wizard AI / Ruse-style depth-limited solving**, chosen for **multiway** speed, and the product needs **on-demand solving as well as a precomputed library**.
+> The **jesolver track was picked first only because it looked easier to implement, and it is now largely spent** - five independent attacks measured neutral or negative (M7.2 in `roadmap.md`), because M6.8's action-major layout and compact hand universe had already bought what jesolver's changelog was buying.
+> Read the tier list below as *finished work plus a few cheap leftovers*, not as the plan. The plan is "The fork" section.
+
 ## The one thing to get right first
 
 **The two competitors are fast for unrelated reasons, and conflating them produces bad plans.**
@@ -120,20 +124,35 @@ It only pays on a deploy server or cloud instance.
 - **GPU for exact vectorized CFR.** The 200-400x figures are against naive OpenSpiel per-infoset tree walkers, not against a vectorized engine. GPU earns its place for batched neural-network inference at lookahead leaves, which is GTO Wizard's shape, not this one.
 - **Micro-optimizing the fold-in loops.** Already restrict-qualified, action-major, invariant-hoisted, branch-free, with packed ops confirmed by `dumpbin`. No meaningful headroom.
 
-## The fork that has to be decided deliberately
+## The fork, and it is decided: depth-limiting
 
 Tiers 1-4 plausibly take flop trees from 44.9 s to somewhere in the 15-25 s range and would put htsolver clearly ahead of Pio and competitive with jesolver everywhere.
 
 **They will not reach GTO Wizard's 6 seconds, and no amount of engineering will.**
 That 30000x is structural.
 
-The only route is depth-limited solving, and the version compatible with this engine's invariants is a **continuation-strategy portfolio** ([Brown & Sandholm, NeurIPS 2018](https://arxiv.org/pdf/1805.08195)): at the street boundary each agent picks among a small set of precomputed continuation strategies rather than a single learned value.
-No neural network, deterministic, provably converging to Nash as the portfolio grows, works with very few strategies, and exact conditional on the portfolio.
+**An earlier version of this document argued that did not matter, on the grounds that "this pipeline already precomputes" and solve time is therefore a machine-hours cost rather than a user-facing one. That premise was wrong and the conclusion drawn from it should be ignored.**
+The product wants BOTH: a precomputed library for common spots AND users solving their own trees on demand.
+On-demand means somebody is waiting, which puts solve time back inside the product.
+See `roadmap.md`, "The goal product".
 
-One reframe before walking through that door: **this pipeline already precomputes.**
-The watcher solves offline and uploads bundles; users browse results.
-Solve time is a machine-hours cost here, not a user-facing latency cost.
-GTO Wizard needs 6 seconds because they solve on demand.
+**So depth-limited solving is the intended direction rather than an option to weigh, and MULTIWAY is why.**
+A 3-way tree is at least 8x its heads-up equivalent, and GTO Wizard's own classical engine needs "multiple minutes on 64 cores" for a 3-way turn.
+Nobody ships exact full-tree multiway at interactive speed.
+Their shape - exact on the river, depth-limited on turn and flop - is the one that works, and M8 should be designed for it rather than built exact-only and retrofitted.
+
+Two routes to it, and they are a real choice rather than a formality:
+
+**A learned value network**, which is what Ruse/GTO Wizard actually did.
+Highest ceiling, and the only one with a track record at 3+ players.
+Costs: an offline training pipeline that does not exist yet, and the artifact's numbers stop being exact, which weakens the Pio gate as the trust mechanism and weakens the "these are the real collusion EVs" claim behind M9/M10.
+
+**A continuation-strategy portfolio** ([Brown & Sandholm, NeurIPS 2018](https://arxiv.org/pdf/1805.08195)): at the street boundary each agent picks among a small set of precomputed continuation strategies rather than a single learned value.
+No neural network, deterministic, provably converging to Nash as the portfolio grows, works with very few strategies, and **exact conditional on the portfolio** - so the Pio gate keeps its meaning.
+Lower ceiling than a value net, far cheaper to build, and it preserves every invariant this engine has.
+
+**Recommended sequencing: portfolio first, network later if it is not enough.**
+The portfolio is the cheaper experiment, it answers "does depth-limiting actually buy what we need on a 3-way tree" without a training pipeline, and if it falls short the value-network work starts from a depth-limited engine that already exists rather than from scratch.
 
 ## Preflop and PLO
 

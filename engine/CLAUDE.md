@@ -90,7 +90,9 @@ No filesystem calls in solver code; `LocalStore` is the only implementation, and
 
 ## Out of scope (do not build speculatively)
 
-GPU code, hand abstraction/bucketing, TMECor / coordination-without-card-visibility, cloud SDKs inside the engine, one-file-per-node output.
+Hand abstraction/bucketing, TMECor / coordination-without-card-visibility, cloud SDKs inside the engine, one-file-per-node output.
+
+**GPU came off this list on 2026-08-29 and now splits in two.** `engine.exe` stays a headless CPU-only CLI - a GPU dependency inside the solver binary is still the line being crossed. But the product direction is now GTO Wizard / Ruse-style **depth-limited solving** (chosen for multiway speed; the product needs on-demand solves, not only a precomputed library), and one of its two routes is a learned value network. Training that network is a **separate offline tool** and may use a GPU; the engine would only read the resulting file and run inference on the CPU. Hand abstraction stays out and that is consistent rather than in tension - GTO Wizard is abstraction-free too, and depth-limiting is what makes them fast. See `docs/roadmap.md` "The goal product" and `docs/perf-plan.md` "The fork".
 
 ## Milestone state
 
