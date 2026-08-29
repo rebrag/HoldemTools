@@ -414,6 +414,32 @@ So the remaining gap on wide-range multi-size flop trees is the per-iteration wo
 
   **So the fix is to parallelize it, not to micro-optimize it.** Sibling subtrees are independent in the export exactly as they are in `CfrSolver::traverse_impl`, and the same fork-onto-the-pool treatment applies. At the solver's measured 8x on 16 threads that is 18.5 s -> ~2.3 s, taking this spot's end-to-end from 74 s to ~58 s. The remaining ~2.5M small vector allocations (about ten per decision node) are the other half, and streaming the blobs during the traversal removes both those and the 4.4 GB at once.
 
+  ### The export is parallel now - and it uncovered a much bigger problem (2026-08-29)
+
+  `ExportPass::visit` forks sibling subtrees onto the solver's pool exactly as `CfrSolver::traverse_impl` does, with the same discipline: siblings write DISJOINT `exports` slots (indexed by `decision_index`), every cross-child accumulation stays serial and in child order, and the per-action fold-back lives in one `fold_child` lambda shared by the forked and serial paths so there is a single copy of the arithmetic. **Verified bit-identical at 1 vs 16 threads** across all 3237 nodes of a turn tree, and pinned by a new `TEST_CASE` in `tests/test_parallel.cpp` in the same bitwise style as the existing thread-count tests.
+
+  Then the thread sweep on the `8d 4c 2c` user spot, which was supposed to confirm the win:
+
+  | threads | solve | speedup | efficiency | export | speedup |
+  |---|---|---|---|---|---|
+  | 1 | 130.02 s | 1.00x | 100% | 15.05 s | 1.00x |
+  | 2 | 72.86 s | 1.78x | 89% | 12.35 s | 1.22x |
+  | 4 | 60.21 s | 2.16x | 54% | 11.93 s | 1.26x |
+  | 8 | 55.34 s | 2.35x | 29% | 14.07 s | 1.07x |
+  | 16 | 48.47 s | **2.68x** | **17%** | 11.63 s | **1.29x** |
+
+  **The flop SOLVE gets 2.68x out of 16 threads. M6.7 measured 8.0x - on a turn tree - and that number does not generalize.** This is the third time a turn-tree measurement has been over-read as a general result, after "best-response checkpoints cost nothing" and "faster than Pio in every family". Treat any figure in this file that was taken on `validate_turn_fullrange` as a turn-tree figure until it is re-measured on a flop tree.
+
+  **Both phases scale well to 2 threads and then stop** - the solve is 89% efficient at 2 and 17% at 16; the export saturates immediately at ~1.25x. Two independent code paths hitting the same wall at the same thread count points at a **shared resource**, not at a structural problem in either one. It is not a shortage of parallel work: 89% efficiency at 2 threads means the fork-out is feeding the pool fine.
+
+  **What it is NOT, measured rather than assumed:** the fan-out budget. The flop root has a single child (OOP can only check in this config), so the obvious theory was that `kMaxSplitLevels` got consumed on narrow betting nodes before reaching the 48-way chance nodes. Raising it 4 -> 10 gave ~10% and doubled the workspace ceiling to 293 MB. Reverted; worth revisiting, not the answer.
+
+  **Hyperthreading works but has little left to gain here.** The 9800X3D is 8 physical cores / 16 logical, so 8 -> 16 is the SMT comparison: **1.14x on the solve, nothing on the export.** SMT is doing its job; the workload simply stops scaling long before the extra logical cores could matter.
+
+  **This also re-explains the ~30% CPU report.** The export was only part of it - a solve using an effective 2.7 cores of 16 is the larger half. Fixing the export moved total wall on this spot from 74 s to ~60 s, but the CPU number will not approach Pio's 70% until the solve scales.
+
+  **Next step is a profiler, not another hypothesis.** Two mechanisms were proposed and measured wrong today (the showdown gather, the fan-out budget), and a third guess is not worth the tokens. Hardware counters (VTune / uProf) on a flop solve at 2 vs 16 threads would settle whether this is memory bandwidth, L3/V-Cache thrash between threads, or contention on something shared like the arena mutex.
+
   ### The pattern across all three attacks
 
   Three independent per-iteration ideas were measured this session - i16 regret storage, merging the fold-in and update passes, and de-gathering the showdown sweep - and all three came back **neutral or negative**. The common cause is the same each time: the data these loops touch is already cache-resident, because M6.8's action-major layout and compact hand universe removed the structural problem that made it otherwise.

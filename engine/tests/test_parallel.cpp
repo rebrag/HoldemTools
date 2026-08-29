@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <numeric>
 #include <stdexcept>
@@ -11,6 +12,8 @@
 #include "config/schema.hpp"
 #include "game/nlhe_river.hpp"
 #include "game/toy/leduc.hpp"
+#include "io/artifact_reader.hpp"
+#include "io/artifact_writer.hpp"
 #include "solver/best_response.hpp"
 #include "solver/cfr.hpp"
 #include "util/parallel.hpp"
@@ -53,7 +56,7 @@ void check_identical_solutions(const Game& game, std::uint64_t iterations) {
   CHECK(br_serial.br_value == br_parallel.br_value);
 }
 
-std::unique_ptr<NlhePostflopGame> tiny_turn_game() {
+SolveConfig tiny_turn_config() {
   SolveConfig config;
   config.game = "nlhe";
   config.board = "Qs Jh 2h 8d";
@@ -65,7 +68,35 @@ std::unique_ptr<NlhePostflopGame> tiny_turn_game() {
   config.river_sizing.oop.bets = {75.0};
   config.river_sizing.ip.bets = {75.0};
   config.river_sizing.max_raises = 0;
-  return std::make_unique<NlhePostflopGame>(config);
+  config.raw = nlohmann::json{{"game", "nlhe"}, {"board", "Qs Jh 2h 8d"}};
+  return config;
+}
+
+std::unique_ptr<NlhePostflopGame> tiny_turn_game() {
+  return std::make_unique<NlhePostflopGame>(tiny_turn_config());
+}
+
+// Write an artifact for a solver that ran on `threads`, and read every
+// decision node back. The export forks sibling subtrees like the traversal
+// does, so it needs the same proof.
+std::vector<ArtifactNodeData> export_nodes(const Game& game, int threads,
+                                           const std::string& tag) {
+  CfrSolver solver(game, UpdateConfig{}, threads);
+  REQUIRE(solver.pool().threads() == resolve_thread_count(threads));
+  solver.run(20);
+
+  SolveStats stats;
+  stats.iterations = solver.iteration();
+  stats.threads = threads;
+  const std::string path =
+      (std::filesystem::temp_directory_path() / ("engine_export_" + tag + ".hta")).string();
+  LocalStore store;
+  write_artifact(store, path, game, solver, tiny_turn_config(), stats);
+
+  ArtifactReader reader(store, path);
+  std::vector<ArtifactNodeData> out;
+  for (std::uint32_t id : reader.decision_node_ids()) out.push_back(reader.read_node(id));
+  return out;
 }
 
 }  // namespace
@@ -121,6 +152,39 @@ TEST_CASE("an nlhe turn tree solves identically on one thread and on eight") {
   // point the flop/turn solves lean on.
   const auto game = tiny_turn_game();
   check_identical_solutions(*game, 20);
+}
+
+TEST_CASE("the artifact export is identical on one thread and on eight") {
+  // The export pass forks sibling subtrees onto the same pool the traversal
+  // uses, so it inherits the same obligation: threading changes WHEN the
+  // arithmetic happens, never the arithmetic. Bitwise, not Approx - every
+  // cross-child accumulation in the export stays serial and in child order
+  // precisely so this holds, and a tolerance here would hide the bug it is
+  // meant to catch.
+  //
+  // A turn board is the shape that exercises it: the 48-child chance node is
+  // where the export gets almost all of its parallelism.
+  const auto game = tiny_turn_game();
+  const std::vector<ArtifactNodeData> serial = export_nodes(*game, 1, "t1");
+  const std::vector<ArtifactNodeData> parallel = export_nodes(*game, 8, "t8");
+
+  REQUIRE(serial.size() == parallel.size());
+  REQUIRE(serial.size() > 1);
+  for (std::size_t n = 0; n < serial.size(); ++n) {
+    const ArtifactNodeData& a = serial[n];
+    const ArtifactNodeData& b = parallel[n];
+    REQUIRE(a.num_seats == b.num_seats);
+    REQUIRE(a.num_actions == b.num_actions);
+    CHECK(a.actor == b.actor);
+    CHECK(a.strategy == b.strategy);
+    CHECK(a.action_ev == b.action_ev);
+    REQUIRE(a.seats.size() == b.seats.size());
+    for (std::size_t s = 0; s < a.seats.size(); ++s) {
+      CHECK(a.seats[s].idx == b.seats[s].idx);
+      CHECK(a.seats[s].reach == b.seats[s].reach);
+      CHECK(a.seats[s].ev == b.seats[s].ev);
+    }
+  }
 }
 
 // ---- chance sampling ------------------------------------------------------

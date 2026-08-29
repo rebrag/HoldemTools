@@ -51,8 +51,25 @@ struct ExportPass {
   // that is already a dense array index.
   std::vector<NodeExportData> exports;
 
+  // Forking below this many children is not worth a reach-vector copy each.
+  static constexpr int kMinSplitChildren = 2;
+
   // Returns counterfactual values per seat.
-  std::vector<std::vector<float>> visit(NodeId id, std::vector<std::vector<float>>& reach) {
+  //
+  // `split` is the remaining fan-out budget and `fork_depth` the number of
+  // forks already taken on this path, exactly as in CfrSolver::traverse_impl -
+  // and the parallelism keeps that function's discipline for the same reason.
+  // Sibling subtrees are independent (they fill DISJOINT `exports` slots,
+  // indexed by decision_index) so they run concurrently, but every
+  // cross-child accumulation stays serial and IN CHILD ORDER after the join.
+  // That is what makes a threaded export bit-identical to a serial one, which
+  // the committed fixture then checks.
+  //
+  // This pass used to be the one serial phase left: 18.5 s on one core at the
+  // end of a solve whose loop had been using sixteen, which is where the
+  // "engine.exe only reaches ~30% CPU" report came from.
+  std::vector<std::vector<float>> visit(NodeId id, std::vector<std::vector<float>>& reach,
+                                        int split, int fork_depth) {
     const PublicTree& tree = game.tree();
     const Node& node = tree[id];
     const int seats = game.num_seats();
@@ -66,9 +83,42 @@ struct ExportPass {
       return values;
     }
 
+    const int children = node.num_children;
+    const bool fork =
+        split > 1 && fork_depth < kMaxSplitLevels && children >= kMinSplitChildren;
+    const int child_split = fork ? std::max(1, split / children) : split;
+    const int child_fork_depth = fork ? fork_depth + 1 : fork_depth;
+
     if (node.kind == NodeKind::Chance) {
       for (int s = 0; s < seats; ++s) values[s].assign(game.num_hands(s), 0.0f);
       const float w = static_cast<float>(game.chance_weight(id));
+      if (fork) {
+        std::vector<std::vector<std::vector<float>>> forked_reach(children);
+        std::vector<std::vector<std::vector<float>>> forked_values(children);
+        solver.pool().parallel_for(children, [&](int c) {
+          const NodeId child = node.first_child + static_cast<NodeId>(c);
+          const int card = tree[child].dealt_card;
+          std::vector<std::vector<float>>& cr = forked_reach[static_cast<std::size_t>(c)];
+          cr = reach;
+          for (int s = 0; s < seats; ++s) {
+            for (int h = 0; h < game.num_hands(s); ++h) {
+              if (game.hand_blocks_card(s, h, card)) cr[s][h] = 0.0f;
+            }
+          }
+          forked_values[static_cast<std::size_t>(c)] =
+              visit(child, cr, child_split, child_fork_depth);
+        });
+        for (int c = 0; c < children; ++c) {
+          const int card = tree[node.first_child + static_cast<NodeId>(c)].dealt_card;
+          const std::vector<std::vector<float>>& cv = forked_values[static_cast<std::size_t>(c)];
+          for (int s = 0; s < seats; ++s) {
+            for (int h = 0; h < game.num_hands(s); ++h) {
+              if (!game.hand_blocks_card(s, h, card)) values[s][h] += w * cv[s][h];
+            }
+          }
+        }
+        return values;
+      }
       for (std::uint16_t c = 0; c < node.num_children; ++c) {
         const NodeId child = node.first_child + c;
         const int card = tree[child].dealt_card;
@@ -79,7 +129,7 @@ struct ExportPass {
             if (game.hand_blocks_card(s, h, card)) reach[s][h] = 0.0f;
           }
         }
-        auto child_values = visit(child, reach);
+        auto child_values = visit(child, reach, child_split, child_fork_depth);
         for (int s = 0; s < seats; ++s) {
           for (int h = 0; h < game.num_hands(s); ++h) {
             if (!game.hand_blocks_card(s, h, card)) values[s][h] += w * child_values[s][h];
@@ -106,12 +156,11 @@ struct ExportPass {
     std::vector<float> compat;
     game.compat_weights(actor, reach, compat);
 
-    std::vector<float> saved = reach[actor];
-    for (std::uint16_t k = 0; k < actions; ++k) {
-      for (int h = 0; h < hands; ++h) {
-        reach[actor][h] = saved[h] * sigma[static_cast<std::size_t>(h) * actions + k];
-      }
-      auto child_values = visit(node.first_child + k, reach);
+    // The per-action fold-back below is identical in both paths; only where
+    // the child values came from differs. Keeping it in one lambda is what
+    // guarantees the threaded result is the serial one.
+    const auto fold_child = [&](std::uint16_t k,
+                                const std::vector<std::vector<float>>& child_values) {
       // Actor's conditional EV of taking this action = value at the child,
       // normalized by the opponents' reach (which the actor's own action
       // does not change). Chips already committed stay subtracted - see the
@@ -130,6 +179,35 @@ struct ExportPass {
         } else {
           for (int h = 0; h < game.num_hands(s); ++h) values[s][h] += child_values[s][h];
         }
+      }
+    };
+
+    std::vector<float> saved = reach[actor];
+    if (fork) {
+      std::vector<std::vector<std::vector<float>>> forked_reach(children);
+      std::vector<std::vector<std::vector<float>>> forked_values(children);
+      solver.pool().parallel_for(children, [&](int c) {
+        const std::uint16_t k = static_cast<std::uint16_t>(c);
+        std::vector<std::vector<float>>& cr = forked_reach[static_cast<std::size_t>(c)];
+        cr = reach;
+        // Only the actor's own reach moves; every other seat's is unchanged
+        // by the actor's choice, which is why the copy above is enough.
+        for (int h = 0; h < hands; ++h) {
+          cr[actor][h] = saved[h] * sigma[static_cast<std::size_t>(h) * actions + k];
+        }
+        forked_values[static_cast<std::size_t>(c)] =
+            visit(node.first_child + k, cr, child_split, child_fork_depth);
+      });
+      for (std::uint16_t k = 0; k < actions; ++k) {
+        fold_child(k, forked_values[static_cast<std::size_t>(k)]);
+      }
+    } else {
+      for (std::uint16_t k = 0; k < actions; ++k) {
+        for (int h = 0; h < hands; ++h) {
+          reach[actor][h] = saved[h] * sigma[static_cast<std::size_t>(h) * actions + k];
+        }
+        auto child_values = visit(node.first_child + k, reach, child_split, child_fork_depth);
+        fold_child(k, child_values);
       }
     }
     reach[actor] = saved;
@@ -353,7 +431,9 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
   {
     std::vector<std::vector<float>> reach(game.num_seats());
     for (int s = 0; s < game.num_seats(); ++s) reach[s] = game.initial_range(s);
-    pass.visit(tree.root(), reach);
+    // Same fan-out budget the solver uses, so the export saturates the same
+    // pool rather than inventing its own policy.
+    pass.visit(tree.root(), reach, solver.split_budget(), 0);
   }
 
   // Hand dictionaries: entry h is the universe id of solver hand h, so a

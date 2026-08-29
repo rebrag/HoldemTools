@@ -237,7 +237,7 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   // ONE core. Print the total the process actually took, and the split.
   std::cout << "total " << wall_s + setup_s + export_s << " s (setup " << setup_s
             << " + solve " << wall_s << " + artifact export " << export_s
-            << " s, single-threaded)\n";
+            << " s)\n";
   return 0;
 }
 
