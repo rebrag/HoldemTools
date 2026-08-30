@@ -33,6 +33,11 @@ export type PostflopLineItem = {
   kind?: "action" | "card";
 };
 
+/** One action offered at a node: the label the whole solver keys off, and the
+ *  percent-of-pot the line card prints beside it (null for fold / check /
+ *  call / all-in, and for a solve with no recorded pot). */
+export type LineOption = { label: string; pct: number | null };
+
 /** A visited node of the postflop line, enriched for the Line display:
  *  dealt-card markers, or decisions with the options that were available. */
 export type PostflopSessionLineNode =
@@ -56,14 +61,9 @@ export type PostflopSessionLineNode =
       /** Chips behind the seat when they faced this decision, in the solve's
        *  display money. */
       stackMoney: number | null;
-      /** Pot facing this decision - the root pot plus what both seats have
-       *  committed on completed streets, in the solve's display money. Only
-       *  read when the strip's ramp is calibrated in percent-of-pot (see
-       *  PostflopLine's sizeUnit); every /solver caller stays in big blinds
-       *  and never looks at this field. */
-      potMoney?: number | null;
-      /** Display labels of every action available at the decision node. */
-      options: string[];
+      /** Every action available at the decision node: its display label, and
+       *  for a bet or raise its size as a percent of the pot (see betPotPct). */
+      options: LineOption[];
       taken: string;
     };
 
@@ -140,7 +140,7 @@ export type PostflopView = {
   /** Chips (not bb) each remaining seat committed preflop - see the seat
    *  stacks and the pot split, which both have to net it out. */
   preflopCommitChips: number;
-  actions: { pioLabel: string; display: string }[];
+  actions: { pioLabel: string; display: string; pct: number | null }[];
   /** Per-combo strategy/EV/equity for the acting seat; null pre-schema-4. */
   actorCombos: ComboDetail | null;
   /** Hand class -> reach 0..1 for each plate's seat; null pre-schema-4. */
@@ -593,18 +593,15 @@ export function usePostflopSession() {
           // Stack as it was when the seat faced this decision (their bet on
           // this street is not deducted yet), matching the preflop Line.
           stackMoney: stackBehindMoney(seat, role, parent),
-          // Same formula as the card branch above: the streets that are
-          // COMPLETE as of this decision, both seats' share.
-          potMoney:
-            core.manifest.pot_chips == null
-              ? null
-              : (core.manifest.pot_chips + 2 * priorStreetCommitChips(parent)) /
-                chipScale,
           options: parentDoc
-            ? displayActionMap(parentDoc, parent, eff, core.manifest.chip_scale).map(
-                (a) => a.display
-              )
-            : [item.label],
+            ? displayActionMap(
+                parentDoc,
+                parent,
+                eff,
+                core.manifest.chip_scale,
+                core.manifest.pot_chips
+              ).map((a) => ({ label: a.display, pct: a.pct }))
+            : [{ label: item.label, pct: null }],
           taken: item.label,
         });
         parent = item.nodeId;
@@ -616,7 +613,8 @@ export function usePostflopSession() {
           currentDoc,
           core.currentNodeId,
           core.manifest.effective_stack_chips,
-          core.manifest.chip_scale
+          core.manifest.chip_scale,
+          core.manifest.pot_chips
         )
       : [];
 

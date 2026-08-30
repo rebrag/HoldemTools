@@ -1492,8 +1492,6 @@ const SolverCompare = () => {
                 rootCards={board}
                 potMoney={spot.pot}
                 money={money}
-                sizeUnit="pct"
-                actorPotMoney={currentPot}
                 lineNodes={line.lineNodes}
                 notice={null}
                 onJump={jumpToNode}

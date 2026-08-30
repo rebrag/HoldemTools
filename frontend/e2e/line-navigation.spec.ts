@@ -13,6 +13,11 @@ import fixture from "./fixtures/postflop.json" with { type: "json" };
  * session, which is why the explicit "Preflop" exit is gone too. Both of those
  * removals are only safe while the cards themselves work, so they are pinned
  * here together.
+ *
+ * The cards' geometry is pinned here too. It used to come from their content,
+ * so a seat with four options made the whole strip taller than a seat with two
+ * and the header jumped as you walked the tree; the size is now fixed in
+ * pages/solver/lineCard.ts and shared by both strips.
  */
 
 const { stacks, board, index, manifest, flopBundle } = fixture;
@@ -51,6 +56,32 @@ test.describe("preflop line", () => {
 
   test("has no reset control - the first card is the root", async ({ page }) => {
     await expect(page.getByTitle("Reset to start of hand")).toHaveCount(0);
+  });
+
+  test("every seat card is the one fixed size", async ({ page }) => {
+    /* LINE_CARD_W_PREFLOP (5.5rem) x LINE_CARD_H (7rem) from
+       pages/solver/lineCard.ts, pinned as numbers rather than as "they all
+       match": the row stretches its children to a common height whatever they
+       hold, so equality alone never failed. What used to drift is the row's
+       own size - with the seat count, the viewport, and the busiest card's
+       option count - and only a number catches that. Same figure on both
+       projects, which is the point of a fixed card. */
+    const sizes = () =>
+      page.locator('[data-testid="line-card"]').evaluateAll((cards) =>
+        cards.map((c) => {
+          const r = c.getBoundingClientRect();
+          return `${Math.round(r.width)}x${Math.round(r.height)}`;
+        })
+      );
+
+    const atRoot = await sizes();
+    expect(atRoot.length).toBeGreaterThan(1);
+    expect(new Set(atRoot)).toEqual(new Set(["88x112"]));
+
+    // Walking the tree changes which seats are live and what their cards hold.
+    await clickCard(seatCard(page, "BTN"), "BTN");
+    await expect(seatCard(page, "BTN")).toHaveAttribute("data-active", "true");
+    expect(await sizes()).toEqual(atRoot);
   });
 
   test("clicking a seat still to act folds the seats in front of it", async ({
@@ -151,6 +182,33 @@ test.describe("postflop line", () => {
     page,
   }) => {
     await expect(page.getByTitle("Exit postflop view")).toHaveCount(0);
+  });
+
+  test("board cards keep the preflop strip's geometry", async ({ page }) => {
+    /* One strip, three kinds of card: PostflopLine draws the preflop cards,
+       the board tiles and the postflop decisions, so all three have to land on
+       LINE_CARD_H - the same 112 the preflop strip is pinned to above. The
+       board tiles are as wide as the cards they show; the preflop cards keep
+       LINE_CARD_W_PREFLOP, which is what makes lineCard.ts shared rather than
+       duplicated per component. */
+    /* Anchored on the flop tile rather than on a class: `flex-nowrap` is also
+       the multi-range grid's row, and matching that instead made this flake
+       under a loaded run. */
+    const heights = await page
+      .getByTitle("Back to the flop decision")
+      .locator("xpath=..")
+      .locator("> *")
+      .evaluateAll((cards) =>
+        cards.map((c) => Math.round(c.getBoundingClientRect().height))
+      );
+    expect(heights.length).toBeGreaterThan(1);
+    expect(new Set(heights)).toEqual(new Set([112]));
+
+    const preflopWidths = await preflopCards(page).evaluateAll((cards) =>
+      cards.map((c) => Math.round(c.getBoundingClientRect().width))
+    );
+    expect(preflopWidths.length).toBeGreaterThan(0);
+    expect(new Set(preflopWidths)).toEqual(new Set([88]));
   });
 
   test("clicking the first preflop card leaves the board at the root", async ({

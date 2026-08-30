@@ -12,10 +12,17 @@
 import React from "react";
 import { X } from "lucide-react";
 import PlayingCard from "@/components/PlayingCard";
-import { buildActionPalette, stringToColor, type BetUnit } from "@/lib/solver/utils";
 import type { PostflopSessionLineNode } from "@/hooks/usePostflopSession";
 import type { PreflopLineNode } from "./usePreflopLineNodes";
 import { fmtMoneyValue, type MoneyOpts } from "./boardDisplay";
+import {
+  LINE_CARD_H,
+  LINE_CARD_W_POSTFLOP,
+  LINE_CARD_W_PREFLOP,
+  LINE_OPTION_TEXT,
+  LINE_OPTIONS_COL,
+  LINE_PCT_TEXT,
+} from "./lineCard";
 
 export interface PostflopLineProps {
   /** Raw preflop line; fallback summary when preflopNodes are unavailable. */
@@ -49,13 +56,12 @@ export interface PostflopLineProps {
    * card. Leaving the session happens by opening another board or sim.
    */
   handSolve?: boolean;
-  /** Stretch the cards to fill the parent's height - used by the study
-   *  header so the strip matches the SimSelect panel beside it. */
-  fillHeight?: boolean;
   /** Seat to act at the current node (the active card). */
   actorSeat?: string;
   actorStackMoney?: number | null;
-  actions?: { display: string }[];
+  /** `pct` (percent of the pot the bet goes into) prints beside the label;
+   *  omit it and the row shows the label alone, which is what /compare does. */
+  actions?: { display: string; pct?: number | null }[];
   onActionClick?: (display: string) => void;
   /** Display label of the action taken in the recorded hand at THIS node, when
    *  the viewer is still walking that hand's line. Marked "Played". */
@@ -72,21 +78,6 @@ export interface PostflopLineProps {
   rootLabel?: string;
   rootCards?: string[];
   /**
-   * Unit the ramp reference (sizeRef, derived from money.bbSize) is in.
-   * Defaults to "bb" - every /solver call is in big blinds. /compare passes
-   * "pct": its trees are specified as sizing lists in percent of pot, not big
-   * blinds, so calibrating the ramp on percent-of-pot is what "how the tree
-   * was actually specified" means. See getColorForAction for the mechanics.
-   */
-  sizeUnit?: BetUnit;
-  /**
-   * Pot facing the CURRENT (to-act) node, in the strip's display money. Only
-   * read when sizeUnit is "pct" - a visited node's own options already carry
-   * their pot on `node.potMoney` (see PostflopSessionLineNode), but the
-   * active card has no lineNode of its own to carry one.
-   */
-  actorPotMoney?: number | null;
-  /**
    * Show the "Preflop" exit control when there are no preflop cards to click.
    * Defaults on, preserving the solver's behaviour. /compare turns it off: its
    * trees have no preflop half at all, so there is nowhere to exit to.
@@ -97,23 +88,13 @@ export interface PostflopLineProps {
   showExit?: boolean;
 }
 
-/* Colours for one node's whole option list. Built per card rather than per
- * label so two close bet sizes stay tellable apart, and so these dots agree
- * with the matrix segments for the same node. */
-const nodePalette = (
-  options: string[],
-  sizeRef = 1,
-  unitMode: BetUnit = "bb"
-): Record<string, string> => {
-  const palette = buildActionPalette(options, sizeRef, unitMode);
-  for (const option of options) palette[option] ||= stringToColor(option);
-  return palette;
-};
-
-/* Shared card shell, mirroring the preflop Line's seat cards. `clickable`
- * cards take a click anywhere on their body, not just on an option row. */
-const cardClass = (active: boolean, clickable = false) =>
-  `flex-shrink-0 flex flex-col rounded-md border px-1.5 py-1 min-w-[3.6rem] transition-colors ${
+/* Shared card shell, mirroring the preflop Line's seat cards. Every card is
+ * the same fixed height whatever it holds; `width` is the seat-card width for
+ * a decision and empty for the board tiles, which are as wide as the cards
+ * they show. `clickable` cards take a click anywhere on their body, not just
+ * on an option row. */
+const cardClass = (width: string, active = false, clickable = false) =>
+  `flex flex-shrink-0 flex-col rounded-md border px-1.5 py-1 ${width} ${LINE_CARD_H} transition-colors ${
     active
       ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_0_2px_rgba(16,185,129,0.35)]"
       : "border-white/15 bg-white/5"
@@ -143,19 +124,19 @@ const CardHeader: React.FC<{
   </div>
 );
 
-/** One option row: color dot + label; the taken action gets a highlight pill. */
+/** One option row: label, then the bet's size as a percent of the pot; the
+ *  taken action gets a highlight pill. */
 const OptionRow: React.FC<{
   action: string;
-  /** Units of the bet labels per big blind; see getColorForAction. */
-  /** Resolved from the node's palette by the caller. */
-  color: string;
+  /** Percent of pot for a bet or raise; null/absent for the rest. */
+  pct?: number | null;
   taken?: boolean;
   /** This is the action the player actually took in the recorded hand. */
   played?: boolean;
   disabled?: boolean;
   onClick?: () => void;
   title?: string;
-}> = ({ action, color, taken, played, disabled, onClick, title }) => (
+}> = ({ action, pct, taken, played, disabled, onClick, title }) => (
   <button
     type="button"
     /* The card body is clickable too, so a row click must not also count as
@@ -166,7 +147,7 @@ const OptionRow: React.FC<{
     }}
     disabled={disabled || !onClick}
     title={title}
-    className={`flex items-center gap-1 rounded-sm px-1 py-0.5 text-left transition-colors ${
+    className={`flex flex-shrink-0 items-center gap-1 rounded-sm px-1 py-0.5 text-left transition-colors ${
       taken ? "bg-white/15" : ""
     } ${
       onClick && !disabled
@@ -174,20 +155,25 @@ const OptionRow: React.FC<{
         : "cursor-default"
     } ${disabled ? "opacity-60" : ""}`}
   >
+    {/* The card is a fixed width, so the label clips before it widens it; the
+        percent is the shorter half and stays whole. */}
     <span
-      className="inline-block w-1.5 h-1.5 rounded-[2px] flex-shrink-0"
-      style={{ backgroundColor: color }}
-    />
-    <span
-      className={`text-[0.55rem] leading-tight whitespace-nowrap ${
+      className={`${LINE_OPTION_TEXT} min-w-0 truncate leading-tight ${
         taken ? "text-gray-100 font-semibold" : "text-gray-300"
       }`}
     >
       {action}
     </span>
+    {pct != null && (
+      <span
+        className={`${LINE_PCT_TEXT} flex-shrink-0 leading-tight tabular-nums text-gray-500`}
+      >
+        ({pct}%)
+      </span>
+    )}
     {played && (
       <span
-        className="ml-auto rounded-sm bg-amber-400/20 px-1 text-[0.5rem] font-semibold uppercase leading-tight tracking-wide text-amber-200"
+        className="ml-auto flex-shrink-0 rounded-sm bg-amber-400/20 px-0.5 text-[0.45rem] font-semibold uppercase leading-tight tracking-wide text-amber-200"
         title="What you did in this hand"
       >
         Played
@@ -209,7 +195,6 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
   onPreflopJump,
   onExit,
   handSolve,
-  fillHeight,
   actorSeat,
   actorStackMoney,
   actions,
@@ -219,22 +204,7 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
   rootLabel = "FLOP",
   rootCards,
   showExit = true,
-  sizeUnit = "bb",
-  actorPotMoney,
 }) => {
-  /* Postflop labels are in the solve's money; the colour ramp is calibrated
-   * in big blinds by default, so tell it how much money makes one. In "pct"
-   * mode this doubles as the fallback pot reference for a node that (for
-   * whatever reason) was not given its own potMoney. */
-  const sizeRef = money?.bbSize && money.bbSize > 0 ? money.bbSize : 1;
-  /* The seat-to-act card's own palette, from the options it actually offers,
-   * against the pot IT faces - not a page-wide constant, since the pot grows
-   * down the line. */
-  const activePalette = nodePalette(
-    (actions ?? []).map((a) => a.display),
-    sizeUnit === "pct" ? (actorPotMoney ?? sizeRef) : sizeRef,
-    sizeUnit
-  );
   const preflopSummary =
     !handSolve && preflopLine && preflopLine.length > 1
       ? preflopLine.slice(1).join(" · ")
@@ -250,22 +220,16 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
   const exitButton = showExit && !preflopCards && !handSolve;
 
   return (
-    <div className={`w-full mx-auto select-none${fillHeight ? " h-full" : ""}`}>
-      <div
-        className={`overflow-x-auto no-scrollbar w-full animate-[fadeSlideIn_0.25s_ease-out]${
-          fillHeight ? " h-full" : ""
-        }`}
-      >
-        <div
-          className={`flex flex-nowrap items-stretch gap-1 w-full${
-            fillHeight ? " h-full" : ""
-          }`}
-        >
+    <div className="mx-auto w-full select-none">
+      <div className="w-full overflow-x-auto no-scrollbar animate-[fadeSlideIn_0.25s_ease-out]">
+        {/* Fixed-size cards, left-aligned; the strip scrolls once the line
+            outgrows the viewport. */}
+        <div className="flex flex-nowrap items-stretch gap-1">
           {exitButton && (
             <button
               type="button"
               onClick={onExit}
-              className="flex-shrink-0 flex flex-col items-center justify-center px-1.5 rounded-md border border-white/15 bg-white/5 hover:bg-white/10 text-gray-300 transition-colors"
+              className={`flex flex-shrink-0 flex-col items-center justify-center rounded-md border border-white/15 bg-white/5 px-1.5 text-gray-300 transition-colors hover:bg-white/10 ${LINE_CARD_H}`}
               title="Exit postflop view"
             >
               <X size={14} />
@@ -286,17 +250,16 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
                     ? `Back to ${node.seat}'s preflop decision`
                     : undefined
                 }
-                className={cardClass(false, !!onPreflopJump)}
+                className={cardClass(LINE_CARD_W_PREFLOP, false, !!onPreflopJump)}
               >
                 {/* Preflop nodes are replayed from the sim, so their stacks
                     are big blinds whatever unit the postflop solve uses. */}
                 <CardHeader label={node.seat} stack={node.stackBB} />
-                <div className="flex flex-col gap-0.5">
-                  {node.options.map((action, _i, all) => (
+                <div className={LINE_OPTIONS_COL}>
+                  {node.options.map((action) => (
                     <OptionRow
                       key={action}
                       action={action}
-                      color={nodePalette(all)[action]}
                       taken={action === node.taken}
                       onClick={
                         onPreflopJump ? () => onPreflopJump(i, action) : undefined
@@ -330,7 +293,7 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") onJump("r:0");
             }}
-            className={`${cardClass(false)} cursor-pointer hover:bg-white/10`}
+            className={`${cardClass("")} cursor-pointer hover:bg-white/10`}
             title={`Back to the ${rootLabel.toLowerCase()} decision`}
           >
             <CardHeader label={rootLabel} stack={potMoney ?? undefined} money={money} />
@@ -357,7 +320,7 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
                   key={node.nodeId}
                   type="button"
                   onClick={() => onJump(node.nodeId)}
-                  className={`${cardClass(false)} cursor-pointer hover:bg-white/10`}
+                  className={`${cardClass("")} cursor-pointer hover:bg-white/10`}
                   title={`Jump to the ${node.label} deal`}
                 >
                   {/* Same header as the root tile: a dealt card should say
@@ -379,35 +342,29 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
                 key={node.nodeId}
                 onClick={() => onJump(node.parentId)}
                 title={`Back to ${node.seat}'s decision`}
-                className={cardClass(false, true)}
+                className={cardClass(LINE_CARD_W_POSTFLOP, false, true)}
               >
                 <CardHeader label={node.seat} stack={node.stackMoney} money={money} />
-                <div className="flex flex-col gap-0.5">
-                  {node.options.map((action, _i, all) => (
+                <div className={LINE_OPTIONS_COL}>
+                  {node.options.map(({ label, pct }) => (
                     <OptionRow
-                      key={action}
-                      action={action}
-                      color={
-                        nodePalette(
-                          all,
-                          sizeUnit === "pct" ? (node.potMoney ?? sizeRef) : sizeRef,
-                          sizeUnit
-                        )[action]
-                      }
-                      taken={action === node.taken}
+                      key={label}
+                      action={label}
+                      pct={pct}
+                      taken={label === node.taken}
                       disabled={actionsDisabled}
                       onClick={
                         onPickAction
                           ? () =>
-                              action === node.taken
+                              label === node.taken
                                 ? onJump(node.nodeId)
-                                : onPickAction(node.parentId, action)
+                                : onPickAction(node.parentId, label)
                           : undefined
                       }
                       title={
-                        action === node.taken
-                          ? `Jump to ${node.seat}'s ${action}`
-                          : `${node.seat}: switch to ${action}`
+                        label === node.taken
+                          ? `Jump to ${node.seat}'s ${label}`
+                          : `${node.seat}: switch to ${label}`
                       }
                     />
                   ))}
@@ -418,14 +375,14 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
 
           {/* Current node: the seat to act (active card) */}
           {actions && actions.length > 0 && (
-            <div className={cardClass(true)}>
+            <div className={cardClass(LINE_CARD_W_POSTFLOP, true)}>
               <CardHeader label={actorSeat ?? "To act"} active stack={actorStackMoney} money={money} />
-              <div className="flex flex-col gap-0.5">
+              <div className={LINE_OPTIONS_COL}>
                 {actions.map((a) => (
                   <OptionRow
                     key={a.display}
                     action={a.display}
-                    color={activePalette[a.display]}
+                    pct={a.pct}
                     played={!!playedAction && a.display === playedAction}
                     disabled={actionsDisabled}
                     onClick={onActionClick ? () => onActionClick(a.display) : undefined}
