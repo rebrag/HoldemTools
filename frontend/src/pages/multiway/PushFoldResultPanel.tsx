@@ -25,9 +25,26 @@ const chip =
 const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
   const [path, setPath] = useState<number[]>([]);
   const meta = dump.metadata;
-  const seats = meta.seats ?? [];
+  // Memoized because the `?? []` fallback is a fresh array every render, which
+  // would make every useMemo keyed on it recompute.
+  const seats = useMemo(() => meta.seats ?? [], [meta.seats]);
 
   const { steps, node } = useMemo(() => walkLine(dump, path), [dump, path]);
+
+  const spot = useMemo(() => {
+    const pf = meta.preflop;
+    const stacks = meta.stacks;
+    if (!pf || !stacks?.length) return null;
+    const smallest = Math.min(...stacks);
+    const depth = pf.big_blind > 0 ? smallest / pf.big_blind : NaN;
+    const same = stacks.every((s) => s === stacks[0]);
+    const sizes = same
+      ? `${stacks[0]} each`
+      : stacks.map((s, i) => `${seats[i] ?? i} ${s}`).join(", ");
+    return `${seats.length}-way jam/fold · blinds ${pf.small_blind}/${pf.big_blind} · ${sizes}` +
+      (Number.isFinite(depth) ? ` (${depth.toFixed(1)} bb)` : "") +
+      ` · button ${seats[pf.button] ?? pf.button}`;
+  }, [meta, seats]);
 
   const grid = useMemo(
     () => (node && node.kind === "decision" ? gridFor(node) : []),
@@ -39,6 +56,12 @@ const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
 
   return (
     <section className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+      {/* What spot this actually is, read off the artifact rather than the
+          builder above it. Loading a past solve leaves the builder showing
+          whatever was last typed, so a panel that did not name its own spot
+          would be quietly ambiguous. */}
+      {spot && <p className="text-[11px] text-slate-300">{spot}</p>}
+
       {/* Per-seat root EV, which is what the whole solve is for. */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-semibold text-slate-200">Root EV</span>
