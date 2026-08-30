@@ -18,6 +18,7 @@ import {
   type TreeParams,
 } from "../src/lib/solver/treeConfig";
 import {
+  betPotPct,
   currentStreetCommitChips,
   formatPioAction,
   potSplitChips,
@@ -284,6 +285,33 @@ test("ALLIN on later streets compares cumulative against cumulative", () => {
   // The old street-relative rule flagged exactly this bet as ALLIN
   // (6000 - 748 = 5252); it leaves 748 chips behind and is just a bet.
   expect(formatPioAction("b5252", TURN_NODE, 6000, 10)).toBe("Bet 450.4");
+});
+
+/* The percent a line card prints beside a bet's amount. The numbers below are
+ * taken off a reference solver's own strip for a 5.5bb (550-chip) flop pot, so
+ * they pin the convention as much as the arithmetic: a bet is measured against
+ * the pot, a raise is the raise-BY amount against the pot after the call. */
+test("bet percentages are measured against the pot the bet goes into", () => {
+  // Flop, 5.5bb pot: a 1.8bb bet is a third of it, a 5.7bb bet is a pot bet.
+  expect(betPotPct("b180", "r:0", 550, 8000)).toBe(33);
+  expect(betPotPct("b570", "r:0", 550, 8000)).toBe(104);
+  // Raising to 9.1 over a 1.8 bet: 7.3 into 5.5 + 1.8 + 1.8 = 9.1.
+  expect(betPotPct("b910", "r:0:b180", 550, 8000)).toBe(80);
+  // Turn, after that 1.8 bet was called: the pot is 9.1 and the carry is out.
+  expect(betPotPct("b1640", "r:0:b180:c:6h", 550, 8000)).toBe(160);
+  expect(betPotPct("b790", "r:0:b180:c:6h", 550, 8000)).toBe(67);
+});
+
+test("only bets and raises carry a percentage", () => {
+  // Fold, check and call are not a size choice; an all-in has no amount on
+  // its label, so it gets no percentage either.
+  expect(betPotPct("f", "r:0:b180", 550, 8000)).toBeNull();
+  expect(betPotPct("c", "r:0", 550, 8000)).toBeNull();
+  expect(betPotPct("c", "r:0:b180", 550, 8000)).toBeNull();
+  expect(betPotPct("b8000", "r:0", 550, 8000)).toBeNull();
+  // A solve with no recorded pot prints the amount alone.
+  expect(betPotPct("b180", "r:0", null, 8000)).toBeNull();
+  expect(betPotPct("b180", "r:0", 0, 8000)).toBeNull();
 });
 
 test("pot math no longer re-adds completed streets", () => {

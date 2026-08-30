@@ -1088,7 +1088,8 @@ const Solver = ({ user }: SolverProps) => {
         continue;
       }
       const actual = actualLine.actions[nextAction];
-      if (!actual || matchPlayedOption(node.options, actual) !== node.taken) return none;
+      const labels = node.options.map((o) => o.label);
+      if (!actual || matchPlayedOption(labels, actual) !== node.taken) return none;
       nextAction += 1;
     }
 
@@ -1561,8 +1562,9 @@ const Solver = ({ user }: SolverProps) => {
   );
 
   /* The line strip beside the sim panel in StudyTopStrip - the one header
-   * every layout shares. It fills its flex cell and stretches to the panel's
-   * height. */
+   * every layout shares. Its cards are a fixed size (see lineCard.ts), so the
+   * strip's height is the same at every node and the sim panel stretches to
+   * meet it. */
   const lineNode = pf.view ? (
     <PostflopLine
       preflopLine={pf.view.manifest.preflop.line}
@@ -1583,7 +1585,6 @@ const Solver = ({ user }: SolverProps) => {
       onActionClick={(display) => void pf.clickAction(display)}
       actionsDisabled={!!pf.view.pendingStreet}
       playedAction={playedHints.action}
-      fillHeight
     />
   ) : (
     <Line
@@ -1597,7 +1598,6 @@ const Solver = ({ user }: SolverProps) => {
       onActionClick={handleActionClick}
       onSkipToSeat={skipToSeat}
       onRewindTo={rewindPreflopTo}
-      fillHeight
     />
   );
 

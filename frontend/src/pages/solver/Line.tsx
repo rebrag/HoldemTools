@@ -1,13 +1,15 @@
 // src/components/Line.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import {
-  buildActionPalette,
-  plateActions,
-  stringToColor,
-} from "@/lib/solver/utils";
+import { plateActions } from "@/lib/solver/utils";
 import type { JsonData } from "@/lib/solver/utils";
 import { canPassAction, indexLineBySeat, resolveSeatNav } from "./seatNavigation";
+import {
+  LINE_CARD_H,
+  LINE_CARD_W_PREFLOP,
+  LINE_OPTION_TEXT,
+  LINE_OPTIONS_COL,
+} from "./lineCard";
 
 export interface LineProps {
   /** Chronological line of actions (index 0 is "Root"), replayed to find each
@@ -35,9 +37,6 @@ export interface LineProps {
    * acted, so its own decision comes back up - folded seats included.
    */
   onRewindTo?: (actionCount: number) => void;
-  /** Stretch the seat cards to fill the parent's height - used by the study
-   *  header so the strip matches the SimSelect panel beside it. */
-  fillHeight?: boolean;
 }
 
 const fmt = (n: number, decimals = 1) =>
@@ -72,7 +71,6 @@ const Line: React.FC<LineProps> = ({
   onActionClick,
   onSkipToSeat,
   onRewindTo,
-  fillHeight,
 }) => {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [canLeft, setCanLeft] = useState(false);
@@ -136,9 +134,7 @@ const Line: React.FC<LineProps> = ({
 
   /* ───── render ───── */
   return (
-    <div
-      className={`relative w-full select-none mx-auto${fillHeight ? " h-full" : ""}`}
-    >
+    <div className="relative mx-auto w-full select-none">
       {/* ← chevron */}
       {canLeft && (
         <button
@@ -162,15 +158,12 @@ const Line: React.FC<LineProps> = ({
       {/* seat strip */}
       <div
         ref={scrollerRef}
-        className={`overflow-x-auto scroll-smooth no-scrollbar w-full${
-          fillHeight ? " h-full" : ""
-        }`}
+        className="w-full overflow-x-auto scroll-smooth no-scrollbar"
       >
-        <div
-          className={`flex flex-nowrap items-stretch gap-1 w-full${
-            fillHeight ? " h-full" : ""
-          }`}
-        >
+        {/* Fixed-width cards, left-aligned: a three-seat sim and a nine-seat
+            one draw the same card, and a strip too wide for the viewport
+            scrolls under the chevrons above. */}
+        <div className="flex flex-nowrap items-stretch gap-1">
         {/* Seat cards. No separate reset control: the first seat's card is the
             root of the tree, so clicking it unwinds the whole line. */}
         {positions.map((pos) => {
@@ -181,11 +174,6 @@ const Line: React.FC<LineProps> = ({
           const bet = playerBets[pos] ?? 0;
           const stack = data ? (data.bb ?? 0) - bet : null;
           const options = seatActions(data);
-          /* One palette per seat card, from that seat's whole option list, so
-             the dots match the matrix segments for the same node instead of
-             each colour resolving in isolation. Preflop labels are already in
-             big blinds or percent of pot, so no sizeRef is needed. */
-          const palette = buildActionPalette(options);
           const card = seatCardClick(pos, alive);
 
           return (
@@ -196,7 +184,7 @@ const Line: React.FC<LineProps> = ({
               data-active={isActive ? "true" : undefined}
               onClick={card?.run}
               title={card?.title}
-              className={`flex-1 flex flex-col rounded-md border px-1.5 py-1 min-w-[3.6rem] transition-colors ${
+              className={`flex flex-shrink-0 flex-col rounded-md border px-1.5 py-1 ${LINE_CARD_W_PREFLOP} ${LINE_CARD_H} transition-colors ${
                 card ? "cursor-pointer hover:bg-white/[0.07]" : ""
               } ${
                 isActive
@@ -221,14 +209,13 @@ const Line: React.FC<LineProps> = ({
                 )}
               </div>
 
-              <div className="flex flex-col gap-0.5">
+              <div className={LINE_OPTIONS_COL}>
                 {options.length === 0 ? (
-                  <span className="text-[0.55rem] text-gray-400 italic leading-tight">
+                  <span className={`${LINE_OPTION_TEXT} italic leading-tight text-gray-400`}>
                     {alive ? " " : "folded"}
                   </span>
                 ) : (
                   options.map((action) => {
-                    const color = palette[action] || stringToColor(action);
                     /* Highlight the seat's taken action once the action has
                      * moved past them (their card no longer being active). */
                     const taken = !isActive && takenBySeat[pos] === action;
@@ -240,17 +227,16 @@ const Line: React.FC<LineProps> = ({
                           if (file) onActionClick(action, file);
                         }}
                         disabled={!file}
-                        className={`group flex items-center gap-1 rounded-sm px-1 py-0.5 text-left hover:bg-white/10 disabled:hover:bg-transparent transition-colors ${
+                        className={`group flex flex-shrink-0 items-center rounded-sm px-1 py-0.5 text-left transition-colors hover:bg-white/10 disabled:hover:bg-transparent ${
                           taken ? "bg-white/15" : ""
                         }`}
                         title={`${pos}: ${action}`}
                       >
+                        {/* The card is a fixed width, so a long label clips
+                            rather than widening it; the title carries it in
+                            full. */}
                         <span
-                          className="inline-block w-1.5 h-1.5 rounded-[2px] flex-shrink-0"
-                          style={{ backgroundColor: color }}
-                        />
-                        <span
-                          className={`text-[0.55rem] leading-tight whitespace-nowrap ${
+                          className={`${LINE_OPTION_TEXT} min-w-0 truncate leading-tight ${
                             taken ? "text-gray-100 font-semibold" : "text-gray-200"
                           }`}
                         >
