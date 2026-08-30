@@ -54,6 +54,13 @@ from htc_format import read_htc_header  # noqa: E402
 
 POLL_SECS = float(os.getenv("ENGINE_WATCHER_POLL_SECS", "5"))
 TIMEOUT_SECS = 30.0
+# How long one htsolver solve may run. This is a wall-clock ceiling on the
+# child, not a budget: the engine stops on its own accuracy target long
+# before this, and the only thing the ceiling does is kill a solve that has
+# genuinely hung. It has to be generous, because a deep or wide tree with a
+# tight target legitimately takes a long time - a 600 s ceiling killed real
+# work. Raise it with ENGINE_SOLVE_TIMEOUT_SECS rather than editing this.
+SOLVE_TIMEOUT_SECS = float(os.getenv("ENGINE_SOLVE_TIMEOUT_SECS", "3600"))
 ENGINE_EXE = os.path.abspath(
     os.getenv("ENGINE_EXE") or os.path.join(WATCHER_DIR, "..", "engine", "build", "engine.exe"))
 
@@ -229,7 +236,7 @@ def run_engine(config: Dict[str, Any], run_dir: str) -> str:
     with open(config_path, "w", encoding="utf8") as f:
         json.dump(config, f)
     out = run_streamed([ENGINE_EXE, "solve", config_path],
-                       timeout=600, prefix="ht")
+                       timeout=SOLVE_TIMEOUT_SECS, prefix="ht")
     if out.returncode != 0 or not os.path.exists(artifact):
         raise RuntimeError(f"htsolver solve failed (exit {out.returncode}): "
                            f"{out.text[-1500:]}")

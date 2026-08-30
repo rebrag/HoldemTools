@@ -125,6 +125,7 @@ const MultiwaySolver = () => {
   const [dump, setDump] = useState<PushFoldDump | null>(null);
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<CompareJob[]>([]);
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const cancelled = useRef(false);
 
@@ -231,6 +232,31 @@ const MultiwaySolver = () => {
   useEffect(() => {
     void refreshJobs();
   }, [refreshJobs]);
+
+  const deleteJob = useCallback(
+    async (id: string) => {
+      setError(null);
+      try {
+        const resp = await authedFetch(`/api/enginecompare/${id}`, { method: "DELETE" });
+        if (!resp.ok && resp.status !== 404) {
+          throw new Error((await resp.text()) || `Delete failed (${resp.status})`);
+        }
+        // Drop it locally rather than waiting for the refetch, so the row
+        // disappears on click; the refresh below then reconciles.
+        setJobs((list) => list.filter((j) => j.id !== id));
+        setViewingId((current) => {
+          if (current !== id) return current;
+          setDump(null);
+          return null;
+        });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        void refreshJobs();
+      }
+    },
+    [refreshJobs]
+  );
 
   const openJob = useCallback(
     async (id: string) => {
@@ -540,30 +566,70 @@ const MultiwaySolver = () => {
               <ul className="flex flex-col gap-1">
                 {jobs.map((j) => {
                   const openable = j.status === "Done" && j.hasHtResult !== false;
+                  const finished = j.status === "Done" || j.status === "Failed";
                   return (
-                    <li key={j.id}>
+                    <li
+                      key={j.id}
+                      className={`flex items-stretch gap-1 rounded-md border transition-colors ${
+                        viewingId === j.id
+                          ? "border-emerald-600/70 bg-emerald-500/10"
+                          : "border-slate-800 bg-slate-950/40"
+                      }`}
+                    >
                       <button
                         type="button"
                         disabled={!openable}
                         onClick={() => void openJob(j.id)}
                         title={j.error ?? (openable ? "Load this solve" : j.status)}
-                        className={`flex w-full items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-left text-[11px] transition-colors ${
-                          viewingId === j.id
-                            ? "border-emerald-600/70 bg-emerald-500/10"
-                            : "border-slate-800 bg-slate-950/40"
-                        } ${
-                          openable
-                            ? "hover:border-slate-600 hover:bg-slate-800/60"
-                            : "cursor-not-allowed opacity-60"
+                        className={`flex min-w-0 flex-1 items-center justify-between gap-2 rounded-l-md px-2 py-1.5 text-left text-[11px] transition-colors ${
+                          openable ? "hover:bg-slate-800/60" : "cursor-not-allowed opacity-60"
                         }`}
                       >
-                        <span className="font-medium text-slate-300">{j.board || "preflop"}</span>
-                        <span className="flex items-center gap-2">
+                        <span className="truncate font-medium text-slate-300">
+                          {j.board || "preflop"}
+                        </span>
+                        <span className="flex shrink-0 items-center gap-2">
                           <span className="tabular-nums text-slate-500">
                             {ago(j.completedAtUtc ?? j.createdAtUtc)}
                           </span>
                           <span className={STATUS_TONE[j.status]}>{j.status}</span>
                         </span>
+                      </button>
+                      {/* Two clicks, not a confirm dialog: the solve is cheap
+                          to re-run and a modal for every row would be worse
+                          than the mistake it prevents. A running job has no
+                          delete at all - the watcher would report into a row
+                          that no longer exists. */}
+                      <button
+                        type="button"
+                        aria-disabled={!finished}
+                        onClick={() => {
+                          if (!finished) return;
+                          if (confirmingDelete === j.id) void deleteJob(j.id);
+                          else setConfirmingDelete(j.id);
+                        }}
+                        onBlur={() =>
+                          setConfirmingDelete((c) => (c === j.id ? null : c))
+                        }
+                        title={
+                          finished
+                            ? confirmingDelete === j.id
+                              ? "Click again to delete this solve and its stored result"
+                              : "Delete this solve"
+                            : "Still running - it can be deleted once it finishes"
+                        }
+                        aria-label={`Delete the ${j.board || "preflop"} solve from ${ago(
+                          j.completedAtUtc ?? j.createdAtUtc
+                        )}`}
+                        className={`shrink-0 rounded-r-md px-2 text-[11px] transition-colors ${
+                          !finished
+                            ? "cursor-not-allowed text-slate-700"
+                            : confirmingDelete === j.id
+                              ? "bg-red-500/20 font-semibold text-red-300"
+                              : "text-slate-600 hover:bg-red-500/10 hover:text-red-300"
+                        }`}
+                      >
+                        {confirmingDelete === j.id ? "Sure?" : "×"}
                       </button>
                     </li>
                   );
