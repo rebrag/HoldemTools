@@ -71,7 +71,9 @@ add_library(engine_core STATIC
   src/cli/args.cpp
   src/config/config.cpp
   src/game/betting_tree.cpp
+  src/game/nlhe_preflop.cpp
   src/game/nlhe_river.cpp
+  src/game/preflop_tree.cpp
   src/game/public_tree.cpp
   src/eval/hand_eval.cpp
   src/eval/terminal.cpp
@@ -100,7 +102,10 @@ add_executable(engine_tests
   tests/test_kuhn.cpp
   tests/test_leduc.cpp
   tests/test_tree.cpp
+  tests/test_preflop_tree.cpp
   tests/test_terminal.cpp
+  tests/test_multiway_terminal.cpp
+  tests/test_preflop_game.cpp
   tests/test_memory.cpp
   tests/test_artifact_roundtrip.cpp
   tests/test_parallel.cpp

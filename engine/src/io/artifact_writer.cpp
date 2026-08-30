@@ -416,12 +416,16 @@ std::size_t export_pass_bytes(const Game& game) { return export_store_bytes(game
 double write_artifact(ArtifactStore& store, const std::string& path, const Game& game,
                     const CfrSolver& solver, const SolveConfig& config,
                     const SolveStats& stats) {
-  if (game.num_seats() != 2) {
-    throw std::runtime_error("artifact writer supports 2-seat games in this pass");
+  if (game.num_seats() < 2 || game.num_seats() > kMaxSeats) {
+    throw std::runtime_error("artifact writer supports 2 to " + std::to_string(kMaxSeats) +
+                             " seats");
   }
   const auto export_start = std::chrono::steady_clock::now();
   const PublicTree& tree = game.tree();
-  const bool rollups = config.rollups_169 && config.game == "nlhe";
+  // The 169-class rollup IS the push/fold chart, so it matters more preflop
+  // than anywhere else.
+  const bool nlhe = config.game == "nlhe" || config.game == "nlhe_preflop";
+  const bool rollups = config.rollups_169 && nlhe;
   const bool strategy_u8 = config.strategy_quantize_u8;
   const bool ev_f16 = !config.ev_float32;
 
@@ -550,13 +554,15 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
     meta["final_qre_gap_chips"] = nullptr;
     meta["final_qre_gap_pct_pot"] = nullptr;
   }
-  meta["ev_chips"] = {stats.ev_seat0, stats.ev_seat1};
-  meta["partition"] = json::array({{0}, {1}});
+  meta["ev_chips"] = stats.ev_chips;
+  json partition = json::array();
+  for (int s = 0; s < game.num_seats(); ++s) partition.push_back(json::array({s}));
+  meta["partition"] = std::move(partition);
   meta["payoff_weights"] = nullptr;
   meta["collusion"] = {{"mode", "none"}, {"p", nullptr}};
   // CFR has no Nash guarantee with 3+ players (it converges to the coarse
   // correlated equilibrium set); flagged here so downstream consumers can
-  // surface it. Always false while the engine is 2-player.
+  // surface it.
   meta["multiway_no_nash_guarantee"] = game.num_seats() > 2;
   meta["wall_time_s"] = stats.wall_time_s;
   meta["setup_time_s"] = stats.setup_time_s;
@@ -576,12 +582,48 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
   meta["pot"] = config.pot;
   meta["node_count"] = tree.size();
   meta["decision_node_count"] = tree.num_decision_nodes;
-  meta["hand_universe"] = config.game == "nlhe" ? "nlhe_combos_1326" : "toy";
+  meta["hand_universe"] = nlhe ? "nlhe_combos_1326" : "toy";
   json seat_labels = json::array();
   for (const PlayerConfig& p : config.players) seat_labels.push_back(p.seat);
-  if (seat_labels.empty()) seat_labels = {"P0", "P1"};
+  if (seat_labels.empty()) {
+    for (int s = 0; s < game.num_seats(); ++s) seat_labels.push_back("P" + std::to_string(s));
+  }
   meta["seats"] = seat_labels;
-  if (!config.players.empty()) meta["effective_stack"] = config.players[0].stack;
+  if (!config.players.empty()) {
+    // Per-seat stacks travel because preflop allows them to differ; the
+    // scalar stays for every existing consumer and is the effective stack.
+    json stacks = json::array();
+    Chips smallest = config.players[0].stack;
+    for (const PlayerConfig& p : config.players) {
+      stacks.push_back(p.stack);
+      smallest = std::min(smallest, p.stack);
+    }
+    meta["stacks"] = std::move(stacks);
+    meta["effective_stack"] = smallest;
+  }
+  if (config.game == "nlhe_preflop") {
+    const PreflopConfig& pf = config.preflop;
+    const int n = game.num_seats();
+    const int sb = n == 2 ? pf.button : (pf.button + 1) % n;
+    const int bb = n == 2 ? (pf.button + 1) % n : (pf.button + 2) % n;
+    json order = json::array();
+    for (int step = 1; step <= n; ++step) order.push_back((bb + step) % n);
+    // Derived here so no consumer re-derives the heads-up blind exception.
+    meta["preflop"] = {{"button", pf.button},   {"sb_seat", sb},
+                       {"bb_seat", bb},         {"small_blind", pf.small_blind},
+                       {"big_blind", pf.big_blind}, {"ante", pf.ante},
+                       {"dead", pf.dead},       {"action_set", pf.action_set},
+                       {"action_order", order}};
+    meta["board_sample"] = {{"iter_count", pf.board_sample.iter_count},
+                            {"pair_count", pf.board_sample.pair_count},
+                            {"seed", pf.board_sample.seed},
+                            {"fixed_across_iterations", true}};
+    // Hero-vs-opponent card removal is exact; opponent-vs-opponent removal
+    // (bunching) is dropped at 3+ seats, where the inclusion-exclusion grows
+    // combinatorially. Exact at 2 seats, which is what the published Nash
+    // push/fold charts also assume.
+    meta["opponent_card_removal"] = "hero_only";
+  }
   meta["sections"] = {
       {"node_table",
        {{"offset", node_table_off},

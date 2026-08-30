@@ -88,6 +88,9 @@ One JSON object. Fields (all present unless marked optional):
 | 40 | 36 | i32[9] | per-seat post-root commitment (side-pot input; unused seats 0) |
 | 76 | 4 | u32 | reserved (0) |
 
+There is deliberately no `folded_mask` field, because it is derivable and a redundant copy could disagree with the tree: a fold edge carries `action_kind == 1`, and its PARENT record names the seat that made it, so one walk down from the root reconstructs the alive set at every node.
+That matters from three players up, where a fold does not end the hand and `fold_winner` is only meaningful at a `terminal_kind == 1` leaf.
+
 ## Hand dictionaries
 
 One per seat, in seat order: `u32 count` followed by `count` x `u16` universe ids in hand order. For hold'em the ids are canonical 1326 combo indices and the dictionary lists every combo not blocked by the board; for toy games the ids are `0..H-1`. Per-node sparse arrays index **into the dictionary** (positions), not into the universe.

@@ -17,6 +17,48 @@ struct PlayerConfig {
   std::string range;  // range string, resolved from @file: at load time
 };
 
+// How a preflop all-in showdown averages over the board.
+//
+// There is no board in the tree - a runout as a chance node would make the
+// cards PUBLIC, which is a different game. The average lives inside
+// NlhePreflopGame::terminal_values, and this is its budget.
+//
+// `pair_count` builds the exact-in-the-limit pairwise equity matrix, whose
+// cost is paid once at construction and never per iteration (heads-up, the
+// board expectation commutes with the sum over opponent hands, so a static
+// matrix is exact). `iter_count` is the per-iteration sample the 3+ way
+// terminals average over, where no such factorization exists.
+//
+// The sample is FIXED across iterations, unlike SamplingConfig: that makes
+// the solve an exact solve of a well-defined sampled game rather than a noisy
+// estimate of the true one, which is what lets the accuracy stop mean
+// something. Every number here lands in artifact metadata so a result is
+// reproducible from (seed, iter_count, pair_count).
+struct BoardSampleConfig {
+  // Both defaults are MEASURED, by tools/bench_board_sample.py, not picked.
+  // On heads-up 10bb push/fold the 169-class chart is stable to 1-3 boundary
+  // classes from pair_count 5000 upward and the jam percentage moves by under
+  // a point all the way to 200000, while setup time is linear in it: 1.2 s,
+  // 4.7 s, 18.9 s, 47.2 s at 5000 / 20000 / 80000 / 200000. 20000 is the knee
+  // that fits an on-demand solve.
+  int iter_count = 500;
+  int pair_count = 20000;
+  std::uint64_t seed = 20260830;
+};
+
+// The preflop game's structure. Seats are `players[i]` clockwise; the blinds
+// are derived from `button` (SB = button+1, BB = button+2, heads-up the
+// button IS the small blind).
+struct PreflopConfig {
+  Chips small_blind = 0;
+  Chips big_blind = 0;
+  std::vector<Chips> ante;  // one per seat; a scalar in JSON broadcasts
+  int button = 0;
+  Chips dead = 0;  // straddle / dead money already in the middle
+  std::string action_set = "jam_fold";
+  BoardSampleConfig board_sample;
+};
+
 // Parsed and validated solve configuration (config schema v1). The raw
 // canonical JSON is kept for hashing and artifact metadata embedding.
 // Keys for QRE, multiway, and collusion are parsed and validated so configs
@@ -24,7 +66,7 @@ struct PlayerConfig {
 // values are accepted until those passes land.
 struct SolveConfig {
   int schema = 1;
-  std::string game = "nlhe";  // nlhe | kuhn | leduc
+  std::string game = "nlhe";  // nlhe | nlhe_preflop | kuhn | leduc
   std::string board;          // 3 cards = flop solve, 4 = turn, 5 = river
   Chips pot = 0;
   double chip_scale = 100.0;  // chips per display-money unit
@@ -35,6 +77,7 @@ struct SolveConfig {
   // Aggressor on the street before the root (preflop for flop solves);
   // gates whether OOP's first-in sizes come from donks or bets.
   Aggressor preflop_aggressor = Aggressor::None;
+  PreflopConfig preflop;  // game == "nlhe_preflop" only
 
   UpdateConfig update;   // algorithm.update / dcfr params
   RecalcConfig recalc;   // algorithm.recalc - chance-child revisit schedule
