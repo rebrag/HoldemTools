@@ -7,6 +7,7 @@
 //   npm run audit:taiwanese                      # avg mode, 1000 hands
 //   npm run audit:taiwanese -- --mode mirror     # symmetry check
 //   npm run audit:taiwanese -- --mode bias       # argmax bias, split-sample
+//   npm run audit:taiwanese -- --mode holdout    # overfitting the sampled pool
 //
 // Flags: --hands N --samples N --seed N --boards 1|2 --opponents N --royalties
 //        --mixing pure|mixed
@@ -27,6 +28,15 @@
 //          out-of-sample value is unbiased for the split the tool actually
 //          recommends; in-sample minus out-of-sample is the winner's-curse
 //          bias of taking a max over 105 correlated noisy estimates.
+//          NOTE: it resamples SCENARIOS, not the opponent pool, so it cannot
+//          see overfitting to the pool's particular hands - that is `holdout`.
+// - holdout Same split-sample idea one level up: choose the split against one
+//          HALF of the opponent pool, score it against the other half. The
+//          gap is how much of the measured exploitability is hero exploiting
+//          the finite sample of opponent hands rather than the policy itself.
+//          Large gap => the fix is a bigger ENTRIES (pool size); small gap =>
+//          the exploitability is real and the fix is more LEVELS / better
+//          per-hand solves.
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync, readFileSync } from "node:fs";
@@ -46,8 +56,8 @@ const argOf = (name, dflt) => {
 const numArg = (name, dflt) => Number(argOf(name, dflt));
 
 const MODE = argOf("mode", "avg");
-if (!["avg", "mirror", "bias"].includes(MODE)) {
-  console.error(`unknown --mode ${MODE} (expected avg | mirror | bias)`);
+if (!["avg", "mirror", "bias", "holdout"].includes(MODE)) {
+  console.error(`unknown --mode ${MODE} (expected avg | mirror | bias | holdout)`);
   process.exit(1);
 }
 
@@ -251,6 +261,38 @@ if (MODE === "avg") {
   console.log(`  sd             ${mirrored.sd.toFixed(4)}`);
   console.log(`\nsame hands, hero best-responding instead (in-sample max)`);
   console.log(`  mean #1 EV     ${pm(best)} pts/deal (95%)`);
+} else if (MODE === "holdout") {
+  // Halve the opponent pool: choose against A, score the choice against B.
+  // Both halves are drawn from the same build, so they differ only in WHICH
+  // opponent hands they contain - which is exactly the thing being tested.
+  const half = Math.floor(library.entries.length / 2);
+  const poolA = library.entries.slice(0, half);
+  const poolB = library.entries.slice(half);
+  const hands = Array.from({ length: HANDS }, () => dealHand(ALL_CARDS));
+
+  const onA = await runJobs(
+    hands.map((hand, h) => ({ hand, seed: seedFor(h, 0) })),
+    poolA,
+    `choose vs A (${poolA.length})`
+  );
+  const onB = await runJobs(
+    hands.map((hand, h) => ({ hand, seed: seedFor(h, 1), heroIdx: onA[h].bestIdx })),
+    poolB,
+    `score vs B (${poolB.length})`
+  );
+
+  const inPool = stats(onA.map((r) => r.best));
+  const outPool = stats(onB.map((r) => r.probe));
+  const bestOnB = stats(onB.map((r) => r.best));
+  const overfit = stats(onA.map((r, h) => r.best - onB[h].probe));
+  const agree = onA.filter((r, h) => r.bestIdx === onB[h].bestIdx).length / HANDS;
+
+  console.log(`
+chosen and scored vs pool A   ${pm(inPool)} pts/deal (95%)`);
+  console.log(`same split, scored vs pool B  ${pm(outPool)} pts/deal (95%)  <- honest vs a fresh field`);
+  console.log(`pool overfitting              ${pm(overfit)} pts/deal (95%)`);
+  console.log(`best response computed vs B   ${pm(bestOnB)} pts/deal (95%)`);
+  console.log(`same split chosen vs both pools: ${(agree * 100).toFixed(1)}%`);
 } else {
   // Split-sample: choose on pass 0, score the chosen split on pass 1.
   const hands = Array.from({ length: HANDS }, () => dealHand(ALL_CARDS));

@@ -174,6 +174,7 @@ Both terms were measured:
 |---|---|---|
 | Hero playing the SAME policy as the opponent | **-0.026 +/- 0.054** | `--mode mirror --hands 4000 --samples 3000 --seed 777` |
 | Argmax (winner's-curse) bias at 20k samples | **0.0015 +/- 0.0054** | `--mode bias --hands 400` |
+| Overfitting the sampled opponent pool | **-0.001 +/- 0.007** | `--mode holdout --hands 600 --seed 4242` |
 | Mean #1 EV over random hands | **+0.19 +/- 0.10** | `--mode avg --hands 1000` |
 
 The mirror row is the load-bearing one: house scoring is pairwise and antisymmetric, so
@@ -195,6 +196,15 @@ Do not confuse that with the ~0.1 floor under `prevPolicyEvLoss` in the precompu
 above: that floor is a different quantity, measured on fresh hands at 3000 INNER samples
 per hand during a build round, and it does not transfer to a 20k-sample solve.
 
+The holdout row rules out the other way the number could have been an artifact.
+Hero best-responds to a FINITE sample of opponent hands, so some of the gain could have
+been hero exploiting that particular sample rather than the policy - choose against half
+the pool, score against the other half, and the gap is that overfitting.
+It is zero even at a 5000-hand half-pool, and the same split wins against both halves
+93.8% of the time, so the shipped 10,000 entries are already past the point where pool
+size limits anything.
+**Do not spend an overnight raising `ENTRIES` to chase this number** - it will not move.
+
 So the whole +0.19 is real exploitability: a player who used the tool against opponents
 drawn from this policy would win about a fifth of a point per deal.
 Paired on identical hands, best-responding beat playing the policy by 0.21 pts/deal.
@@ -203,6 +213,37 @@ round of policy iteration would have to reduce - and it is the one to re-measure
 change to `LEVELS`, `ENTRIES`, or `INNER_SAMPLES`.
 Note the spread dwarfs it either way: SD across hands is ~1.7, about 9x the mean, so the
 hand you are dealt decides far more than the edge does.
+
+#### Lowering it
+
+Measured, the number is not noise, not a scoring artifact, and not pool overfitting, which
+leaves exactly two knobs and one structural change:
+
+- **`INNER_SAMPLES` is the first place to spend.**
+Every library hand's stored split is itself an argmax over 105 candidates from 3000
+scenarios, and argmax stability was measured at 55% @150, 67.5% @300, 77.5% @1200 - so a
+large minority of entries store a split that is not that hand's best, and each one is a
+systematic leak a best-responder collects.
+The cheaper version of the same lever is to spend samples ADAPTIVELY (successive
+elimination over the top-K, extra scenarios only while the top two are inside the noise)
+rather than giving every hand the same budget regardless of how close its race is.
+- **`LEVELS`, but judged by this metric rather than by `prevPolicyEvLoss`.**
+That build metric is itself an argmax over noisy estimates, floors around 0.1, and rises
+at rounds 4-5, so it cannot tell you whether another round helps.
+The paired best-response-minus-mirror number can. Dumping each round's library so
+exploitability can be plotted per round would settle the stopping point properly.
+- **If it plateaus, the fix is structural.**
+Iterated best response can cycle; this game (house rules, one opponent) is symmetric
+zero-sum, where fictitious play converges - respond to the AVERAGE of all previous
+policies, not the last one, and store a mixed policy per hand.
+If the equilibrium genuinely needs mixing, a pure lookup table's exploitability cannot
+reach zero no matter how long it iterates.
+
+Two caveats before chasing it. Exactly 0 is unreachable with a finite sampled pool and a
+table-lookup policy; the honest target is "small next to what matters", and +0.19 is ~11%
+of the hand-to-hand SD. And a zero-exploitability field is not obviously the product: the
+client's game is full of humans, which is what the mixed play style is for. Read this
+number as a trust metric for the strategic advice, not as a defect.
 
 ### Opponent play styles (the "Opponent play" toggle)
 
