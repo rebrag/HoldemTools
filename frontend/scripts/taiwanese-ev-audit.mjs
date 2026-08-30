@@ -258,7 +258,18 @@ if (MODE === "avg") {
   console.log(`share negative   ${((sorted.filter((v) => v < 0).length / s.n) * 100).toFixed(1)}%`);
   const dump = argOf("dump", null);
   if (dump) {
-    writeFileSync(join(root, dump), JSON.stringify({ lib: fileKey, seed: SEED, tops }));
+    writeFileSync(
+      join(root, dump),
+      JSON.stringify({
+        lib: fileKey,
+        seed: SEED,
+        opponents: OPPONENTS,
+        tops,
+        // Chosen split per hand, so two runs can be compared on WHICH split
+        // they pick and not only on what it scored.
+        idx: res.map((r) => r.bestIdx),
+      })
+    );
     console.log(`per-hand EVs -> ${dump}`);
   }
 } else if (MODE === "mirror") {

@@ -214,6 +214,20 @@ change to `LEVELS`, `ENTRIES`, or `INNER_SAMPLES`.
 Note the spread dwarfs it either way: SD across hands is ~1.7, about 9x the mean, so the
 hand you are dealt decides far more than the edge does.
 
+#### Why a nonzero average is a convergence measure, not a bug
+
+At an exact equilibrium every hand's best action IS the strategy's action - that is what
+equilibrium means - so best-response value equals strategy value for every hand, and
+averaging over hands gives E[#1 EV] = E[value] = 0 (pure or mixed, either way).
+A nonzero average #1 EV is therefore proof that the policy is not an equilibrium, and its
+size is exactly how far from one it is.
+That is the whole justification for treating this number as the convergence metric.
+It is NOT evidence of a scoring or harness bug: the mirror, bias and holdout rows above
+each would have caught one, and all three are clean.
+As exploitability falls the entire displayed EV distribution slides down with it, ending
+at mean zero with weak hands negative - today ~43-45% of hands already show a negative #1
+EV, and at equilibrium it would be about half.
+
 #### Lowering it
 
 Measured, the number is not noise, not a scoring artifact, and not pool overfitting, which
@@ -315,7 +329,16 @@ worker_threads); there is exactly one implementation.
 
 What gets built: house libraries per board count only, because pairwise scoring makes EV
 exactly linear in opponent count (same argmax for any table size - this is why the house
-cache key ignores N). PokerNews libraries are built at 3 opponents and reused for other
+cache key ignores N).
+That linearity is now measured, not just argued: over 400 hands solved at BOTH 1 and 3
+opponents on identical seeds, the 3-opponent EV divided by 3 minus the heads-up EV is
+**-0.0000 +/- 0.0072** pts/deal, and the same split is chosen at both table sizes 92.5%
+of the time - which is the same agreement rate two independent scenario draws produce at
+a FIXED table size (93.5%), so table size explains none of the disagreement.
+Card removal between the extra opponents, the one thing linearity glosses over, does not
+register.
+Solving heads-up and applying the answer at a full table is therefore exact under house
+rules, not a shortcut. PokerNews libraries are built at 3 opponents and reused for other
 counts (approximation; winner-take-all genuinely depends on N). Whenever a library is
 reused at a different table size the results panel says so, and says which of the two
 cases it is; keep that disclosure honest if the sizing changes.
