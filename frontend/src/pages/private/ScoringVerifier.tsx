@@ -9,7 +9,6 @@ import clsx from "clsx";
 import { evaluateCards } from "phe";
 import PlayingCard from "@/components/PlayingCard";
 import CardPicker from "@/components/CardPicker";
-import RankSuitKeypad from "@/components/RankSuitKeypad";
 import { bestOmaha } from "@/lib/handEval";
 import { scoreDealAll, type RowScores } from "@/lib/taiwanese";
 import BreakdownTable from "./BreakdownTable";
@@ -274,19 +273,18 @@ const ScoringVerifier: React.FC = () => {
             {missing} card{missing === 1 ? "" : "s"} left to place
             {targetLabel ? `, next: ${targetLabel}` : ""}.
           </p>
-          <div className="mt-2 hidden md:block">
+          {/* One picker on every viewport, matching the advisor tab: thirteen
+              fractional columns keep the suit rows on one line on a phone. */}
+          <div className="mt-2">
             <CardPicker
               used={used}
               onPick={pick}
               size="sm"
               fitToWidth
               cardWidth="100%"
-              gapPx={5}
-              className="grid w-full max-w-3xl rounded-xl border border-white/10 bg-white/[0.04] p-2.5"
+              gapPx={3}
+              className="grid w-full max-w-3xl rounded-xl border border-white/10 bg-white/[0.04] p-1.5 sm:p-2.5"
             />
-          </div>
-          <div className="mt-2 md:hidden">
-            <RankSuitKeypad used={used} onPick={pick} targetLabel={targetLabel} />
           </div>
         </>
       ) : (
