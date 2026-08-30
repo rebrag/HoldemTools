@@ -21,7 +21,7 @@ interface PrivatePageProps {
 type Tab = "rankings" | "taiwanese" | "advanced";
 
 const PrivatePage: React.FC<PrivatePageProps> = ({ user }) => {
-  const [tab, setTab] = useState<Tab>("rankings");
+  const [tab, setTab] = useState<Tab>("taiwanese");
   const [showLogin, setShowLogin] = useState(false);
   const [upsellOpen, setUpsellOpen] = useState(false);
   const { isPro, loading: tierLoading } = useCurrentTier();
@@ -80,12 +80,6 @@ const PrivatePage: React.FC<PrivatePageProps> = ({ user }) => {
 
   return (
     <div className="max-w-5xl mx-auto px-4 pb-12 pt-6">
-      <div className="mb-4">
-        <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">
-          Private
-        </p>
-        <h1 className="text-2xl font-semibold text-white">Poker Study Tools</h1>
-      </div>
       <div className="mb-4">
         <Segmented
           value={tab}
