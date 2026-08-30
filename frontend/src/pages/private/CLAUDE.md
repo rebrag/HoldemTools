@@ -227,17 +227,61 @@ systematic leak a best-responder collects.
 The cheaper version of the same lever is to spend samples ADAPTIVELY (successive
 elimination over the top-K, extra scenarios only while the top two are inside the noise)
 rather than giving every hand the same budget regardless of how close its race is.
-- **`LEVELS`, but judged by this metric rather than by `prevPolicyEvLoss`.**
-That build metric is itself an argmax over noisy estimates, floors around 0.1, and rises
-at rounds 4-5, so it cannot tell you whether another round helps.
-The paired best-response-minus-mirror number can. Dumping each round's library so
-exploitability can be plotted per round would settle the stopping point properly.
+- **`LEVELS`: cut them, do not add them** (measured, see below).
 - **If it plateaus, the fix is structural.**
 Iterated best response can cycle; this game (house rules, one opponent) is symmetric
 zero-sum, where fictitious play converges - respond to the AVERAGE of all previous
 policies, not the last one, and store a mixed policy per hand.
 If the equilibrium genuinely needs mixing, a pure lookup table's exploitability cannot
 reach zero no matter how long it iterates.
+
+#### Rounds past 3 make the policy worse (measured 2026-08-30)
+
+`precompute-taiwanese.mjs --custom --dump-rounds` snapshots the library after every round,
+so a whole levels curve comes from ONE hand pool and only the round count differs.
+`taiwanese-ev-audit.mjs --dump` writes per-hand EVs, and two runs sharing a `--seed` see
+identical hands and scenario seeds, so arms difference PAIRWISE - which cancels the ~1.7
+hand-to-hand SD that otherwise swamps every comparison.
+
+Exploitability by round, 2000 entries, 750 inner samples, one pool:
+
+| Round | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| Exploitability | 0.491 | **0.268** | 0.273 | 0.312 | 0.369 | 0.373 |
+
+Paired differences (positive = more exploitable = worse):
+
+| Comparison | Paired difference |
+|---|---|
+| round 3 vs round 2 | +0.006 +/- 0.026 (nothing) |
+| round 4 vs round 3 | +0.038 +/- 0.031 |
+| round 6 vs round 3 | +0.100 +/- 0.032 |
+| round 6 vs round 2 | +0.105 +/- 0.014 |
+| 6 rounds vs 3, separate builds | +0.134 +/- 0.035 |
+| 8x inner samples (6000 vs 750), 3 rounds | **-0.047 +/- 0.013** |
+
+Iteration is done by round 2 here, and every round after 3 makes the policy measurably
+MORE exploitable.
+The mechanism is the one the argmax-stability numbers imply: each round rebuilds the
+opponent field out of the previous round's stored argmaxes, so when only ~50% of those are
+that hand's true best, later rounds best-respond to a field that is wrong in a structured
+way and lock the error in rather than averaging it out.
+Iterating harder cannot fix per-hand noise; it compounds it.
+
+Raising `INNER_SAMPLES` is the lever that does work, but it is expensive at this exchange
+rate: 8x the scenarios bought an 18% reduction, with argmax stability going 50% -> 57%.
+That is the argument for spending the samples ADAPTIVELY (successive elimination over the
+top-K, more scenarios only while the leaders are inside the noise) instead of giving a
+blowout race and a coin-flip race the same 3000.
+
+**Unverified at the shipped sizes**, and worth checking before the next overnight: the
+curve above is at 750 inner samples, while the shipped libraries used 3000, where argmax
+noise is lower and the turn may come later.
+But the shipped house-2b build shows the same rising signature at rounds 4-5, so it may
+already be past its own optimum - rebuild it with `--dump-rounds` and measure per round.
+If it is, the fix costs nothing: dropping 5 rounds to 3 frees 40% of the build, and
+putting that into samples (3000 -> 5000 at 3 rounds) is the same overnight budget for a
+policy that is better on both axes.
 
 Two caveats before chasing it. Exactly 0 is unreachable with a finite sampled pool and a
 table-lookup policy; the honest target is "small next to what matters", and +0.19 is ~11%
@@ -282,10 +326,12 @@ The libraries in `public/taiwanese-libs/` are the run of 2026-08-25: 348M scenar
 3h20m wall clock on 15 threads. House 10,000 hands x 3,000 samples x 5 rounds (1.1MB
 each, 360KB gzipped); PokerNews 4,000 x 1,500 x 4 (0.44MB, 150KB gzipped). Per-round
 gains, house double board: 1.19, 0.30, 0.10, 0.11, 0.15 pts/deal. The rise after round 3
-is NOT divergence and not a reason to add rounds: the metric is an argmax over noisy
-per-hand estimates, so it carries an upward bias that does not shrink with more hands,
-and ~0.1 is the floor at these settings. Read that as converged by round 3, with rounds
-4-5 as confirmation. PokerNews (fewer hands, fewer samples, and a genuinely N-dependent
+was originally read as harmless upward bias in the metric (it is an argmax over noisy
+per-hand estimates, with a floor around 0.1 that does not shrink with more hands).
+**That reading is now known to be wrong, or at least incomplete** - see "Rounds past 3
+make the policy worse" below, where an external measurement shows the same rise tracking
+real degradation at 750 inner samples. Treat a rising gain as a stop signal, not as
+confirmation, and verify at the shipped sample size before trusting rounds 4-5. PokerNews (fewer hands, fewer samples, and a genuinely N-dependent
 game) floors higher: 2.80, 0.79, 0.45, 0.41.
 
 It is emphatically NOT a solve of all 133.8M seven-card hands, nor of the ~6.0M

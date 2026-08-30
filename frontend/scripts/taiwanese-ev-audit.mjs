@@ -10,7 +10,17 @@
 //   npm run audit:taiwanese -- --mode holdout    # overfitting the sampled pool
 //
 // Flags: --hands N --samples N --seed N --boards 1|2 --opponents N --royalties
-//        --mixing pure|mixed
+//        --mixing pure|mixed --lib <path to a library json> --dump <path>
+//
+// --dump writes avg mode's per-hand #1 EVs to a JSON file. Two runs sharing a
+// --seed see identical hands and scenario seeds, so their dumps can be
+// differenced PAIRWISE - which cancels the hand-to-hand SD (~1.7) that
+// otherwise swamps every comparison between two libraries.
+//
+// --lib points the run at a library other than the shipped one, which is how
+// build knobs get A/B'd: build probe libraries with
+// `precompute-taiwanese.mjs --custom`, then measure each one's exploitability
+// here on the same hands and seeds.
 //
 // The three modes answer three different questions:
 //
@@ -39,7 +49,7 @@
 //          per-hand solves.
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 import os from "node:os";
 import esbuild from "esbuild";
@@ -205,9 +215,15 @@ const helpersFile = await bundle(HELPERS_SRC, "audit-helpers.bundle.mjs");
 const { decodeLibrary, ALL_CARDS } = await import(`file://${helpersFile.replace(/\\/g, "/")}`);
 
 // The exact policy file the page fetches for these settings.
-const fileKey = `${ROYALTIES ? "pokernews" : "house"}-${BOARDS}b`;
+const libPath = argOf("lib", null);
+const fileKey = libPath ?? `${ROYALTIES ? "pokernews" : "house"}-${BOARDS}b`;
 const library = decodeLibrary(
-  JSON.parse(readFileSync(join(root, "public", "taiwanese-libs", `${fileKey}.json`), "utf8"))
+  JSON.parse(
+    readFileSync(
+      libPath ? join(root, libPath) : join(root, "public", "taiwanese-libs", `${fileKey}.json`),
+      "utf8"
+    )
+  )
 );
 
 console.log(
@@ -240,6 +256,11 @@ if (MODE === "avg") {
     `p10 p25 med p75 p90  ${[0.1, 0.25, 0.5, 0.75, 0.9].map((p) => q(p).toFixed(2)).join("  ")}`
   );
   console.log(`share negative   ${((sorted.filter((v) => v < 0).length / s.n) * 100).toFixed(1)}%`);
+  const dump = argOf("dump", null);
+  if (dump) {
+    writeFileSync(join(root, dump), JSON.stringify({ lib: fileKey, seed: SEED, tops }));
+    console.log(`per-hand EVs -> ${dump}`);
+  }
 } else if (MODE === "mirror") {
   // Hero is dealt library hands and plays the library's own choice, so both
   // seats run the same strategy. Antisymmetric pairwise scoring => mean 0.

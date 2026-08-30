@@ -25,10 +25,29 @@ import esbuild from "esbuild";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
-const outDir = join(root, "public", "taiwanese-libs");
 const cacheDir = join(here, ".cache");
 
 const QUICK = process.argv.includes("--quick");
+
+// One-off job, for experiments on the build knobs rather than a shipping
+// library: sizes come from flags, and --outdir keeps the result OUT of
+// public/ so a probe library can never be served to the app by accident.
+//
+//   node scripts/precompute-taiwanese.mjs --custom --entries 2000 //     --samples 6000 --levels 3 --file ab-hi --outdir scripts/.cache/ab
+const CUSTOM = process.argv.includes("--custom");
+// Custom runs can also write a snapshot after every round, which is what
+// turns "does another round help?" into a measurable curve: every snapshot
+// comes from the SAME hand pool, so only the round count differs.
+const DUMP_ROUNDS = process.argv.includes("--dump-rounds");
+const argOf = (name, dflt) => {
+  const i = process.argv.indexOf(`--${name}`);
+  return i >= 0 ? process.argv[i + 1] : dflt;
+};
+const numArg = (name, dflt) => Number(argOf(name, dflt));
+
+const outDir = CUSTOM
+  ? join(root, argOf("outdir", "scripts/.cache/custom"))
+  : join(root, "public", "taiwanese-libs");
 
 // Budget notes (measured): the in-browser build does ~17k scenarios/s over 6
 // workers; Node with more threads lands higher. The full config below is
@@ -36,7 +55,19 @@ const QUICK = process.argv.includes("--quick");
 // 6-hour window with margin. INNER samples got the biggest raise: argmax
 // stability on an unchanged field was measured at 55% @150, 67.5% @300,
 // 77.5% @1200 samples, so per-hand split quality was the binding constraint.
-const JOBS = QUICK
+const JOBS = CUSTOM
+  ? [
+      {
+        file: argOf("file", "custom"),
+        opponents: numArg("opponents", 1),
+        boards: numArg("boards", 2),
+        royalties: process.argv.includes("--royalties"),
+        entries: numArg("entries", 2000),
+        samples: numArg("samples", 3000),
+        levels: numArg("levels", 3),
+      },
+    ]
+  : QUICK
   ? [
       { file: "house-2b", opponents: 1, boards: 2, royalties: false, entries: 120, samples: 100, levels: 2 },
       { file: "house-1b", opponents: 1, boards: 1, royalties: false, entries: 120, samples: 100, levels: 2 },
@@ -150,7 +181,10 @@ function printProgress() {
 }
 
 async function main() {
-  console.log(`Taiwanese precompute${QUICK ? " (QUICK smoke test)" : ""}`);
+  console.log(
+    `Taiwanese precompute${QUICK ? " (QUICK smoke test)" : ""}${CUSTOM ? " (CUSTOM one-off)" : ""}`
+  );
+  if (CUSTOM) console.log(`out dir: ${outDir}`);
   console.log(`threads: ${nThreads}`);
   const totalScenarios = JOBS.reduce((a, j) => a + j.entries * j.samples * j.levels, 0);
   console.log(`total scenario budget: ${(totalScenarios / 1e6).toFixed(0)}M\n`);
@@ -207,6 +241,20 @@ async function main() {
       stats.push(round);
       policy = nextPolicy;
       prevIdx = nextIdx;
+      if (DUMP_ROUNDS) {
+        writeFileSync(
+          join(outDir, `${job.file}-r${level}.json`),
+          JSON.stringify(
+            helpers.encodeLibrary({
+              entries: policy,
+              stats: [...stats],
+              opponents: job.opponents,
+              boards: job.boards,
+              royalties: job.royalties,
+            })
+          )
+        );
+      }
       process.stdout.write(
         `\r${progressState.label}: done. gain over previous ${round.prevPolicyEvLoss.toFixed(3)} pts/deal, ` +
           `same split ${round.agreePrevPct.toFixed(0)}%${" ".repeat(20)}\n`
