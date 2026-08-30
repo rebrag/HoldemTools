@@ -7,12 +7,14 @@
 #include <memory>
 #include <numeric>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "config/schema.hpp"
 #include "game/nlhe_river.hpp"
 #include "game/toy/leduc.hpp"
 #include "io/artifact_reader.hpp"
+#include "io/artifact_store.hpp"
 #include "io/artifact_writer.hpp"
 #include "solver/best_response.hpp"
 #include "solver/cfr.hpp"
