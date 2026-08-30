@@ -45,7 +45,9 @@ const MultiRangeMobileView = ({
 }: MultiRangeViewProps) => {
   const [zoom, setZoom] = useState<PlateZoomPayload | null>(null);
   const container = useElementSize<HTMLDivElement>({ hysteresis: 6 });
-  const baseW = container.width || windowWidth;
+  /* Never wider than the viewport - this becomes inline pixel widths below,
+   * so a stale measurement would push the document sideways. */
+  const baseW = Math.min(container.width || windowWidth, windowWidth);
 
   const gridRows = Math.ceil(files.length / 2);
   const gridCols = 2;
