@@ -12,6 +12,7 @@ import RankingsTab from "./RankingsTab";
 import TaiwaneseTab from "./TaiwaneseTab";
 import AdvancedTab from "./AdvancedTab";
 import ScoringVerifier from "./ScoringVerifier";
+import InfoButton from "@/components/InfoButton";
 import { Segmented } from "./controls";
 
 interface PrivatePageProps {
@@ -80,7 +81,7 @@ const PrivatePage: React.FC<PrivatePageProps> = ({ user }) => {
 
   return (
     <div className="max-w-5xl mx-auto px-4 pb-12 pt-6">
-      <div className="mb-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <Segmented
           value={tab}
           options={[
@@ -90,11 +91,18 @@ const PrivatePage: React.FC<PrivatePageProps> = ({ user }) => {
           ]}
           onChange={setTab}
         />
+        {/* The checker is a reference tool, not an input to any tab, so it
+            lives behind an info button rather than under every result. */}
+        <InfoButton
+          label="Score checker"
+          title="Score checker"
+          description="Enter every player's set hands and the board cards from a real deal; the points come from the exact code the advisor uses. It starts loaded with a scored deal from the home game, so the output can be compared with the real scoresheet."
+          desktopMaxWidthClassName="sm:max-w-3xl"
+        >
+          <ScoringVerifier />
+        </InfoButton>
       </div>
       {tab === "rankings" ? <RankingsTab /> : tab === "taiwanese" ? <TaiwaneseTab /> : <AdvancedTab />}
-      <div className="mt-4">
-        <ScoringVerifier />
-      </div>
     </div>
   );
 };

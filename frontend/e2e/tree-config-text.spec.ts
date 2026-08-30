@@ -212,7 +212,10 @@ test("htsolver config is byte-identical to the shipped output", () => {
     algorithm: { update: "dcfr", recalc: { enabled: true } },
     isomorphism: true,
     qre: { mode: "nash" },
-    budget: { iterations: 20000, target_exploitable_pct: 0.02, checkpoint_every: 250 },
+    // 25, not 250: a checkpoint is a best-response pass, which on a flop tree
+    // costs about 2.7 iterations, so the cheapest resolution for the solve
+    // sizes this page produces is ~25 (measured, see builderState.ts).
+    budget: { iterations: 20000, target_exploitable_pct: 0.02, checkpoint_every: 25 },
     memory_limit_gb: 12,
     threads: 0,
   });

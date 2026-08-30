@@ -4,6 +4,9 @@
 // real home-game results can be checked against the implementation. Ships
 // preloaded with a real 4-player double-board deal from the client's game
 // whose scoresheet is known, so the numbers can be compared at a glance.
+//
+// Renders bare content, no container: it lives inside the page's InfoButton
+// overlay, which supplies the heading, the padding and the scroll region.
 import React, { useMemo, useState } from "react";
 import clsx from "clsx";
 import { evaluateCards } from "phe";
@@ -12,7 +15,7 @@ import CardPicker from "@/components/CardPicker";
 import { bestOmaha } from "@/lib/handEval";
 import { scoreDealAll, type RowScores } from "@/lib/taiwanese";
 import BreakdownTable from "./BreakdownTable";
-import { Segmented, Chip, glassCard } from "./controls";
+import { Segmented, Chip } from "./controls";
 
 // A real deal from the client's home game (2026-08-24), reconstructed from
 // screenshots of the table and its scoresheet. House scoring of this deal
@@ -178,17 +181,8 @@ const ScoringVerifier: React.FC = () => {
   };
 
   return (
-    <div className={glassCard}>
-      <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">
-        Score checker
-      </p>
-      <p className="mt-1 text-sm text-emerald-100/70 max-w-2xl">
-        Enter every player's set hands and the board cards from a real deal; the points come
-        from the exact code the advisor uses. It starts loaded with a scored deal from the
-        home game, so the output can be compared with the real scoresheet.
-      </p>
-
-      <div className="mt-4 flex flex-wrap items-end gap-x-6 gap-y-3">
+    <div>
+      <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-2">
             Players
