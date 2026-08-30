@@ -1,6 +1,7 @@
 #include "io/artifact_writer.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -42,10 +43,33 @@ static_assert(sizeof(NodeExportData) == 4 * sizeof(std::vector<float>),
 struct ExportPass {
   const Game& game;
   const CfrSolver& solver;
-  std::map<NodeId, NodeExportData> exports;
+  // Indexed by Node::decision_index, which is dense over EVERY decision node
+  // including suit-isomorphic members (they carry a valid index; only their
+  // solver storage is redirected). This was a std::map<NodeId, ...>: one
+  // red-black allocation per node - 248536 of them on a real flop tree - plus
+  // an O(log n) lookup for each one in the write loop below, to hold a key
+  // that is already a dense array index.
+  std::vector<NodeExportData> exports;
+
+  // Forking below this many children is not worth a reach-vector copy each.
+  static constexpr int kMinSplitChildren = 2;
 
   // Returns counterfactual values per seat.
-  std::vector<std::vector<float>> visit(NodeId id, std::vector<std::vector<float>>& reach) {
+  //
+  // `split` is the remaining fan-out budget and `fork_depth` the number of
+  // forks already taken on this path, exactly as in CfrSolver::traverse_impl -
+  // and the parallelism keeps that function's discipline for the same reason.
+  // Sibling subtrees are independent (they fill DISJOINT `exports` slots,
+  // indexed by decision_index) so they run concurrently, but every
+  // cross-child accumulation stays serial and IN CHILD ORDER after the join.
+  // That is what makes a threaded export bit-identical to a serial one, which
+  // the committed fixture then checks.
+  //
+  // This pass used to be the one serial phase left: 18.5 s on one core at the
+  // end of a solve whose loop had been using sixteen, which is where the
+  // "engine.exe only reaches ~30% CPU" report came from.
+  std::vector<std::vector<float>> visit(NodeId id, std::vector<std::vector<float>>& reach,
+                                        int split, int fork_depth) {
     const PublicTree& tree = game.tree();
     const Node& node = tree[id];
     const int seats = game.num_seats();
@@ -59,9 +83,42 @@ struct ExportPass {
       return values;
     }
 
+    const int children = node.num_children;
+    const bool fork =
+        split > 1 && fork_depth < kMaxSplitLevels && children >= kMinSplitChildren;
+    const int child_split = fork ? std::max(1, split / children) : split;
+    const int child_fork_depth = fork ? fork_depth + 1 : fork_depth;
+
     if (node.kind == NodeKind::Chance) {
       for (int s = 0; s < seats; ++s) values[s].assign(game.num_hands(s), 0.0f);
       const float w = static_cast<float>(game.chance_weight(id));
+      if (fork) {
+        std::vector<std::vector<std::vector<float>>> forked_reach(children);
+        std::vector<std::vector<std::vector<float>>> forked_values(children);
+        solver.pool().parallel_for(children, [&](int c) {
+          const NodeId child = node.first_child + static_cast<NodeId>(c);
+          const int card = tree[child].dealt_card;
+          std::vector<std::vector<float>>& cr = forked_reach[static_cast<std::size_t>(c)];
+          cr = reach;
+          for (int s = 0; s < seats; ++s) {
+            for (int h = 0; h < game.num_hands(s); ++h) {
+              if (game.hand_blocks_card(s, h, card)) cr[s][h] = 0.0f;
+            }
+          }
+          forked_values[static_cast<std::size_t>(c)] =
+              visit(child, cr, child_split, child_fork_depth);
+        });
+        for (int c = 0; c < children; ++c) {
+          const int card = tree[node.first_child + static_cast<NodeId>(c)].dealt_card;
+          const std::vector<std::vector<float>>& cv = forked_values[static_cast<std::size_t>(c)];
+          for (int s = 0; s < seats; ++s) {
+            for (int h = 0; h < game.num_hands(s); ++h) {
+              if (!game.hand_blocks_card(s, h, card)) values[s][h] += w * cv[s][h];
+            }
+          }
+        }
+        return values;
+      }
       for (std::uint16_t c = 0; c < node.num_children; ++c) {
         const NodeId child = node.first_child + c;
         const int card = tree[child].dealt_card;
@@ -72,7 +129,7 @@ struct ExportPass {
             if (game.hand_blocks_card(s, h, card)) reach[s][h] = 0.0f;
           }
         }
-        auto child_values = visit(child, reach);
+        auto child_values = visit(child, reach, child_split, child_fork_depth);
         for (int s = 0; s < seats; ++s) {
           for (int h = 0; h < game.num_hands(s); ++h) {
             if (!game.hand_blocks_card(s, h, card)) values[s][h] += w * child_values[s][h];
@@ -99,12 +156,11 @@ struct ExportPass {
     std::vector<float> compat;
     game.compat_weights(actor, reach, compat);
 
-    std::vector<float> saved = reach[actor];
-    for (std::uint16_t k = 0; k < actions; ++k) {
-      for (int h = 0; h < hands; ++h) {
-        reach[actor][h] = saved[h] * sigma[static_cast<std::size_t>(h) * actions + k];
-      }
-      auto child_values = visit(node.first_child + k, reach);
+    // The per-action fold-back below is identical in both paths; only where
+    // the child values came from differs. Keeping it in one lambda is what
+    // guarantees the threaded result is the serial one.
+    const auto fold_child = [&](std::uint16_t k,
+                                const std::vector<std::vector<float>>& child_values) {
       // Actor's conditional EV of taking this action = value at the child,
       // normalized by the opponents' reach (which the actor's own action
       // does not change). Chips already committed stay subtracted - see the
@@ -123,6 +179,35 @@ struct ExportPass {
         } else {
           for (int h = 0; h < game.num_hands(s); ++h) values[s][h] += child_values[s][h];
         }
+      }
+    };
+
+    std::vector<float> saved = reach[actor];
+    if (fork) {
+      std::vector<std::vector<std::vector<float>>> forked_reach(children);
+      std::vector<std::vector<std::vector<float>>> forked_values(children);
+      solver.pool().parallel_for(children, [&](int c) {
+        const std::uint16_t k = static_cast<std::uint16_t>(c);
+        std::vector<std::vector<float>>& cr = forked_reach[static_cast<std::size_t>(c)];
+        cr = reach;
+        // Only the actor's own reach moves; every other seat's is unchanged
+        // by the actor's choice, which is why the copy above is enough.
+        for (int h = 0; h < hands; ++h) {
+          cr[actor][h] = saved[h] * sigma[static_cast<std::size_t>(h) * actions + k];
+        }
+        forked_values[static_cast<std::size_t>(c)] =
+            visit(node.first_child + k, cr, child_split, child_fork_depth);
+      });
+      for (std::uint16_t k = 0; k < actions; ++k) {
+        fold_child(k, forked_values[static_cast<std::size_t>(k)]);
+      }
+    } else {
+      for (std::uint16_t k = 0; k < actions; ++k) {
+        for (int h = 0; h < hands; ++h) {
+          reach[actor][h] = saved[h] * sigma[static_cast<std::size_t>(h) * actions + k];
+        }
+        auto child_values = visit(node.first_child + k, reach, child_split, child_fork_depth);
+        fold_child(k, child_values);
       }
     }
     reach[actor] = saved;
@@ -149,14 +234,14 @@ struct ExportPass {
         }
       }
     }
-    exports.emplace(id, std::move(data));
+    exports[node.decision_index] = std::move(data);
     return values;
   }
 };
 
-// Live bytes of the ExportPass map at its peak, which is the moment the last
-// decision node is inserted: nothing is erased until write_artifact returns.
-std::size_t export_map_bytes(const Game& game) {
+// Live bytes of the ExportPass store at its peak, which is the moment the last
+// decision node is filled in: nothing is released until write_artifact returns.
+std::size_t export_store_bytes(const Game& game) {
   const PublicTree& tree = game.tree();
   const std::size_t seats = static_cast<std::size_t>(game.num_seats());
   std::size_t hands = 0;
@@ -167,10 +252,11 @@ std::size_t export_map_bytes(const Game& game) {
   // std::vector header is ~2% of the payload it points at, and there are
   // 2*seats + actions of them per node on top of the four inside the struct.
   constexpr std::size_t kVec = sizeof(std::vector<float>);
-  // One red-black node per decision node: the value, the NodeId key, three
-  // links and the colour. Rounded up to a pointer-sized allowance rather
-  // than measured, because the node type is the allocator's business.
-  const std::size_t per_entry = sizeof(NodeExportData) + sizeof(NodeId) + 4 * sizeof(void*);
+  // The store is one contiguous std::vector<NodeExportData> indexed by
+  // decision_index, so an entry costs exactly the struct - no key, no links,
+  // and no per-node heap block. It used to be a std::map, which charged all
+  // three.
+  const std::size_t per_entry = sizeof(NodeExportData);
   // Each of those vectors is its own heap block, and there are ~11 blocks per
   // decision node here - on a flop tree the bookkeeping alone runs to tens of
   // megabytes, enough on its own to leave this estimate below the measured
@@ -183,9 +269,9 @@ std::size_t export_map_bytes(const Game& game) {
     // reach and ev_cond: one hand-wide vector per seat each. strategy: one
     // hands x actions block. action_ev_cond: one hand-wide vector per action.
     const std::size_t floats = 2 * seats * hands + 2 * actions * hands;
-    // Blocks: the four buffers the struct's own vectors own, the inner
-    // vectors' buffers, and the map node.
-    const std::size_t blocks = 4 + 2 * seats + actions + 1;
+    // Blocks: the four buffers the struct's own vectors own plus the inner
+    // vectors' buffers. No map node any more - the store is one allocation.
+    const std::size_t blocks = 4 + 2 * seats + actions;
     total += floats * sizeof(float) + (2 * seats + actions) * kVec + per_entry +
              blocks * kHeapBlockOverhead;
   }
@@ -326,25 +412,28 @@ void pad_to(ArtifactStore& store, std::uint64_t alignment) {
 
 }  // namespace
 
-std::size_t export_pass_bytes(const Game& game) { return export_map_bytes(game); }
+std::size_t export_pass_bytes(const Game& game) { return export_store_bytes(game); }
 
-void write_artifact(ArtifactStore& store, const std::string& path, const Game& game,
+double write_artifact(ArtifactStore& store, const std::string& path, const Game& game,
                     const CfrSolver& solver, const SolveConfig& config,
                     const SolveStats& stats) {
   if (game.num_seats() != 2) {
     throw std::runtime_error("artifact writer supports 2-seat games in this pass");
   }
+  const auto export_start = std::chrono::steady_clock::now();
   const PublicTree& tree = game.tree();
   const bool rollups = config.rollups_169 && config.game == "nlhe";
   const bool strategy_u8 = config.strategy_quantize_u8;
   const bool ev_f16 = !config.ev_float32;
 
   // Export pass under the average strategy.
-  ExportPass pass{game, solver, {}};
+  ExportPass pass{game, solver, std::vector<NodeExportData>(tree.num_decision_nodes)};
   {
     std::vector<std::vector<float>> reach(game.num_seats());
     for (int s = 0; s < game.num_seats(); ++s) reach[s] = game.initial_range(s);
-    pass.visit(tree.root(), reach);
+    // Same fan-out budget the solver uses, so the export saturates the same
+    // pool rather than inventing its own policy.
+    pass.visit(tree.root(), reach, solver.split_budget(), 0);
   }
 
   // Hand dictionaries: entry h is the universe id of solver hand h, so a
@@ -405,7 +494,7 @@ void write_artifact(ArtifactStore& store, const std::string& path, const Game& g
     if (node.kind != NodeKind::Decision) continue;
     pad_to(store, 64);
     const std::uint64_t off = store.tell();
-    const auto blob = encode_node_blob(game, node, pass.exports.at(id), dicts,
+    const auto blob = encode_node_blob(game, node, pass.exports[node.decision_index], dicts,
                                        strategy_u8, ev_f16, rollups);
     store.write(blob.data(), blob.size());
     index.push_back({id, off, blob.size()});
@@ -472,6 +561,12 @@ void write_artifact(ArtifactStore& store, const std::string& path, const Game& g
   meta["multiway_no_nash_guarantee"] = game.num_seats() > 2;
   meta["wall_time_s"] = stats.wall_time_s;
   meta["setup_time_s"] = stats.setup_time_s;
+  // The export pass and file write, which wall_time_s excludes by design.
+  // Recorded here rather than by the caller because only this function knows
+  // when its own work started; the caller's clock has already stopped.
+  const double export_s =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - export_start).count();
+  meta["export_time_s"] = export_s;
   meta["threads"] = stats.threads;
   meta["recalc_skips"] = stats.recalc_skips;
   meta["peak_rss_bytes"] = peak.working_set;
@@ -533,6 +628,7 @@ void write_artifact(ArtifactStore& store, const std::string& path, const Game& g
   store.seek(0);
   store.write(header.data(), header.size());
   store.close_write();
+  return export_s;
 }
 
 }  // namespace engine

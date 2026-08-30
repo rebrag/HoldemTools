@@ -27,6 +27,19 @@ and implies `--no-pio`, since the harness refuses to rate a QRE against Pio.
   python bench_boards.py --no-pio --ranges tight --accuracy-pct 0.3 --checkpoint-every 5
   python bench_boards.py --ranges tight --accuracy-pct 0.3 --checkpoint-every 5       --qre-lambda 20 --qre-anneal-factor 50 --qre-anneal-at 25
 
+`--dcfr-alpha/-beta/-gamma` override the DCFR discount exponents the same way,
+and gamma is the interesting one: it is the exponent on the STRATEGY-sum
+discount `(t/(t+1))^gamma`, so it changes only how aggressively early
+iterations are discounted out of the running average. The engine's default is
+1.0 (plain linear averaging); the DCFR paper's value is 2 and the reference
+Rust implementation ships 3.
+
+  python bench_boards.py --no-pio --only flop --ranges tight --accuracy-pct 0.3       --checkpoint-every 5 --dcfr-gamma 2
+
+Gamma is a PURE ITERATION-COUNT lever - the discount is one multiply either
+way, so per-iteration cost is unchanged and `ht_iterations` alone settles the
+comparison, with no wall-clock noise to argue about.
+
 Compare the ITERATION medians, not the wall clock: iteration counts are exact
 and deterministic, while wall clock on this box moves by tens of percent when
 anything else is running. Watch --checkpoint-every too - the stop can only fire
@@ -171,7 +184,7 @@ def load_template(path: str) -> dict:
 def build_config(board: str, name: str, iterations: int, accuracy_pct: float,
                  threads: int, ranges: str, qre: dict | None = None,
                  checkpoint_every: int = 100, spr: float = 4.0,
-                 template: dict | None = None) -> str:
+                 template: dict | None = None, dcfr: dict | None = None) -> str:
     if template is not None:
         # Everything except the board is the template's business - including
         # its own accuracy target and budget, which is the point of pinning a
@@ -182,6 +195,12 @@ def build_config(board: str, name: str, iterations: int, accuracy_pct: float,
         config["output"]["path"] = f"out/_bench/{name}.hta"
         if qre is not None:
             config["qre"] = qre
+        if dcfr is not None:
+            # The exponents are the A/B variable, so they override the
+            # template - unlike the rest of it, which is deliberately pinned.
+            algorithm = dict(config.get("algorithm") or {"update": "dcfr"})
+            algorithm["dcfr"] = {**(algorithm.get("dcfr") or {}), **dcfr}
+            config["algorithm"] = algorithm
         path = os.path.join(BENCH_DIR, f"{name}.json")
         with open(path, "w", encoding="utf8") as f:
             json.dump(config, f, indent=2)
@@ -203,7 +222,7 @@ def build_config(board: str, name: str, iterations: int, accuracy_pct: float,
             {"seat": "IP", "stack": round(100 * spr), "range": RANGE_FILES[ranges]},
         ],
         "bet_sizing": bet_sizing,
-        "algorithm": {"update": "dcfr"},
+        "algorithm": {"update": "dcfr", **({"dcfr": dcfr} if dcfr else {})},
         "qre": qre or {"mode": "nash"},
         "budget": {
             "iterations": iterations,
@@ -362,6 +381,15 @@ def main() -> int:
                              "into a homotopy to Nash. 0 = fixed lambda")
     parser.add_argument("--qre-anneal-at", type=int, default=50,
                         help="iteration at which lambda reaches that multiple")
+    parser.add_argument("--dcfr-alpha", type=float,
+                        help="DCFR positive-regret discount exponent (engine default 1.5)")
+    parser.add_argument("--dcfr-beta", type=float,
+                        help="DCFR negative-regret discount exponent (engine default 0)")
+    parser.add_argument("--dcfr-gamma", type=float,
+                        help="DCFR strategy-average discount exponent (engine default 1.0 "
+                             "= linear averaging; the paper says 2, postflop-solver ships "
+                             "3). Pure iteration-count lever: per-iteration cost does not "
+                             "move, so compare ht_iterations and ignore the wall clock")
     parser.add_argument("--out", default=os.path.join(WATCHER_DIR, "bench_boards_results.json"))
     args = parser.parse_args()
 
@@ -382,8 +410,12 @@ def main() -> int:
         if args.qre_anneal_factor > 1.0:
             qre["anneal"] = {"factor": args.qre_anneal_factor,
                              "full_at": args.qre_anneal_at}
+    dcfr = {k: v for k, v in (("alpha", args.dcfr_alpha), ("beta", args.dcfr_beta),
+                              ("gamma", args.dcfr_gamma)) if v is not None} or None
+
     print(f"htsolver {'only' if args.no_pio else 'vs PioSolver'}"
-          f"{'' if qre is None else f'  qre {qre}'}", flush=True)
+          f"{'' if qre is None else f'  qre {qre}'}"
+          f"{'' if dcfr is None else f'  dcfr {dcfr}'}", flush=True)
 
     os.makedirs(BENCH_DIR, exist_ok=True)
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -414,12 +446,12 @@ def main() -> int:
             print(f"\n=== {name}: {board} ===", flush=True)
             config_path = build_config(board, name, args.iterations,
                                        args.accuracy_pct, args.threads, args.ranges, qre,
-                                       args.checkpoint_every, args.spr, template)
+                                       args.checkpoint_every, args.spr, template, dcfr)
             artifact = os.path.join(ENGINE_DIR, "out", "_bench", f"{name}.hta")
             out_prefix = os.path.join(OUT_DIR, f"{name}.compare")
             row = {"family": family, "board": board, "name": name, "ranges": args.ranges,
                    "spr": None if template is not None else args.spr,
-                   "template": args.template}
+                   "template": args.template, "dcfr": dcfr}
             try:
                 row.update(run_engine(config_path))
                 if args.no_pio:

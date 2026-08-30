@@ -20,6 +20,14 @@ struct SolveStats {
   // timing comparison against another solver is interpretable.
   double wall_time_s = 0.0;
   double setup_time_s = 0.0;  // tree build + showdown tables, before iterating
+  // Filled in BY write_artifact, not by the caller: seconds spent in the
+  // export pass and the file write. Kept separate from wall_time_s rather
+  // than folded into it, because wall_time_s is what the Pio harness compares
+  // against Pio's own solve time and redefining it would silently move every
+  // ratio ever recorded. It exists because it was hidden: on a real flop tree
+  // the export is ~24% of the process and ran on one core, so a solve that
+  // reported 56 s took 74 s. See docs/roadmap.md.
+  double export_time_s = 0.0;
   int threads = 1;
   // Subtree traversals the recalc schedule skipped. Observability: a solve
   // where this stays 0 on a multistreet tree means the schedule never
@@ -51,7 +59,10 @@ std::size_t export_pass_bytes(const Game& game);
 // engine/docs/artifact-format.md: header, metadata JSON, node table, hand
 // dictionaries, per-decision-node blobs (sparse per-hand reach/EV/strategy,
 // optional trailing 169-class rollup), node index at EOF.
-void write_artifact(ArtifactStore& store, const std::string& path, const Game& game,
+// Returns seconds spent in the export pass and file write - the phase that
+// wall_time_s deliberately excludes. Callers that ignore it lose nothing;
+// main prints it so the number stops being invisible.
+double write_artifact(ArtifactStore& store, const std::string& path, const Game& game,
                     const CfrSolver& solver, const SolveConfig& config,
                     const SolveStats& stats);
 

@@ -3,6 +3,7 @@
 #include <string>
 
 #include "game/game.hpp"
+#include "solver/updates.hpp"
 
 namespace engine {
 
@@ -48,7 +49,8 @@ struct MemoryEstimate {
 // workspace term: each concurrently traversed subtree checks out its own
 // scratch arena. `recalc` sizes the chance-child cache term (0 when the
 // recalc schedule is disabled).
-MemoryEstimate estimate_memory(const Game& game, int threads = 1, bool recalc = true);
+MemoryEstimate estimate_memory(const Game& game, int threads = 1, bool recalc = true,
+                               Precision precision = Precision::F32);
 
 // Process memory high-water marks, in bytes (0 where unavailable).
 //

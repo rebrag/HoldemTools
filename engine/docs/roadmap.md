@@ -8,6 +8,9 @@ The full original spec lives in the engine bootstrap prompt (session plan file `
 htsolver replaces PioSolver in the HoldemTools pipeline.
 
 - The watcher picks up a gametree job, solves it with **htsolver**, uploads schema-4 bundles, and frontend users browse the result in `/solutions` - exactly today's flow with Pio swapped out. The plumbing already exists: publish-mode `EngineCompareJob`s do this for river spots now.
+- **BOTH delivery models, and this is a product requirement rather than a nice-to-have.** A precomputed library covers the common spots, AND users solve their own trees **on demand**. Do not plan as though precomputing removes the latency constraint - it does not, and a plan that assumes it will reach the wrong conclusion about what to optimize. On-demand means a user is waiting, which puts solve time in the product rather than in the compute budget.
+- **The intended direction for that speed is GTO Wizard AI / Ruse-style depth-limited solving, explicitly, and the motivation is MULTIWAY.** Solving one street at a time with an estimated continuation value is the only published approach that makes 3+ player trees tractable at interactive speed; GTO Wizard's own figure for street-by-street solving is a **30000x complexity reduction**, and it is what lets them do 3-way spots at all. See `docs/perf-plan.md` for what they actually do and the two routes to it (a learned value network, or a Brown-Sandholm continuation-strategy portfolio that keeps the computation exact).
+- **jesolver-style optimization was the FIRST target only because it looked easier to implement, and it is now largely spent.** Five independent attacks were measured in one session and all came back neutral or negative - see M7.2. That is not a reason to abandon speed work; it is the reason the speed work moves to depth-limiting.
 - Pio is retired once htsolver is trusted **as much or more than Pio**. Trust is earned through the `/compare` loop: every spot solvable by both, compared per hand, gated on cross-exploitability.
 - htsolver's differentiators over Pio/Monker (the reason it exists): **QRE** (per-player rationality - *shipped, M7*; lambda fitting still to come), **3+ players** (NashConv, side pots), **configurable cooperation/collusion** (seat->agent partitions, payoff weights, Bayesian unknown-collusion). Everything else is table stakes.
 - Hard boundaries that never change: the engine is a headless CLI with zero cloud/Firebase/GUI dependencies; artifacts are local files; upload/index/serving is the backend + watcher's job; Firebase is auth-only.
@@ -129,6 +132,29 @@ Both were found by chasing an iteration count that could not have moved if the e
 
 The sweep's hardest board (`Ks Kd 4c 9h`, which has a usable s<->d permutation) went 17.9 s -> 9.45 s at 100% ranges. Full-range turn boards remain the one family where Pio is still ahead (0.71x median, best board 0.93x - close to parity); per M6.10's negative results, closing that residual is an update-rule question, not further scheduling or collapsing.
 
+**That last sentence was right, and M7.1 answered it.** The DCFR gamma sweep closed the family outright: re-run after the default change, 100%-range turn boards are **1.17x faster than Pio** (median over the same 10 boards, range 0.93-1.66x), all 10 passing the cross-exploitability gate. Only `Ks Kd 4c 9h` is still behind, at 0.93x. **htsolver is now ahead of PioSolver in every family it has been swept on.** The prediction that it would take an update-rule change rather than more scheduling held exactly - it just turned out to be a parameter of the rule already in use, not a different rule.
+
+**Do not over-read that sentence: the swept families are turn and river, at tight and 100% ranges, on a two-size tree. A real user flop spot measured 2026-08-28 is still 3.8x behind Pio**, and it is worth recording exactly because it is the shape the sweep does not cover.
+
+`8d 4c 2c`, pot 100, stacks 700 (SPR 7), ~50-60% asymmetric ranges, flop/turn/river sizes of 30/80/all-in plus raises, `max_raises` 3: **648732 nodes (248536 decision), 536-hand universe**. Same tree built node-for-node in Pio via `--solve-pio`, both to a 0.3%-of-pot target.
+
+| | htsolver | pio |
+|---|---|---|
+| solve | **53.85 s** | **14.13 s** (+0.59 s tree build) |
+| reached | 0.237% of pot | 0.250% |
+| iterations | 100 | - |
+| solve-phase peak | 1951 MB | 1818 MB |
+| root EV (OOP) | 30.992 | 30.977 |
+
+**The loss is entirely per-iteration cost, not convergence.** 100 iterations is all it needs - post-gamma convergence is excellent - but each costs **538 ms**, against ~49 ms for the 213356-node SPR 7 bench tree. Only 17% more nodes for 11x the cost. Roughly 5x of that is honest arithmetic (536 hands vs ~190 at tight ranges, and 5-6 actions per node vs 3-4); the rest is cache behaviour at a 1.4 GB regret+strategy working set.
+
+Two things measured on this spot rather than assumed:
+
+- **Suit isomorphism IS active here and worth 1.57x** (53.85 s on, 84.69 s off). "Asymmetric range" in the collapse rule means a range that is not suit-symmetric - one carrying an explicit combo token like `AdQd` - **not** "the two seats' ranges differ". Ranges written in class notation with weights (`AJs:0.75`) stay suit-symmetric and collapse fine. That lever is already spent on spots like this, not available.
+- **`checkpoint_every` was most of the earlier user-visible complaint.** This solve stops at iteration 100, so the old hardcoded 250 could not have stopped before 250 and would have cost ~134 s - 9.5x Pio instead of 3.8x.
+
+So the remaining gap on wide-range multi-size flop trees is the per-iteration work, and the ladder in `docs/perf-plan.md` is pointed at exactly it: i16 regret/strategy storage halves the dominant memory traffic, and the terminal-evaluator gather is the other half. Neither is convergence work, and no further update-rule tuning will touch this.
+
 - **M7 - QRE (quantal response equilibrium).** Landed 2026-08-28. **The first differentiator over Pio to actually ship.**
 
   Entropy-regularized CFR, implemented as a **reward transformation inside the traversal** rather than as a replacement for regret matching. At an actor's decision node each action's counterfactual value is charged the dilated KL of the current strategy to uniform:
@@ -243,6 +269,187 @@ The sweep's hardest board (`Ks Kd 4c 9h`, which has a usable s<->d permutation) 
 
   Not built, deliberately: `fit-lambda` (MLE from observed frequency counts) needs hand-history frequency plumbing that does not exist yet.
 
+- **M7.1 - the DCFR strategy-discount exponent.** Landed 2026-08-28.
+  **A ~2x wall-clock win on every family, from a constant that had never been swept.**
+
+  `UpdateConfig::gamma` is the exponent on the strategy-sum discount `(t/(t+1))^gamma`.
+  It was 1.0 - plain linear averaging - since M3.
+  The DCFR paper's value is 2 and the reference Rust implementation (`b-inary/postflop-solver`) ships 3.
+  Nobody had checked, because "DCFR is already the right update rule" (measured, and still true) was read as "the update rule is settled" and the rule's own parameters went with it.
+
+  Iterations to the same accuracy target, medians over the standard board sets at tight ranges, via the new `bench_boards.py --dcfr-gamma`:
+
+  | family, target | gamma 1 | gamma 2 | gamma 3 | gamma 4 | gamma 5 | best saving |
+  |---|---|---|---|---|---|---|
+  | river, 0.02% | 675 | 435 | 425 | 425 | 455 | 1.59x |
+  | turn, 0.02% | 1225 | 675 | 585 | 590 | 590 | **2.09x** |
+  | flop SPR 4, 0.3% | 260 | 155 | 135 | 125 | - | **2.08x** |
+  | flop SPR 7, 0.3% | 565 | - | 255 | 235 | 230 | **2.46x** |
+  | flop SPR 10, 0.3% | 900 | - | 405 | 395 | - | **2.28x** |
+
+  Wall clock follows exactly, because **gamma is a pure iteration-count lever**: the discount is one multiply per cell either way, so per-iteration cost does not move.
+  Flop trees at SPR 10 went 94.1 s -> 44.9 s; at SPR 7, 40.5 s -> 18.0 s; turn trees 0.70 s -> 0.36 s.
+
+  **The saving does NOT decay with stack depth**, which is what separates this from the annealed-QRE result directly above it.
+  QRE's iteration saving collapsed 1.41x -> 1.13x -> 1.07x across SPR 4/7/10 while its per-iteration cost climbed; gamma's is 2.08x -> 2.46x -> 2.28x with no per-iteration cost at all.
+  That asymmetry is the reason one is the default now and the other is a modelling feature.
+
+  **Why 3 and not 4.** The curve is flat from 3 to 5 and degrades by 8 (turn 625, river 485), so 3 sits at the knee with margin on both sides.
+  4 is a few checkpoints better on flop trees and equal-or-worse on turn and river, and most of those gaps are inside the `--checkpoint-every 5` resolution.
+  3 is also the value postflop-solver independently converged on.
+  If flop trees ever become the only thing that matters, 4 is defensible; do not go past 5.
+
+  **Gated, not assumed.** `configs/validate_turn_fullrange.json` through `engine_compare.py --solve-pio --cross-check`: Pio's own evaluator rates the engine strategy **0.016 chips** exploitable against **0.019** for Pio's own solve of the same tree. The strategy is not merely cheaper to reach, it is at least as good.
+
+  **Two baselines moved, and this is the note that stops a future session calling it a regression.**
+  Neither is a bit-neutrality failure - gamma legitimately changes the numbers, and everything above was verified bit-neutral against the gamma-1 defaults of its own day.
+
+  - `validate_turn_fullrange` at 300 iterations now gives **`nashconv 0.106929, ev 46.0018 53.9982`**, where the M6.8/M6.9/M7 entries above record `nashconv 0.232074, ev 45.9951 54.0049`. Same iterations, 2.17x lower exploitability. Use the new numbers as the refactor reference from here.
+  - The committed fixture pair `backend/Tests/Fixtures/engine/tiny_river.{hta,golden.json}` was regenerated; its `final_nashconv` went from `3.9826105587081884e-4` to `2.4049526814451383e-9` at the same 500 iterations.
+
+  `tests/test_qre.cpp`'s isomorphism case went from 2400 to 4800 iterations.
+  Not a convergence regression - the same sweep has gamma 3 reaching a QRE-gap target in 440 iterations against gamma 1's 595.
+  A heavier strategy discount makes the running average *younger*, so at a **fixed iteration count** it carries more of the still-moving recent iterates and two equivalent-but-differently-accumulated solves (iso on vs off) agree less closely.
+  Re-measured residual under gamma 3: 0.063 at 2400, 0.027 at 4800, 0.0097 at 9600, 0.0087 at 19200 - going to zero, which is what rules out a relabeling bug.
+  Measuring an accuracy target and measuring agreement at fixed `t` are different questions and gamma moves them in opposite directions.
+
+  Also fixed here because the suite was red: `tests/test_memory.cpp`'s hand-computed workspace mirror still read `(2 + seats)` hands-wide scratch slots per level after M7 added `kSlotCompat`, so it expected 360 bytes where the estimator correctly said 420. The estimator was right; the test had not been updated with it.
+
+- **M7.2 - i16 strategy sums (`algorithm.precision`).** Landed 2026-08-28.
+  **A 25% memory win and NO speed win, which is a negative result against the jesolver evidence and the reason it is written up in full.**
+
+  Strategy sums store as u16 with a per-node f32 scale; regrets stay f32. `precision: "f32" | "i16"`, f32 the default and the Pio-gated path, verified bit-identical (`validate_turn_fullrange` at 300 iterations still `nashconv 0.106929, ev 46.0018 53.9982`, all 47 tests pass).
+
+  The strategy half was chosen first because it is the safe half, and none of its properties carry over to regrets: sums are accumulate-only from non-negative terms, their discount is a single sign-independent factor (so it is charged to the SCALE, deleting that memory pass rather than narrowing it), they are never read inside the traversal, and `row_from_action_major` normalizes every row by its own sum - **so the per-node scale cancels on read and there is no dequantization step anywhere**. Overflow is a per-node bound, not a per-cell check: sigma is a probability, so no cell can grow by more than `max(rw)` per visit, and that number is free in the loop that already builds `rw`.
+
+  On the user flop spot above (248536 decision nodes, 536 hands), regrets+strategy **1.40 GB -> 1.05 GB**, root EVs matching f32 to four decimals and nashconv 0.472781 against 0.473739. The quantization is numerically sound.
+
+  Wall clock, three interleaved rounds, 100 iterations each:
+
+  | attempt | i16 vs f32 | why |
+  |---|---|---|
+  | fused update loop | **-4.3%** (consistent sign) | the loop compiled SCALAR |
+  | split into two loops | **-2.75%** (consistent sign) | vectorized again |
+  | + scale hoisted per node | **+0.45%, +3.5%, -2.4%** | sign flips: not resolved |
+
+  **The final answer is "indistinguishable from f32".** Within-arm spread was 10.6% against an effect under 1.5%, which is well inside the box's documented ~3% wall-clock noise floor, so no percentage should be quoted from it in either direction.
+
+  **The vectorization finding is the durable part, and it is a new instance of a trap this file has hit twice.** Writing f32 regrets and u16 strategy sums in ONE loop makes MSVC give up entirely: `dumpbin` showed **zero packed ymm ops against the f32 version's seven**, and 37 scalar `ss` ops. It scalarised the regret half too, which is why the loss was bigger than the strategy array's share of traffic could explain. Splitting restored 12 ymm ops in each half. **Mixing output widths in one loop silently costs the whole loop its vectorization** - alongside the lambda-capture provenance trap in M7 and the hand-major scatter in M6.8.
+
+  **On the regret half - and this is a CORRECTION to the first version of this entry, which said flatly "do not attempt it".** That was argued from conversion counts rather than measured, and `tools/qbench.cpp` (written afterwards, at the user's prompting) measures the thing directly. Same action-major layout, 536 hands x 5 actions x 25000 nodes = 268 MB of f32 cells, far past the 96 MB V-Cache:
+
+  | variant | time | packed ymm | vs f32 |
+  |---|---|---|---|
+  | A: f32 store, f32 math (what the solver does) | 0.0131 s | 16 | - |
+  | B: u16 store, **f32 math** (naive quantized regrets) | 0.0341 s | **0** | **0.39x - 2.6x SLOWER** |
+  | C: u16 store, **u16 integer math** | 0.0051 s | 12 | **2.56x FASTER** |
+
+  So both halves of the folk wisdom are true at once, and which one you get depends entirely on where the conversion sits:
+
+  - **Naive u16 regrets are much worse than doing nothing.** Reading u16, converting to float to subtract a float counterfactual value, converting back and storing u16 is a round trip MSVC refuses to vectorize at all (0 ymm ops), and it lands at 0.39x. This is the same mixed-width failure as the fused loop above, and it is the version anyone would write first.
+  - **A pure 16-bit integer inner loop is 2.56x faster than f32**, which is better than the 2x that halving the bytes alone would predict - the extra is 16-wide integer lanes against 8-wide float. The prize is real.
+
+  Reaching C is a **fixed-point** design, not a storage change: the per-node value vector `out[]` would be quantized once per node (H conversions) instead of per cell (H x A), leaving the update loop pure integer. That is the same hoisting trick that already paid for the strategy scale. The unsolved part is `regret_matched_action_major`, which reads H x A regrets and must emit float sigma because sigma multiplies float child values - so it cannot obviously be made integer, and a partially-integer loop reintroduces exactly the mixed-width pattern that measures 0.39x.
+
+  **That experiment was then run.** `tools/qbench.cpp` now models all three ways the traversal touches the regret array, and the answer is that each one behaves differently:
+
+  | touch | f32 baseline | best i16 form | |
+  |---|---|---|---|
+  | the update (`r -= out[h]`) | - | **2.35x faster** | pure integer, if `out[]` is quantized once per node |
+  | regret matching (pass 1) | - | **1.21x faster** | widen i16 -> f32 scratch in its OWN loop, then the existing all-float kernel |
+  | `plain_fold_in` (`r += cv`) | - | **0.76x - still a loss** | even with every loop single-width |
+
+  **The governing rule, which explains all eleven variants measured: MSVC vectorizes a loop whose streaming array is touched at ONE width, and scalarises it the moment the streaming array has to be widened or narrowed inside the loop.** Pure f32 and pure integer loops get 12-20 packed ymm ops; every fused mixed-width variant gets exactly zero. Splitting the widening into a loop of its own is what rescues regret matching (`j_widen`, 17 ymm ops), and it is the same fix that rescued `strat_accum_q16` in the solver. Fold-in cannot be rescued the same way because it needs a float multiply, a narrowing, and an integer accumulate, and the cheap cache-resident half stays scalar and dominates.
+
+  Weighting the three touches equally puts the whole regret quantization at about **1.16x on this array alone**, which is a few percent of a solve - far too little for signed quantization, per-node scale management, and a sign-dependent discount that cannot be folded into the scale.
+
+  **And the reason it is that small is the genuinely useful finding, because it explains why jesolver's compression does not transfer.** A twelfth variant merged `plain_fold_in` and the update into ONE streaming pass over the regrets, which halves the bytes moved and needs no quantization at all. It measured **0.99x - exactly nothing**. The regret rows for a single node are H x A x 4 bytes = about 10.7 KB at these sizes, so they are **L1-resident for the whole time the node is being processed**. The array streams from DRAM roughly ONCE per node per iteration and every subsequent touch is a cache hit. So the traffic that quantization would halve is already small, while the conversion cost is paid on every cell.
+
+  **Verdict: do not quantize regrets.** Not because narrow cells are slow - variant C is 2.35x - but because this engine's hot data is already mostly in L1 within a node, so there is little streaming traffic left to save. The action-major layout and compact hand universe from M6.8 are what made that true; compression pays for jesolver because it is buying something this engine already has.
+
+  ### The showdown gather, measured the same way (2026-08-29) - also refuted
+
+  `docs/perf-plan.md` listed the `for (int i : sorted_)` gather in `RiverEvaluator` as the next lever, on the reasoning that an indirect gather in the hottest loop cannot autovectorize. `tools/qbench.cpp` models its totals sweep four ways, at 500 valid hands:
+
+  | variant | vs today |
+  |---|---|
+  | N: gather + 52-bin scatter (today) | - |
+  | O: `hi`/`lo` pre-permuted at construction, reach pre-gathered, contiguous sweep | **0.82x - SLOWER** |
+  | Q: contiguous plus a 4-bank scatter (the standard histogram fix) | **0.76x** |
+  | P: contiguous with the scatter removed entirely (the ceiling) | **1.12x** |
+
+  **The premise was wrong twice over.** A 536-hand reach vector is ~2 KB, so it and the permutation are **L1-resident** - a gather out of L1 is cheap, and there is no bandwidth problem to fix. And the loop is latency-bound on the dependent `double` accumulation rather than on its loads, so a pre-gather pass adds a whole extra traversal to save something that was not costing much. **Even deleting the scatter completely only reaches 1.12x**, so the sweep is already within ~12% of its own floor and every standard fix overshoots that budget.
+
+  Scope, stated honestly: this models the opening totals pass of `showdown_2p` and `compat_reach`, not the group sweep below it. What it does establish is that the *gather* is not the problem, which is what the perf plan claimed.
+
+  ### The artifact export is 24% of the run, single-threaded, and INVISIBLE in every number we report (measured 2026-08-29)
+
+  Found by chasing a user observation that `engine.exe` sits at ~30% CPU in Task Manager while PioSolver sits at ~70%. Both halves of that turned out to be the same thing.
+
+  On the `8d 4c 2c` user spot, one run:
+
+  | | |
+  |---|---|
+  | printed `solve time` | 56.15 s |
+  | printed `wall ... including setup` | 56.29 s |
+  | **actual process wall** | **74.49 s** |
+
+  `wall_s` is captured in `main.cpp` **before** `write_artifact` is called, so the 18.2 s export pass is in neither the console line nor `wall_time_s` in the artifact metadata. `watcher/engine_compare.py` reads `wall_time_s` for the htsolver-vs-Pio comparison, which means **every ratio this project has published understates htsolver's end-to-end cost on flop trees by about a quarter**. The solve-loop-to-solve-loop comparison is still the fair one for the solver, but it is not what a `/compare` user experiences: end to end this spot is 74.5 s against Pio's 14.1 s.
+
+  `ExportPass::visit` is a plain recursive call (`artifact_writer.cpp`) with no `parallel_for` anywhere, so those 18.2 s run on ONE core. That is the CPU number: the solve loop reaches ~8x on 16 threads (50% efficiency, measured in M6.7), then a quarter of the run drops to 1/16 of the machine, and the average lands near 30%. Pio has no equivalent serial tail.
+
+  Three separate problems now point at the same code, which makes it the highest-value target in the engine:
+
+  1. **Memory** - the export holds one record per decision node for ALL of them at once: 4.43 GB against the solver's own 1.40 GB, and 9.58 GB on the config that could not run at all.
+  2. **Wall clock** - 24% of the run, single-threaded.
+  3. **Reporting** - it is excluded from the only timing number the pipeline records.
+
+  #### Two of those fixed, and the map swap was a dud (2026-08-29)
+
+  **The timing is now reported.** `write_artifact` returns its own elapsed seconds, `export_time_s` lands in artifact metadata, and `solve` prints `total N s (setup + solve + artifact export, single-threaded)`. `wall_time_s` deliberately keeps its old meaning - it is what `engine_compare.py` rates against Pio's solve time, and redefining it would silently move every ratio ever recorded - so the export is surfaced beside it rather than folded into it.
+
+  **`exports` went from `std::map<NodeId, NodeExportData>` to a `std::vector` indexed by `decision_index`, and it bought essentially nothing: 18.2 s -> 18.5 s (noise), 4.43 GB -> 4.42 GB.** Worth recording as a dud so nobody tries it again. The reasoning was sound - a red-black node per entry, 248536 of them, O(log n) lookups - but the arithmetic was not: those map nodes are ~16 MB against 4.4 GB of payload, and 248536 lookups are nothing against the traversal itself. The change stays because a dense array index has no business being a map key, not because it is faster.
+
+  **What the timing number then made obvious is that the export is not slow - it is SERIAL.** 18.5 s single-threaded against a solve loop that does ~558 ms per iteration on 16 threads. In core-seconds the export is about 18.5 against an iteration's ~8.9, so it is roughly two iterations' worth of work - entirely reasonable for a full tree traversal that copies both seats' reach per node, calls `compat_weights` per seat per node, and divides per hand. It only looks pathological because it runs on one core while everything around it uses sixteen.
+
+  **So the fix is to parallelize it, not to micro-optimize it.** Sibling subtrees are independent in the export exactly as they are in `CfrSolver::traverse_impl`, and the same fork-onto-the-pool treatment applies. At the solver's measured 8x on 16 threads that is 18.5 s -> ~2.3 s, taking this spot's end-to-end from 74 s to ~58 s. The remaining ~2.5M small vector allocations (about ten per decision node) are the other half, and streaming the blobs during the traversal removes both those and the 4.4 GB at once.
+
+  ### The export is parallel now - and it uncovered a much bigger problem (2026-08-29)
+
+  `ExportPass::visit` forks sibling subtrees onto the solver's pool exactly as `CfrSolver::traverse_impl` does, with the same discipline: siblings write DISJOINT `exports` slots (indexed by `decision_index`), every cross-child accumulation stays serial and in child order, and the per-action fold-back lives in one `fold_child` lambda shared by the forked and serial paths so there is a single copy of the arithmetic. **Verified bit-identical at 1 vs 16 threads** across all 3237 nodes of a turn tree, and pinned by a new `TEST_CASE` in `tests/test_parallel.cpp` in the same bitwise style as the existing thread-count tests.
+
+  Then the thread sweep on the `8d 4c 2c` user spot, which was supposed to confirm the win:
+
+  | threads | solve | speedup | efficiency | export | speedup |
+  |---|---|---|---|---|---|
+  | 1 | 130.02 s | 1.00x | 100% | 15.05 s | 1.00x |
+  | 2 | 72.86 s | 1.78x | 89% | 12.35 s | 1.22x |
+  | 4 | 60.21 s | 2.16x | 54% | 11.93 s | 1.26x |
+  | 8 | 55.34 s | 2.35x | 29% | 14.07 s | 1.07x |
+  | 16 | 48.47 s | **2.68x** | **17%** | 11.63 s | **1.29x** |
+
+  **The flop SOLVE gets 2.68x out of 16 threads. M6.7 measured 8.0x - on a turn tree - and that number does not generalize.** This is the third time a turn-tree measurement has been over-read as a general result, after "best-response checkpoints cost nothing" and "faster than Pio in every family". Treat any figure in this file that was taken on `validate_turn_fullrange` as a turn-tree figure until it is re-measured on a flop tree.
+
+  **Both phases scale well to 2 threads and then stop** - the solve is 89% efficient at 2 and 17% at 16; the export saturates immediately at ~1.25x. Two independent code paths hitting the same wall at the same thread count points at a **shared resource**, not at a structural problem in either one. It is not a shortage of parallel work: 89% efficiency at 2 threads means the fork-out is feeding the pool fine.
+
+  **What it is NOT, measured rather than assumed:** the fan-out budget. The flop root has a single child (OOP can only check in this config), so the obvious theory was that `kMaxSplitLevels` got consumed on narrow betting nodes before reaching the 48-way chance nodes. Raising it 4 -> 10 gave ~10% and doubled the workspace ceiling to 293 MB. Reverted; worth revisiting, not the answer.
+
+  **Hyperthreading works but has little left to gain here.** The 9800X3D is 8 physical cores / 16 logical, so 8 -> 16 is the SMT comparison: **1.14x on the solve, nothing on the export.** SMT is doing its job; the workload simply stops scaling long before the extra logical cores could matter.
+
+  **This also re-explains the ~30% CPU report.** The export was only part of it - a solve using an effective 2.7 cores of 16 is the larger half. Fixing the export moved total wall on this spot from 74 s to ~60 s, but the CPU number will not approach Pio's 70% until the solve scales.
+
+  **Next step is a profiler, not another hypothesis.** Two mechanisms were proposed and measured wrong today (the showdown gather, the fan-out budget), and a third guess is not worth the tokens. Hardware counters (VTune / uProf) on a flop solve at 2 vs 16 threads would settle whether this is memory bandwidth, L3/V-Cache thrash between threads, or contention on something shared like the arena mutex.
+
+  ### The pattern across all three attacks
+
+  Three independent per-iteration ideas were measured this session - i16 regret storage, merging the fold-in and update passes, and de-gathering the showdown sweep - and all three came back **neutral or negative**. The common cause is the same each time: the data these loops touch is already cache-resident, because M6.8's action-major layout and compact hand universe removed the structural problem that made it otherwise.
+
+  **Treat "the per-iteration cost has headroom" as disproven until someone profiles the real solve and shows where the time actually goes.** The wins this session came from iterations (M7.1's gamma sweep, ~2x) and from not wasting them (the `checkpoint_every` fix). The remaining credible levers are algorithmic - fewer iterations, fewer nodes (bet-size pruning, regret-based pruning), or depth-limiting - not narrower cells or tighter loops.
+
+  **The likely reason this diverges from jesolver**, stated as a hypothesis rather than a finding: compression pays there because it removes stalls that this engine has already removed by other means - the action-major layout (M6.8), the compact hand universe (M6.8), and the restrict-pointer fold-in work (M7). That win can only be spent once.
+
+  Memory-wise the result is also out-scaled by its neighbour: on the same spot the ARTIFACT EXPORT is 4.43 GB against regrets+strategy's 1.40 GB, so streaming the export saves ~12x what i16 does.
+
 ## Where the time goes: the chance-node cliff (measured 2026-08-26)
 
 `watcher/bench_boards.py` swept 10 turn boards and 10 river boards through both solvers - same ranges, pot, stacks and betting structure, same 0.02%-of-pot accuracy target, so the only variable is whether the tree contains a chance node. All 20 passed the cross-exploitability gate.
@@ -299,7 +506,12 @@ sweep would not move any ratio in the tables; it would add a second, larger colu
 ### Also measured, so nobody re-derives it
 
 - **DCFR is already the right update rule.** Iterations to 0.02% of pot on `9c 5d Jc 7s`: dcfr 1100 (6.07 s), cfr_plus 2000 (10.16 s), plain regret matching did not converge inside 20000 (100 s). There is no free win in swapping the rule.
-- **Best-response checkpoints cost nothing.** 1000 iterations with a BR pass every 100 vs every 1000: 5.229 s vs 5.226 s, 0.06%.
+  **Corrected 2026-08-28: there was a free win in its EXPONENTS.** The conclusion above is about which *rule* to use and it still holds; it was read for years as "the update rule is settled", which stopped anyone from sweeping DCFR's own parameters. `gamma` had been sitting at 1.0 the whole time. See M7.1.
+- **Best-response checkpoints cost nothing** *on a TURN tree*. 1000 iterations with a BR pass every 100 vs every 1000: 5.229 s vs 5.226 s, 0.06%.
+  **Corrected 2026-08-28: this does NOT generalize to flop trees, and reading it as a general result is how `/compare` ended up with a bad default.** Same SPR 7 flop tree (213356 decision nodes), 250 fixed iterations, no accuracy stop, interleaved runs: `checkpoint_every 5` (50 BR passes) 19.31 / 19.17 s against `checkpoint_every 250` (1 BR pass) 12.37 / 13.36 s. **A BR pass costs about 2.7 iterations there** - it walks the whole tree per seat, so it scales with the tree like an iteration does, and the turn measurement only looked free because 10 passes over 1000 iterations is a hundredth of the ratio being charged here.
+  Both ends of the range are therefore expensive, and for opposite reasons: frequent checkpoints pay BR passes, rare ones overshoot the target because **the accuracy stop can only fire at a checkpoint** (`main.cpp`). Expected overshoot is `checkpoint_every / 2` iterations, so the cost is `(N/cp) * 2.7 + cp/2` iterations and the optimum is near `cp = sqrt(2 * N * 2.7)` - about **25-40 for a 250-iteration flop solve**, where both 5 and 250 cost roughly 50%.
+  Measured on the four SPR 7 flop boards, `cp 250` against `cp 5`: three boards land at or under 250 and finish in **0.69-0.71x** the time, while `Ah Kd 7c` needs 265, overshoots to 500, and costs **1.44x**. That coin flip is the user-visible symptom.
+  Consequence for the numbers recorded elsewhere in this file: **every wall clock measured with `--checkpoint-every 5` is inflated by roughly 55% on flop trees**, M7.1's table included. The iteration counts are unaffected and the gamma RATIOS are unaffected (at a fixed `cp` the BR count is proportional to iterations, so both arms pay the same factor), but the absolute seconds are not the cost of a well-configured solve.
 - **Threading is done.** 8.0x on 16 threads (8 physical cores).
 - **The DCFR discount sweep is ~10%** of an iteration: dcfr 2.699 s vs plain rm 2.445 s over 500 iterations. Real, cheap to fix, not the gap.
 
@@ -323,10 +535,15 @@ Re-run `bench_boards.py --ranges tight` after each item; it is the only number t
 Next (config schema already carries the keys; do not re-plumb):
 
 - **M8 - multiway (3+ players)**: N-seat public tree, fast side-pot terminal path (`showdown_share` is the correct-but-slow reference), NashConv already generalizes. `multiway_no_nash_guarantee` stays surfaced - CFR converges to coarse correlated equilibria with 3+ players.
+  **This is the milestone that forces the depth-limiting decision, and it should be designed with that in mind rather than built exact-only and retrofitted.** A 3-way tree is at least 8x the size of the heads-up equivalent and costs GTO Wizard 1.5x per iteration on flop/turn and 2x on the river even after their reductions; their own *classical* engine needs "multiple minutes on 64 cores" for a 3-way turn. Exact full-tree multiway at interactive speed is not a thing anyone has shipped. The shape that works, and that they use, is **exact on the river** (no future left to approximate, and they explicitly run no network there) with **depth-limited turn and flop**. Building M8 as exact-everywhere first would produce something correct that cannot be served on demand, which is half the product.
 - **M9 - collusion, best-response mode first**: seat->agent partition + payoff-weight matrices, joint-range representation (1326x1225 - river-only on 16GB), frozen-opponent team best response.
 - **M10 - Bayesian unknown-collusion**: chance root over team type with probability p; opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.
 
-Out of scope, permanently (do not build speculatively): GPU, hand abstraction/bucketing, TMECor / coordination-without-card-visibility, cloud SDKs inside the engine.
+Out of scope, permanently (do not build speculatively): hand abstraction/bucketing, TMECor / coordination-without-card-visibility, cloud SDKs inside the engine.
+
+**"GPU" moved off that list and needs splitting, because the depth-limiting direction above touches it.** The boundary that still holds is the *engine binary*: `engine.exe` stays a headless CPU-only CLI with no cloud SDK, and a value network it consults would be a local file it reads, with inference on the CPU. What is no longer forbidden is a **separate, offline training tool** that produces that file - training a value network is the one part of the Ruse approach that plausibly wants a GPU, and it is not part of the solver. Keep them apart: if a GPU dependency ever appears inside `engine.exe`, that is the line being crossed, not training hardware.
+
+Hand abstraction stays out for the same reason it always was, and note that this is consistent rather than in tension with copying GTO Wizard: **they are abstraction-free too.** Depth-limiting is what makes them fast; bucketing is not something they do. See `docs/perf-plan.md`.
 
 ## Working agreements
 
