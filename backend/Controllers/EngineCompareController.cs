@@ -115,12 +115,21 @@ namespace PokerRangeAPI2.Controllers
             if (string.IsNullOrWhiteSpace(uid)) return Unauthorized();
 
             if (request.Mode != EngineCompareJobMode.Compare &&
-                request.Mode != EngineCompareJobMode.Publish)
+                request.Mode != EngineCompareJobMode.Publish &&
+                request.Mode != EngineCompareJobMode.PushFold)
             {
-                return BadRequest("mode must be \"compare\" or \"publish\"");
+                return BadRequest("mode must be \"compare\", \"publish\" or \"pushfold\"");
             }
             if (request.Mode == EngineCompareJobMode.Publish && !IsAdmin())
                 return Forbid();
+            var pushFold = request.Mode == EngineCompareJobMode.PushFold;
+            if (pushFold)
+            {
+                // Nothing to compare against: PioSOLVER is heads-up postflop and
+                // cannot build this tree at all. Normalize rather than validate,
+                // so a stale client flag cannot queue a Pio run that would fail.
+                request.DisablePio = true;
+            }
             if (request.PioAccuracyPct <= 0 || request.PioAccuracyPct > 10)
                 return BadRequest("pioAccuracyPct must be in (0, 10]");
             // "No Pio" subsumes the other two: neither the per-hand extraction
@@ -135,15 +144,33 @@ namespace PokerRangeAPI2.Controllers
             var configJson = request.Config.ToJsonString();
             if (configJson.Length > MaxConfigBytes)
                 return BadRequest($"config too large (max {MaxConfigBytes} bytes)");
-            var boardText = request.Config["board"]?.GetValue<string>();
-            if (string.IsNullOrWhiteSpace(boardText))
-                return BadRequest("config.board is required");
-            var board = string.Concat(Regex.Matches(boardText, "[2-9TJQKA][hdcs]",
-                RegexOptions.IgnoreCase).Select(m => m.Value));
-            if (board.Length != 6 && board.Length != 8 && board.Length != 10)
-                return BadRequest("config.board must have 3, 4, or 5 cards");
-            if (request.Mode == EngineCompareJobMode.Publish && board.Length != 10)
-                return BadRequest("publish mode is river-only for now (see engine/docs/roadmap.md)");
+            // A preflop solve has no board, and must not be given one: the
+            // runout is averaged inside the all-in showdown rather than dealt
+            // into the tree, so config.board is refused by the engine itself.
+            string? board = null;
+            if (pushFold)
+            {
+                if (request.Config["board"] != null)
+                    return BadRequest("pushfold mode takes no config.board");
+                var seats = request.Config["players"]?.AsArray().Count ?? 0;
+                if (seats < 2 || seats > 9)
+                    return BadRequest("pushfold mode needs 2 to 9 players");
+                // Board is only ever a list-display label; reuse it to say what
+                // the spot was, since a preflop job has nothing else short.
+                board = $"{seats}-way";
+            }
+            else
+            {
+                var boardText = request.Config["board"]?.GetValue<string>();
+                if (string.IsNullOrWhiteSpace(boardText))
+                    return BadRequest("config.board is required");
+                board = string.Concat(Regex.Matches(boardText, "[2-9TJQKA][hdcs]",
+                    RegexOptions.IgnoreCase).Select(m => m.Value));
+                if (board.Length != 6 && board.Length != 8 && board.Length != 10)
+                    return BadRequest("config.board must have 3, 4, or 5 cards");
+                if (request.Mode == EngineCompareJobMode.Publish && board.Length != 10)
+                    return BadRequest("publish mode is river-only for now (see engine/docs/roadmap.md)");
+            }
 
             var job = new EngineCompareJob
             {

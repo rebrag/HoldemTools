@@ -24,6 +24,7 @@ export const routeImports = {
   "/course/section": () => import("@/pages/course/CourseSection"),
   "/private": () => import("@/pages/private/PrivatePage"),
   "/compare": () => import("@/pages/compare/SolverCompare"),
+  "/multiway": () => import("@/pages/multiway/MultiwaySolver"),
 } as const;
 
 export type RoutePath = keyof typeof routeImports;
