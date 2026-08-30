@@ -12,11 +12,17 @@ All compute is client side, in workers, with no backend involved.
 | `AdvancedTab.tsx` | Full-table dealer: every player sets their best pre-board split, board resolves, click a player for their ranking |
 | `useAdvancedSolves.ts` | Runs the advisor worker once per player, sequentially |
 | `SplitRows.tsx`, `BreakdownTable.tsx` | Shared split and scoresheet renderers |
-| `ScoringExplainer.tsx` | On-page readout of how Taiwanese scoring is configured |
+| `ScoringExplainer.tsx` | Readout of how Taiwanese scoring is configured, opened from the advisor's info button |
 | `taiwaneseScoring.ts` | Derives that readout from the scoring code |
-| `ScoringVerifier.tsx` | Score checker: enter a real deal, see per-player points from the same code |
+| `ScoringVerifier.tsx` | Score checker: enter a real deal, see per-player points from the same code; opened from the page's info button |
 | `protocol.ts` | Worker message types, shared with `src/workers/` |
 | `useRankingsSim.ts`, `useTaiwaneseSolve.ts` | One worker per run, terminated on cancel, re-run and unmount |
+
+Both of those render bare content with no container of their own: they live inside
+`components/InfoButton` overlays, which supply the heading, the padding and the scroll
+region.
+That is deliberate - the page is inputs and results, and everything explanatory sits one
+tap away rather than between them.
 
 Game logic lives in `src/lib/` (`badugi.ts`, `taiwanese.ts`, `handEval.ts`), not here.
 Workers must only import from `src/lib/`, never from a page module that pulls in React.
@@ -159,6 +165,9 @@ somewhere among the near-best options rather than on the exact argmax. Near-ties
 weaken the field, so rankings hardly move, but EVs read slightly higher vs mixed (softer)
 opponents - measured +0.41 vs +0.15 on the same hand. Build rounds always use mixed play
 (smoothed best-response iteration converges more stably than pure argmax chasing).
+The advisor tab defaults to **pure** ("Best split"): the client's question is what to set
+against opponents who set correctly.
+`AdvancedTab` still defaults to mixed, where the point is a realistic full table.
 Constants live in `lib/taiwaneseSolver.ts`.
 
 ### Precomputed libraries

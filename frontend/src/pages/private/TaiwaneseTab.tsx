@@ -9,6 +9,7 @@ import CardPicker from "@/components/CardPicker";
 import { buildDeck, sampleN } from "@/lib/cards";
 import { useTaiwaneseSolve } from "./useTaiwaneseSolve";
 import { useSelfPlayLibrary, cachedLibrary, LIBRARY_ENTRIES } from "./useSelfPlayLibrary";
+import InfoButton from "@/components/InfoButton";
 import ScoringExplainer from "./ScoringExplainer";
 import SplitRows from "./SplitRows";
 import { Segmented, Chip, ProgressBar, glassCard } from "./controls";
@@ -33,10 +34,11 @@ const TaiwaneseTab: React.FC = () => {
   // Self-play by default: it is the equilibrium model, and the fixed rule of
   // thumb only exists as a fast preview.
   const [selfPlay, setSelfPlay] = useState(true);
-  // Human-like mixed play by default: opponents sample among their near-best
-  // splits weighted by EV gap, which mimics real tables better than everyone
-  // finding the exact best split every hand.
-  const [mixing, setMixing] = useState<"pure" | "mixed">("mixed");
+  // Best-split opponents by default: the advisor answers "what should I set
+  // against opponents who set correctly", which is the question the client
+  // wants. "Human mix" (opponents sampling among their near-best splits) is
+  // the softer, more table-realistic field, one toggle away.
+  const [mixing, setMixing] = useState<"pure" | "mixed">("pure");
   const [solvedModel, setSolvedModel] = useState<"heuristic" | "selfplay">("selfplay");
   const [showAll, setShowAll] = useState(false);
   // Collapsed by default: the settings are set once and then left alone, and
@@ -310,7 +312,7 @@ const TaiwaneseTab: React.FC = () => {
             </div>
           )}
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
               onClick={busy ? onCancel : onSolve}
@@ -325,6 +327,13 @@ const TaiwaneseTab: React.FC = () => {
             {lib.building && (
               <p className="text-xs text-emerald-100/60">Building opponent policy...</p>
             )}
+            <InfoButton
+              label="How scoring is configured"
+              title="How scoring is configured"
+              className="ml-auto shrink-0"
+            >
+              <ScoringExplainer royalties={royalties} boards={boards} />
+            </InfoButton>
           </div>
 
           {(error || lib.error) && <p className="text-sm text-red-400">{error ?? lib.error}</p>}
@@ -428,7 +437,6 @@ const TaiwaneseTab: React.FC = () => {
         </div>
       )}
 
-      <ScoringExplainer royalties={royalties} boards={boards} />
     </div>
   );
 };
