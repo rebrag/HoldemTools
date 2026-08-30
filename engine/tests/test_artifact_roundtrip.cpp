@@ -1,8 +1,12 @@
 #include <doctest/doctest.h>
 
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
+#include <string>
+#include <vector>
 
+#include "game/nlhe_preflop.hpp"
 #include "game/toy/kuhn.hpp"
 #include "io/artifact_format.hpp"
 #include "io/artifact_reader.hpp"
@@ -35,8 +39,7 @@ void roundtrip(bool strategy_u8, bool ev_float32, float strategy_tol, float ev_t
   SolveStats stats;
   stats.iterations = solver.iteration();
   stats.nashconv = br.nashconv();
-  stats.ev_seat0 = br.ev[0];
-  stats.ev_seat1 = br.ev[1];
+  stats.ev_chips = br.ev;
 
   const std::string path =
       (std::filesystem::temp_directory_path() /
@@ -146,4 +149,106 @@ TEST_CASE("float16 conversion round-trips representative values") {
     const float back = artifact::half_to_float(artifact::float_to_half(v));
     CHECK(back == doctest::Approx(v).epsilon(0.001).scale(1.0f));
   }
+}
+
+TEST_CASE("a 4-seat artifact round-trips without a format bump") {
+  // The .hta layout was already N-seat before multiway existed: the node
+  // record carries i32[9] of per-seat commitment and every node blob is
+  // prefixed with its own u16 num_seats and per-seat hand counts. Only a
+  // guard in the writer and a pair of scalar EV fields stood in the way.
+  //
+  // This is the test that PROVES that claim, which is what keeps the
+  // one-commit rule in engine/CLAUDE.md (spec + both readers + regenerate the
+  // fixture) from being triggered by this work.
+  SolveConfig config;
+  config.game = "nlhe_preflop";
+  config.chip_scale = 2.0;
+  for (int s = 0; s < 4; ++s) {
+    PlayerConfig p;
+    p.seat = "P" + std::to_string(s);
+    p.stack = s == 2 ? 9 : 16;  // a short stack, so side-pot layers exist
+    p.range = "AA,KK,AKs,72o";
+    config.players.push_back(p);
+  }
+  config.preflop.small_blind = 1;
+  config.preflop.big_blind = 2;
+  config.preflop.button = 3;
+  config.preflop.ante.assign(4, 0);
+  config.preflop.board_sample.pair_count = 1000;
+  config.preflop.board_sample.iter_count = 4;
+  config.pot = 3;
+  config.threads = 1;
+  config.rollups_169 = true;
+  config.raw = nlohmann::json{{"game", "nlhe_preflop"}};
+
+  const NlhePreflopGame game(config);
+  CfrSolver solver(game, UpdateConfig{}, 1);
+  solver.run(50);
+  const BrResult br = compute_best_response(game, solver);
+
+  SolveStats stats;
+  stats.iterations = solver.iteration();
+  stats.nashconv = br.nashconv();
+  stats.ev_chips = br.ev;
+
+  const std::string path =
+      (std::filesystem::temp_directory_path() / "engine_roundtrip_4seat.hta").string();
+  LocalStore store;
+  write_artifact(store, path, game, solver, config, stats);
+
+  ArtifactReader reader(store, path);
+  CHECK(reader.format_version() == artifact::kFormatVersion);
+  CHECK(reader.hand_dicts().size() == 4);
+  CHECK(reader.metadata().at("ev_chips").size() == 4);
+  CHECK(reader.metadata().at("seats").size() == 4);
+  CHECK(reader.metadata().at("stacks") == nlohmann::json({16, 16, 9, 16}));
+  CHECK(reader.metadata().at("effective_stack") == 9);
+  CHECK(reader.metadata().at("partition") == nlohmann::json({{0}, {1}, {2}, {3}}));
+  // CFR carries no Nash guarantee past two players; the flag has to travel.
+  CHECK(reader.metadata().at("multiway_no_nash_guarantee") == true);
+  CHECK(reader.metadata().at("opponent_card_removal") == "hero_only");
+  CHECK(reader.metadata().at("board_sample").at("pair_count") == 1000);
+  CHECK(reader.metadata().at("preflop").at("bb_seat") == 1);
+  CHECK(reader.metadata().at("hand_universe") == "nlhe_combos_1326");
+
+  // The per-seat commitment really is in the node table, all four of them.
+  //
+  // There is no folded_mask on the record and none is needed: a fold edge
+  // carries action_kind == 1 and its PARENT names the seat that made it, so
+  // walking down from the root reconstructs the alive set exactly. Checked
+  // here so a consumer can rely on it.
+  std::vector<std::uint16_t> folded(game.tree().size(), 0);
+  for (NodeId id = 0; id < game.tree().size(); ++id) {
+    const Node& n = game.tree()[id];
+    const ArtifactNodeRecord& r = reader.nodes()[id];
+    for (int s = 0; s < 4; ++s) CHECK(r.commit[s] == n.commit[s]);
+    if (id != 0) {
+      folded[id] = folded[r.parent_id];
+      if (r.action_kind == 1) {
+        folded[id] = static_cast<std::uint16_t>(
+            folded[id] | (1u << reader.nodes()[r.parent_id].actor));
+      }
+    }
+    CHECK(folded[id] == n.folded_mask);
+  }
+
+  // Every decision node's blob carries four seats' reach, and the actor's
+  // strategy rows sum to 1.
+  for (const ArtifactNodeRecord& r : reader.nodes()) {
+    if (r.kind != 0) continue;
+    const ArtifactNodeData data = reader.read_node(r.node_id);
+    CHECK(data.num_seats == 4);
+    CHECK(data.actor == r.actor);
+    const ArtifactSeatData& actor = data.seats[data.actor];
+    for (std::size_t h = 0; h < actor.idx.size(); ++h) {
+      float sum = 0.0f;
+      for (int k = 0; k < data.num_actions; ++k) {
+        sum += data.strategy[h * static_cast<std::size_t>(data.num_actions) +
+                             static_cast<std::size_t>(k)];
+      }
+      CHECK(sum == doctest::Approx(1.0f).epsilon(0.02));
+    }
+    CHECK(data.has_rollup);
+  }
+  std::filesystem::remove(path);
 }

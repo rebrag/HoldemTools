@@ -12,7 +12,7 @@ namespace {
 
 using nlohmann::json;
 
-json node_to_json(const ArtifactNodeRecord& record, bool nlhe) {
+json node_to_json(const ArtifactNodeRecord& record, bool nlhe, int num_seats) {
   static const char* kKinds[] = {"decision", "chance", "terminal"};
   static const char* kActions[] = {"root", "fold", "check_call", "bet", "deal"};
   json j;
@@ -25,7 +25,9 @@ json node_to_json(const ArtifactNodeRecord& record, bool nlhe) {
   j["actor"] = record.actor == 0xFFFF ? json(nullptr) : json(record.actor);
   j["num_children"] = record.num_children;
   j["first_child"] = record.first_child == 0xFFFFFFFFu ? json(nullptr) : json(record.first_child);
-  j["commit"] = {record.commit[0], record.commit[1]};
+  json commit = json::array();
+  for (int s = 0; s < num_seats; ++s) commit.push_back(record.commit[s]);
+  j["commit"] = std::move(commit);
   if (record.kind == 2) {
     j["terminal"] = record.terminal_kind == 1 ? "fold" : "showdown";
     if (record.terminal_kind == 1) j["fold_winner"] = record.fold_winner;
@@ -109,6 +111,10 @@ json dump_artifact_json(ArtifactStore& store, const std::string& path,
                         std::optional<int> runouts, DumpFields fields) {
   ArtifactReader reader(store, path);
   const bool nlhe = reader.metadata().value("hand_universe", "") == "nlhe_combos_1326";
+  // The node record carries commit for all kMaxSeats; only the first
+  // num_seats of them are meaningful, and the seat labels are the only place
+  // the count is recorded outside the per-node blobs.
+  const int num_seats = static_cast<int>(reader.hand_dicts().size());
   const auto& records = reader.nodes();
 
   // Top-down include set: betting children always follow; chance-node
@@ -155,7 +161,7 @@ json dump_artifact_json(ArtifactStore& store, const std::string& path,
   for (const ArtifactNodeRecord& record : records) {
     if (only_node && record.node_id != *only_node) continue;
     if (!include[record.node_id]) continue;
-    json j = node_to_json(record, nlhe);
+    json j = node_to_json(record, nlhe, num_seats);
     if (record.kind == 0) {
       j["data"] = node_data_to_json(reader, reader.read_node(record.node_id), nlhe,
                                     fields, record.node_id == 0);

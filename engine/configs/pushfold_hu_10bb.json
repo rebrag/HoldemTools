@@ -1,0 +1,27 @@
+{
+  // Heads-up 10bb jam-or-fold. The blinds are 1/2, so 20 chips is 10bb.
+  //
+  // This is the cheapest external correctness check the multiway work has:
+  // heads-up push/fold has published Nash charts, and at 2 seats the engine's
+  // terminal path is the exact pairwise-equity matrix with exact card
+  // removal - no board sampling in the iteration at all.
+  "schema": 1,
+  "game": "nlhe_preflop",
+  "chip_scale": 2.0,
+  "players": [
+    { "seat": "BTN", "stack": 20, "range": "@file:ranges/full.txt" },
+    { "seat": "BB",  "stack": 20, "range": "@file:ranges/full.txt" }
+  ],
+  "preflop": {
+    "small_blind": 1,
+    "big_blind": 2,
+    "button": 0,
+    "action_set": "jam_fold",
+    "board_sample": { "iter_count": 1, "pair_count": 20000, "seed": 20260830 }
+  },
+  "algorithm": { "update": "dcfr" },
+  "budget": { "iterations": 3000, "target_nashconv": 0.002, "checkpoint_every": 100 },
+  "memory_limit_gb": 12,
+  "threads": 0,
+  "output": { "path": "out/pushfold_hu_10bb.hta", "rollups_169": true }
+}

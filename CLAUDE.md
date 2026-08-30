@@ -65,6 +65,13 @@ The **compare-job pipeline** makes both solvers reachable from the frontend anyw
 (b) `publish` mode (admin-only): POSTs the artifact to `/api/enginecompare/{id}/publish-artifact`, where the API converts it to schema-4 bundles, uploads them under `piosolutions/`, and upserts `enginesolutions-index.json` - a separate index blob merged into `piosolutionsIndex` at read time so the Pio watcher stays the sole writer of `piosolutions-index.json`.
 Publish mode is the transition path to dropping PioSolver: once htsolver is trusted, solve jobs flow through it and the frontend needs no changes.
 
+A third mode, (c) `pushfold`, carries the **multiway preflop** solver (engine M8a): `/multiway` -> `POST /api/enginecompare` with `mode: "pushfold"` -> the watcher solves an N-seat jam-or-fold tree with htsolver and uploads `engine.exe dump-json` output, which `/result/ht` serves back to the page.
+It takes no `config.board` and never involves Pio - not because Pio is disabled but because Pio is heads-up postflop and cannot build a 4-way preflop tree at all - and it does not go through `EngineSolutionExporter`, whose schema-4 bundle contract is `oop`/`ip`-keyed and correctly refuses a 4-seat artifact.
+The artifact's own 169-class rollup is the push/fold chart, so `/multiway` renders it with the same `DecisionMatrix` as `/solutions`.
+
+**`/multiway` and `/compare` are the two engines**, and the segmented control at the top of `/multiway` is what makes that legible: multiway preflop (sampled board runouts, no hand bucketing) versus heads-up postflop (exact).
+Neither has a NavBar slot; both are URL-only.
+
 Out of scope, recorded so it is not built speculatively: GPU code, hand abstraction/bucketing, TMECor (coordination without card visibility), any cloud SDK inside the engine.
 QRE, multiway solving, and collusion modes are scheduled follow-ups whose config schema already exists - see `engine/CLAUDE.md`.
 

@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "config/schema.hpp"
 #include "game/game.hpp"
@@ -13,8 +14,7 @@ namespace engine {
 struct SolveStats {
   std::uint64_t iterations = 0;
   double nashconv = 0.0;
-  double ev_seat0 = 0.0;  // chips, root
-  double ev_seat1 = 0.0;
+  std::vector<double> ev_chips;  // per-seat root EVs in chips; they sum to the root pot
   // Wall clock for the whole solve loop (CFR + every checkpoint's
   // best-response), and the worker count it ran on. Both are reported so a
   // timing comparison against another solver is interpretable.

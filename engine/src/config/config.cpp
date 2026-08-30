@@ -112,8 +112,33 @@ SolveConfig load_config(const std::string& path_text) {
   if (config.schema != 1) fail("unsupported config schema " + std::to_string(config.schema));
 
   config.game = j.value("game", "nlhe");
-  if (config.game != "nlhe" && config.game != "kuhn" && config.game != "leduc") {
-    fail("game must be nlhe | kuhn | leduc, got '" + config.game + "'");
+  if (config.game != "nlhe" && config.game != "nlhe_preflop" && config.game != "kuhn" &&
+      config.game != "leduc") {
+    fail("game must be nlhe | nlhe_preflop | kuhn | leduc, got '" + config.game + "'");
+  }
+  // Both NLHE variants share the players array, the chip scale and the range
+  // grammar; only the tree above them differs.
+  const bool nlhe = config.game == "nlhe" || config.game == "nlhe_preflop";
+  const bool preflop = config.game == "nlhe_preflop";
+
+  if (nlhe) {
+    config.chip_scale = j.value("chip_scale", 100.0);
+    if (config.chip_scale <= 0) fail("chip_scale must be positive");
+
+    if (!j.contains("players")) fail("nlhe solves need a players array");
+    for (const json& p : j.at("players")) {
+      PlayerConfig player;
+      player.seat = p.value("seat", "");
+      if (player.seat.empty()) fail("every player needs a seat label");
+      player.stack = p.at("stack").get<Chips>();
+      if (player.stack < 0) fail("player stacks cannot be negative");
+      player.range = p.at("range").get<std::string>();
+      if (player.range.rfind("@file:", 0) == 0) {
+        const std::filesystem::path range_path = path.parent_path() / player.range.substr(6);
+        player.range = read_file(range_path);
+      }
+      config.players.push_back(std::move(player));
+    }
   }
 
   if (config.game == "nlhe") {
@@ -130,31 +155,15 @@ SolveConfig load_config(const std::string& path_text) {
     if (!j.contains("pot")) fail("nlhe solves need a root pot");
     config.pot = j.at("pot").get<Chips>();
     if (config.pot <= 0) fail("pot must be positive");
-    config.chip_scale = j.value("chip_scale", 100.0);
-    if (config.chip_scale <= 0) fail("chip_scale must be positive");
 
-    if (!j.contains("players")) fail("nlhe solves need a players array");
-    for (const json& p : j.at("players")) {
-      PlayerConfig player;
-      player.seat = p.value("seat", "");
-      if (player.seat.empty()) fail("every player needs a seat label");
-      player.stack = p.at("stack").get<Chips>();
-      if (player.stack < 0) fail("player stacks cannot be negative");
-      player.range = p.at("range").get<std::string>();
-      if (player.range.rfind("@file:", 0) == 0) {
-        const std::filesystem::path range_path =
-            path.parent_path() / player.range.substr(6);
-        player.range = read_file(range_path);
-      }
-      config.players.push_back(std::move(player));
-    }
     if (config.players.size() != 2) {
-      fail("this pass solves 2-player games only (multiway lands in a later pass); got " +
+      fail("postflop solves are 2-player (3+ players preflop is game \"nlhe_preflop\"; "
+           "multiway POSTFLOP is a later pass); got " +
            std::to_string(config.players.size()) + " players");
     }
     if (config.players[0].stack != config.players[1].stack) {
-      fail("this pass requires equal stacks (the terminal evaluator is side-pot capable, "
-           "but the 2p betting tree does not generate all-in-for-less lines yet)");
+      fail("postflop solves require equal stacks (the terminal evaluator is side-pot "
+           "capable, but the 2p betting tree does not generate all-in-for-less lines yet)");
     }
 
     if (!j.contains("bet_sizing")) fail("nlhe solves need bet_sizing");
@@ -177,6 +186,83 @@ SolveConfig load_config(const std::string& path_text) {
     else if (aggressor == "oop") config.preflop_aggressor = Aggressor::Oop;
     else if (aggressor == "none") config.preflop_aggressor = Aggressor::None;
     else fail("preflop_aggressor must be ip | oop | none");
+  }
+
+  if (preflop) {
+    if (j.contains("board")) {
+      fail("game \"nlhe_preflop\" has no board: the runout is averaged inside the "
+           "all-in showdown, never dealt into the tree");
+    }
+    if (j.contains("bet_sizing")) {
+      fail("game \"nlhe_preflop\" takes preflop.action_set, not bet_sizing");
+    }
+    if (config.players.size() < 2 || config.players.size() > static_cast<std::size_t>(kMaxSeats)) {
+      fail("preflop solves take 2 to " + std::to_string(kMaxSeats) + " players, got " +
+           std::to_string(config.players.size()));
+    }
+    // No equal-stack requirement, unlike the postflop branch: the showdown
+    // terminal is layered by commit level, so all-in-for-less is exact.
+    for (const PlayerConfig& player : config.players) {
+      if (player.stack <= 0) fail("every preflop stack must be positive");
+    }
+
+    if (!j.contains("preflop")) fail("game \"nlhe_preflop\" needs a preflop block");
+    const json& pf = j.at("preflop");
+    PreflopConfig& cfg = config.preflop;
+    cfg.small_blind = pf.value("small_blind", Chips{0});
+    cfg.big_blind = pf.value("big_blind", Chips{0});
+    cfg.dead = pf.value("dead", Chips{0});
+    cfg.button = pf.value("button", 0);
+    if (cfg.big_blind <= 0) fail("preflop.big_blind must be positive");
+    if (cfg.small_blind < 0) fail("preflop.small_blind cannot be negative");
+    if (cfg.dead < 0) fail("preflop.dead cannot be negative");
+    if (cfg.button < 0 || cfg.button >= static_cast<int>(config.players.size())) {
+      fail("preflop.button must index the players array");
+    }
+
+    const std::size_t seats = config.players.size();
+    cfg.ante.assign(seats, 0);
+    if (pf.contains("ante") && !pf.at("ante").is_null()) {
+      const json& ante = pf.at("ante");
+      if (ante.is_array()) {
+        if (ante.size() != seats) {
+          fail("preflop.ante must have one entry per player (" + std::to_string(seats) +
+               "), got " + std::to_string(ante.size()));
+        }
+        cfg.ante = ante.get<std::vector<Chips>>();
+      } else if (ante.is_number()) {
+        cfg.ante.assign(seats, ante.get<Chips>());
+      } else {
+        fail("preflop.ante must be a number or an array of numbers");
+      }
+      for (Chips a : cfg.ante) {
+        if (a < 0) fail("preflop.ante cannot be negative");
+      }
+    }
+
+    cfg.action_set = pf.value("action_set", std::string("jam_fold"));
+    if (cfg.action_set != "jam_fold") {
+      fail("preflop.action_set must be \"jam_fold\"; real preflop sizings land later");
+    }
+
+    if (pf.contains("board_sample")) {
+      const json& bsm = pf.at("board_sample");
+      BoardSampleConfig& sample = cfg.board_sample;
+      sample.iter_count = bsm.value("iter_count", sample.iter_count);
+      sample.pair_count = bsm.value("pair_count", sample.pair_count);
+      sample.seed = bsm.value("seed", sample.seed);
+      if (sample.iter_count < 1) fail("preflop.board_sample.iter_count must be positive");
+      if (sample.pair_count < 1000) {
+        fail("preflop.board_sample.pair_count must be at least 1000; below that the "
+             "pairwise equity matrix is too noisy to be worth building");
+      }
+    }
+
+    // The root pot is derived, not configured, so budget.target_exploitable_pct
+    // keeps a pot to be a percent of. It is a tiny number preflop, which is
+    // why budget.target_nashconv (chips) is the knob that means something.
+    config.pot = cfg.dead + cfg.small_blind + cfg.big_blind;
+    for (Chips a : cfg.ante) config.pot += a;
   }
 
   if (j.contains("algorithm")) {
@@ -207,6 +293,13 @@ SolveConfig load_config(const std::string& path_text) {
     if (mode == "off") config.sampling.enabled = false;
     else if (mode == "chance") config.sampling.enabled = true;
     else fail("algorithm.sampling.mode must be off | chance, got '" + mode + "'");
+    if (config.sampling.enabled && preflop) {
+      // There are no chance nodes in a preflop tree to subsample, so this
+      // would do exactly nothing while looking like it controlled the board
+      // approximation. That knob is preflop.board_sample.
+      fail("algorithm.sampling has nothing to do in game \"nlhe_preflop\" - the tree has "
+           "no chance nodes. The board approximation is preflop.board_sample.");
+    }
     config.sampling.runouts = s.value("runouts", config.sampling.runouts);
     config.sampling.anneal_full_at =
         s.value("anneal_full_at", config.sampling.anneal_full_at);
@@ -241,9 +334,10 @@ SolveConfig load_config(const std::string& path_text) {
     }
     if (config.qre_mode == "qre") {
       config.qre.enabled = true;
-      // Two seats for now; multiway is M8. Sized off the seat count rather
-      // than hardcoded so the array check below moves with it.
-      const std::size_t seats = 2;
+      // One lambda per seat. `players` is parsed above for both NLHE variants
+      // and before this block runs, which is what makes reading its size here
+      // safe - keep that ordering.
+      const std::size_t seats = config.players.empty() ? 2 : config.players.size();
       if (!q.contains("lambda") || q.at("lambda").is_null()) {
         fail("qre.mode \"qre\" needs qre.lambda: the per-seat rationality, in units of "
              "1/chips. A scalar applies to both seats; an array gives one per seat.");
@@ -316,7 +410,7 @@ SolveConfig load_config(const std::string& path_text) {
     config.checkpoint_every = budget.value("checkpoint_every", config.checkpoint_every);
     if (config.iterations == 0) fail("budget.iterations must be positive");
     if (config.target_exploitable_pct < 0) fail("budget.target_exploitable_pct cannot be negative");
-    if (config.target_exploitable_pct > 0 && config.game != "nlhe") {
+    if (config.target_exploitable_pct > 0 && !nlhe) {
       fail("budget.target_exploitable_pct needs a pot to be a percent of; toy games "
            "use budget.target_nashconv (chips)");
     }

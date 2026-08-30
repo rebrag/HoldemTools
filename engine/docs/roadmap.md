@@ -534,8 +534,78 @@ Re-run `bench_boards.py --ranges tight` after each item; it is the only number t
 
 Next (config schema already carries the keys; do not re-plumb):
 
-- **M8 - multiway (3+ players)**: N-seat public tree, fast side-pot terminal path (`showdown_share` is the correct-but-slow reference), NashConv already generalizes. `multiway_no_nash_guarantee` stays surfaced - CFR converges to coarse correlated equilibria with 3+ players.
+- **M8 SPLITS IN TWO, and the preflop half is done** - see "M8a" below for the results.
+
+- **M8a - multiway PREFLOP (jam/fold). LANDED 2026-08-30.**
+  It has no postflop tree, so it does **not** force the depth-limiting decision, and it de-risks every N-seat data path (config, tree, terminal, agents, artifact writer, both readers) against a tree that fits in cache.
+  It is also the only multiway milestone with a real external correctness gate: published heads-up Nash push/fold charts.
+
+- **M8b - multiway POSTFLOP (3+ players)**: N-seat public tree over streets, fast side-pot terminal path, NashConv already generalizes. `multiway_no_nash_guarantee` stays surfaced - CFR converges to coarse correlated equilibria with 3+ players.
   **This is the milestone that forces the depth-limiting decision, and it should be designed with that in mind rather than built exact-only and retrofitted.** A 3-way tree is at least 8x the size of the heads-up equivalent and costs GTO Wizard 1.5x per iteration on flop/turn and 2x on the river even after their reductions; their own *classical* engine needs "multiple minutes on 64 cores" for a 3-way turn. Exact full-tree multiway at interactive speed is not a thing anyone has shipped. The shape that works, and that they use, is **exact on the river** (no future left to approximate, and they explicitly run no network there) with **depth-limited turn and flop**. Building M8 as exact-everywhere first would produce something correct that cannot be served on demand, which is half the product.
+### M8a - multiway preflop push/fold. Landed 2026-08-30.
+
+`game: "nlhe_preflop"` with `preflop.action_set: "jam_fold"`, 2 to 9 seats, unequal stacks, blinds and antes.
+The 4-way 10bb target spot (blinds 1/2, stacks 20) solves **end to end in about 7 s**, of which 4.7 s is table construction and 2.4 s is the solve.
+
+**The board is not in the tree, and that is the load-bearing decision.**
+Runouts as chance-node children would make the cards PUBLIC, which is a different and far easier game; and `CfrSolver` cannot express infoset-sharing siblings without breaking bitwise determinism.
+So the tree is pure betting - **29 nodes for 4-way jam/fold: 14 decision, 15 terminal (4 fold, 6 two-way showdowns, 4 three-way, 1 four-way)** - and the whole board average lives inside `Game::terminal_values`.
+`build_preflop_tree` is a separate file from `build_postflop_tree` on purpose: the postflop builder is 2-player in every line of its recursion and produces the Pio-gated tree, and the structural difference is that **a preflop fold is not terminal** until one seat remains.
+
+**Two estimators, because heads-up and multiway are different problems.**
+
+- **k = 2: the board expectation COMMUTES with the sum over opponent hands**, so a static pairwise matrix `e2_` is exact in the limit. Built once from `pair_count` boards, every heads-up showdown is then one matvec with **no per-iteration board loop at all**.
+- **k >= 3: the value contains a PRODUCT over opponents inside the board expectation**, which does not factorize and for which no static table exists. Those terminals average over `iter_count` boards, a FIXED sample drawn once at construction. Fixed is what separates this from `SamplingConfig`, which redraws per iteration and is therefore guarded by `sampling_exact()`: a fixed sample makes the solve an exact solve of a well-defined sampled game, so it genuinely converges and the accuracy stop keeps its meaning.
+
+**Suit symmetrization of `e2_` is the highest-value line in the milestone, and it was not in the plan.**
+Pairwise all-in equity depends only on the two hands and the suit-invariant board distribution, so it must satisfy `E2[h][o] == E2[pi(h)][pi(o)]` for every suit permutation - and it does **not** depend on the ranges, so this holds unconditionally.
+A finite board sample does not satisfy it. Projecting onto the suit-symmetric subspace removes error and adds no bias, and the 24 images are near-independent, so it is worth about a sqrt(24) ~ 4.9x noise reduction for one cheap pass.
+Without it the four combos of `J3s` came out with jam EVs spread over **0.11 chips** at `pair_count` 20000 - larger than the entire jam/fold margin of a threshold hand, and visible in the chart as suits disagreeing about a hand class.
+With it the measured within-class spread is **exactly 0.00000**, which `tools/bench_board_sample.py` reports as a regression guard.
+
+**Two normalization bugs, both found by writing the reference rather than by reading the charts, and both of which produced plausible-looking charts.**
+
+1. **The win side and the commitment side rode different measures.** The multiway branch averaged over every sampled board, counting hero-blocked ones as zero, while the commitment term used the unrestricted opponent mass - quietly shrinking every jam by the ~34% of boards that conflict with four known cards. The fix is to make the middle factor a pure equity FRACTION (`num/den` accumulated over the same boards) and multiply by `compat_weights`, which is exactly the form the `e2_` path already had. That is why heads-up was right and multiway was not.
+2. **Seats that could not win a layer were not weighting its board distribution.** A seat that is folded, or alive but committed below a side pot, still holds two cards and so still decides which runouts were possible. Leaving it out conditioned the layer on a different board distribution than the deal allows: measured at **4-5% of the layer's value**, and shown to be systematic rather than noise by holding steady when the sample went from 3 boards to 40. Every seat now contributes a per-board factor to both numerator and denominator.
+
+**Validation.** `tests/test_multiway_terminal.cpp` gates `terminal_values` against a brute-force O(H^k) reference built on `showdown_share` - independently written, side-pot correct, and already covered by `test_terminal.cpp`.
+Agreement is **1.1e-7 relative** on 3- and 4-way showdowns and on layered side pots with three distinct commit levels.
+The reference had to be taught the engine's measure to get there: the estimator integrates over (board, deal) PAIRS jointly, not board-averages within each deal, and the two coincide exactly under full card removal.
+Layers with exactly one eligible opponent are skipped by that gate and covered by the heads-up path instead, because they are answered out of `e2_` and so integrate a different board set.
+
+`tests/test_preflop_game.cpp` adds the product-facing gates, all self-contained with nothing checked in:
+
+- **Heads-up 10bb is an exact hand-by-hand best response**: each hand's jam and fold value is recomputed from `terminal_values` under the solved opponent strategy, and every pure action agrees with the sign while every mixed hand is indifferent. 762 pure jams, 556 pure folds, 8 mixed, **worst inconsistency 0 chips**.
+- **The chart lands where published Nash charts do**: SB jams **57.8%** of combos and BB calls **37.3%**, against a published 58-60% / 37-40%. Asserted as a band rather than a golden file - wide enough not to be a chart test in disguise, narrow enough that a mispriced all-in equity would miss by tens of percent.
+- **4-way position ordering**: CO **25.4%** < BTN **33.1%** < SB **57.8%** open jams, and the big blind calls 37.2% against the SB but only 17.5% against the CO.
+
+**The honest caveats, measured rather than argued:**
+
+- **Nothing is bucketed.** Every combo carries its own regret row, strategy row and EV; the 169 rollup is export-only aggregation exactly as it already is postflop. **Abstraction-free in the hand dimension, sampled in the chance dimension, exact on hero blockers.**
+- **Opponent-vs-opponent card removal (bunching) is dropped at 3+ seats**, and is exact at 2. The inclusion-exclusion over collision events grows combinatorially, and the strength-conditioned per-card sums it needs cost roughly 52x the current sweep. Its cost surfaces as a chip-conservation error: root EVs on the 4-way spot sum to **0.068 chips instead of 0** against a 3-chip root pot. `test_preflop_game.cpp` reports that number and guards it loosely.
+- **CFR has no Nash guarantee at 3+ players.** `multiway_no_nash_guarantee` already fired correctly and now travels on real artifacts.
+
+**No artifact format bump, and that was verified rather than assumed.**
+The `.hta` layout was already N-seat: the node record carries `i32[9]` per-seat commitment and every node blob is prefixed with its own `u16 num_seats` and per-seat counts.
+Only a `num_seats() != 2` guard and a pair of scalar EV fields stood in the way.
+`tests/test_artifact_roundtrip.cpp` now round-trips a 4-seat artifact with a short stack, which is the test that proves it - so the one-commit rule (spec + both readers + regenerate the fixture) is not triggered.
+`SolveStats::ev_seat0/ev_seat1` became `std::vector<double> ev_chips`; metadata gained `stacks`, `preflop` (derived button and blind seats plus the action order, so no consumer re-derives the heads-up blind exception), `board_sample` and `opponent_card_removal`.
+There is deliberately no `folded_mask` on the record: a fold edge names its actor through its parent, so the alive set is derivable, and a redundant copy could disagree with the tree.
+
+**The board-sample defaults are measured, not picked** (`tools/bench_board_sample.py`, heads-up 10bb, two seeds per rung):
+
+| pair_count | jam% | classes flipped vs the finest rung | within-class EV spread | setup |
+|---|---|---|---|---|
+| 5000 | 57.79 / 58.43 | 4 / 6 | 0.00000 | 1.2 s |
+| 20000 | 58.48 / 58.13 | 2 / 1 | 0.00000 | 4.7 s |
+| 80000 | 58.09 / 58.08 | 1 / 3 | 0.00000 | 18.9 s |
+| 200000 | 58.59 / 58.37 | 0 / 2 | 0.00000 | 47.2 s |
+
+Setup is linear in `pair_count` and the answer is essentially converged from 5000: the jam percentage moves under a point across a 40x range, and the residual 1-3 flips are boundary classes that are genuinely mixed (seed 1 at 200000 still shows 2).
+**20000 is the knee that fits an on-demand solve** and is the default.
+
+Still open in M8a: real preflop bet sizings (the tree builder's `open_bb` / `raise_pct` / `max_raises` fields exist and are refused), a 3-player toy game as a cheap CI gate for the N-seat CFR loop, and closing the bunching gap.
+
 - **M9 - collusion, best-response mode first**: seat->agent partition + payoff-weight matrices, joint-range representation (1326x1225 - river-only on 16GB), frozen-opponent team best response.
 - **M10 - Bayesian unknown-collusion**: chance root over team type with probability p; opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.
 

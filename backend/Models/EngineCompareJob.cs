@@ -76,6 +76,11 @@ namespace PokerRangeAPI2.Models
     {
         public const string Compare = "compare";
         public const string Publish = "publish";
+        // Multiway preflop jam/fold (engine M8a). There is no board and no
+        // PioSOLVER equivalent to compare against - Pio is heads-up postflop -
+        // so the watcher solves with htsolver and uploads the dumped artifact
+        // straight to HtResultBlobPath, which /result/ht already serves.
+        public const string PushFold = "pushfold";
     }
 
     public static class EngineCompareJobStatus

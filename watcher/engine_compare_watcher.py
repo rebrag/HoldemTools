@@ -16,6 +16,11 @@ Job modes:
   publish  solve with htsolver only and POST the artifact to the API, which
            converts it to schema-4 bundles and publishes it to the solutions
            library. This is the post-Pio production path.
+  pushfold multiway PREFLOP jam/fold (engine M8a). htsolver only, and not
+           because Pio is disabled - Pio is heads-up postflop and cannot build
+           a 4-way preflop tree at all, so there is nothing to compare against.
+           The artifact is dumped to JSON and uploaded as the htsolver payload,
+           which /api/enginecompare/{id}/result/ht already serves.
 
 Env (same .env as the main watcher):
   HOLDEMTOOLS_API_BASE, WATCHER_API_KEY, WATCHER_ID   queue API (api_client)
@@ -122,12 +127,16 @@ class Heartbeat:
             self._thread.join(timeout=2.0)
 
 
-def upload_result(job_id: str, result_path: str, solver: str) -> str:
+def upload_result(job_id: str, result_path: str, solver: str, ext: str = "htc") -> str:
     """Gzip + upload one solver's payload; returns the blob path.
 
     Each solver gets its own blob, tagged in the name: the frontend fetches
     the htsolver half first and merges Pio's when it exists, and a Pio
-    failure cannot cost the engine result."""
+    failure cannot cost the engine result.
+
+    `ext` names what is actually inside. Compare jobs upload the binary .htc
+    per-node payload; a pushfold job uploads dumped JSON, and calling that
+    .htc would make the blob store lie about its own contents."""
     from azure.storage.filedatalake import DataLakeServiceClient
 
     conn = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
@@ -137,7 +146,7 @@ def upload_result(job_id: str, result_path: str, solver: str) -> str:
     fs = DataLakeServiceClient.from_connection_string(conn).get_file_system_client(container)
     with open(result_path, "rb") as f:
         payload = gzip.compress(f.read())
-    rel_path = f"enginecompare/{job_id}.{solver}.htc.gz"
+    rel_path = f"enginecompare/{job_id}.{solver}.{ext}.gz"
     fs.get_file_client(rel_path).upload_data(payload, overwrite=True)
     return rel_path
 
@@ -316,6 +325,43 @@ def handle_publish(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) -
     log(f"  published -> {coords.get('stacks')}/{coords.get('nodeName')}/{coords.get('board')}")
 
 
+def handle_pushfold(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) -> None:
+    """Multiway preflop jam/fold (engine M8a).
+
+    Deliberately does NOT shell engine_compare.py. That harness exists to drive
+    PioSOLVER, which is heads-up postflop and cannot build a 4-way preflop tree
+    at all, so there is nothing to compare against and no gate to run. The
+    artifact is dumped to JSON and uploaded as the htsolver payload, which
+    /api/enginecompare/{id}/result/ht already serves.
+    """
+    job_id = job["id"]
+    config = json.loads(job["config"])
+    # Viewer-quality flags. rollups_169 is the important one here: the 169-class
+    # rollup IS the push/fold chart the frontend renders.
+    config["output"] = {"strategy_quantize_u8": True, "ev_float32": True, "rollups_169": True}
+    phase_start = time.perf_counter()
+    artifact = run_engine(config, run_dir)
+    timings["engine_solve_s"] = round(time.perf_counter() - phase_start, 3)
+
+    phase_start = time.perf_counter()
+    dump_path = os.path.join(run_dir, "pushfold.json")
+    out = run_streamed(
+        [ENGINE_EXE, "dump-json", artifact, "--compact", "--out", dump_path],
+        timeout=300, prefix="dump")
+    if out.returncode != 0 or not os.path.exists(dump_path):
+        raise RuntimeError(f"htsolver dump-json failed (exit {out.returncode}): "
+                           f"{out.text[-1500:]}")
+    timings["dump_s"] = round(time.perf_counter() - phase_start, 3)
+    timings["dump_bytes"] = os.path.getsize(dump_path)
+
+    report(job_id, status="Uploading")
+    phase_start = time.perf_counter()
+    blob = upload_result(job_id, dump_path, "ht", ext="json")
+    timings["upload_s"] = round(time.perf_counter() - phase_start, 3)
+    report(job_id, status="Done", ht_blob_path=blob, timings=timings)
+    log(f"  pushfold -> {blob} ({timings['dump_bytes']} bytes before gzip)")
+
+
 def main() -> int:
     if not enabled():
         print("HOLDEMTOOLS_API_BASE / WATCHER_API_KEY not set; see watcher/.env.example")
@@ -341,6 +387,8 @@ def main() -> int:
                     report(job_id, status="Running")
                     if mode == "publish":
                         handle_publish(job, run_dir, timings)
+                    elif mode == "pushfold":
+                        handle_pushfold(job, run_dir, timings)
                     else:
                         handle_compare(job, run_dir, timings)
             except Exception as e:

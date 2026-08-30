@@ -9,6 +9,7 @@
 
 #include "cli/args.hpp"
 #include "config/schema.hpp"
+#include "game/nlhe_preflop.hpp"
 #include "game/nlhe_river.hpp"
 #include "game/toy/kuhn.hpp"
 #include "game/toy/leduc.hpp"
@@ -29,6 +30,7 @@ using namespace engine;
 std::unique_ptr<Game> make_game(const SolveConfig& config) {
   if (config.game == "kuhn") return std::make_unique<toy::KuhnGame>();
   if (config.game == "leduc") return std::make_unique<toy::LeducGame>();
+  if (config.game == "nlhe_preflop") return std::make_unique<NlhePreflopGame>(config);
   return std::make_unique<NlhePostflopGame>(config);
 }
 
@@ -204,8 +206,7 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   SolveStats stats;
   stats.iterations = solver.iteration();
   stats.nashconv = nashconv;
-  stats.ev_seat0 = br.ev.size() > 0 ? br.ev[0] : 0.0;
-  stats.ev_seat1 = br.ev.size() > 1 ? br.ev[1] : 0.0;
+  stats.ev_chips = br.ev;
   stats.wall_time_s = wall_s;
   stats.setup_time_s = setup_s;
   stats.threads = threads;
