@@ -17,6 +17,7 @@ All compute is client side, in workers, with no backend involved.
 | `ScoringVerifier.tsx` | Score checker: enter a real deal, see per-player points from the same code; opened from the page's info button |
 | `protocol.ts` | Worker message types, shared with `src/workers/` |
 | `useRankingsSim.ts`, `useTaiwaneseSolve.ts` | One worker per run, terminated on cancel, re-run and unmount |
+| `scripts/taiwanese-ev-audit.mjs` | `npm run audit:taiwanese`: what the #1 EV number means, measured off-browser |
 
 Both of those render bare content with no container of their own: they live inside
 `components/InfoButton` overlays, which supply the heading, the padding and the scroll
@@ -155,6 +156,53 @@ Changing opponent count, board count, or royalties is a different cache key and 
 Best-response iteration can cycle in principle (rock-paper-scissors dynamics); it looks
 stable here, but that is an observation, not a proof. If it ever oscillates, average the
 policies across rounds (fictitious play) instead of replacing them.
+
+### What the #1 EV number actually is (measured 2026-08-30)
+
+`npm run audit:taiwanese` drives `solveHand` from Node over worker threads, against the
+same shipped policy the page fetches, and answers this in three modes.
+Reproduce any line below with the flags shown; all of them are house rules, double board,
+1 opponent, best-split opponents.
+
+The advisor's headline number is NOT "the EV of playing this game".
+Hero does not play the policy; hero plays the best response to it, so the number is the
+**exploitability** the shipped policy still leaves on the table, plus any bias from taking
+a maximum over 105 noisy estimates.
+Both terms were measured:
+
+| Quantity | Measured | How |
+|---|---|---|
+| Hero playing the SAME policy as the opponent | **-0.026 +/- 0.054** | `--mode mirror --hands 4000 --samples 3000 --seed 777` |
+| Argmax (winner's-curse) bias at 20k samples | **0.0015 +/- 0.0054** | `--mode bias --hands 400` |
+| Mean #1 EV over random hands | **+0.19 +/- 0.10** | `--mode avg --hands 1000` |
+
+The mirror row is the load-bearing one: house scoring is pairwise and antisymmetric, so
+two seats running an identical strategy must each average exactly 0.
+It does, so scoring, the harness, and the policy's own symmetry are all sound - treat a
+mirror run that excludes 0 as a bug in scoring, not as a finding about the game.
+Be careful about sample size when reading it: at 600 hands the same check came back
++0.17 +/- 0.14 (2.3 sigma), which was pure noise.
+Hand-to-hand SD is ~1.73 pts, so a mean is only worth quoting past ~2000 hands.
+
+The bias row retires a worry rather than confirming one.
+A max over 105 estimates is biased upward in general, but at 20k samples it is
+indistinguishable from zero here, because the splits are all scored on the SAME scenarios
+(so the noise in their differences is far smaller than the +/-0.04 standard error on any
+one split's absolute EV) and the top split is genuinely separated - the same split wins on
+two independent passes 93.5% of the time.
+
+Do not confuse that with the ~0.1 floor under `prevPolicyEvLoss` in the precompute notes
+above: that floor is a different quantity, measured on fresh hands at 3000 INNER samples
+per hand during a build round, and it does not transfer to a 20k-sample solve.
+
+So the whole +0.19 is real exploitability: a player who used the tool against opponents
+drawn from this policy would win about a fifth of a point per deal.
+Paired on identical hands, best-responding beat playing the policy by 0.21 pts/deal.
+That number is the honest convergence metric for the shipped library - it is what another
+round of policy iteration would have to reduce - and it is the one to re-measure after any
+change to `LEVELS`, `ENTRIES`, or `INNER_SAMPLES`.
+Note the spread dwarfs it either way: SD across hands is ~1.7, about 9x the mean, so the
+hand you are dealt decides far more than the edge does.
 
 ### Opponent play styles (the "Opponent play" toggle)
 
