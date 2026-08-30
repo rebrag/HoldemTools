@@ -604,7 +604,40 @@ There is deliberately no `folded_mask` on the record: a fold edge names its acto
 Setup is linear in `pair_count` and the answer is essentially converged from 5000: the jam percentage moves under a point across a 40x range, and the residual 1-3 flips are boundary classes that are genuinely mixed (seed 1 at 200000 still shows 2).
 **20000 is the knee that fits an on-demand solve** and is the default.
 
-Still open in M8a: real preflop bet sizings (the tree builder's `open_bb` / `raise_pct` / `max_raises` fields exist and are refused), a 3-player toy game as a cheap CI gate for the N-seat CFR loop, and closing the bunching gap.
+#### Bunching, half closed: the MASS is corrected, the FRACTION is not (2026-08-30)
+
+Prompted by a user comparison against MonkerSolver on the 4-way 10bb spot, which is worth recording because the diagnosis came out of arithmetic rather than opinion.
+
+**First, what the gap was not.** Re-running with **8x the multiway boards (4000), 5x the pairwise matrix (100000) and a 6.7x tighter target** - 128 s against 7 s - moved the root EVs by **0.05-0.08 bb/100**. The residual is bias, not variance, and no amount of sampling touches it.
+
+**What it was.** Converting Monker's mchip at 2000/bb, every seat was high and the four excesses summed to **exactly** the chip-conservation error:
+
+| seat | Monker | before | gap | after | gap |
+|---|---|---|---|---|---|
+| BTN | +24.1 | +24.74 | +0.64 | +24.23 | **+0.13** |
+| CO | +17.0 | +17.41 | +0.41 | +17.20 | **+0.20** |
+| SB | -12.2 | -10.53 | +1.67 | -11.46 | **+0.74** |
+| BB | -28.9 | -28.12 | +0.78 | -28.66 | **+0.24** |
+| **sum** | **0.0** | **+3.50** | **+3.50** | **+1.30** | **+1.30** |
+
+(bb/100. Monker's own EVs sum to zero, which is what makes the comparison usable as a gate at all.)
+
+**The fix, and why it is affordable in one place and not the other.** The dropped correction enters in two places, and they cost wildly different amounts:
+
+- The profile **MASS** (`compat_weights`, and through it `total_profile_weight` and every terminal's normalizer) carries no board and no strength conditioning. Removing opponent-vs-opponent collisions there is one 52-wide pass per pair per hand - `sum_c Ca(c|h) Cb(c|h) - sum_o ra(o) rb(o)`, where the second sum puts back the same-combo pair the first counts twice. Landed.
+- The equity **FRACTION** - the chips-per-unit-mass the per-board sweep produces - would need the same pairwise sums recomputed **at every strength threshold on every sampled board**. That is a rewrite of the hottest loop, not an extra pass. Not landed.
+
+The split was not a guess about where the error lived; the per-seat gaps summing exactly to the conservation error is a signature of a measure error rather than a ranking error, and correcting the mass alone removed **63%** of the total gap for a solve that went 7 s -> 8.5 s.
+
+**Exact where it can be, measured where it cannot.** With two opponents there is exactly one collision pair, so first-order inclusion-exclusion is the whole expansion: `compat_weights` matches a brute-force enumeration of pairwise-disjoint profiles to **8.7e-8** at three seats, and `terminal_values` matches the `showdown_share` reference to **1.3e-7** there. At four seats three pairs mean profiles where two different pairs collide at once, which the first-order term leaves in; that residual is asserted only as "much closer to exact than the uncorrected mass" (3x on the test universe) rather than against an absolute bound, because the gate's deliberately tiny 34-combo universe collides far more often than the 1326 a real solve carries.
+
+The layered side-pot gate now compares **per unit of profile mass** on both sides. Layers need four seats to exist, so its mass carries the triple term; dividing it out keeps that test on what it is actually for - layer amounts, eligible sets, tie expansion - all of which live in the per-unit half. It passes at 1.0e-7.
+
+**What is left, measured rather than argued.** A 3-seat solve has an exact mass, so its remaining conservation error is purely the fraction: **0.020 chips** on 3-way 10bb. `tests/test_multiway_terminal.cpp` reports the per-hand size of the fraction gap directly. Closing it is the hot-loop rewrite above, and it is what stands between 1.30 bb/100 and matching Monker outright.
+
+**A note for anyone reading Monker's abstraction dialog while debugging this: bucketing and bunching are different things with opposite effects.** Bucketing merges strategically similar hands so they must be played identically - a hand abstraction, which makes the answer less exact and which this engine does not do. Bunching is card removal between opponents, which makes it more exact. A preflop jam/fold sim has zero postflop nodes, so Monker's bucket settings are inert there and its numbers are essentially exact - which is precisely why they were usable as a reference.
+
+Still open in M8a: the equity-fraction half of bunching (above), real preflop bet sizings (the tree builder's `open_bb` / `raise_pct` / `max_raises` fields exist and are refused), and a 3-player toy game as a cheap CI gate for the N-seat CFR loop.
 
 - **M9 - collusion, best-response mode first**: seat->agent partition + payoff-weight matrices, joint-range representation (1326x1225 - river-only on 16GB), frozen-opponent team best response.
 - **M10 - Bayesian unknown-collusion**: chance root over team type with probability p; opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.

@@ -14,11 +14,6 @@
       "range": "@file:ranges/full.txt"
     },
     {
-      "seat": "CO",
-      "stack": 20,
-      "range": "@file:ranges/full.txt"
-    },
-    {
       "seat": "BTN",
       "stack": 20,
       "range": "@file:ranges/full.txt"
@@ -27,11 +22,11 @@
   "preflop": {
     "small_blind": 1,
     "big_blind": 2,
-    "button": 3,
+    "button": 2,
     "action_set": "jam_fold",
     "board_sample": {
-      "iter_count": 4000,
-      "pair_count": 100000,
+      "iter_count": 500,
+      "pair_count": 20000,
       "seed": 20260830
     }
   },
@@ -39,14 +34,14 @@
     "update": "dcfr"
   },
   "budget": {
-    "iterations": 4000,
-    "target_nashconv": 0.0004,
+    "iterations": 2000,
+    "target_nashconv": 0.004,
     "checkpoint_every": 25
   },
   "memory_limit_gb": 12,
   "threads": 0,
   "output": {
-    "path": "out/pushfold_4way_hiacc.hta",
+    "path": "out/pushfold_3way.hta",
     "rollups_169": true
   }
 }

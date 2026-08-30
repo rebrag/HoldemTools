@@ -618,11 +618,13 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
                             {"pair_count", pf.board_sample.pair_count},
                             {"seed", pf.board_sample.seed},
                             {"fixed_across_iterations", true}};
-    // Hero-vs-opponent card removal is exact; opponent-vs-opponent removal
-    // (bunching) is dropped at 3+ seats, where the inclusion-exclusion grows
-    // combinatorially. Exact at 2 seats, which is what the published Nash
-    // push/fold charts also assume.
-    meta["opponent_card_removal"] = "hero_only";
+    // Hero-vs-opponent card removal is exact everywhere. Opponent-vs-opponent
+    // removal (bunching) is applied to the profile MASS by first-order
+    // inclusion-exclusion - exact with two opponents - but not to the equity
+    // FRACTION, which would need the same sums at every strength threshold on
+    // every sampled board. Named rather than described so a consumer can tell
+    // artifacts written before and after the correction apart.
+    meta["opponent_card_removal"] = "pairwise_mass";
   }
   meta["sections"] = {
       {"node_table",

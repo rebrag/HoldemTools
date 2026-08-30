@@ -61,8 +61,14 @@ std::uint32_t strength_on(const std::array<Card, 5>& board, const Combo& hand) {
 }
 
 struct Reference {
-  std::vector<double> value;   // the terminal's counterfactual value per hero hand
-  std::vector<double> compat;  // the opponent-profile mass it was summed over
+  std::vector<double> value;        // the terminal's counterfactual value per hero hand
+  std::vector<double> compat;       // profile mass under the engine's rule
+  std::vector<double> compat_hero;  // ... under hero-only removal, for contrast
+  // Chips per unit of profile mass, the half the engine still computes with
+  // hero-only removal, and the same quantity with every pair disjoint. The
+  // gap between them is what the bunching work has NOT closed.
+  std::vector<double> per_unit;
+  std::vector<double> per_unit_full;
 };
 
 // Brute-force reference for one terminal, built on showdown_share - which is
@@ -71,10 +77,24 @@ struct Reference {
 // averages over the boards that profile leaves possible, so it shares no
 // machinery with the estimator's sweep-and-combine.
 //
-// `full_removal` selects the measure:
-//   false - each opponent disjoint from HERO only, the rule the engine uses.
-//   true  - every pair of hands disjoint, i.e. real hold'em.
-// The gap between the two is the size of the dropped bunching correction.
+// It encodes the engine's HYBRID rule exactly, which is worth stating plainly
+// because it is two different measures in one number:
+//
+//   the profile MASS removes cards between opponents as well as against hero,
+//   because that correction is affordable - the mass carries no board and no
+//   strength conditioning, so it is one 52-wide pass per pair per hand;
+//
+//   the equity FRACTION does not, because correcting it would mean redoing
+//   the pairwise sums at every strength threshold on every sampled board.
+//
+// That split is not arbitrary: the error was concentrated in the mass. Before
+// the mass was corrected the 4-way 10bb root EVs failed to sum to zero by
+// 0.070 chips; after, by 0.026.
+//
+// `full_removal` selects which mass the reference builds:
+//   false - hero-only, what the engine did before the bunching correction.
+//   true  - every pair of hands disjoint, which is real hold'em and what the
+//           engine now approximates to first order.
 Reference reference_terminal(const NlhePreflopGame& game, NodeId node_id, int hero,
                              const std::vector<std::vector<float>>& reach, bool full_removal) {
   const Node& node = game.tree()[node_id];
@@ -95,6 +115,9 @@ Reference reference_terminal(const NlhePreflopGame& game, NodeId node_id, int he
   Reference ref;
   ref.value.assign(static_cast<std::size_t>(hands), 0.0);
   ref.compat.assign(static_cast<std::size_t>(hands), 0.0);
+  ref.compat_hero.assign(static_cast<std::size_t>(hands), 0.0);
+  ref.per_unit.assign(static_cast<std::size_t>(hands), 0.0);
+  ref.per_unit_full.assign(static_cast<std::size_t>(hands), 0.0);
   std::vector<int> pick(m, 0);
   std::array<std::uint32_t, kMaxSeats> strengths{};
 
@@ -102,31 +125,39 @@ Reference reference_terminal(const NlhePreflopGame& game, NodeId node_id, int he
     const Combo& hero_combo = combos[static_cast<std::size_t>(h)];
     const std::uint64_t hero_mask = (1ULL << hero_combo.hi) | (1ULL << hero_combo.lo);
     double value = 0.0;
-    double mass = 0.0;
+    double mass = 0.0;       // under the selected rule
+    double mass_hero = 0.0;  // hero-only, always
     double num = 0.0;
     double den = 0.0;
+    double num_full = 0.0;  // the same sums restricted to pairwise-disjoint deals
+    double den_full = 0.0;
     std::fill(pick.begin(), pick.end(), 0);
     while (true) {
       double weight = 1.0;
       std::uint64_t used = hero_mask;
-      bool ok = true;
+      bool ok = true;         // disjoint from hero
+      bool disjoint = true;   // ... and pairwise disjoint
       for (std::size_t k = 0; k < m && ok; ++k) {
         const Combo& c = combos[static_cast<std::size_t>(pick[k])];
         const std::uint64_t om = (1ULL << c.hi) | (1ULL << c.lo);
         if (om & hero_mask) ok = false;
-        else if (full_removal && (om & used)) ok = false;
         else {
+          if (om & used) disjoint = false;
           used |= om;
           weight *= static_cast<double>(
               reach[static_cast<std::size_t>(others[k])][static_cast<std::size_t>(pick[k])]);
         }
       }
       if (ok && weight != 0.0) {
-        mass += weight;
+        // The two halves count DIFFERENT profile sets, on purpose: that is
+        // the hybrid rule. The mass follows `full_removal`; the fraction
+        // below is always hero-only, because that is what the engine's
+        // per-board sweep computes.
+        mass_hero += weight;
+        if (disjoint || !full_removal) mass += weight;
         if (node.terminal_kind == TerminalKind::Fold) {
-          value += weight *
-                   ((node.fold_winner == hero ? static_cast<double>(node.pot) : 0.0) -
-                    static_cast<double>(node.commit[hero]));
+          // Nothing per-profile to do: a fold pays the same to every profile,
+          // so its value is the MASS times that constant, settled below.
         } else {
           // Accumulate over (board, deal) PAIRS jointly, not board-averages
           // within each deal. That is the measure the engine integrates, and
@@ -146,9 +177,14 @@ Reference reference_terminal(const NlhePreflopGame& game, NodeId node_id, int he
               strengths[static_cast<std::size_t>(others[k])] =
                   strength_on(board, combos[static_cast<std::size_t>(pick[k])]);
             }
-            num += weight * showdown_share(hero, seats, node.commit, dead, node.folded_mask,
-                                           strengths.data());
+            const double share = showdown_share(hero, seats, node.commit, dead,
+                                                node.folded_mask, strengths.data());
+            num += weight * share;
             den += weight;
+            if (disjoint) {
+              num_full += weight * share;
+              den_full += weight;
+            }
           }
         }
       }
@@ -159,14 +195,21 @@ Reference reference_terminal(const NlhePreflopGame& game, NodeId node_id, int he
       }
       if (k == m) break;
     }
-    if (node.terminal_kind != TerminalKind::Fold) {
-      // value = amount won per unit of profile mass, times the whole profile
-      // mass, minus what hero put in on every one of them.
+    // Both branches are "chips per unit of profile mass, times the mass".
+    // The per-unit half comes from the hero-only sweep, the mass from
+    // whichever rule was asked for - which is exactly the hybrid.
+    if (node.terminal_kind == TerminalKind::Fold) {
+      value = ((node.fold_winner == hero ? static_cast<double>(node.pot) : 0.0) -
+               static_cast<double>(node.commit[hero])) * mass;
+    } else {
       const double per_unit = den > 0.0 ? num / den : 0.0;
       value = (per_unit - static_cast<double>(node.commit[hero])) * mass;
+      ref.per_unit[static_cast<std::size_t>(h)] = per_unit;
+      ref.per_unit_full[static_cast<std::size_t>(h)] = den_full > 0.0 ? num_full / den_full : 0.0;
     }
     ref.value[static_cast<std::size_t>(h)] = value;
     ref.compat[static_cast<std::size_t>(h)] = mass;
+    ref.compat_hero[static_cast<std::size_t>(h)] = mass_hero;
   }
   return ref;
 }
@@ -221,18 +264,41 @@ bool single_layer_no_bystanders(const Node& n, int seats) {
 
 }  // namespace
 
-TEST_CASE("compat_weights matches the enumerated profile mass") {
+TEST_CASE("compat_weights removes cards between opponents, not just against hero") {
+  // At THREE seats there are two opponents and therefore exactly one pair, so
+  // the engine's first-order inclusion-exclusion is not an approximation at
+  // all - it is the whole expansion, and must match a brute-force enumeration
+  // of pairwise-disjoint profiles exactly.
+  //
+  // At four seats there are three pairs, and what the first-order term leaves
+  // behind is the profiles where two DIFFERENT pairs collide at once. That
+  // residual is measured here rather than asserted.
   for (int seats : {2, 3, 4}) {
     CAPTURE(seats);
     const NlhePreflopGame game(tiny_config(std::vector<Chips>(static_cast<std::size_t>(seats), 14)));
     const std::vector<std::vector<float>> reach = skewed_reach(game);
+    double worst_exact = 0.0;
+    double worst_hero = 0.0;
     for (int hero = 0; hero < seats; ++hero) {
       std::vector<float> got;
       game.compat_weights(hero, reach, got);
-      // Any terminal will do - the reference's mass is the same enumeration.
-      const Reference ref = reference_terminal(game, 1, hero, reach, false);
-      CHECK(worst_relative(got, ref.compat) < 1e-5);
+      // Any terminal will do - the mass is the same enumeration everywhere.
+      const Reference ref = reference_terminal(game, 1, hero, reach, true);
+      worst_exact = std::max(worst_exact, worst_relative(got, ref.compat));
+      worst_hero = std::max(worst_hero, worst_relative(got, ref.compat_hero));
+      if (seats <= 3) CHECK(worst_relative(got, ref.compat) < 1e-5);
     }
+    if (seats == 4) {
+      // Three pairs means profiles where two different pairs collide at
+      // once, which first-order inclusion-exclusion leaves in. Asserting an
+      // absolute bound here would be asserting a property of this test's
+      // 34-combo universe, where collisions are far denser than in the 1326
+      // a real solve carries. What IS universe-independent is that the
+      // correction moves the mass a long way toward exact.
+      CHECK(worst_exact < worst_hero / 2.0);
+    }
+    MESSAGE(seats << " seats: vs exact pairwise-disjoint mass " << worst_exact
+                  << ", vs the old hero-only mass " << worst_hero);
   }
 }
 
@@ -241,9 +307,14 @@ TEST_CASE("terminal values match the showdown_share reference exactly where the 
     const char* name;
     std::vector<Chips> stacks;
   };
+  // Three seats only. With two opponents there is exactly one collision pair,
+  // so the engine's first-order correction IS the whole expansion and its
+  // profile mass is exact - which makes this an exact gate on the layered
+  // arithmetic, the tie expansion and the way mass and fraction combine.
+  // Four seats is measured separately below, because there the mass carries
+  // the triple-collision term the first-order expansion leaves behind.
   const std::vector<Case> cases{
       {"3 seats", {14, 14, 14}},
-      {"4 seats", {14, 14, 14, 14}},
   };
 
   for (const Case& c : cases) {
@@ -265,7 +336,7 @@ TEST_CASE("terminal values match the showdown_share reference exactly where the 
       for (int hero = 0; hero < seats; ++hero) {
         std::vector<float> got;
         game.terminal_values(id, hero, reach, got);
-        const Reference ref = reference_terminal(game, id, hero, reach, false);
+        const Reference ref = reference_terminal(game, id, hero, reach, true);
         // f32 accumulation, and the two sides sum in completely different
         // orders over a few thousand profiles.
         const double rel = worst_relative(got, ref.value);
@@ -277,6 +348,7 @@ TEST_CASE("terminal values match the showdown_share reference exactly where the 
     // Non-vacuous, and reaching the widest showdown the tree has.
     CHECK(checked > 0);
     CHECK(widest == seats);
+    (void)worst;
     MESSAGE(c.name << ": " << checked << " (terminal, hero) pairs gated exactly, widest "
                    << widest << "-way, worst relative " << worst);
   }
@@ -294,6 +366,14 @@ TEST_CASE("layered side pots agree with showdown_share") {
   // disagreement would say nothing about the layer arithmetic. Those
   // one-opponent layers are what the heads-up path is made of, and
   // test_preflop_game.cpp gates them there.
+  //
+  // Compared PER UNIT OF PROFILE MASS - value divided by the mass it was
+  // summed over, on both sides. Layers need four seats to exist at all, and
+  // at four seats the engine's mass carries the triple-collision term its
+  // first-order correction leaves behind. Dividing it out is not a dodge: the
+  // mass is gated on its own above (exactly, at three seats), and what is
+  // under test here is the layer amounts, the eligible sets and the tie
+  // expansion - all of which live entirely in the per-unit half.
   const NlhePreflopGame game(tiny_config({16, 16, 16, 9}));
   const std::vector<std::vector<float>> reach = skewed_reach(game);
   const int seats = game.num_seats();
@@ -329,9 +409,18 @@ TEST_CASE("layered side pots agree with showdown_share") {
         continue;
       }
       std::vector<float> got;
+      std::vector<float> mass;
       game.terminal_values(id, hero, reach, got);
-      const Reference ref = reference_terminal(game, id, hero, reach, false);
-      const double rel = worst_relative(got, ref.value);
+      game.compat_weights(hero, reach, mass);
+      const Reference ref = reference_terminal(game, id, hero, reach, true);
+
+      std::vector<float> got_per_unit(got.size(), 0.0f);
+      std::vector<double> ref_per_unit(ref.value.size(), 0.0);
+      for (std::size_t h = 0; h < got.size(); ++h) {
+        if (mass[h] > 0.0f) got_per_unit[h] = got[h] / mass[h];
+        if (ref.compat[h] > 0.0) ref_per_unit[h] = ref.value[h] / ref.compat[h];
+      }
+      const double rel = worst_relative(got_per_unit, ref_per_unit);
       CHECK(rel < 5e-5);
       worst = std::max(worst, rel);
       ++checked;
@@ -343,10 +432,19 @@ TEST_CASE("layered side pots agree with showdown_share") {
                   << " skipped as pairwise layers, worst relative " << worst);
 }
 
-TEST_CASE("the size of the dropped opponent-vs-opponent card removal") {
-  // NOT a gate. The engine drops bunching at 3+ seats (it is exact at 2), and
-  // this measures what that costs so the number lives somewhere other than an
-  // argument. See M8a in docs/roadmap.md.
+TEST_CASE("what the bunching correction has NOT closed: the equity fraction") {
+  // NOT a gate, and the one number that says where the remaining error is.
+  //
+  // The correction landed in the profile MASS, which is exact at three seats
+  // and first-order at four. It did NOT land in the equity FRACTION - the
+  // chips-per-unit-mass the per-board sweep produces - because correcting
+  // that means redoing the pairwise collision sums at every strength
+  // threshold on every sampled board, which is a rewrite of the hottest loop
+  // rather than one extra pass.
+  //
+  // This measures what that leaves on the table: the same terminal, the same
+  // boards, the fraction computed over hero-only deals and over
+  // pairwise-disjoint deals. See M8a in docs/roadmap.md.
   for (int seats : {2, 3, 4}) {
     const NlhePreflopGame game(tiny_config(std::vector<Chips>(static_cast<std::size_t>(seats), 14)));
     const std::vector<std::vector<float>> reach = skewed_reach(game);
@@ -363,22 +461,16 @@ TEST_CASE("the size of the dropped opponent-vs-opponent card removal") {
     }
     REQUIRE(widest != kNoNode);
 
-    const Reference hero_only = reference_terminal(game, widest, 0, reach, false);
-    const Reference exact = reference_terminal(game, widest, 0, reach, true);
-    // Both are unnormalized sums over different profile sets, so compare the
-    // CONDITIONAL EV: value divided by the mass it was summed over.
+    const Reference ref = reference_terminal(game, widest, 0, reach, true);
     double worst = 0.0;
-    for (std::size_t h = 0; h < hero_only.value.size(); ++h) {
-      if (hero_only.compat[h] <= 0.0 || exact.compat[h] <= 0.0) continue;
-      const double a = hero_only.value[h] / hero_only.compat[h];
-      const double b = exact.value[h] / exact.compat[h];
-      worst = std::max(worst, std::abs(a - b));
+    for (std::size_t h = 0; h < ref.per_unit.size(); ++h) {
+      worst = std::max(worst, std::abs(ref.per_unit[h] - ref.per_unit_full[h]));
     }
-    MESSAGE(seats << " seats, " << best << "-way showdown: hero-only vs full card removal, "
-                  << "worst per-hand conditional-EV gap " << worst << " chips");
+    MESSAGE(seats << " seats, " << best << "-way showdown: the fraction is off by at most "
+                  << worst << " chips per hand for want of opponent-vs-opponent removal");
     if (seats == 2) {
-      // One opponent means no opponent pair to collide, so the two measures
-      // are the same measure and this has to be exact.
+      // One opponent, no pair to collide: the two measures are the same
+      // measure, so this half is exact heads-up and always was.
       CHECK(worst < 1e-9);
     }
   }

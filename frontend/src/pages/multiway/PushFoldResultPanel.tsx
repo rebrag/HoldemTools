@@ -163,11 +163,12 @@ const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
             this result is reproducible.
           </li>
         )}
-        {meta.opponent_card_removal === "hero_only" && seats.length > 2 && (
+        {seats.length > 2 && (
           <li>
-            Card removal is exact between your hand and each opponent, and dropped BETWEEN
-            opponents at three or more seats. That is what the root EVs summing to{" "}
-            {(meta.ev_chips ?? []).reduce((a, b) => a + b, 0).toFixed(3)} instead of 0 measures.
+            Card removal between you and each opponent is exact. Between opponents it is exact
+            for the profile weighting and approximate for the showdown itself, so the root EVs
+            sum to {(meta.ev_chips ?? []).reduce((a, b) => a + b, 0).toFixed(3)} instead of 0 -
+            that number is what is left of it.
           </li>
         )}
         {meta.multiway_no_nash_guarantee && (

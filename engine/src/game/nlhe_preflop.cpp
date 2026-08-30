@@ -459,14 +459,138 @@ void NlhePreflopGame::multiply_compat(const float* opp_reach, float* inout) cons
 
 void NlhePreflopGame::compat_weights(int seat, const std::vector<std::vector<float>>& reach,
                                      std::vector<float>& out) const {
-  // The product over the OTHER seats of the mass each can hold given hero's
-  // two cards. Opponent-vs-opponent collisions are not removed (see the class
-  // comment); the same rule holds in terminal_values, which is what keeps the
-  // exported conditional EVs coherent.
-  out.assign(static_cast<std::size_t>(universe_.size()), 1.0f);
+  const int hands = universe_.size();
+  const std::vector<Combo>& combos = universe_.combos;
+  out.assign(static_cast<std::size_t>(hands), 1.0f);
+
+  std::vector<int> others;
   for (int s = 0; s < seats_; ++s) {
-    if (s == seat) continue;
-    multiply_compat(reach[static_cast<std::size_t>(s)].data(), out.data());
+    if (s != seat) others.push_back(s);
+  }
+  const std::size_t m = others.size();
+
+  // Per opponent: total mass and the mass sitting on each card. Both
+  // unrestricted here; hero's own two cards come out per hand below.
+  std::vector<double> total(m, 0.0);
+  std::vector<std::array<double, kNumCards>> per_card(m);
+  for (std::size_t k = 0; k < m; ++k) {
+    per_card[k].fill(0.0);
+    const float* r = reach[static_cast<std::size_t>(others[k])].data();
+    for (int i = 0; i < hands; ++i) {
+      total[k] += r[i];
+      per_card[k][combos[static_cast<std::size_t>(i)].hi] += r[i];
+      per_card[k][combos[static_cast<std::size_t>(i)].lo] += r[i];
+    }
+  }
+
+  std::vector<double> factor(m, 0.0);
+  for (int i = 0; i < hands; ++i) {
+    const Card hi = combos[static_cast<std::size_t>(i)].hi;
+    const Card lo = combos[static_cast<std::size_t>(i)].lo;
+    double product = 1.0;
+    for (std::size_t k = 0; k < m; ++k) {
+      const float* r = reach[static_cast<std::size_t>(others[k])].data();
+      product *= total[k] - per_card[k][hi] - per_card[k][lo] + r[i];
+    }
+    out[static_cast<std::size_t>(i)] = static_cast<float>(product);
+  }
+  if (m < 2) return;
+
+  // ---- Bunching: opponents cannot hold each other's cards either --------
+  //
+  // The product above counts profiles in which two opponents hold the same
+  // card, which the deck does not allow. Removing them is an
+  // inclusion-exclusion over the collision events; this takes its FIRST-ORDER
+  // term, correcting every pair and leaving triple-and-higher coincidences
+  // in. One pair collides about 8% of the time, so what is dropped is second
+  // order (~0.7%) against a first-order term measured at 3.4 bb/100 on the
+  // 4-way 10bb spot.
+  //
+  // For one pair (a, b) restricted to hands disjoint from hero hand h:
+  //
+  //   collide(h) = sum_c Ca(c|h) * Cb(c|h)  -  sum_o ra(o) rb(o) [o vs h]
+  //
+  // The first sum counts a colliding pair once per SHARED card, so a pair
+  // sharing both cards - the same combo - is counted twice, and the second
+  // sum puts one copy back.
+  //
+  // This is affordable precisely because the profile MASS carries no board
+  // and no strength conditioning: Ca(c|h) is the unrestricted per-card mass
+  // minus the two specific combos {c,hi} and {c,lo}. The same correction
+  // inside the showdown sweep would have to be recomputed at every strength
+  // threshold on every sampled board, which is orders of magnitude dearer -
+  // see docs/roadmap.md M8a.
+  std::vector<std::pair<std::size_t, std::size_t>> pairs;
+  for (std::size_t a = 0; a < m; ++a) {
+    for (std::size_t b = a + 1; b < m; ++b) pairs.emplace_back(a, b);
+  }
+  std::vector<double> pair_total(pairs.size(), 0.0);
+  std::vector<std::array<double, kNumCards>> pair_card(pairs.size());
+  for (std::size_t p = 0; p < pairs.size(); ++p) {
+    pair_card[p].fill(0.0);
+    const float* ra = reach[static_cast<std::size_t>(others[pairs[p].first])].data();
+    const float* rb = reach[static_cast<std::size_t>(others[pairs[p].second])].data();
+    for (int i = 0; i < hands; ++i) {
+      const double v = static_cast<double>(ra[i]) * static_cast<double>(rb[i]);
+      if (v == 0.0) continue;
+      pair_total[p] += v;
+      pair_card[p][combos[static_cast<std::size_t>(i)].hi] += v;
+      pair_card[p][combos[static_cast<std::size_t>(i)].lo] += v;
+    }
+  }
+
+  // Universe index of the combo {c, x}, or -1 when it is outside the
+  // universe. Built once: the loop below asks for it 52 times per hand per
+  // pair, and combo_index + a binary search each time would dominate.
+  std::vector<std::int32_t> combo_at(static_cast<std::size_t>(kNumCards) * kNumCards, -1);
+  for (int i = 0; i < hands; ++i) {
+    const std::size_t hi = static_cast<std::size_t>(combos[static_cast<std::size_t>(i)].hi);
+    const std::size_t lo = static_cast<std::size_t>(combos[static_cast<std::size_t>(i)].lo);
+    combo_at[hi * kNumCards + lo] = i;
+    combo_at[lo * kNumCards + hi] = i;
+  }
+
+  for (int i = 0; i < hands; ++i) {
+    const Card hi = combos[static_cast<std::size_t>(i)].hi;
+    const Card lo = combos[static_cast<std::size_t>(i)].lo;
+    for (std::size_t k = 0; k < m; ++k) {
+      const float* r = reach[static_cast<std::size_t>(others[k])].data();
+      factor[k] = total[k] - per_card[k][hi] - per_card[k][lo] + r[i];
+    }
+    double correction = 0.0;
+    for (std::size_t p = 0; p < pairs.size(); ++p) {
+      const std::size_t ka = pairs[p].first;
+      const std::size_t kb = pairs[p].second;
+      const float* ra = reach[static_cast<std::size_t>(others[ka])].data();
+      const float* rb = reach[static_cast<std::size_t>(others[kb])].data();
+      double shared = 0.0;
+      for (int c = 0; c < kNumCards; ++c) {
+        if (c == hi || c == lo) continue;  // hero holds it; no opponent can
+        const std::int32_t with_hi =
+            combo_at[static_cast<std::size_t>(c) * kNumCards + static_cast<std::size_t>(hi)];
+        const std::int32_t with_lo =
+            combo_at[static_cast<std::size_t>(c) * kNumCards + static_cast<std::size_t>(lo)];
+        const double ca = per_card[ka][c] - (with_hi >= 0 ? ra[with_hi] : 0.0) -
+                          (with_lo >= 0 ? ra[with_lo] : 0.0);
+        const double cb = per_card[kb][c] - (with_hi >= 0 ? rb[with_hi] : 0.0) -
+                          (with_lo >= 0 ? rb[with_lo] : 0.0);
+        shared += ca * cb;
+      }
+      const double same = pair_total[p] - pair_card[p][hi] - pair_card[p][lo] +
+                          static_cast<double>(ra[i]) * static_cast<double>(rb[i]);
+      double term = shared - same;
+      for (std::size_t k = 0; k < m; ++k) {
+        if (k != ka && k != kb) term *= factor[k];
+      }
+      correction += term;
+    }
+    // Clamped rather than asserted: a first-order inclusion-exclusion can in
+    // principle overshoot when collisions are dense, and a negative profile
+    // mass would poison every conditional EV divided by it. At realistic
+    // collision rates it does not happen, so this is a guard, not a
+    // mechanism.
+    const double corrected = static_cast<double>(out[static_cast<std::size_t>(i)]) - correction;
+    out[static_cast<std::size_t>(i)] = static_cast<float>(corrected > 0.0 ? corrected : 0.0);
   }
 }
 
