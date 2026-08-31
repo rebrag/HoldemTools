@@ -31,8 +31,9 @@ namespace engine {
 // CfrSolver, byte-identical and untouched.
 //
 // Determinism contract, matching the repo invariant: the result is a pure
-// function of (seed, iterations, batch, lanes) and NEVER of the thread
-// count. Iteration t's deal is a counter-based function of (seed, t);
+// function of (seed, iterations, batch, lanes) and the run() call
+// segmentation - a checkpoint truncates the batch in flight, which moves a
+// freeze boundary - and NEVER of the thread count. Iteration t's deal is a counter-based function of (seed, t);
 // batches of `batch` iterations run against regrets frozen at batch start
 // (lanes only read the master and write private delta buffers, so freezing
 // costs nothing); iteration t belongs to lane t % lanes, each lane
@@ -40,10 +41,11 @@ namespace engine {
 // SERIALLY in lane order after the join. Any assignment of lanes to threads
 // produces identical bits.
 //
-// Discounting is linear per batch (LCFR at batch granularity): before batch
-// n (1-based) folds in, the master arrays scale by (n-1)/n, so batch k's
-// contribution carries weight k/n - bounded magnitude, deterministic, and
-// the standard cure for MCCFR's early-noise hangover.
+// Discounting is linear in the ITERATION count (LCFR at batch
+// granularity): before batch [b0, b1) folds in, the master arrays scale by
+// b0/b1, which telescopes to weight b/T for a batch ending at iteration b -
+// bounded magnitude, insensitive to how run() calls segment the batches,
+// and the standard cure for MCCFR's early-noise hangover.
 class SampledCfrSolver final : public StrategySource {
  public:
   // `game` and `deals` must be the same object wearing both interfaces.
@@ -101,7 +103,6 @@ class SampledCfrSolver final : public StrategySource {
   std::unique_ptr<ThreadPool> pool_;
   QreConfig qre_{};  // never enabled here; StrategySource contract only
   std::uint64_t t_ = 0;
-  std::uint64_t batches_done_ = 0;
   int max_depth_ = 0;
 };
 

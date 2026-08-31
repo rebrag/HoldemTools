@@ -30,7 +30,7 @@
     "family": "sampled",
     "sampled": { "seed": 20260830, "batch": 1024, "lanes": 16 }
   },
-  "budget": { "iterations": 200000, "checkpoint_every": 20000 },
+  "budget": { "iterations": 200000, "checkpoint_every": 200000 },
   "memory_limit_gb": 12,
   "threads": 0,
   "output": { "path": "out/pushfold_4way_10bb_sampled.hta", "rollups_169": true }

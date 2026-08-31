@@ -70,11 +70,16 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
     const std::uint64_t b0 = t_;
     const std::uint64_t b1 = std::min<std::uint64_t>(end, b0 + config_.batch);
 
-    // Linear discount at batch granularity: before batch n folds in, batch
-    // k < n's accumulated weight becomes k/n. Serial, so bit-exact.
-    const double n = static_cast<double>(batches_done_ + 1);
-    const float scale = static_cast<float>((n - 1.0) / n);
-    if (batches_done_ > 0) {
+    // Linear discount, keyed to ABSOLUTE iteration count: scaling by b0/b1
+    // before folding [b0, b1) telescopes so a batch ending at iteration b
+    // carries weight b/T at the end - the same weighting whatever run()
+    // segmentation or checkpoint cadence produced the batches. (Keying on a
+    // batch COUNTER was measured to make the result depend on
+    // checkpoint_every, because checkpoints truncate batches.) Serial, so
+    // bit-exact.
+    if (b0 > 0) {
+      const float scale =
+          static_cast<float>(static_cast<double>(b0) / static_cast<double>(b1));
       for (float& r : regrets_) r *= scale;
       for (float& s : strat_sum_) s *= scale;
     }
@@ -99,7 +104,6 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
       for (std::size_t i = 0; i < layout_.total; ++i) regrets_[i] += lane.regret_delta[i];
       for (std::size_t i = 0; i < layout_.total; ++i) strat_sum_[i] += lane.strat_delta[i];
     }
-    ++batches_done_;
     t_ = b1;
   }
 }

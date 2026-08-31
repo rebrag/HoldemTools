@@ -665,14 +665,83 @@ So the fraction was rewritten too. `layer_masses` replaces the per-opponent swee
 
 The two escape routes, recorded so they are not re-derived: treat hero's own collisions to first order as well, which restores symmetry at any seat count but degrades hero blocking from exact to approximate - the dominant effect, currently free; or abandon the factorized sweep for sampled deals, which is manifestly symmetric and is what a sampling solver like MonkerSolver gets for free, at the cost of its 55,934 tree passes against our 25.
 
-**A note for anyone reading Monker's abstraction dialog while debugging this: bucketing and bunching are different things with opposite effects.** Bucketing merges strategically similar hands so they must be played identically - a hand abstraction, which makes the answer less exact and which this engine does not do. Bunching is card removal between opponents, which makes it more exact. A preflop jam/fold sim has zero postflop nodes, so Monker's bucket settings are inert there and its numbers are essentially exact - which is precisely why they were usable as a reference.
+**A note for anyone reading Monker's abstraction dialog while debugging this: bucketing and bunching are different things with opposite effects.** Bucketing merges strategically similar hands so they must be played identically - a hand abstraction, which makes the answer less exact and which the vectorized core does not do. Bunching is card removal between opponents, which makes it more exact.
+
+**Correction (2026-08-30): Monker's texture abstraction is NOT inert on a jam/fold tree.**
+An earlier version of this note claimed a preflop-only sim leaves the bucket settings unused; running the 4-way ALLIN/FOLD tree in Monker disproved that from its own output.
+The run wrote `holdemturn_30_4.ser`, which decodes (zlib + Java serialization) as a `TIntObjectHashMap` of exactly **16,432 entries - the suit-isomorphic turn-board count** - each an ~548-entry `TShortShortHashMap` from a packed hand key to a bucket in 0-29: a per-canonical-board 30-strength-bucket table for texture tier 4.
+A jam/fold tree has no turn strategy to store, so the only consumer is the runout evaluation; with the running-stats arithmetic (~2,366 tree nodes against a 29-node betting tree) and the texture-sensitive RAM estimate, the conclusion is that Monker walks all-in runouts through abstracted chance structure with hand strength carried at 30 buckets per canonical board.
+Its jam/fold EVs therefore carry board/strength abstraction error of their own, the recorded comparison bands stay TOLERANCE bands rather than exact-match gates, and part of any residual gap belongs to Monker's side of the table.
+The sampled core (M8c) deals real boards and evaluates exact 7-card strength per deal, so it is strictly more exact at these terminals.
 
 Still open in M8a: the equity-fraction half of bunching (above), real preflop bet sizings (the tree builder's `open_bb` / `raise_pct` / `max_raises` fields exist and are refused), and a 3-player toy game as a cheap CI gate for the N-seat CFR loop.
+
+### M8c - the sampled-deal solver core. Landed 2026-08-30.
+
+The escape route M8a recorded, taken: **deal the cards instead of correcting for not dealing them.**
+`SampledCfrSolver` (`src/solver/sampled_cfr.*`) is a second solver core beside the vectorized `CfrSolver`, selected by `algorithm.family: "sampled"`, sharing the tree builder, config, artifact writer, CLI and thread pool - and sharing nothing of the hot loop, which stays byte-identical.
+
+**The shape is chance-sampled CFR with the hero vectorized.**
+Each iteration draws ONE deal - a hand per seat plus a full board, without replacement - shared by all of that iteration's seat traversals.
+The traversing seat stays vectorized over its whole compact universe with deal-colliding hands zeroed (hero blockers exact, as everywhere else in this engine); every other seat is pinned to its dealt combo and walks as a scalar reach; action loops enumerate rather than sample.
+Collisions cannot occur by construction and every deal's payoffs sum to the pot deal by deal, so **chip conservation holds at ANY seat count as a property of each sample** - the thing the factorized first-order expansion provably cannot reach at 4+.
+Ignoring the hero's own dealt cards during its traversal is unbiased by an exchangeability argument recorded in `game/deal_game.hpp`.
+
+**Determinism kept to the house standard.**
+Iteration t's deal is a counter-based function of (seed, t) (`solver/deal.hpp`, the sibling of `sample_draw`); batches of `algorithm.sampled.batch` iterations run against regrets frozen at batch start (lanes only read the master and write private delta buffers, so freezing costs nothing); iteration t belongs to lane t mod `lanes`, and lanes fold back into the master SERIALLY in lane order.
+The result is a pure function of (seed, iterations, batch, lanes); `tests/test_sampled_kuhn.cpp` asserts BITWISE equality of the raw arrays between 1 and 8 threads.
+Discounting is linear at batch granularity (batch k's weight becomes k/n), applied serially.
+
+**Two bugs the gates caught, and one diagnosis that was wrong first.**
+Kuhn initially converged to a stable wrong equilibrium at nashconv 0.16; the first hypothesis - too few strategy revisions at batch 512 - was disproved by batch 32 landing on the identical number.
+The real bug: terminal values for deal-blocked hero hands were never zeroed, so a Fold terminal's constant and a showdown row's garbage fed regret to exactly the hands the opponents were holding.
+The vectorized core does this zeroing implicitly through the opponent REACH VECTOR inside `terminal_values`; a pinned scalar reach cannot, so the sampled traversal zeroes an explicit blocked list at every terminal.
+The second bug: Kuhn's `hands_blocking_card` answered empty (the vectorized core never asks - no chance nodes), making the hero-universe masking a silent no-op there.
+And a measurement lesson: the 3-way solve "plateaued" at nashconv 0.27 flat from 200k to 600k iterations - which was not the solve but the measuring stick.
+The sampled core solves the TRUE game (a fresh board every iteration), so best response against a 40-fixed-board evaluator reports the game mismatch as a floor; at 2000 boards the same profile measures under 0.05.
+Measure against a fine evaluator, not with more iterations.
+
+**Measured, 2026-08-30, 16 threads:**
+
+| gate | result |
+|---|---|
+| Kuhn, 200k iters | nashconv < 0.02 of a 2-chip pot, EVs conserve to 1e-4 |
+| Leduc, 400k iters | nashconv < 0.05, strictly decreasing, bitwise across thread counts |
+| HU 10bb, 150k iters | nashconv **0.0044 chips**, SB jam / BB call inside the published bands |
+| 3-way 10bb, 150k iters | root EVs sum to **0.001 chips** against the exact evaluator |
+| 4-way 10bb, 200k iters | see below |
+
+The 4-way 10bb target spot, against the recorded MonkerSolver reference (bb/100):
+
+| seat | Monker | factorized (216 s) | sampled |
+|---|---|---|---|
+| SB | -12.2 | -11.98 | **-12.05** |
+| BB | -28.9 | -29.79 | **-29.81** |
+| CO | +17.0 | +17.20 | **+17.04** |
+| BTN | +24.1 | +24.03 | **+24.25** |
+| sum | 0 | -0.55 | **-0.56** |
+
+The -0.56 sum is NOT the profile: it is the measuring evaluator's own first-order residual (the same -0.55 signature the factorized solve carries), because per-seat EVs still ride `Game::terminal_values` at 4+ seats.
+The profile's own measure conserves by construction; a sampled EV export that would make the DISPLAYED numbers conserve too is the recorded follow-up.
+Both solvers now sit within the tolerance band of a Monker reference that is itself abstracted at the runout (see the correction note above), so the band is the strongest claim the comparison supports.
+
+**Cost, measured (16 threads, 4-way 10bb, 200,000 deals):** the sampled solve itself is about **5 s** (~25,000 iterations/s).
+Everything else in the wall clock is the FACTORIZED measuring stick: one best-response diagnostic costs ~38 s at `board_sample.iter_count` 500 (~3 s at 40), and the artifact export's per-hand EV pass ~45 s at 500 (~4 s at 40) - so the shipped config (500 boards, one checkpoint) lands at ~93 s end to end, against the corrected factorized solve's 216 s and its unclosable residual.
+Dropping the evaluator to 40 boards gives ~17 s at the price of roughly 1 bb/100 of DISPLAY noise on the EVs; the strategy is identical either way, because the solve never reads `board_sample` - it only feeds the evaluator.
+Checkpoint sparingly: ten checkpoints put ten best-response passes inside the solve loop, which is how the first measurement read 439 s.
+
+**What stays on the factorized path, deliberately.**
+Best-response diagnostics and the artifact export's per-hand reach/EV fields ride `Game::terminal_values` - exact at 2-3 seats, first-order at 4+ (artifacts stamp `solver_family`; the export caveat is `export_ev_estimator` territory).
+The 2-seat `e2_` path and the 3-seat factorized estimator stay: exact, fast, and the only deterministic cross-check oracle the sampled core has.
+The 216s corrected 4-way demotes from product path to reference oracle; `/multiway` emits `family: "sampled"` for 4+ seats and stays vectorized at 2-3.
+
+**Follow-ups this core unlocks, in the order they are likely to matter:** a sampled EV export (displayed EVs conserving at any seat count); ICM as a terminal payoff transform on `DealGame` (the sampled core evaluates concrete stacks exactly where ICM applies); bucketed multiway POSTFLOP and PLO through the `InfosetIndexer` seam (buckets/node = strength buckets x texture classes over suit-isomorphic boards - in scope for THIS core only, see the per-core rule below); QRE and real preflop sizings ported over.
 
 - **M9 - collusion, best-response mode first**: seat->agent partition + payoff-weight matrices, joint-range representation (1326x1225 - river-only on 16GB), frozen-opponent team best response.
 - **M10 - Bayesian unknown-collusion**: chance root over team type with probability p; opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.
 
-Out of scope, permanently (do not build speculatively): hand abstraction/bucketing, TMECor / coordination-without-card-visibility, cloud SDKs inside the engine.
+Out of scope, permanently (do not build speculatively): TMECor / coordination-without-card-visibility, cloud SDKs inside the engine.
+Hand abstraction/bucketing became a PER-CORE rule with M8c: still permanently out of the vectorized core, in scope for the sampled core as the route to multiway postflop and PLO (the `InfosetIndexer` seam is where it lands).
 
 **"GPU" moved off that list and needs splitting, because the depth-limiting direction above touches it.** The boundary that still holds is the *engine binary*: `engine.exe` stays a headless CPU-only CLI with no cloud SDK, and a value network it consults would be a local file it reads, with inference on the CPU. What is no longer forbidden is a **separate, offline training tool** that produces that file - training a value network is the one part of the Ruse approach that plausibly wants a GPU, and it is not part of the solver. Keep them apart: if a GPU dependency ever appears inside `engine.exe`, that is the line being crossed, not training hardware.
 

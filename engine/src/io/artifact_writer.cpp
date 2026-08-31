@@ -624,13 +624,16 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
                             {"pair_count", pf.board_sample.pair_count},
                             {"seed", pf.board_sample.seed},
                             {"fixed_across_iterations", true}};
-    // Hero-vs-opponent card removal is exact everywhere. Opponent-vs-opponent
-    // removal (bunching) is applied to the profile MASS by first-order
-    // inclusion-exclusion - exact with two opponents - but not to the equity
-    // FRACTION, which would need the same sums at every strength threshold on
-    // every sampled board. Named rather than described so a consumer can tell
-    // artifacts written before and after the correction apart.
-    meta["opponent_card_removal"] = "pairwise_mass";
+    // Named rather than described so a consumer can tell artifacts written
+    // under different removal rules apart. The sampled core deals concrete
+    // cards, so removal between every pair of seats is exact in expectation;
+    // the vectorized preflop estimator applies first-order pairwise
+    // inclusion-exclusion (exact at 2-3 seats, first-order at 4+). Either
+    // way the export pass's per-hand reach/EV fields ride the factorized
+    // evaluator, and export_ev_estimator says so.
+    meta["opponent_card_removal"] =
+        config.sampled.enabled ? "exact_sampled" : "pairwise_mass";
+    meta["export_ev_estimator"] = "factorized_first_order";
   }
   meta["sections"] = {
       {"node_table",
