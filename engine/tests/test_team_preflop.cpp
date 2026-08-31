@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -264,4 +265,113 @@ TEST_CASE("team solve is bitwise identical at any thread count") {
   const auto eight = solve(8);
   REQUIRE(one.size() == eight.size());
   CHECK(std::memcmp(one.data(), eight.data(), one.size() * sizeof(float)) == 0);
+}
+
+TEST_CASE("frozen opponents export their baseline strategy, not uniform") {
+  // The 50/50 bug: in unaware phase 2 the frozen seats never accumulate
+  // strategy sums, so average_strategy used to fall to the uniform
+  // fallback and the artifact showed the opponents playing 50% fold /
+  // 50% jam. The export must be the frozen baseline rows, exactly.
+  const SolveConfig config = team_config(3);
+  NlhePreflopGame game(config);
+  SampledCfrSolver baseline(game, game, team_solver_config(), config.threads);
+  baseline.run(8000);
+  SampledCfrSolver unaware(game, game, team_solver_config(), config.threads,
+                           team_map(3, 0, 2));
+  std::vector<bool> frozen(3, false);
+  frozen[1] = true;
+  unaware.freeze_seats_from(baseline, frozen);
+  unaware.run(8000);
+  const PublicTree& tree = game.tree();
+  std::vector<float> rows_baseline, rows_unaware;
+  int checked = 0;
+  for (NodeId id = 0; id < tree.size(); ++id) {
+    const Node& node = tree[id];
+    if (node.kind != NodeKind::Decision || node.actor != 1) continue;
+    baseline.average_strategy(id, rows_baseline);
+    unaware.average_strategy(id, rows_unaware);
+    REQUIRE(rows_baseline.size() == rows_unaware.size());
+    CHECK(std::memcmp(rows_baseline.data(), rows_unaware.data(),
+                      rows_baseline.size() * sizeof(float)) == 0);
+    ++checked;
+  }
+  CHECK(checked > 0);
+}
+
+TEST_CASE("conditioned team charts converge: two seeds agree where reached") {
+  // The two-sided team update trains a team seat's full conditioned row on
+  // every deal. Without it, a conditioned cell (own X, partner Y) only
+  // trains when both classes are literally dealt, and two independent
+  // seeds disagree wildly on the conditioned frequencies.
+  // UNAWARE mode on purpose: against a fixed frozen environment the team's
+  // joint best-response VALUE is unique, so the seeds must agree on team
+  // EV; the strategy is gated only where the conditioning actually
+  // reaches the node (partner_reach weighting) - an unreachable
+  // conditioning like "partner folded AA" trains on nothing and gates
+  // nothing, and even reachable near-indifferent cells can mix (the joint
+  // argmax is not unique: which seat carries the aggression can be
+  // interchangeable at identical team EV).
+  const SolveConfig config = team_config(3);
+  NlhePreflopGame game(config);
+  SampledCfrSolver baseline(game, game, team_solver_config(), config.threads);
+  baseline.run(40000);
+  std::vector<bool> frozen(3, false);
+  frozen[1] = true;
+  const std::uint64_t kEvDeals = 80000;
+  const std::uint64_t kEvSeed = 424242;
+  auto solve_one = [&](std::uint64_t seed) {
+    SampledConfig sc = team_solver_config();
+    sc.seed = seed;
+    SampledCfrSolver solver(game, game, sc, config.threads, team_map(3, 0, 2));
+    solver.freeze_seats_from(baseline, frozen);
+    solver.run(160000);
+    return std::make_pair(solver.team_rollup_json(),
+                          team_ev(solver.sampled_ev(kEvDeals, kEvSeed), 0, 2));
+  };
+  const auto [first, ev_first] = solve_one(20260830);
+  const auto [second, ev_second] = solve_one(777777);
+  REQUIRE(!first.empty());
+  MESSAGE("unaware team ev by seed: " << ev_first << " vs " << ev_second);
+  // The optimum value is unique even when the argmax is not.
+  CHECK(std::abs(ev_first - ev_second) < 0.05);
+  double total = 0.0, wsum = 0.0;
+  double root_mad = 1.0;
+  for (auto it = first.begin(); it != first.end(); ++it) {
+    const nlohmann::json& other = second.at(it.key());
+    const auto& fa = it.value().at("freq");
+    const auto& fb = other.at("freq");
+    const auto& ra = it.value().at("partner_reach");
+    const auto& rb = other.at("partner_reach");
+    REQUIRE(fa.size() == fb.size());
+    double node_total = 0.0, node_w = 0.0;
+    for (std::size_t pc = 0; pc < fa.size(); ++pc) {
+      const double w =
+          std::min(ra[pc].get<double>(), rb[pc].get<double>());
+      for (std::size_t oc = 0; oc < fa[pc].size(); ++oc) {
+        for (std::size_t a = 0; a < fa[pc][oc].size(); ++a) {
+          const double d = std::abs(fa[pc][oc][a].get<double>() -
+                                    fb[pc][oc][a].get<double>());
+          node_total += w * d;
+          node_w += w;
+        }
+      }
+    }
+    const double node_mad = node_w > 0.0 ? node_total / node_w : 0.0;
+    MESSAGE("node " << it.key() << ": reach-weighted mad " << node_mad);
+    if (it.key() == "0") root_mad = node_mad;
+    total += node_total;
+    wsum += node_w;
+  }
+  REQUIRE(wsum > 0.0);
+  const double mad = total / wsum;
+  MESSAGE("reach-weighted conditioned |diff| across seeds: " << mad);
+  // Calibrated regression tripwires (measured 0.087 root / 0.154 overall at
+  // these seeds and budgets; pre-two-sided-update both were ~0.22 and did
+  // NOT shrink with iterations). The overall number stays soft on purpose:
+  // deeper team nodes hold residual mixing that is genuinely EV-free -
+  // e.g. once the outsider folds, the last team seat calling its own
+  // partner's jam only moves chips WITHIN the team - plus a wide
+  // small-edge threshold band that sharpens only as 1/sqrt(iterations).
+  CHECK(mad < 0.25);
+  CHECK(root_mad < 0.15);
 }

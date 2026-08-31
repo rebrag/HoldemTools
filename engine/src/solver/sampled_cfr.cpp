@@ -111,8 +111,8 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
     lane.regret_delta.assign(store_total_, 0.0f);
     lane.strat_delta.assign(store_total_, 0.0f);
     lane.class_sigma.resize(static_cast<std::size_t>(max_depth_) + 2);
+    lane.mate_stack.resize(static_cast<std::size_t>(max_depth_) + 2);
     lane.sigma_stack.resize(static_cast<std::size_t>(max_depth_) + 2);
-    lane.oppw_stack.resize(static_cast<std::size_t>(max_depth_) + 2);
     lane.child_stack.resize(static_cast<std::size_t>(max_depth_) + 2);
     lane.reach_stack.resize(static_cast<std::size_t>(max_depth_) + 2);
     lane.value_stack.resize(static_cast<std::size_t>(max_depth_) + 2);
@@ -208,14 +208,15 @@ void SampledCfrSolver::run_iteration(std::uint64_t t, Lane& lane) {
       const std::uint16_t hq = lane.deal.hand[static_cast<std::size_t>(q)];
       w *= hq == kNoHand ? 0.0 : static_cast<double>(game_.initial_range(q)[hq]);
     }
-    traverse(game_.tree().root(), hero, lane, w, nullptr, lane.hero_root, 0, 0,
+    traverse(game_.tree().root(), hero, lane, w, lane.hero_root, nullptr, 0, 0,
              lane.value_stack[0]);
   }
 }
 
 void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
-                               const float* opp_wv, const std::vector<float>& hero_reach,
-                               int chance_depth, int depth, std::vector<float>& out) {
+                               const std::vector<float>& hero_reach,
+                               const float* mate_reach, int chance_depth, int depth,
+                               std::vector<float>& out) {
   const PublicTree& tree = game_.tree();
   const Node& node = tree[id];
   const std::uint32_t my_hands = static_cast<std::uint32_t>(game_.num_hands(hero));
@@ -234,9 +235,6 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
       }
       const float v = static_cast<float>(opp_w * (share - commit));
       out.assign(my_hands, v);
-      if (opp_wv != nullptr) {
-        for (std::uint32_t h = 0; h < my_hands; ++h) out[h] *= opp_wv[h];
-      }
     } else {
       if (hero_mate >= 0) {
         deals_.deal_showdown_values_team(id, hero, hero_mate, lane.deal, lane.strengths, out);
@@ -244,11 +242,7 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
         deals_.deal_showdown_values(id, hero, lane.deal, lane.strengths, out);
       }
       const float w = static_cast<float>(opp_w);
-      if (opp_wv != nullptr) {
-        for (std::uint32_t h = 0; h < my_hands; ++h) out[h] *= w * opp_wv[h];
-      } else {
-        for (float& v : out) v *= w;
-      }
+      for (float& v : out) v *= w;
     }
     // A hand colliding with the deal is an impossible holding on this
     // sample: its counterfactual value is 0, not the fold constant or the
@@ -269,8 +263,8 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
     for (int c = 0; c < node.num_children; ++c) {
       const NodeId child = node.first_child + static_cast<NodeId>(c);
       if (tree[child].dealt_card == card) {
-        traverse(child, hero, lane, opp_w, opp_wv, hero_reach, chance_depth + 1, depth + 1,
-                 out);
+        traverse(child, hero, lane, opp_w, hero_reach, mate_reach, chance_depth + 1,
+                 depth + 1, out);
         return;
       }
     }
@@ -289,11 +283,11 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
     if (agents_.teammate_of[actor] == hero) {
       // THE HERO'S OWN PARTNER. Its policy conditions on the hero's hand,
       // and the hero is vectorized - so its sigma is a VECTOR over hero
-      // hands (joint row (partner's dealt hand, h)), and it folds into the
-      // per-hand opponent weight rather than the scalar. Getting this
-      // wrong - conditioning on the hero's DEALT hand - trains each member
-      // against a partner reacting to the wrong cards, and the measured
-      // result was a team that lost to its own no-team baseline.
+      // hands (joint row (partner's dealt hand, h)), folded into the
+      // returned values per hand rather than the scalar weight. Getting
+      // this wrong - conditioning on the hero's DEALT hand - trains each
+      // member against a partner reacting to the wrong cards, and the
+      // measured result was a team that lost to its own no-team baseline.
       std::vector<float>& sig = lane.sigma_stack[static_cast<std::size_t>(depth)];
       const std::size_t cells = static_cast<std::size_t>(actions) * my_hands;
       sig.resize(cells);
@@ -320,19 +314,60 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
           }
         }
       }
-      std::vector<float>& wv_child = lane.oppw_stack[static_cast<std::size_t>(depth)];
+      // TWO-SIDED TEAM UPDATE. Descend each action WITHOUT this node's
+      // sigma, so the child values u_a[h] are the mate's counterfactual
+      // action values (values are elementwise-linear in the weights, so
+      // folding sigma in after the descent returns the same expectation to
+      // the parent). That turns every deal into a CFR update for the mate's
+      // FULL conditioned row (own = dealt hand, partner = every hero hand)
+      // instead of only the dealt pair - per-cell coverage goes from
+      // freq(own)*freq(partner) to about freq(own)+freq(partner), which is
+      // what makes the conditioned charts converge.
+      std::vector<float>& child_vals = lane.child_stack[static_cast<std::size_t>(depth)];
       std::vector<float>& child_out = lane.value_stack[static_cast<std::size_t>(depth) + 1];
-      wv_child.resize(my_hands);
+      std::vector<float>& mate_child = lane.mate_stack[static_cast<std::size_t>(depth)];
+      child_vals.resize(cells);
+      mate_child.resize(my_hands);
       for (std::uint16_t a = 0; a < actions; ++a) {
         const float* srow = sig.data() + static_cast<std::size_t>(a) * my_hands;
-        if (opp_wv != nullptr) {
-          for (std::uint32_t h = 0; h < my_hands; ++h) wv_child[h] = opp_wv[h] * srow[h];
+        if (mate_reach != nullptr) {
+          for (std::uint32_t h = 0; h < my_hands; ++h) {
+            mate_child[h] = mate_reach[h] * srow[h];
+          }
         } else {
-          for (std::uint32_t h = 0; h < my_hands; ++h) wv_child[h] = srow[h];
+          for (std::uint32_t h = 0; h < my_hands; ++h) mate_child[h] = srow[h];
         }
-        traverse(node.first_child + a, hero, lane, opp_w, wv_child.data(), hero_reach,
+        traverse(node.first_child + a, hero, lane, opp_w, hero_reach, mate_child.data(),
                  chance_depth, depth + 1, child_out);
-        for (std::uint32_t h = 0; h < my_hands; ++h) out[h] += child_out[h];
+        std::copy(child_out.begin(), child_out.end(),
+                  child_vals.begin() + static_cast<std::size_t>(a) * my_hands);
+      }
+      for (std::uint16_t a = 0; a < actions; ++a) {
+        const float* srow = sig.data() + static_cast<std::size_t>(a) * my_hands;
+        const float* vrow = child_vals.data() + static_cast<std::size_t>(a) * my_hands;
+        for (std::uint32_t h = 0; h < my_hands; ++h) out[h] += srow[h] * vrow[h];
+      }
+      // Regret: hero_reach[h] times the returned value (which already
+      // carries the external opponents' reach via opp_w at the terminals) is
+      // exactly the everyone-but-the-mate counterfactual weight - no mate
+      // sigma ever reaches the values, since every mate node folds its own
+      // sigma in only after its own descent. Strategy sum: weighted by the
+      // hero's reach (the actor's PARTNER) and the actor's own earlier
+      // sigma, so the stored mass is the conditioning's actual reach.
+      float* rd = lane.regret_delta.data() + offset;
+      float* sd = lane.strat_delta.data() + offset;
+      for (std::uint16_t a = 0; a < actions; ++a) {
+        const std::size_t srow_off = static_cast<std::size_t>(a) * my_hands;
+        const std::size_t drow_off = static_cast<std::size_t>(a) * rows;
+        const float* srow = sig.data() + srow_off;
+        const float* vrow = child_vals.data() + srow_off;
+        for (std::uint32_t h = 0; h < my_hands; ++h) {
+          const std::uint32_t jc = joint_class_[mbase + h];
+          if (jc == kNoJointRow) continue;
+          rd[drow_off + jc] += hero_reach[h] * (vrow[h] - out[h]);
+          const float own = mate_reach != nullptr ? mate_reach[h] : 1.0f;
+          sd[drow_off + jc] += hero_reach[h] * own * srow[h];
+        }
       }
       return;
     }
@@ -379,7 +414,7 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
     std::vector<float>& child_out = lane.value_stack[static_cast<std::size_t>(depth) + 1];
     for (std::uint16_t a = 0; a < actions; ++a) {
       traverse(node.first_child + a, hero, lane, opp_w * static_cast<double>(sigma[a]),
-               opp_wv, hero_reach, chance_depth, depth + 1, child_out);
+               hero_reach, mate_reach, chance_depth, depth + 1, child_out);
       for (std::uint32_t h = 0; h < my_hands; ++h) out[h] += child_out[h];
     }
     return;
@@ -437,8 +472,8 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
     for (std::uint16_t a = 0; a < actions; ++a) {
       const float* srow = sigma.data() + static_cast<std::size_t>(a) * my_hands;
       for (std::uint32_t h = 0; h < my_hands; ++h) child_reach[h] = hero_reach[h] * srow[h];
-      traverse(node.first_child + a, hero, lane, opp_w, opp_wv, child_reach, chance_depth,
-               depth + 1, child_out);
+      traverse(node.first_child + a, hero, lane, opp_w, child_reach, mate_reach,
+               chance_depth, depth + 1, child_out);
       std::copy(child_out.begin(), child_out.end(),
                 child_vals.begin() + static_cast<std::size_t>(a) * my_hands);
     }
@@ -448,6 +483,9 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
       const float* vrow = child_vals.data() + static_cast<std::size_t>(a) * my_hands;
       for (std::uint32_t h = 0; h < my_hands; ++h) out[h] += srow[h] * vrow[h];
     }
+    // Strategy sums carry the partner's reach too (mate_reach), so the
+    // joint mass measures how often the conditioning reaches this node -
+    // see the traverse contract in the header.
     float* rd = lane.regret_delta.data() + offset;
     float* sd = lane.strat_delta.data() + offset;
     for (std::uint16_t a = 0; a < actions; ++a) {
@@ -456,8 +494,9 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
       const float* srow = sigma.data() + srow_off;
       const float* vrow = child_vals.data() + srow_off;
       for (std::uint32_t h = 0; h < my_hands; ++h) {
+        const float mr = mate_reach != nullptr ? mate_reach[h] : 1.0f;
         rd[drow_off + team_rows[h]] += vrow[h] - out[h];
-        sd[drow_off + team_rows[h]] += hero_reach[h] * srow[h];
+        sd[drow_off + team_rows[h]] += hero_reach[h] * mr * srow[h];
       }
     }
     return;
@@ -506,7 +545,7 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
   for (std::uint16_t a = 0; a < actions; ++a) {
     const float* srow = sigma.data() + static_cast<std::size_t>(a) * my_hands;
     for (std::uint32_t h = 0; h < my_hands; ++h) child_reach[h] = hero_reach[h] * srow[h];
-    traverse(node.first_child + a, hero, lane, opp_w, opp_wv, child_reach, chance_depth,
+    traverse(node.first_child + a, hero, lane, opp_w, child_reach, mate_reach, chance_depth,
              depth + 1, child_out);
     std::copy(child_out.begin(), child_out.end(),
               child_vals.begin() + static_cast<std::size_t>(a) * my_hands);
@@ -544,6 +583,15 @@ void SampledCfrSolver::average_strategy(NodeId id, std::vector<float>& out) cons
   const std::uint32_t hands = layout_.node_hands[node.decision_index];
   const std::uint16_t actions = layout_.node_actions[node.decision_index];
   out.assign(static_cast<std::size_t>(hands) * actions, 0.0f);
+  // A FROZEN seat (unaware phase 2) never trains in this solver, so its
+  // strategy sums are all zero and the fallback below would export uniform
+  // rows. Its actual play is the frozen baseline - export that.
+  if (frozen_seat_[static_cast<std::size_t>(node.actor)] &&
+      !frozen_rows_[static_cast<std::size_t>(id)].empty()) {
+    const std::vector<float>& fr = frozen_rows_[static_cast<std::size_t>(id)];
+    std::copy(fr.begin(), fr.end(), out.begin());
+    return;
+  }
   // Same contract as CfrSolver::average_strategy: hand-major rows summing to
   // 1, uniform where nothing accumulated.
   // A team actor's exported rows are the MARGINAL over the partner: per
@@ -761,9 +809,27 @@ nlohmann::json SampledCfrSolver::team_rollup_json() const {
     }
     // Emit the first actions-1 frequencies (the last is 1 minus the rest),
     // rounded, nested [partner class][own class]. Keeps the metadata blob
-    // an order of magnitude smaller than the naive dump.
+    // an order of magnitude smaller than the naive dump. Alongside each
+    // partner class, its REACH relative to the node's most-reached partner
+    // class (strategy sums are reach-weighted, so the stored mass is a real
+    // reach signal): the frontend uses it to flag conditionings that never
+    // actually happen at this node - e.g. "partner folded AA".
     nlohmann::json fr = nlohmann::json::array();
+    std::vector<double> partner_w(static_cast<std::size_t>(ncls), 0.0);
+    double max_partner_w = 0.0;
     for (int pc = 0; pc < ncls; ++pc) {
+      double sum = 0.0;
+      for (int oc = 0; oc < ncls; ++oc) {
+        sum += weight[static_cast<std::size_t>(pc) * ncls + static_cast<std::size_t>(oc)];
+      }
+      partner_w[static_cast<std::size_t>(pc)] = sum;
+      max_partner_w = std::max(max_partner_w, sum);
+    }
+    nlohmann::json pw = nlohmann::json::array();
+    for (int pc = 0; pc < ncls; ++pc) {
+      const double rel =
+          max_partner_w > 0.0 ? partner_w[static_cast<std::size_t>(pc)] / max_partner_w : 0.0;
+      pw.push_back(std::round(rel * 10000.0) / 10000.0);
       nlohmann::json prow = nlohmann::json::array();
       for (int oc = 0; oc < ncls; ++oc) {
         const std::size_t cell = static_cast<std::size_t>(pc) * ncls + static_cast<std::size_t>(oc);
@@ -783,6 +849,7 @@ nlohmann::json SampledCfrSolver::team_rollup_json() const {
     node_j["partner"] = mate;
     node_j["num_actions"] = actions;
     node_j["freq"] = std::move(fr);
+    node_j["partner_reach"] = std::move(pw);
     out[std::to_string(id)] = std::move(node_j);
   }
   return out;

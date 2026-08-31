@@ -114,7 +114,7 @@ class SampledCfrSolver final : public StrategySource {
     std::vector<std::uint16_t> blocked;            // hero hands colliding with the deal
     std::vector<std::vector<float>> class_sigma;   // per depth: A*rows action-major
     std::vector<std::uint32_t> team_rows;          // per-hand joint row scratch
-    std::vector<std::vector<float>> oppw_stack;    // per depth: H per-hand opp weights
+    std::vector<std::vector<float>> mate_stack;    // per depth: H mate reach
     std::vector<std::vector<float>> sigma_stack;   // per depth: A*H action-major
     std::vector<std::vector<float>> child_stack;   // per depth: A*H child values
     std::vector<std::vector<float>> reach_stack;   // per depth: H hero reach
@@ -125,15 +125,23 @@ class SampledCfrSolver final : public StrategySource {
   // Counterfactual values for `hero`'s hands at `id` under the lane's deal,
   // scaled by the pinned opponents' reach `opp_w`. Writes into out (length =
   // hero hands).
-  // opp_wv: per-hero-hand opponent weight, or null. It exists because a
-  // TEAM partner's policy conditions on the hero's hand, and the hero is
-  // vectorized here - so past a partner node the opponents' reach is a
-  // VECTOR over hero hands, not a scalar. Null until the traversal passes
-  // the hero's partner acting; the effective weight is always
-  // opp_w * (opp_wv ? opp_wv[h] : 1).
-  void traverse(NodeId id, int hero, Lane& lane, double opp_w, const float* opp_wv,
-                const std::vector<float>& hero_reach, int chance_depth, int depth,
-                std::vector<float>& out);
+  // A TEAM partner's policy conditions on the hero's hand, and the hero is
+  // vectorized here - so a partner node's sigma is a VECTOR over hero
+  // hands. It folds into the returned values AFTER that node's descent
+  // (values are elementwise-linear in the weights), which keeps the child
+  // values counterfactual for the partner and powers the two-sided team
+  // update at its node.
+  // mate_reach: per-hero-hand product of the partner's sigmas along the
+  // path (null = all ones, and always null without a team). Strategy sums
+  // at team nodes are weighted by BOTH seats' reach so the stored mass
+  // measures how often each (own, partner) conditioning actually reaches
+  // the node - that is what makes the exported marginal a real
+  // reach-weighted average and the rollup's weight an honest reach signal.
+  // Regret updates never use it: counterfactual weights exclude the
+  // actor's own side.
+  void traverse(NodeId id, int hero, Lane& lane, double opp_w,
+                const std::vector<float>& hero_reach, const float* mate_reach,
+                int chance_depth, int depth, std::vector<float>& out);
 
   // Sigma for one pinned actor at `node` holding `hand` (partner-aware for
   // team seats, frozen-aware for frozen seats), written into out[actions].

@@ -791,17 +791,32 @@ Chip conservation is untouched: payoffs per deal still sum to the pot; only pref
 | | SB | BB | CO | BTN | team (SB+CO) |
 |---|---|---|---|---|---|
 | baseline (no team) | -0.255 | -0.615 | +0.364 | +0.506 | **0.109** |
-| unaware | -0.188 | -0.976 | +0.459 | +0.704 | **0.271** |
-| aware | -0.376 | -0.649 | +0.501 | +0.524 | **0.125** |
+| unaware | -0.220 | -0.995 | +0.553 | +0.663 | **0.333** |
+| aware | -0.316 | -0.673 | +0.477 | +0.512 | **0.161** |
+
+(Numbers are from the two-sided-update build; the first shipped build measured unaware 0.271 / aware 0.125 - the stronger conditioned training is worth ~40% more uplift.)
 
 Three findings worth the table:
-the unaware uplift is **+0.162 chips = +8.1 bb/100** for the pair, and it is extracted almost entirely from the BB (-0.62 to -0.98) while the unaware BTN **free-rides** the team's pressure (+0.51 to +0.70);
-opponents who KNOW nearly neutralize the edge (uplift +0.016 chips = +0.8 bb/100);
-and on the 3-way gate the aware team measured BELOW its own baseline (0.213 vs 0.322) - being known to collude can cost more than the sharing gains, which is a property of the changed game, not a bug, and exactly why the two modes had to ship together.
+the unaware uplift is **+0.223 chips = +11.2 bb/100** for the pair, and it is extracted almost entirely from the BB (-0.62 to -1.00) while the unaware BTN **free-rides** the team's pressure (+0.51 to +0.66);
+opponents who KNOW keep most of it away (uplift +0.052 chips = +2.6 bb/100);
+and on the 3-way gate the aware team measured BELOW its own baseline (0.304 vs 0.322) - being known to collude can cost more than the sharing gains, which is a property of the changed game, not a bug, and exactly why the two modes had to ship together.
 
-**The estimator trap, paid for and recorded.** During a team hero's traversal the partner's policy conditions on the hero's hand - and the hero is VECTORIZED, so past a partner node the opponents' reach is a per-hand vector, not a scalar (`opp_wv` in the traversal).
+**The estimator trap, paid for and recorded.** During a team hero's traversal the partner's policy conditions on the hero's hand - and the hero is VECTORIZED, so a partner node's sigma is a per-hand vector, not a scalar.
 The first implementation conditioned the partner on the hero's DEALT hand; each member then trained against a partner reacting to the wrong cards, and the measured result was a team losing to its own no-team baseline (-0.97 vs +0.32 on the 3-way gate).
 If a future change makes a team lose to its baseline, look here first.
+(The vector originally traveled as a per-hand opponent-weight channel folded before the descent; the two-sided update below replaced that with folding the sigma into the returned values AFTER each partner node's descent - same expectation by linearity, and it keeps the child values counterfactual for the partner.)
+
+**The two-sided team update (landed one day later, after the first user run).** The initial traversal only updated the HERO's rows, so a conditioned cell (own X, partner Y) trained only on deals where BOTH classes were literally dealt - about freq(X) x freq(Y) = 0.001% of deals - and the conditioned charts shipped as visible noise (the first 4-way run showed CO jamming "nearly any-two" with AA behind; the converged answer is the OPPOSITE, CO folds everything and lets AA collect).
+Since a partner node's descent already computes the mate's per-hand sigma and, per action, the team's per-hand counterfactual values, the mate's full conditioned row (own = dealt, partner = every hero hand) is updated there too: regret weight `hero_reach[h]` times the returned value (which carries the external reach via `opp_w`) is exactly the everyone-but-the-mate counterfactual weight.
+Per-cell coverage goes from freq(X)*freq(Y) to ~freq(X)+freq(Y) - three orders of magnitude - and the stronger joint best response it finds raised the measured 4-way unaware uplift by ~40%.
+Strategy sums at team nodes are additionally weighted by BOTH seats' reach (`mate_reach` threading), so the exported marginal is a real reach-weighted average and the rollup's per-partner-class mass is an honest reach signal - `team_rollup.partner_reach` ships it, and `/multiway` flags conditionings that never happen ("partner folded AA").
+
+**What converges and what legitimately does not.** The unaware team EV is seed-stable (0.766 vs 0.765 on the 3-way gate at 640k iterations) because the joint best-response VALUE is unique - but the argmax is NOT: which seat carries the aggression can be interchangeable at identical team EV, and once the outsider folds, the last team seat calling its own partner's jam only moves chips WITHIN the team, a genuine indifference.
+So conditioned charts at deeper team nodes keep a mixing band that two seeds resolve differently, on top of a small-edge threshold band that sharpens only as 1/sqrt(iterations).
+`test_team_preflop.cpp` gates EV agreement tight and strategy agreement reach-weighted and loose, on purpose; do not tighten the strategy gate without first checking the disagreement is not one of these two EV-free kinds.
+
+**Frozen seats export their baseline.** In unaware phase 2 the frozen seats never accumulate strategy sums, and `average_strategy` originally fell to its uniform fallback - artifacts showed the opponents playing 50/50 while the solve itself (training traversals and the EV pass read `frozen_rows_`) was correct all along.
+`average_strategy` now returns the frozen rows, and a gate pins every frozen node's export bitwise-equal to the baseline solver's.
 
 **EV honesty forced a general improvement.** Per-seat marginal strategies cannot reproduce a team's correlated play, so team EVs cannot ride `Game::terminal_values` - and now EVERY sampled solve's root EVs come from a **sampled EV pass** (200k fresh seeded deals under the average profile, all seats pinned, `deal_showdown_pinned`).
 These conserve exactly at any seat count, retiring the displayed "-0.011 evaluator residual" on 4-way solves; metadata says `root_ev_estimator: "sampled_deals"`.

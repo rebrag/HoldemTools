@@ -59,7 +59,17 @@ export interface PushFoldDump {
     } | null;
     team_rollup?: Record<
       string,
-      { actor: number; partner: number; num_actions: number; freq: number[][][] }
+      {
+        actor: number;
+        partner: number;
+        num_actions: number;
+        freq: number[][][];
+        /** Per partner class: how often that conditioning reaches this node,
+         *  relative to the node's most-reached partner class (0..1). ~0 means
+         *  the partner never arrives here with that hand (e.g. "partner
+         *  folded AA") and the conditioned chart is untrained noise. */
+        partner_reach?: number[];
+      }
     >;
     board_sample?: { iter_count: number; pair_count: number; seed: number };
     preflop?: {

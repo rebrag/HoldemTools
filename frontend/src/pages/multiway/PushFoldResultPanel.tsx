@@ -170,16 +170,25 @@ const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
                 className="rounded border border-slate-700 bg-slate-800/70 px-1.5 py-0.5 text-[11px] text-slate-200"
               >
                 <option value="">any hand (marginal)</option>
-                {CLASS_NAMES.map((name, i) => (
-                  <option key={name} value={String(i)}>
-                    {name}
-                  </option>
-                ))}
+                {CLASS_NAMES.map((name, i) => {
+                  const reach = teamRollup.partner_reach?.[i];
+                  const suffix =
+                    reach == null ? "" : reach < 0.005 ? " - never here" : reach < 0.05 ? " - rare here" : "";
+                  return (
+                    <option key={name} value={String(i)}>
+                      {name + suffix}
+                    </option>
+                  );
+                })}
               </select>
               <span className="text-[10px] text-slate-500">
                 {partnerClass == null
                   ? "Partner-averaged chart; pick a hand to see the conditioned strategy."
-                  : "Conditioned on the partner's hand - the shared-cards strategy itself. Frequencies only; EVs are not stored per pair."}
+                  : (teamRollup.partner_reach?.[partnerClass] ?? 1) < 0.005
+                    ? "The partner never reaches this spot holding that hand - this conditioning never happens, so the chart is untrained noise."
+                    : (teamRollup.partner_reach?.[partnerClass] ?? 1) < 0.05
+                      ? "The partner rarely arrives here with that hand, so this conditioned chart trains on thin data - read it loosely."
+                      : "Conditioned on the partner's hand - the shared-cards strategy itself. Frequencies only; EVs are not stored per pair."}
               </span>
             </div>
           )}
