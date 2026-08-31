@@ -80,6 +80,13 @@ NlhePreflopGame::NlhePreflopGame(const SolveConfig& config) {
   for (int s = 0; s < seats_; ++s) {
     ranges_[static_cast<std::size_t>(s)] = universe_.compact(canonical[static_cast<std::size_t>(s)]);
   }
+  combo_at_.assign(static_cast<std::size_t>(kNumCards) * kNumCards, -1);
+  for (int h = 0; h < hands; ++h) {
+    const std::size_t hi = static_cast<std::size_t>(universe_.combos[static_cast<std::size_t>(h)].hi);
+    const std::size_t lo = static_cast<std::size_t>(universe_.combos[static_cast<std::size_t>(h)].lo);
+    combo_at_[hi * kNumCards + lo] = h;
+    combo_at_[lo * kNumCards + hi] = h;
+  }
 
   PreflopTreeParams params;
   params.num_seats = seats_;
@@ -358,80 +365,6 @@ void NlhePreflopGame::build_pair_equity(int threads) {
   }
 }
 
-void NlhePreflopGame::board_compat(const BoardTable& board, const float* opp_reach,
-                                   float* out) const {
-  // One seat's compatible mass per hero hand ON THIS BOARD: the same
-  // inclusion-exclusion as multiply_compat, restricted to the hands the board
-  // has not already used up.
-  //
-  // Every seat at the table gets one of these, not just the ones contesting
-  // the layer. A seat that cannot win a side pot still holds two cards, so it
-  // still decides which runouts were possible - leaving it out conditions the
-  // layer on a different board distribution than the deal actually allows,
-  // and that was measured at 4-5% of the layer's value on a small universe.
-  const std::vector<Combo>& combos = universe_.combos;
-  for (int h = 0; h < universe_.size(); ++h) out[h] = 0.0f;
-  double all = 0.0;
-  double per_card[kNumCards] = {};
-  for (std::int32_t i : board.sorted) {
-    const double r = opp_reach[i];
-    all += r;
-    per_card[combos[static_cast<std::size_t>(i)].hi] += r;
-    per_card[combos[static_cast<std::size_t>(i)].lo] += r;
-  }
-  for (std::int32_t i : board.sorted) {
-    const Card hi = combos[static_cast<std::size_t>(i)].hi;
-    const Card lo = combos[static_cast<std::size_t>(i)].lo;
-    out[i] = static_cast<float>(all - per_card[hi] - per_card[lo] + opp_reach[i]);
-  }
-}
-
-void NlhePreflopGame::worse_and_tie(const BoardTable& board, const float* opp_reach, float* worse,
-                                    float* tie, float* total) const {
-  const int hands = universe_.size();
-  const std::vector<Combo>& combos = universe_.combos;
-  for (int h = 0; h < hands; ++h) {
-    worse[h] = 0.0f;
-    tie[h] = 0.0f;
-    total[h] = 0.0f;
-  }
-  board_compat(board, opp_reach, total);
-  // Ascending sweep, the same shape as RiverEvaluator::showdown_2p, with the
-  // two halves emitted separately because the multiway combine multiplies
-  // them per opponent instead of adding them.
-  double worse_total = 0.0;
-  double worse_per_card[kNumCards] = {};
-  for (const auto& [begin, end] : board.groups) {
-    double group_total = 0.0;
-    double group_per_card[kNumCards] = {};
-    for (int s = begin; s < end; ++s) {
-      const int i = board.sorted[static_cast<std::size_t>(s)];
-      const double r = opp_reach[i];
-      group_total += r;
-      group_per_card[combos[static_cast<std::size_t>(i)].hi] += r;
-      group_per_card[combos[static_cast<std::size_t>(i)].lo] += r;
-    }
-    for (int s = begin; s < end; ++s) {
-      const int i = board.sorted[static_cast<std::size_t>(s)];
-      const Card hi = combos[static_cast<std::size_t>(i)].hi;
-      const Card lo = combos[static_cast<std::size_t>(i)].lo;
-      // Strictly worse: hero's own combo is never in the worse set, so the
-      // pairwise inclusion-exclusion term is zero. Ties: hero's combo is in
-      // this group and blocked, and the +reach term cancels its double
-      // subtraction so it nets out excluded.
-      worse[i] = static_cast<float>(worse_total - worse_per_card[hi] - worse_per_card[lo]);
-      tie[i] = static_cast<float>(group_total - group_per_card[hi] - group_per_card[lo] +
-                                  opp_reach[i]);
-    }
-    worse_total += group_total;
-    for (int s = begin; s < end; ++s) {
-      const int i = board.sorted[static_cast<std::size_t>(s)];
-      worse_per_card[combos[static_cast<std::size_t>(i)].hi] += opp_reach[i];
-      worse_per_card[combos[static_cast<std::size_t>(i)].lo] += opp_reach[i];
-    }
-  }
-}
-
 void NlhePreflopGame::multiply_compat(const float* opp_reach, float* inout) const {
   // One opponent's compatible mass per hero hand, folded into a running
   // product: total minus the two per-card sums, plus the identical combo back
@@ -539,17 +472,6 @@ void NlhePreflopGame::compat_weights(int seat, const std::vector<std::vector<flo
     }
   }
 
-  // Universe index of the combo {c, x}, or -1 when it is outside the
-  // universe. Built once: the loop below asks for it 52 times per hand per
-  // pair, and combo_index + a binary search each time would dominate.
-  std::vector<std::int32_t> combo_at(static_cast<std::size_t>(kNumCards) * kNumCards, -1);
-  for (int i = 0; i < hands; ++i) {
-    const std::size_t hi = static_cast<std::size_t>(combos[static_cast<std::size_t>(i)].hi);
-    const std::size_t lo = static_cast<std::size_t>(combos[static_cast<std::size_t>(i)].lo);
-    combo_at[hi * kNumCards + lo] = i;
-    combo_at[lo * kNumCards + hi] = i;
-  }
-
   for (int i = 0; i < hands; ++i) {
     const Card hi = combos[static_cast<std::size_t>(i)].hi;
     const Card lo = combos[static_cast<std::size_t>(i)].lo;
@@ -567,9 +489,9 @@ void NlhePreflopGame::compat_weights(int seat, const std::vector<std::vector<flo
       for (int c = 0; c < kNumCards; ++c) {
         if (c == hi || c == lo) continue;  // hero holds it; no opponent can
         const std::int32_t with_hi =
-            combo_at[static_cast<std::size_t>(c) * kNumCards + static_cast<std::size_t>(hi)];
+            combo_at_[static_cast<std::size_t>(c) * kNumCards + static_cast<std::size_t>(hi)];
         const std::int32_t with_lo =
-            combo_at[static_cast<std::size_t>(c) * kNumCards + static_cast<std::size_t>(lo)];
+            combo_at_[static_cast<std::size_t>(c) * kNumCards + static_cast<std::size_t>(lo)];
         const double ca = per_card[ka][c] - (with_hi >= 0 ? ra[with_hi] : 0.0) -
                           (with_lo >= 0 ? ra[with_lo] : 0.0);
         const double cb = per_card[kb][c] - (with_hi >= 0 ? rb[with_hi] : 0.0) -
@@ -594,9 +516,308 @@ void NlhePreflopGame::compat_weights(int seat, const std::vector<std::vector<flo
   }
 }
 
+void NlhePreflopGame::layer_masses(const std::vector<int>& eligible,
+                                   const std::vector<int>& bystanders,
+                                   const std::vector<std::vector<float>>& reach,
+                                   std::vector<double>& num, std::vector<double>& den) const {
+  const int hands = universe_.size();
+  const std::vector<Combo>& combos = universe_.combos;
+  num.assign(static_cast<std::size_t>(hands), 0.0);
+  den.assign(static_cast<std::size_t>(hands), 0.0);
+  if (boards_.empty()) throw std::runtime_error("multiway showdown with no board sample");
+
+  // Every other seat, contesting or not. The order is eligible-first so the
+  // subset expansion below can index the contesting ones as 0..e-1.
+  std::vector<int> others = eligible;
+  others.insert(others.end(), bystanders.begin(), bystanders.end());
+  const std::size_t n = others.size();
+  const std::size_t e = eligible.size();
+  const std::size_t subsets = std::size_t{1} << e;
+
+  // States a seat can be in relative to hero's hand on a board. Bystanders
+  // are pinned to kTotal - they hold cards but do not race.
+  enum State { kWorse = 0, kTie = 1, kTotal = 2, kNumStates = 3 };
+  // Where a single combo sits relative to hero on a board. Deliberately NOT
+  // the same enum: kTotal is a query ("any live hand"), while a combo is
+  // concretely worse, tied, better, or not dealable at all. Collapsing
+  // "better" into "invalid" is a bug that hides - it only shows up in the
+  // total column, where a live hand that happens to beat hero must still be
+  // removed when hero holds one of its cards.
+  enum Slot { kSlotWorse = 0, kSlotTie = 1, kSlotBetter = 2, kSlotInvalid = 3 };
+
+  std::vector<std::pair<std::size_t, std::size_t>> pairs;
+  for (std::size_t a = 0; a < n; ++a) {
+    for (std::size_t b = a + 1; b < n; ++b) pairs.emplace_back(a, b);
+  }
+  const std::size_t np = pairs.size();
+
+  // ---- per-seat and per-pair accumulators, all over board-valid hands ----
+  // [state][seat] and [state][pair]: cumulative "strictly worse" is built up
+  // group by group, "tie" is rebuilt per group, "total" is fixed per board.
+  std::vector<std::array<double, kNumCards>> card(kNumStates * n);
+  std::vector<double> mass(kNumStates * n, 0.0);
+  std::vector<std::array<double, kNumCards>> pair_card(kNumStates * np);
+  std::vector<double> pair_mass(kNumStates * np, 0.0);
+
+  // Per hero hand, per card: the universe index of {c, hi} and {c, lo}, and
+  // whether each is strictly worse than / tied with hero on this board.
+  // Hoisted out of the pair loops because every pair asks the same question.
+  std::vector<std::int32_t> idx_hi(kNumCards), idx_lo(kNumCards);
+  std::vector<std::uint8_t> state_hi(kNumCards), state_lo(kNumCards);
+
+  std::vector<double> factor(n, 0.0);  // S_j for the current state assignment
+  std::vector<double> kterm(np * kNumStates * kNumStates, 0.0);
+  std::vector<int> states(n, static_cast<int>(kTotal));
+
+  for (const BoardTable& board : boards_) {
+    // Totals over everything live on this board.
+    for (std::size_t j = 0; j < n; ++j) {
+      const float* r = reach[static_cast<std::size_t>(others[j])].data();
+      auto& c = card[kTotal * n + j];
+      c.fill(0.0);
+      double t = 0.0;
+      for (std::int32_t i : board.sorted) {
+        const double v = r[i];
+        t += v;
+        c[combos[static_cast<std::size_t>(i)].hi] += v;
+        c[combos[static_cast<std::size_t>(i)].lo] += v;
+      }
+      mass[kTotal * n + j] = t;
+      card[kWorse * n + j].fill(0.0);
+      mass[kWorse * n + j] = 0.0;
+    }
+    for (std::size_t p = 0; p < np; ++p) {
+      const float* ra = reach[static_cast<std::size_t>(others[pairs[p].first])].data();
+      const float* rb = reach[static_cast<std::size_t>(others[pairs[p].second])].data();
+      auto& c = pair_card[kTotal * np + p];
+      c.fill(0.0);
+      double t = 0.0;
+      for (std::int32_t i : board.sorted) {
+        const double v = static_cast<double>(ra[i]) * static_cast<double>(rb[i]);
+        if (v == 0.0) continue;
+        t += v;
+        c[combos[static_cast<std::size_t>(i)].hi] += v;
+        c[combos[static_cast<std::size_t>(i)].lo] += v;
+      }
+      pair_mass[kTotal * np + p] = t;
+      pair_card[kWorse * np + p].fill(0.0);
+      pair_mass[kWorse * np + p] = 0.0;
+    }
+
+    // Ascending sweep. At each tie group the "worse" accumulators hold
+    // everything strictly below it, which is exactly hero's threshold for
+    // every hand in the group.
+    for (const auto& [begin, end] : board.groups) {
+      for (std::size_t j = 0; j < n; ++j) {
+        const float* r = reach[static_cast<std::size_t>(others[j])].data();
+        auto& c = card[kTie * n + j];
+        c.fill(0.0);
+        double t = 0.0;
+        for (int s = begin; s < end; ++s) {
+          const int i = board.sorted[static_cast<std::size_t>(s)];
+          const double v = r[i];
+          t += v;
+          c[combos[static_cast<std::size_t>(i)].hi] += v;
+          c[combos[static_cast<std::size_t>(i)].lo] += v;
+        }
+        mass[kTie * n + j] = t;
+      }
+      for (std::size_t p = 0; p < np; ++p) {
+        const float* ra = reach[static_cast<std::size_t>(others[pairs[p].first])].data();
+        const float* rb = reach[static_cast<std::size_t>(others[pairs[p].second])].data();
+        auto& c = pair_card[kTie * np + p];
+        c.fill(0.0);
+        double t = 0.0;
+        for (int s = begin; s < end; ++s) {
+          const int i = board.sorted[static_cast<std::size_t>(s)];
+          const double v = static_cast<double>(ra[i]) * static_cast<double>(rb[i]);
+          if (v == 0.0) continue;
+          t += v;
+          c[combos[static_cast<std::size_t>(i)].hi] += v;
+          c[combos[static_cast<std::size_t>(i)].lo] += v;
+        }
+        pair_mass[kTie * np + p] = t;
+      }
+
+      for (int s = begin; s < end; ++s) {
+        const int h = board.sorted[static_cast<std::size_t>(s)];
+        const Card hi = combos[static_cast<std::size_t>(h)].hi;
+        const Card lo = combos[static_cast<std::size_t>(h)].lo;
+        const std::uint32_t mine = board.strength[static_cast<std::size_t>(h)];
+
+        // Which combos containing one of hero's cards sit where relative to
+        // hero. Those are the only hands a per-card sum has to give back:
+        // a hand holding hero's card is impossible, and removing card c
+        // removes exactly {c,hi} and {c,lo} from that card's column.
+        for (int c = 0; c < kNumCards; ++c) {
+          idx_hi[static_cast<std::size_t>(c)] =
+              combo_at_[static_cast<std::size_t>(c) * kNumCards + static_cast<std::size_t>(hi)];
+          idx_lo[static_cast<std::size_t>(c)] =
+              combo_at_[static_cast<std::size_t>(c) * kNumCards + static_cast<std::size_t>(lo)];
+          const auto classify = [&](std::int32_t idx) -> std::uint8_t {
+            if (idx < 0 || !board.valid[static_cast<std::size_t>(idx)]) {
+              return static_cast<std::uint8_t>(kSlotInvalid);
+            }
+            const std::uint32_t st = board.strength[static_cast<std::size_t>(idx)];
+            return static_cast<std::uint8_t>(st < mine   ? kSlotWorse
+                                             : st == mine ? kSlotTie
+                                                          : kSlotBetter);
+          };
+          state_hi[static_cast<std::size_t>(c)] = classify(idx_hi[static_cast<std::size_t>(c)]);
+          state_lo[static_cast<std::size_t>(c)] = classify(idx_lo[static_cast<std::size_t>(c)]);
+        }
+
+        // S_j for each seat and state, with hero's two cards removed.
+        auto seat_mass = [&](std::size_t j, int st) {
+          const float* r = reach[static_cast<std::size_t>(others[j])].data();
+          const std::size_t k = static_cast<std::size_t>(st) * n + j;
+          // Subtracting both columns removes the hand {hi,lo} = hero twice,
+          // so add it back when hero itself belongs to the state.
+          const double self = (st == kWorse) ? 0.0 : static_cast<double>(r[h]);
+          return mass[k] - card[k][hi] - card[k][lo] + self;
+        };
+        // The per-card column of state `st` for seat j, hero's cards removed.
+        auto seat_card = [&](std::size_t j, int st, int c) {
+          if (c == hi || c == lo) return 0.0;
+          const float* r = reach[static_cast<std::size_t>(others[j])].data();
+          const std::size_t k = static_cast<std::size_t>(st) * n + j;
+          double v = card[k][c];
+          const std::int32_t a = idx_hi[static_cast<std::size_t>(c)];
+          const std::int32_t b = idx_lo[static_cast<std::size_t>(c)];
+          // kTotal accepts anything dealable; kWorse and kTie must match.
+          const auto in_state = [&](std::uint8_t slot) {
+            if (slot == kSlotInvalid) return false;
+            if (st == kTotal) return true;
+            return slot == (st == kWorse ? kSlotWorse : kSlotTie);
+          };
+          if (a >= 0 && in_state(state_hi[static_cast<std::size_t>(c)])) v -= r[a];
+          if (b >= 0 && in_state(state_lo[static_cast<std::size_t>(c)])) v -= r[b];
+          return v;
+        };
+
+        // Collision mass for one pair in one state combination.
+        //
+        // The per-card sum counts a colliding pair once per SHARED card, so a
+        // pair holding the identical combo is counted twice and one copy has
+        // to come back. That same-combo term is over the INTERSECTION of the
+        // two states, which is not the same as "the states are equal":
+        // kTotal contains both kWorse and kTie, so a worse hand and a total
+        // hand can be the same combo. Only worse-versus-tied is genuinely
+        // empty. Getting this wrong is invisible until a folded seat is at
+        // the table - a bystander is the only seat that uses kTotal while
+        // someone else uses kWorse - and it shows up as chips not conserving.
+        auto collision = [&](std::size_t p, int sa, int sb) {
+          const std::size_t ja = pairs[p].first;
+          const std::size_t jb = pairs[p].second;
+          double shared = 0.0;
+          for (int c = 0; c < kNumCards; ++c) {
+            if (c == hi || c == lo) continue;
+            shared += seat_card(ja, sa, c) * seat_card(jb, sb, c);
+          }
+          int both = -1;  // the narrower of the two states, or -1 when empty
+          if (sa == sb) both = sa;
+          else if (sa == kTotal) both = sb;
+          else if (sb == kTotal) both = sa;
+          if (both < 0) return shared;  // worse and tied never overlap
+          const float* ra = reach[static_cast<std::size_t>(others[ja])].data();
+          const float* rb = reach[static_cast<std::size_t>(others[jb])].data();
+          const std::size_t k = static_cast<std::size_t>(both) * np + p;
+          const double self =
+              (both == kWorse) ? 0.0 : static_cast<double>(ra[h]) * static_cast<double>(rb[h]);
+          const double same = pair_mass[k] - pair_card[k][hi] - pair_card[k][lo] + self;
+          return shared - same;
+        };
+
+        // The (pair, state, state) combinations the expansion below actually
+        // reaches, computed once and reused across its 2^e terms. This IS
+        // where the time goes - each one is a 52-wide pass - so the pruning
+        // earns its keep: an eligible seat is only ever worse or tied in the
+        // numerator and total in the denominator, and a bystander is total
+        // throughout, which cuts nine combinations to five, three or one.
+        for (std::size_t p = 0; p < np; ++p) {
+          const bool ea = pairs[p].first < e;
+          const bool eb = pairs[p].second < e;
+          for (int sa = 0; sa < kNumStates; ++sa) {
+            if (sa != kTotal && !ea) continue;
+            for (int sb = 0; sb < kNumStates; ++sb) {
+              if (sb != kTotal && !eb) continue;
+              // Total pairs with total (the denominator) or with a bystander;
+              // an eligible seat never sits at total while its partner races.
+              if ((sa == kTotal) != (sb == kTotal) && ea && eb) continue;
+              kterm[(p * kNumStates + static_cast<std::size_t>(sa)) * kNumStates +
+                    static_cast<std::size_t>(sb)] = collision(p, sa, sb);
+            }
+          }
+        }
+
+        // JointMass for one state assignment, first-order in the collisions.
+        auto joint = [&](const int* states) {
+          double product = 1.0;
+          for (std::size_t j = 0; j < n; ++j) {
+            factor[j] = seat_mass(j, states[j]);
+            product *= factor[j];
+          }
+          double correction = 0.0;
+          for (std::size_t p = 0; p < np; ++p) {
+            const std::size_t ja = pairs[p].first;
+            const std::size_t jb = pairs[p].second;
+            double term = kterm[(p * kNumStates + static_cast<std::size_t>(states[ja])) *
+                                    kNumStates +
+                                static_cast<std::size_t>(states[jb])];
+            if (term == 0.0) continue;
+            for (std::size_t j = 0; j < n; ++j) {
+              if (j != ja && j != jb) term *= factor[j];
+            }
+            correction += term;
+          }
+          return product - correction;
+        };
+
+        std::fill(states.begin(), states.end(), static_cast<int>(kTotal));
+        den[static_cast<std::size_t>(h)] += joint(states.data());
+
+        double acc = 0.0;
+        for (std::size_t a = 0; a < subsets; ++a) {
+          int ties = 0;
+          for (std::size_t k = 0; k < n; ++k) states[k] = kTotal;  // bystanders
+          for (std::size_t k = 0; k < e; ++k) {
+            const bool tied = ((a >> k) & 1u) != 0;
+            states[k] = tied ? kTie : kWorse;
+            if (tied) ++ties;
+          }
+          acc += joint(states.data()) / static_cast<double>(ties + 1);
+        }
+        num[static_cast<std::size_t>(h)] += acc;
+      }
+
+      // Fold this group into the cumulative "strictly worse" state.
+      for (std::size_t j = 0; j < n; ++j) {
+        const std::size_t w = kWorse * n + j;
+        const std::size_t t = kTie * n + j;
+        mass[w] += mass[t];
+        for (int c = 0; c < kNumCards; ++c) card[w][c] += card[t][c];
+      }
+      for (std::size_t p = 0; p < np; ++p) {
+        const std::size_t w = kWorse * np + p;
+        const std::size_t t = kTie * np + p;
+        pair_mass[w] += pair_mass[t];
+        for (int c = 0; c < kNumCards; ++c) pair_card[w][c] += pair_card[t][c];
+      }
+    }
+  }
+}
+
 void NlhePreflopGame::terminal_values(NodeId id, int seat,
                                       const std::vector<std::vector<float>>& reach,
                                       std::vector<float>& out) const {
+  std::vector<float> unused;
+  terminal_values_with_mass(id, seat, reach, out, unused);
+}
+
+void NlhePreflopGame::terminal_values_with_mass(NodeId id, int seat,
+                                                const std::vector<std::vector<float>>& reach,
+                                                std::vector<float>& out,
+                                                std::vector<float>& mass_out) const {
   const Node& node = tree_[id];
   const TerminalPlan& plan = terminal_plan_[static_cast<std::size_t>(node.terminal_index)];
   const int hands = universe_.size();
@@ -610,32 +831,91 @@ void NlhePreflopGame::terminal_values(NodeId id, int seat,
   compat_weights(seat, reach, compat);
 
   const bool hero_alive = (plan.alive_mask & (1u << seat)) != 0;
-  if (!plan.showdown || !hero_alive) {
-    const double u = (!plan.showdown && plan.fold_winner == seat) ? plan.pot - my_commit
-                                                                 : -my_commit;
+  if (!plan.showdown) {
+    // A fold terminal deals no board, so there is nothing to sample and every
+    // seat is measured on the same board-free profile mass.
+    const double u = plan.fold_winner == seat ? plan.pot - my_commit : -my_commit;
     out.assign(static_cast<std::size_t>(hands), 0.0f);
+    mass_out = compat;
     for (int h = 0; h < hands; ++h) {
       out[static_cast<std::size_t>(h)] = static_cast<float>(compat[static_cast<std::size_t>(h)] * u);
     }
     return;
   }
-
-  out.assign(static_cast<std::size_t>(hands), 0.0f);
-  for (int h = 0; h < hands; ++h) {
-    out[static_cast<std::size_t>(h)] =
-        static_cast<float>(-my_commit * compat[static_cast<std::size_t>(h)]);
+  if (!hero_alive) {
+    // Hero folded into someone else's showdown: it wins nothing and pays what
+    // it already put in. The chips are trivial; the MEASURE is not. The seats
+    // still in the hand are about to be valued over sampled (board, deal)
+    // pairs, and charging hero against the board-free mass instead would put
+    // one seat at this terminal on a different measure than the others - which
+    // is precisely how a table full of correct-looking EVs fails to sum to
+    // the dead money.
+    out.assign(static_cast<std::size_t>(hands), 0.0f);
+    if (seats_ == 2) {
+      mass_out = compat;
+      for (int h = 0; h < hands; ++h) {
+        out[static_cast<std::size_t>(h)] =
+            static_cast<float>(compat[static_cast<std::size_t>(h)] * -my_commit);
+      }
+      return;
+    }
+    std::vector<int> alive;
+    std::vector<int> folded;
+    for (int s = 0; s < seats_; ++s) {
+      if (s == seat) continue;
+      if ((plan.alive_mask & (1u << s)) != 0) alive.push_back(s);
+      else folded.push_back(s);
+    }
+    std::vector<double> num;
+    std::vector<double> den_dead;
+    layer_masses(alive, folded, reach, num, den_dead);
+    double mass_compat = 0.0;
+    double mass_den = 0.0;
+    for (int h = 0; h < hands; ++h) {
+      const double r = reach[static_cast<std::size_t>(seat)][static_cast<std::size_t>(h)];
+      mass_compat += r * static_cast<double>(compat[static_cast<std::size_t>(h)]);
+      mass_den += r * den_dead[static_cast<std::size_t>(h)];
+    }
+    const double dead_scale = mass_den > 0.0 ? mass_compat / mass_den : 0.0;
+    mass_out.assign(static_cast<std::size_t>(hands), 0.0f);
+    for (int h = 0; h < hands; ++h) {
+      mass_out[static_cast<std::size_t>(h)] =
+          static_cast<float>(dead_scale * den_dead[static_cast<std::size_t>(h)]);
+      out[static_cast<std::size_t>(h)] = static_cast<float>(
+          -my_commit * static_cast<double>(mass_out[static_cast<std::size_t>(h)]));
+    }
+    return;
   }
 
-  // Every layer contributes `amount * P(hero takes it) * compat[h]`. Keeping
-  // the middle factor a pure FRACTION is what makes the two estimators
-  // interchangeable and what keeps the win side on the same measure as the
-  // commitment term above - the bug this shape replaced averaged the win side
-  // over every sampled board (counting hero-blocked ones as zero) while the
-  // commitment used the unrestricted opponent mass, quietly shrinking every
-  // jam by the ~34% of boards that conflict with four known cards.
+  out.assign(static_cast<std::size_t>(hands), 0.0f);
+
+  // A genuine heads-up game - one other seat at the table - has no second
+  // opponent to collide with and no bystander to block a runout, so the
+  // pairwise matrix is both exact and symmetric, and it is built from far more
+  // boards than the per-iteration sample. Every other shape goes through
+  // layer_masses, where cards are removed between every pair of seats.
+  const bool heads_up = seats_ == 2;
+
+  // The profile mass this terminal is measured against. `compat` is
+  // board-independent; the sampled path produces its own mass over the
+  // (board, deal) pairs it actually integrated, and the two are put on the
+  // same footing by ONE scale rather than a per-hand ratio.
+  //
+  // That distinction is the whole reason root EVs sum to the dead money. A
+  // per-hand ratio corrects for a hand happening to be blocked by more of the
+  // sampled boards than average - lower variance, and tempting - but it gives
+  // every hand its own effective measure, and chips only conserve when every
+  // hand and every seat integrate the same one. A single constant leaves the
+  // imbalance as variance, which shrinks with the board sample, instead of
+  // turning it into a conservation error, which does not.
+  std::vector<double> den;
+  std::vector<std::vector<double>> layer_num(plan.layers.size());
+  double scale = 1.0;
   std::vector<float> frac(static_cast<std::size_t>(hands), 0.0f);
   std::vector<float> denom(static_cast<std::size_t>(hands), 0.0f);
-  for (const Layer& layer : plan.layers) {
+
+  for (std::size_t li = 0; li < plan.layers.size(); ++li) {
+    const Layer& layer = plan.layers[li];
     if (layer.amount <= 0.0) continue;
     if ((layer.eligible & (1u << seat)) == 0) continue;
 
@@ -646,100 +926,70 @@ void NlhePreflopGame::terminal_values(NodeId id, int seat,
       if ((layer.eligible & (1u << s)) != 0) opponents.push_back(s);
       else bystanders.push_back(s);
     }
-    if (opponents.empty()) {
-      // Nobody contests this layer - it is an uncalled bet coming back.
-      for (int h = 0; h < hands; ++h) {
-        out[static_cast<std::size_t>(h)] += static_cast<float>(
-            layer.amount * static_cast<double>(compat[static_cast<std::size_t>(h)]));
-      }
-      continue;
-    }
+    if (opponents.empty()) continue;  // uncalled bet; settled below
 
-    const std::size_t m = opponents.size();
-    std::fill(frac.begin(), frac.end(), 0.0f);
-
-    if (m == 1) {
-      // Heads-up in this layer: the board expectation commutes with the sum
-      // over opponent hands, so the pairwise matrix answers it exactly and no
-      // per-iteration board loop happens at all.
+    if (heads_up) {
       const float* opp = reach[static_cast<std::size_t>(opponents[0])].data();
       std::fill(denom.begin(), denom.end(), 1.0f);
       multiply_compat(opp, denom.data());
+      layer_num[li].assign(static_cast<std::size_t>(hands), 0.0);
       for (int h = 0; h < hands; ++h) {
         const float* row = e2_.data() + static_cast<std::size_t>(h) * hands;
         double acc = 0.0;
         for (int o = 0; o < hands; ++o) acc += static_cast<double>(row[o]) * opp[o];
         const double d = denom[static_cast<std::size_t>(h)];
-        frac[static_cast<std::size_t>(h)] = d > 0.0 ? static_cast<float>(acc / d) : 0.0f;
+        layer_num[li][static_cast<std::size_t>(h)] =
+            d > 0.0 ? acc / d * static_cast<double>(compat[static_cast<std::size_t>(h)]) : 0.0;
       }
-    } else {
-      // Three or more: the value is a PRODUCT over opponents inside the board
-      // expectation, which does not factorize, so it is averaged over the
-      // fixed board sample. Numerator and denominator are accumulated over
-      // the SAME boards, so hero hands that more boards block do not come out
-      // systematically cheaper - the ratio is conditioned on hero being live.
-      if (boards_.empty()) throw std::runtime_error("multiway showdown with no board sample");
-      std::vector<double> num(static_cast<std::size_t>(hands), 0.0);
-      std::vector<double> den(static_cast<std::size_t>(hands), 0.0);
-      std::vector<float> worse(m * static_cast<std::size_t>(hands));
-      std::vector<float> tie(m * static_cast<std::size_t>(hands));
-      std::vector<float> total(m * static_cast<std::size_t>(hands));
-      std::vector<float> bystander(static_cast<std::size_t>(hands));
-      std::vector<float> scratch(static_cast<std::size_t>(hands));
-      const std::size_t subsets = std::size_t{1} << m;
-      for (const BoardTable& board : boards_) {
-        for (std::size_t k = 0; k < m; ++k) {
-          worse_and_tie(board, reach[static_cast<std::size_t>(opponents[k])].data(),
-                        worse.data() + k * hands, tie.data() + k * hands,
-                        total.data() + k * hands);
-        }
-        // Seats that cannot win this layer still block runouts, so they
-        // weight the board, they just do not enter the win condition. Their
-        // factor cancels out of num/den only if it is applied to BOTH, which
-        // is exactly why it is per-board rather than folded in afterwards.
-        std::fill(bystander.begin(), bystander.end(), 1.0f);
-        for (int s : bystanders) {
-          board_compat(board, reach[static_cast<std::size_t>(s)].data(), scratch.data());
-          for (int h = 0; h < hands; ++h) bystander[static_cast<std::size_t>(h)] *= scratch[static_cast<std::size_t>(h)];
-        }
-        for (int h = 0; h < hands; ++h) {
-          if (!board.valid[static_cast<std::size_t>(h)]) continue;
-          const double bys = bystander[static_cast<std::size_t>(h)];
-          if (bys == 0.0) continue;
-          // Sum over WHICH opponents tie hero: hero takes 1/(1+|A|) of the
-          // layer when exactly set A ties and the rest are worse. Exact tie
-          // handling, 2^(k-1) terms.
-          double acc = 0.0;
-          for (std::size_t a = 0; a < subsets; ++a) {
-            double term = 1.0;
-            int ties = 0;
-            for (std::size_t k = 0; k < m; ++k) {
-              const float* src = ((a >> k) & 1u) ? tie.data() : worse.data();
-              term *= static_cast<double>(src[k * hands + static_cast<std::size_t>(h)]);
-              if ((a >> k) & 1u) ++ties;
-              if (term == 0.0) break;
-            }
-            if (term != 0.0) acc += term / static_cast<double>(ties + 1);
-          }
-          double mass = 1.0;
-          for (std::size_t k = 0; k < m; ++k) {
-            mass *= static_cast<double>(total[k * hands + static_cast<std::size_t>(h)]);
-          }
-          num[static_cast<std::size_t>(h)] += acc * bys;
-          den[static_cast<std::size_t>(h)] += mass * bys;
-        }
-      }
-      for (int h = 0; h < hands; ++h) {
-        const double d = den[static_cast<std::size_t>(h)];
-        frac[static_cast<std::size_t>(h)] =
-            d > 0.0 ? static_cast<float>(num[static_cast<std::size_t>(h)] / d) : 0.0f;
-      }
+      continue;
     }
 
+    std::vector<double> num;
+    std::vector<double> layer_den;
+    layer_masses(opponents, bystanders, reach, num, layer_den);
+    if (den.empty()) {
+      // The all-total joint mass does not depend on which seats contest the
+      // layer, so the first layer's copy serves the whole terminal.
+      den = std::move(layer_den);
+      double mass_compat = 0.0;
+      double mass_den = 0.0;
+      for (int h = 0; h < hands; ++h) {
+        const double r = reach[static_cast<std::size_t>(seat)][static_cast<std::size_t>(h)];
+        mass_compat += r * static_cast<double>(compat[static_cast<std::size_t>(h)]);
+        mass_den += r * den[static_cast<std::size_t>(h)];
+      }
+      // Both sums are symmetric across seats, so every seat computes the same
+      // scale - which is what makes the conservation argument go through.
+      scale = mass_den > 0.0 ? mass_compat / mass_den : 0.0;
+    }
+    layer_num[li] = std::move(num);
+  }
+
+  // Charge the commitment once, against whichever mass the wins were measured
+  // on. Mixing the two is exactly the bug this shape exists to prevent.
+  mass_out.assign(static_cast<std::size_t>(hands), 0.0f);
+  for (int h = 0; h < hands; ++h) {
+    const double mass = den.empty() ? static_cast<double>(compat[static_cast<std::size_t>(h)])
+                                    : scale * den[static_cast<std::size_t>(h)];
+    mass_out[static_cast<std::size_t>(h)] = static_cast<float>(mass);
+    out[static_cast<std::size_t>(h)] = static_cast<float>(-my_commit * mass);
+  }
+  for (std::size_t li = 0; li < plan.layers.size(); ++li) {
+    const Layer& layer = plan.layers[li];
+    if (layer.amount <= 0.0) continue;
+    if ((layer.eligible & (1u << seat)) == 0) continue;
+    if (layer_num[li].empty()) {
+      // Nobody contests this layer - an uncalled bet coming straight back.
+      for (int h = 0; h < hands; ++h) {
+        out[static_cast<std::size_t>(h)] +=
+            static_cast<float>(layer.amount * static_cast<double>(mass_out[static_cast<std::size_t>(h)]));
+      }
+      continue;
+    }
+    const double w = heads_up ? layer.amount : layer.amount * scale;
     for (int h = 0; h < hands; ++h) {
-      out[static_cast<std::size_t>(h)] += static_cast<float>(
-          layer.amount * static_cast<double>(frac[static_cast<std::size_t>(h)]) *
-          static_cast<double>(compat[static_cast<std::size_t>(h)]));
+      out[static_cast<std::size_t>(h)] +=
+          static_cast<float>(w * layer_num[li][static_cast<std::size_t>(h)]);
     }
   }
 }

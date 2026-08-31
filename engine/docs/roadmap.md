@@ -635,6 +635,36 @@ The layered side-pot gate now compares **per unit of profile mass** on both side
 
 **What is left, measured rather than argued.** A 3-seat solve has an exact mass, so its remaining conservation error is purely the fraction: **0.020 chips** on 3-way 10bb. `tests/test_multiway_terminal.cpp` reports the per-hand size of the fraction gap directly. Closing it is the hot-loop rewrite above, and it is what stands between 1.30 bb/100 and matching Monker outright.
 
+#### Then the fraction too, because conservation is all-or-nothing (2026-08-30)
+
+The mass-only fix above left root EVs summing to 1.30 bb/100 instead of zero. That residual is not a rounding artifact to be shrugged at: **chip conservation holds if and only if every seat integrates the identical set of deals**, and a rule phrased as "the others must miss MY cards" defines a different set for every hero. Half-correcting it - exact mass, hero-only fraction - is exactly the shape that cannot conserve, because the two halves are then two different measures multiplied together.
+
+So the fraction was rewritten too. `layer_masses` replaces the per-opponent sweeps with ONE joint sweep over the board's tie groups, carrying per-card accumulators for every other seat and every pair of them, so the pairwise collision term can be evaluated at each hero hand's own strength threshold. `worse_and_tie` and `board_compat` are gone, superseded.
+
+**Two more things changed that are not the correction itself and matter as much.**
+
+- **A single scale, not a per-hand ratio.** `num/den` per hand corrects for a hand happening to be blocked by more of the sampled boards than average - lower variance, and tempting. But it gives every hand its own effective measure, and chips only conserve when every hand integrates the same one. One shared constant leaves the imbalance as variance, which shrinks with the board sample, instead of as a conservation error, which does not.
+- **A folded hero is measured on the sampled mass too.** It wins nothing and pays what it put in, so the chips are trivial - but charging it against the board-free mass while the seats still in the hand are valued over sampled deals puts one seat at that terminal on a different measure than the others.
+
+**Two bugs, both found by the per-terminal conservation gate and neither visible in a chart.**
+
+1. `classify` collapsed "better than hero" into "not dealable", so the total column never removed hero-blocked hands that happened to beat hero.
+2. The same-combo term was skipped whenever the two states differed - correct only for worse-versus-tied. **kTotal CONTAINS both**, so every pair involving a bystander lost its correction entirely. It showed up only at terminals with a folded seat, which is why the 3-way tree failed at exactly one node.
+
+**Where it landed.**
+
+| | before any bunching work | mass only | mass + fraction |
+|---|---|---|---|
+| 3-way 10bb, sum of root EVs | 1.00 bb/100 | - | **0.04 bb/100** |
+| 4-way 10bb, sum of root EVs | 3.50 | 1.30 | **-0.55** |
+| 4-way wall clock | 7 s | 8.5 s | **216 s** |
+
+`tests/test_multiway_terminal.cpp` gates it directly: per-terminal conservation is **1.3e-8 of the pot at two and three seats**, and `terminal_values` matches the brute-force `showdown_share` reference per unit of profile mass to **1.4e-7** at three seats.
+
+**Four or more players cannot be made exact this way, and that is a property of the expansion rather than a missing line of code.** With three opponents there are three collision pairs, and first-order inclusion-exclusion gives a deal weight of `1 - (number of colliding pairs)`. A deal where two different pairs collide gets `-1` from a seat that is clean and `0` from the seats caught in a collision - not the same number, so the measure stops being seat-independent. Fixing it needs the second- and third-order terms, and those are `O(H)` per hero hand per board (a sum over one opponent's whole range for each of the other two's collision masses), which measures at roughly `3e10` operations per iteration. Intractable at this shape.
+
+The two escape routes, recorded so they are not re-derived: treat hero's own collisions to first order as well, which restores symmetry at any seat count but degrades hero blocking from exact to approximate - the dominant effect, currently free; or abandon the factorized sweep for sampled deals, which is manifestly symmetric and is what a sampling solver like MonkerSolver gets for free, at the cost of its 55,934 tree passes against our 25.
+
 **A note for anyone reading Monker's abstraction dialog while debugging this: bucketing and bunching are different things with opposite effects.** Bucketing merges strategically similar hands so they must be played identically - a hand abstraction, which makes the answer less exact and which this engine does not do. Bunching is card removal between opponents, which makes it more exact. A preflop jam/fold sim has zero postflop nodes, so Monker's bucket settings are inert there and its numbers are essentially exact - which is precisely why they were usable as a reference.
 
 Still open in M8a: the equity-fraction half of bunching (above), real preflop bet sizings (the tree builder's `open_bb` / `raise_pct` / `max_raises` fields exist and are refused), and a 3-player toy game as a cheap CI gate for the N-seat CFR loop.

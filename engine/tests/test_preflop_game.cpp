@@ -204,9 +204,14 @@ TEST_CASE("heads-up 10bb push/fold lands on the published Nash ranges") {
 }
 
 TEST_CASE("4-way 10bb push/fold: position ordering, and the cost of dropping bunching") {
-  const NlhePreflopGame game(pushfold_config(4, 5000, 200));
+  // Small board sample and few iterations on purpose: this gate is about the
+  // ORDERING of the open ranges and the size of the conservation residual,
+  // neither of which needs a converged solve. Card removal between opponents
+  // makes each iteration far dearer than it was, and a CI job that takes ten
+  // minutes gets disabled rather than fixed.
+  const NlhePreflopGame game(pushfold_config(4, 5000, 40));
   CfrSolver solver(game, UpdateConfig{}, 0);
-  solver.run(200);
+  solver.run(30);
 
   const int hands = game.num_hands(0);
   const PublicTree& tree = game.tree();
