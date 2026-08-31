@@ -6,6 +6,7 @@
 
 #include "cards/cards.hpp"
 #include "config/schema.hpp"
+#include "game/deal_game.hpp"
 #include "game/game.hpp"
 #include "ranges/universe.hpp"
 
@@ -53,7 +54,7 @@ namespace engine {
 //     silently misscale every exported EV.
 //   - Side pots and ties are EXACT: layers come from the node's public commit
 //     levels, and ties are a subset expansion over the eligible opponents.
-class NlhePreflopGame final : public Game {
+class NlhePreflopGame final : public Game, public DealGame {
  public:
   explicit NlhePreflopGame(const SolveConfig& config);
 
@@ -79,6 +80,17 @@ class NlhePreflopGame final : public Game {
 
   void compat_weights(int seat, const std::vector<std::vector<float>>& reach,
                       std::vector<float>& out) const override;
+
+  // The DealGame face, for the sampled solver core. A deal is 2 cards per
+  // seat plus a full 5-card board; deal_strengths is the once-per-iteration
+  // whole-universe 7-card evaluation on that board, and deal_showdown_values
+  // resolves the same TerminalPlan layers as the vectorized path but against
+  // PINNED opponents, so it is O(H) flat with no inclusion-exclusion.
+  void sample_deal(std::uint64_t seed, std::uint64_t iter, Deal& out) const override;
+  void deal_strengths(const Deal& deal, std::vector<std::uint32_t>& out) const override;
+  void deal_showdown_values(NodeId node, int seat, const Deal& deal,
+                            const std::vector<std::uint32_t>& strengths,
+                            std::vector<float>& out) const override;
 
   std::vector<std::uint16_t> hand_dictionary(int) const override { return universe_.ids; }
 

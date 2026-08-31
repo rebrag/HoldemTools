@@ -147,6 +147,20 @@ struct SamplingConfig {
 // would make effective rationality vary with opponent reach - hands the
 // opponent rarely holds would drift toward uniform for no reason. Scaling by
 // pi(h) is what makes one lambda mean the same thing at every infoset.
+// The sampled-deal solver core's knobs. Distinct from SamplingConfig above,
+// which subsamples chance children INSIDE CfrSolver's vectorized traversal;
+// this one selects a different solver entirely (SampledCfrSolver), whose
+// every iteration deals one concrete hand per seat plus a board and updates
+// against that deal. `batch` iterations run against regrets frozen at batch
+// start, partitioned over `lanes` fixed accumulation lanes; the result is a
+// pure function of (seed, iterations, batch, lanes) at any thread count.
+struct SampledConfig {
+  bool enabled = false;
+  std::uint64_t seed = 20260830;
+  std::uint32_t batch = 512;
+  std::uint32_t lanes = 16;
+};
+
 struct QreConfig {
   bool enabled = false;
   // Per-seat rationality in units of 1/chips. Empty when disabled; the parser

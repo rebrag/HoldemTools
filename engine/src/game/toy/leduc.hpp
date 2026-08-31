@@ -2,7 +2,9 @@
 #include <cstdint>
 #include <vector>
 
+#include "game/deal_game.hpp"
 #include "game/game.hpp"
+#include "solver/deal.hpp"
 
 namespace engine::toy {
 
@@ -10,7 +12,7 @@ namespace engine::toy {
 // card each, ante 1. Round 1 bet size 2, then one community card, round 2
 // bet size 4; at most 2 raises per round. Pair with the community card wins,
 // else high card; ties split. Card ids 0..5, rank = id / 2 (J=0, Q=1, K=2).
-class LeducGame final : public Game {
+class LeducGame final : public Game, public DealGame {
  public:
   LeducGame() {
     range_.assign(6, 1.0f);
@@ -49,6 +51,37 @@ class LeducGame final : public Game {
 
   std::vector<std::uint16_t> hand_dictionary(int) const override {
     return {0, 1, 2, 3, 4, 5};
+  }
+
+  void sample_deal(std::uint64_t seed, std::uint64_t iter, Deal& out) const override {
+    std::uint8_t cards[3];
+    deal_cards(seed, iter, 6, 3, cards);
+    out.hole_per_seat = 1;
+    out.board_count = 1;
+    for (int s = 0; s < 2; ++s) {
+      out.hole[static_cast<std::size_t>(s)] = cards[s];
+      out.hand[static_cast<std::size_t>(s)] = cards[s];  // a Leduc hand IS its card
+    }
+    out.board[0] = cards[2];
+  }
+
+  void deal_showdown_values(NodeId id, int seat, const Deal& deal,
+                            const std::vector<std::uint32_t>&,
+                            std::vector<float>& out) const override {
+    const Node& node = tree_[id];
+    // The sampled traversal only reaches terminals whose chance path matches
+    // the deal, so the node's own community card and deal.board[0] agree.
+    const int comm = comm_card_[id];
+    const int o = deal.hand[static_cast<std::size_t>(1 - seat)];
+    const int so = strength(o, comm);
+    const double my_commit = static_cast<double>(node.commit[seat]);
+    out.assign(6, 0.0f);
+    for (int h = 0; h < 6; ++h) {
+      const int sh = strength(h, comm);
+      const double share =
+          sh > so ? static_cast<double>(node.pot) : (sh < so ? 0.0 : node.pot / 2.0);
+      out[static_cast<std::size_t>(h)] = static_cast<float>(share - my_commit);
+    }
   }
 
   void terminal_values(NodeId id, int seat,

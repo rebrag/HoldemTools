@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -12,6 +13,7 @@
 #include "game/preflop_tree.hpp"
 #include "ranges/iso.hpp"
 #include "ranges/range.hpp"
+#include "solver/deal.hpp"
 #include "solver/sample.hpp"
 #include "util/parallel.hpp"
 
@@ -1008,6 +1010,89 @@ std::size_t NlhePreflopGame::auxiliary_bytes() const {
     bytes += p.layers.size() * sizeof(Layer) + sizeof(TerminalPlan);
   }
   return bytes;
+}
+
+void NlhePreflopGame::sample_deal(std::uint64_t seed, std::uint64_t iter, Deal& out) const {
+  const int hole = 2 * seats_;
+  std::uint8_t cards[2 * kMaxSeats + 5];
+  deal_cards(seed, iter, kNumCards, hole + 5, cards);
+  out.hole_per_seat = 2;
+  out.board_count = 5;
+  for (int s = 0; s < seats_; ++s) {
+    const std::uint8_t a = cards[2 * s];
+    const std::uint8_t b = cards[2 * s + 1];
+    out.hole[static_cast<std::size_t>(2 * s)] = a;
+    out.hole[static_cast<std::size_t>(2 * s) + 1] = b;
+    const std::int32_t idx =
+        combo_at_[static_cast<std::size_t>(a) * kNumCards + static_cast<std::size_t>(b)];
+    // Outside the universe (a zero-weight combo under partial ranges): the
+    // seat's range weight is 0 anyway, so the solver contributes nothing for
+    // this iteration. Sentinel rather than a throw - an unlucky deal is not
+    // an error.
+    out.hand[static_cast<std::size_t>(s)] =
+        idx < 0 ? std::numeric_limits<std::uint16_t>::max() : static_cast<std::uint16_t>(idx);
+  }
+  for (int b = 0; b < 5; ++b) out.board[static_cast<std::size_t>(b)] = cards[hole + b];
+}
+
+void NlhePreflopGame::deal_strengths(const Deal& deal, std::vector<std::uint32_t>& out) const {
+  const int hands = universe_.size();
+  std::uint64_t board_mask = 0;
+  Card cards[7];
+  for (int b = 0; b < 5; ++b) {
+    cards[2 + b] = static_cast<Card>(deal.board[static_cast<std::size_t>(b)]);
+    board_mask |= 1ULL << deal.board[static_cast<std::size_t>(b)];
+  }
+  out.assign(static_cast<std::size_t>(hands), 0);
+  for (int h = 0; h < hands; ++h) {
+    if ((universe_.masks[static_cast<std::size_t>(h)] & board_mask) != 0) continue;
+    const Combo& combo = universe_.combos[static_cast<std::size_t>(h)];
+    cards[0] = combo.hi;
+    cards[1] = combo.lo;
+    out[static_cast<std::size_t>(h)] = evaluate7(cards, 7);
+  }
+}
+
+void NlhePreflopGame::deal_showdown_values(NodeId id, int seat, const Deal& deal,
+                                           const std::vector<std::uint32_t>& strengths,
+                                           std::vector<float>& out) const {
+  const Node& node = tree_[id];
+  const TerminalPlan& plan = terminal_plan_[static_cast<std::size_t>(node.terminal_index)];
+  const int hands = universe_.size();
+  const float base = -static_cast<float>(plan.commit[static_cast<std::size_t>(seat)]);
+  out.assign(static_cast<std::size_t>(hands), base);
+  // A folded hero wins nothing and pays what it put in, on every deal alike.
+  if ((plan.alive_mask & (1u << seat)) == 0) return;
+
+  for (const Layer& layer : plan.layers) {
+    if (layer.amount <= 0.0) continue;
+    if ((layer.eligible & (1u << seat)) == 0) continue;  // hero cannot win this layer
+    // The pinned opponents reduce the layer to two scalars: the best opposing
+    // strength and how many of them share it. Ties then split among hero plus
+    // that count, which is the concrete-deal special case of the vectorized
+    // path's subset expansion.
+    std::uint32_t best = 0;
+    int at_best = 0;
+    for (int q = 0; q < seats_; ++q) {
+      if (q == seat || (layer.eligible & (1u << q)) == 0) continue;
+      const std::uint32_t sq = strengths[deal.hand[static_cast<std::size_t>(q)]];
+      if (sq > best) {
+        best = sq;
+        at_best = 1;
+      } else if (sq == best) {
+        ++at_best;
+      }
+    }
+    const float amount = static_cast<float>(layer.amount);
+    const float tie_share = static_cast<float>(layer.amount / (1.0 + at_best));
+    for (int h = 0; h < hands; ++h) {
+      const std::uint32_t sh = strengths[static_cast<std::size_t>(h)];
+      // Hands colliding with the deal carry garbage here; the caller's reach
+      // is zero there, so the value never surfaces.
+      out[static_cast<std::size_t>(h)] +=
+          sh > best ? amount : (sh == best ? tie_share : 0.0f);
+    }
+  }
 }
 
 }  // namespace engine
