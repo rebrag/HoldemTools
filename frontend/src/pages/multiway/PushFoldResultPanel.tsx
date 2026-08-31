@@ -163,7 +163,16 @@ const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
             this result is reproducible.
           </li>
         )}
-        {seats.length > 2 && (
+        {seats.length > 2 && meta.solver_family === "sampled" && (
+          <li>
+            Solved by dealing: every iteration deals one hand per seat plus a real board, so
+            card removal between every pair of seats is exact and the strategy conserves chips
+            by construction. The EVs shown ride a fixed-board measuring evaluator, which is why
+            they sum to {(meta.ev_chips ?? []).reduce((a, b) => a + b, 0).toFixed(3)} instead
+            of 0 - that residual belongs to the measurement, not the strategy.
+          </li>
+        )}
+        {seats.length > 2 && meta.solver_family !== "sampled" && (
           <li>
             Card removal between you and each opponent is exact. Between opponents it is exact
             for the profile weighting and approximate for the showdown itself, so the root EVs
