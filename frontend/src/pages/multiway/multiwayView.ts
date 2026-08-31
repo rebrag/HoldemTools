@@ -201,7 +201,11 @@ export const buildMultiwayConfig = (view: MultiwayView): Record<string, unknown>
     budget: {
       iterations: num(view.maxIterations),
       target_nashconv: num(view.accuracy),
-      checkpoint_every: view.players >= 4 ? 20000 : 25,
+      // One checkpoint for a sampled solve: each checkpoint runs a
+      // best-response pass over the factorized evaluator (~38 s at 500
+      // boards), and targets cannot stop a 4+ seat sampled solve anyway,
+      // so mid-solve checkpoints would only multiply the measuring cost.
+      checkpoint_every: view.players >= 4 ? num(view.maxIterations) : 25,
     },
     memory_limit_gb: 12,
     threads: 0,
