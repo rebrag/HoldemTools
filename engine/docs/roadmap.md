@@ -828,6 +828,11 @@ Configs: `configs/pushfold_4way_10bb_team_{unaware,aware}.json`.
 Phase control: `agents.baseline_iterations` is phase 1 (the frozen baseline; defaults to `budget.iterations` when unset), `budget.iterations` is phase 2 (the team) - independently, so a long team solve sets a modest baseline and pours the budget into phase 2, which is also the cheaper phase (2 hero traversals per deal instead of one per seat).
 `/multiway` exposes both (Baseline iterations appears when a team is marked unaware).
 
+**Long solves are never discarded.** `budget.max_seconds` caps the whole run; on expiry the loop stops at the next batch-aligned slice, the EV pass still runs, and the artifact is written with `metadata.stopped_reason: "time_budget"` and `requested_iterations`, so a truncated solve is a usable (just less converged) result instead of nothing.
+This exists because the artifact is only written at the end: the compare watcher's `ENGINE_SOLVE_TIMEOUT_SECS` kill threw away a 70M-iteration team solve after an hour.
+The watcher now passes `ceiling - ENGINE_SOLVE_WRITE_MARGIN_SECS` (default 300 s) as the engine's budget and keeps its kill only as a hang backstop, and `/multiway` shows a "stopped on time budget" chip.
+Unaware phase 1 is capped at half the budget so a team artifact can never be a baseline solve wearing team metadata.
+
 Still open under M9: teams of three or more seats and multiple teams (the joint quotient generalizes but the orbit space grows), general payoff-weight matrices (only summed-EV teams exist), and a team-aware best-response evaluator so team solves get a convergence number again.
 
 - **M10 - Bayesian unknown-collusion**: chance root over team type with probability p - now precisely the p-interpolation between M9's two awareness modes (p=0 is unaware, p=1 is aware); opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.

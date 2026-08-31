@@ -124,6 +124,20 @@ const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
           </span>
         )}
         <span className={chip}>{meta.iterations} iters</span>
+        {meta.stopped_reason === "time_budget" && (
+          <span
+            className={`${chip} border-sky-800 text-sky-300`}
+            title={
+              "The solve hit its wall-clock ceiling and wrote what it had rather than " +
+              "being discarded. Everything shown is a real solve, just less converged " +
+              (meta.requested_iterations
+                ? `than the ${meta.requested_iterations} iterations requested.`
+                : "than requested.")
+            }
+          >
+            stopped on time budget
+          </span>
+        )}
       </div>
 
       {/* Breadcrumb: the line that led to the node on screen. */}

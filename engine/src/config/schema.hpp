@@ -110,6 +110,14 @@ struct SolveConfig {
   // = NashConv / 2) as a percent of the root pot. 0 = disabled. Pio's
   // default UI value is 0.02 (% of the pot).
   double target_exploitable_pct = 0.0;
+  // Wall-clock ceiling for the WHOLE run in seconds; 0 = none. On expiry the
+  // solve stops at the next slice and writes the artifact for the iterations
+  // it completed, with metadata.stopped_reason = "time_budget". This exists
+  // so an externally imposed deadline (a watcher's kill) cannot discard the
+  // whole solve: the artifact is only written at the end, so a killed run
+  // yields nothing at all. Set it BELOW the external deadline, leaving room
+  // for the EV pass and the artifact export.
+  double max_seconds = 0.0;
   std::uint64_t checkpoint_every = 1000;
   double memory_limit_gb = 12.0;
 

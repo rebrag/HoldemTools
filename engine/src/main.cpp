@@ -29,6 +29,38 @@ namespace {
 
 using namespace engine;
 
+// Wall clock from process start. `budget.max_seconds` is a ceiling on the
+// WHOLE run, not just the iteration loop, because the thing it exists to
+// beat is an external kill: a watcher (or a scheduler) that shoots the
+// process at a deadline discards every iteration, since the artifact is
+// only written at the end. Stopping ourselves a little early and writing a
+// shorter solve turns an hour of thrown-away compute into a usable answer.
+// Setup counts against it for the same reason - the caller's deadline does
+// not care which phase we were in.
+const std::chrono::steady_clock::time_point kProcessStart =
+    std::chrono::steady_clock::now();
+
+double elapsed_s() {
+  return std::chrono::duration<double>(std::chrono::steady_clock::now() - kProcessStart)
+      .count();
+}
+
+// How much iterating to do between deadline checks. Small enough that the
+// budget is honored closely, large enough that the check costs nothing.
+// For the sampled core it is rounded to a whole number of BATCHES: a batch
+// boundary is where the discount and the lane fold happen, so slicing on
+// one keeps the run bitwise identical to an unsliced solve.
+constexpr std::uint64_t kSliceTargetIters = 250000;
+
+std::uint64_t deadline_slice(std::uint64_t remaining, std::uint64_t batch) {
+  std::uint64_t slice = kSliceTargetIters;
+  if (batch > 0) {
+    const std::uint64_t batches = std::max<std::uint64_t>(1, kSliceTargetIters / batch);
+    slice = batches * batch;
+  }
+  return std::min(slice, remaining);
+}
+
 std::unique_ptr<Game> make_game(const SolveConfig& config) {
   if (config.game == "kuhn") return std::make_unique<toy::KuhnGame>();
   if (config.game == "leduc") return std::make_unique<toy::LeducGame>();
@@ -88,7 +120,24 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
       std::cout << "phase 1: no-team baseline, " << base_iters << " iterations\n";
       baseline = std::make_unique<SampledCfrSolver>(game, *deals, config.sampled,
                                                     config.threads);
-      baseline->run(base_iters);
+      // Phase 1 gets at most half the time budget. The budget exists so the
+      // run always reaches the artifact, and an artifact whose team phase
+      // never ran would be a no-team solve wearing a team's metadata.
+      const double base_deadline = config.max_seconds > 0.0 ? config.max_seconds * 0.5 : 0.0;
+      std::uint64_t base_done = 0;
+      while (base_done < base_iters) {
+        const std::uint64_t slice =
+            base_deadline > 0.0 ? deadline_slice(base_iters - base_done, config.sampled.batch)
+                                : base_iters - base_done;
+        baseline->run(slice);
+        base_done += slice;
+        if (base_deadline > 0.0 && elapsed_s() >= base_deadline) {
+          std::cout << "phase 1 stopped at its " << base_deadline << " s share of the "
+                    << "time budget after " << base_done << " iterations\n";
+          stats.stopped_reason = "time_budget";
+          break;
+        }
+      }
       stats.baseline_ev_chips = baseline->sampled_ev(kEvDeals, ev_seed);
       std::cout << "baseline ev";
       for (double ev : stats.baseline_ev_chips) std::cout << " " << ev;
@@ -121,11 +170,32 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   double nashconv = 0.0;
   std::uint64_t done = 0;
   const double pot = static_cast<double>(config.pot);
+  const bool timed = config.max_seconds > 0.0;
+  bool out_of_time = false;
   while (done < config.iterations) {
     const std::uint64_t step =
         std::min<std::uint64_t>(config.checkpoint_every, config.iterations - done);
-    solver.run(step);
-    done += step;
+    // A team solve takes ONE checkpoint for the whole budget (there is no
+    // best response to measure), so the deadline has to be checked inside
+    // the step or a 60M-iteration solve would never look at the clock.
+    std::uint64_t ran = 0;
+    while (ran < step) {
+      const std::uint64_t slice =
+          timed ? deadline_slice(step - ran, config.sampled.batch) : step - ran;
+      solver.run(slice);
+      ran += slice;
+      if (timed && elapsed_s() >= config.max_seconds) {
+        out_of_time = true;
+        break;
+      }
+    }
+    done += ran;
+    if (out_of_time) {
+      std::cout << "iter " << done << "\nstopping at the " << config.max_seconds
+                << " s budget: writing the artifact for the " << done
+                << " iterations completed\n";
+      break;
+    }
     if (team) {
       std::cout << "iter " << done << "\n";
       continue;
@@ -155,6 +225,7 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   stats.iterations = solver.iteration();
   stats.nashconv = nashconv;
   stats.nashconv_valid = !team;
+  if (out_of_time) stats.stopped_reason = "time_budget";
   // Root EVs from the sampled pass for EVERY sampled solve: each deal's
   // payoffs sum to the pot, so these conserve exactly at any seat count -
   // and they are the only honest EVs for a team, whose correlated play no
@@ -230,6 +301,7 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   double qre_gap = 0.0;
   BrResult br;
   std::uint64_t done = 0;
+  bool out_of_time = false;
   const double pot = static_cast<double>(config.pot);
 
   // A fixed-lambda QRE is not a Nash equilibrium, and its PLAIN exploitability
@@ -352,6 +424,16 @@ int run_solve(const SolveConfig& config, bool dry_run) {
       std::cout << "target_exploitable_pct reached (" << metric_name << ")\n";
       break;
     }
+    // Checkpoint granularity is the natural deadline unit here: this loop
+    // measures a best response every checkpoint anyway, so it is already
+    // stopping at a point where the solve is worth writing out.
+    if (config.max_seconds > 0.0 && elapsed_s() >= config.max_seconds) {
+      out_of_time = true;
+      std::cout << "stopping at the " << config.max_seconds
+                << " s budget: writing the artifact for the " << done
+                << " iterations completed\n";
+      break;
+    }
   }
   const double wall_s =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
@@ -359,6 +441,7 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   SolveStats stats;
   stats.iterations = solver.iteration();
   stats.nashconv = nashconv;
+  if (out_of_time) stats.stopped_reason = "time_budget";
   stats.ev_chips = br.ev;
   stats.wall_time_s = wall_s;
   stats.setup_time_s = setup_s;

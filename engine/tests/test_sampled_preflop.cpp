@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -213,4 +214,34 @@ TEST_CASE("sampled core on the 4-way 10bb spot: position order and near-conserva
   MESSAGE("sampled 4-way: EVs sum to " << sum << " (dead money 0; the evaluator itself is "
           "first-order at 4 seats, so this measures evaluator residual, not the profile)");
   CHECK(std::abs(sum) < 0.05);
+}
+
+TEST_CASE("run() slicing on batch boundaries is bitwise identical") {
+  // The wall-clock budget (budget.max_seconds) stops a solve between
+  // slices, so a long run is a SEQUENCE of run() calls where an
+  // unconstrained one would be a single call. That is only safe because a
+  // slice ends on a batch boundary - where the discount and the lane fold
+  // already happen - so the sliced run must produce the same bits. If this
+  // ever fails, deadline_slice() in main.cpp has stopped rounding to whole
+  // batches and time-capped solves silently became a different solve.
+  const SolveConfig config = sampled_pushfold_config(3, 200);
+  NlhePreflopGame game(config);
+  SampledConfig sc = sampled_solver_config();
+  sc.batch = 256;
+  sc.lanes = 8;
+  const std::uint64_t kIters = 4096;  // 16 batches
+
+  SampledCfrSolver whole(game, game, sc, config.threads);
+  whole.run(kIters);
+
+  SampledCfrSolver sliced(game, game, sc, config.threads);
+  for (std::uint64_t done = 0; done < kIters; done += sc.batch * 3) {
+    sliced.run(std::min<std::uint64_t>(sc.batch * 3, kIters - done));
+  }
+
+  REQUIRE(whole.regrets().size() == sliced.regrets().size());
+  CHECK(std::memcmp(whole.regrets().data(), sliced.regrets().data(),
+                    whole.regrets().size() * sizeof(float)) == 0);
+  CHECK(std::memcmp(whole.strategy_sums().data(), sliced.strategy_sums().data(),
+                    whole.strategy_sums().size() * sizeof(float)) == 0);
 }

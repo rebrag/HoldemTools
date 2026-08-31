@@ -23,6 +23,11 @@ struct SolveStats {
   std::string awareness;                   // "aware" | "unaware" | ""
   std::vector<double> baseline_ev_chips;   // unaware: the frozen no-team reference EVs
   bool nashconv_valid = true;              // false when nashconv is not a meaningful measure
+  // Why the loop ended, when it was not "ran the whole budget": currently
+  // only "time_budget" (budget.max_seconds expired). Stamped into metadata
+  // so a consumer can tell a short solve from a converged one - `iterations`
+  // alone looks like the user simply asked for fewer.
+  std::string stopped_reason;
   nlohmann::json team_rollup;              // conditioned 169x169 chart per team node
   // Wall clock for the whole solve loop (CFR + every checkpoint's
   // best-response), and the worker count it ran on. Both are reported so a

@@ -48,6 +48,11 @@ export interface PushFoldDump {
     solver_family?: string;
     hand_symmetry?: string;
     final_exploitable_chips?: number | null;
+    /** Present only when the solve ended before its budget: "time_budget"
+     *  means it hit the wall-clock ceiling and wrote what it had, so the
+     *  result is usable but less converged than requested. */
+    stopped_reason?: string;
+    requested_iterations?: number;
     team?: {
       seats: number[];
       awareness: string;

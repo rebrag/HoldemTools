@@ -26,6 +26,12 @@ Env (same .env as the main watcher):
   HOLDEMTOOLS_API_BASE, WATCHER_API_KEY, WATCHER_ID   queue API (api_client)
   AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER   result upload
   ENGINE_EXE   default ../engine/build/engine.exe (relative to this file)
+  ENGINE_SOLVE_TIMEOUT_SECS   hard kill for one solve, default 3600
+  ENGINE_SOLVE_WRITE_MARGIN_SECS   how much of that ceiling is reserved for
+      the engine to finish and write its artifact, default 300. The engine
+      is handed `budget.max_seconds` = ceiling - margin and stops itself
+      there, so a long solve is TRUNCATED (and uploaded) rather than killed
+      and lost. Raise the ceiling for multi-hour solves.
 
 Run alongside the main watcher:  python engine_compare_watcher.py
 Only ONE compare watcher instance should run (it spawns Pio processes).
@@ -61,6 +67,14 @@ TIMEOUT_SECS = 30.0
 # tight target legitimately takes a long time - a 600 s ceiling killed real
 # work. Raise it with ENGINE_SOLVE_TIMEOUT_SECS rather than editing this.
 SOLVE_TIMEOUT_SECS = float(os.getenv("ENGINE_SOLVE_TIMEOUT_SECS", "3600"))
+# Killing the child at the ceiling THROWS AWAY the whole solve: the engine
+# writes its artifact only at the end, so an hour of iterations produces no
+# file at all. So the engine is given its own `budget.max_seconds`, set this
+# far below the ceiling, and stops itself in time to run the EV pass and
+# write the artifact - a shorter solve the user can actually look at, marked
+# `stopped_reason: "time_budget"`. The kill stays as the backstop for a child
+# that is genuinely hung and never reaches its own check.
+SOLVE_WRITE_MARGIN_SECS = float(os.getenv("ENGINE_SOLVE_WRITE_MARGIN_SECS", "300"))
 ENGINE_EXE = os.path.abspath(
     os.getenv("ENGINE_EXE") or os.path.join(WATCHER_DIR, "..", "engine", "build", "engine.exe"))
 
@@ -232,6 +246,14 @@ def run_engine(config: Dict[str, Any], run_dir: str) -> str:
     artifact = os.path.join(run_dir, "solve.hta")
     config["output"] = dict(config.get("output") or {})
     config["output"]["path"] = artifact.replace("\\", "/")
+    # Let the engine stop itself before we would kill it, so a solve that
+    # runs long still produces an artifact instead of nothing. A config that
+    # names its own (smaller) budget wins - that is a deliberate request.
+    budget = dict(config.get("budget") or {})
+    engine_budget = max(60.0, SOLVE_TIMEOUT_SECS - SOLVE_WRITE_MARGIN_SECS)
+    if not budget.get("max_seconds") or budget["max_seconds"] > engine_budget:
+        budget["max_seconds"] = engine_budget
+    config["budget"] = budget
     config_path = os.path.join(run_dir, "config.json")
     with open(config_path, "w", encoding="utf8") as f:
         json.dump(config, f)
