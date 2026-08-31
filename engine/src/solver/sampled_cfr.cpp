@@ -61,6 +61,7 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
     lane.value_stack.resize(static_cast<std::size_t>(max_depth_) + 2);
   }
   pool_ = std::make_unique<ThreadPool>(resolve_thread_count(threads));
+  split_budget_ = pool_->threads() > 1 ? pool_->threads() * 4 : 1;
 }
 
 void SampledCfrSolver::run(std::uint64_t iterations) {

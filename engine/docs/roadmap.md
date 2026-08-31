@@ -725,10 +725,24 @@ The -0.56 sum is NOT the profile: it is the measuring evaluator's own first-orde
 The profile's own measure conserves by construction; a sampled EV export that would make the DISPLAYED numbers conserve too is the recorded follow-up.
 Both solvers now sit within the tolerance band of a Monker reference that is itself abstracted at the runout (see the correction note above), so the band is the strongest claim the comparison supports.
 
-**Cost, measured (16 threads, 4-way 10bb, 200,000 deals):** the sampled solve itself is about **5 s** (~25,000 iterations/s).
-Everything else in the wall clock is the FACTORIZED measuring stick: one best-response diagnostic costs ~38 s at `board_sample.iter_count` 500 (~3 s at 40), and the artifact export's per-hand EV pass ~45 s at 500 (~4 s at 40) - so the shipped config (500 boards, one checkpoint) lands at ~93 s end to end, against the corrected factorized solve's 216 s and its unclosable residual.
-Dropping the evaluator to 40 boards gives ~17 s at the price of roughly 1 bb/100 of DISPLAY noise on the EVs; the strategy is identical either way, because the solve never reads `board_sample` - it only feeds the evaluator.
-Checkpoint sparingly: ten checkpoints put ten best-response passes inside the solve loop, which is how the first measurement read 439 s.
+**Cost, measured (16 threads, 4-way 10bb), and the bug that hid in it.**
+`SampledCfrSolver::split_budget()` returned 1.
+That reads as a statement about this core's own traversal - which is true, iterations parallelize across lanes, not across subtrees - but `split_budget()` is not read by the solver at all.
+It is the fan-out budget the CONSUMERS take: `compute_best_response` and the artifact export pass both fork sibling subtrees onto the pool with it.
+Returning 1 pinned both to a single core, and since both are `Game::terminal_values` walks over the factorized evaluator, they were most of the wall clock: a user watching Task Manager saw ~70% for a few seconds and then ~6% (one core of sixteen) for a minute and a half.
+It now returns `threads * 4`, the same policy `CfrSolver` uses, and the outputs are bit-identical (the BR fold-back was already serial and in child order).
+
+| phase | before | after |
+|---|---|---|
+| 200k deals, end to end | 93 s | **25 s** |
+| 600k deals, end to end | ~98 s | **32 s** |
+| best response (one pass, 500 boards) | ~38 s | **~8 s** |
+| artifact export (per-hand, all nodes) | ~45 s | **~8.6 s** |
+| engine test suite | 80 s | **62 s** |
+
+The marginal iteration rate is ~57,000 deals/s, so at 600k the split is roughly setup 4.6 s + iterations 10.6 s + best response 8.2 s + export 8.6 s.
+**The factorized measuring stick is still the majority of it**, and `board_sample.iter_count` scales it linearly while the sampled solve never reads that value - so it is the honest wall-clock knob, priced in EV display noise rather than strategy quality.
+The export pass is not "the root EVs": it stores per-hand, per-seat reach and conditional EV for EVERY decision node, and each terminal it touches runs the 500-board layer sweep.
 
 **What stays on the factorized path, deliberately.**
 Best-response diagnostics and the artifact export's per-hand reach/EV fields ride `Game::terminal_values` - exact at 2-3 seats, first-order at 4+ (artifacts stamp `solver_family`; the export caveat is `export_ev_estimator` territory).

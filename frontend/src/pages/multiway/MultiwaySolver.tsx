@@ -156,6 +156,10 @@ const MultiwaySolver = () => {
   );
   const issues = useMemo(() => validate(view), [view]);
   const bbCount = effectiveBb(view);
+  // Four or more seats run the sampled-deal core, where board_sample stops
+  // being a solve parameter and becomes only the measuring stick. Keep this
+  // threshold in step with buildMultiwayConfig in multiwayView.ts.
+  const sampled = view.players >= 4;
 
   const anteEach = Number(view.ante) || 0;
   const potChips =
@@ -493,9 +497,25 @@ const MultiwaySolver = () => {
               {(
                 [
                   ["boardSamplePair", "Pairwise boards", "Boards behind the exact heads-up equity matrix. Built once; costs setup time, not iterations."],
-                  ["boardSampleIter", "Multiway boards", "Boards averaged per iteration at 3+ way showdowns, where the value does not factorize."],
-                  ["accuracy", "Target (chips)", "Per-player exploitability to stop at."],
-                  ["maxIterations", "Max iterations", ""],
+                  [
+                    "boardSampleIter",
+                    sampled ? "Measuring boards" : "Multiway boards",
+                    sampled
+                      ? "The SOLVE never reads this - it deals a real board every iteration. This only sizes the fixed-board evaluator behind the EVs shown below, and it is most of the wall clock: halve it to halve the wait, at the price of noise on the EVs and none on the strategy."
+                      : "Boards averaged per iteration at 3+ way showdowns, where the value does not factorize.",
+                  ],
+                  [
+                    "accuracy",
+                    "Target (chips)",
+                    sampled
+                      ? "Ignored at four or more seats: the evaluator that measures exploitability is itself approximate there, so the solve runs the full iteration count rather than stopping on a number it cannot trust."
+                      : "Per-player exploitability to stop at.",
+                  ],
+                  [
+                    "maxIterations",
+                    "Max iterations",
+                    sampled ? "One dealt hand per iteration, so this is the real convergence knob here." : "",
+                  ],
                 ] as const
               ).map(([key, text, why]) => (
                 <label key={key} className="flex flex-col gap-1">
