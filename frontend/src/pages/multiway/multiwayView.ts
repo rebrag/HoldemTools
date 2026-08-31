@@ -228,7 +228,19 @@ export const buildMultiwayConfig = (view: MultiwayView): Record<string, unknown>
     // cadence.
     algorithm:
       view.players >= 4 || view.teamSeats.length === 2
-        ? { family: "sampled", sampled: { seed: num(view.seed), batch: 1024, lanes: 16 } }
+        ? {
+            family: "sampled",
+            sampled: {
+              seed: num(view.seed),
+              // Every batch boundary is a full discount + lane-fold sweep
+              // over the solver arrays, so at multi-million iteration
+              // budgets a small batch spends minutes on synchronization
+              // alone. Larger batches only coarsen the linear-discount
+              // granularity, which is negligible at that scale.
+              batch: num(view.maxIterations) >= 10_000_000 ? 8192 : 1024,
+              lanes: 16,
+            },
+          }
         : { update: "dcfr" },
     ...(view.teamSeats.length === 2
       ? {
