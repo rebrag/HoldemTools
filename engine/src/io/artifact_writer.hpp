@@ -8,6 +8,7 @@
 #include "game/game.hpp"
 #include "io/artifact_store.hpp"
 #include "solver/cfr.hpp"
+#include "solver/strategy_source.hpp"
 
 namespace engine {
 
@@ -63,7 +64,14 @@ std::size_t export_pass_bytes(const Game& game);
 // wall_time_s deliberately excludes. Callers that ignore it lose nothing;
 // main prints it so the number stops being invisible.
 double write_artifact(ArtifactStore& store, const std::string& path, const Game& game,
-                    const CfrSolver& solver, const SolveConfig& config,
+                    const StrategySource& source, const SolveConfig& config,
                     const SolveStats& stats);
+
+// The vectorized core's convenience overload, mirroring best_response.hpp.
+inline double write_artifact(ArtifactStore& store, const std::string& path, const Game& game,
+                    const CfrSolver& solver, const SolveConfig& config,
+                    const SolveStats& stats) {
+  return write_artifact(store, path, game, CfrStrategySource(solver), config, stats);
+}
 
 }  // namespace engine

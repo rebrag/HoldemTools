@@ -3,6 +3,7 @@
 
 #include "game/game.hpp"
 #include "solver/cfr.hpp"
+#include "solver/strategy_source.hpp"
 
 namespace engine {
 
@@ -21,7 +22,13 @@ struct BrResult {
   }
 };
 
-BrResult compute_best_response(const Game& game, const CfrSolver& solver);
+BrResult compute_best_response(const Game& game, const StrategySource& source);
+
+// The vectorized core's convenience overload: existing call sites keep
+// compiling, and the adapter is constructed on this cold path only.
+inline BrResult compute_best_response(const Game& game, const CfrSolver& solver) {
+  return compute_best_response(game, CfrStrategySource(solver));
+}
 
 // The same measurement taken in the ENTROPY-AUGMENTED game a QRE solve is
 // actually minimizing: the best response is a smooth (log-sum-exp) maximum and
@@ -35,6 +42,10 @@ BrResult compute_best_response(const Game& game, const CfrSolver& solver);
 // denominated the same way, and is what an accuracy stop should watch.
 //
 // Falls back to the plain best response when the solver has no QRE configured.
-BrResult compute_qre_best_response(const Game& game, const CfrSolver& solver);
+BrResult compute_qre_best_response(const Game& game, const StrategySource& source);
+
+inline BrResult compute_qre_best_response(const Game& game, const CfrSolver& solver) {
+  return compute_qre_best_response(game, CfrStrategySource(solver));
+}
 
 }  // namespace engine
