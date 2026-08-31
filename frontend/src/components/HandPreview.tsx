@@ -57,7 +57,13 @@ const HandPreview: React.FC<{
    *  Don't combine with a wrapping preview-click button — nested buttons
    *  are invalid markup. */
   onBoardClick?: () => void;
-}> = ({ rawText, tone = "light", onBoardClick }) => {
+  /** Makes each linked player's identity chip open that player's editor.
+   *  Takes the id rather than a bound closure so every hop from the host page
+   *  down to here forwards ONE referentially stable function — this component
+   *  is memoized on its props, and an inline arrow anywhere in the chain
+   *  rebuilds every card fan on every parent render. */
+  onPlayerClick?: (playerId: string) => void;
+}> = ({ rawText, tone = "light", onBoardClick, onPlayerClick }) => {
   const summary = useMemo(() => summaryFromRawText(rawText), [rawText]);
   // Consumed here rather than passed as a prop so the memo contract stays
   // rawText+tone: the roster loading re-renders rows once via the shared
@@ -82,32 +88,71 @@ const HandPreview: React.FC<{
     label: string;
     hero?: boolean;
     playerId?: string;
-  }> = ({ cards, label, hero: isHero, playerId }) => (
-    <div className="flex flex-col items-center gap-0.5">
-      <CardGroup cards={cards.length ? cards : [null, null]} />
-      <span className="flex max-w-[80px] items-center gap-1">
-        {/* Tiny identity chip for linked players; sized to the label's
-            line-height so the fan row's rhythm is untouched. */}
-        {playerId && (
-          <PlayerAvatar
-            player={playersById.get(playerId)}
-            name={label}
-            size="xs"
-            className="!h-3.5 !w-3.5"
-          />
-        )}
+  }> = ({ cards, label, hero: isHero, playerId }) => {
+    // The 14px avatar is far too small to tap, so the whole chip (avatar +
+    // name) is the target. A span with role="button" rather than a real
+    // button: the host often wraps this preview in one, and nested
+    // interactive elements are invalid markup (same trick as the dealer badge
+    // in PokerTableSeat). The negative margins exactly cancel the padding, so
+    // the hit box grows without moving anything in the fan row.
+    const live = !!playerId && !!onPlayerClick;
+    const open = (e: React.SyntheticEvent) => {
+      e.stopPropagation();
+      onPlayerClick!(playerId!);
+    };
+
+    return (
+      <div className="flex flex-col items-center gap-0.5">
+        <CardGroup cards={cards.length ? cards : [null, null]} />
         <span
-          className={
-            isHero
-              ? "text-[8px] font-semibold uppercase tracking-wide text-emerald-600"
-              : `min-w-0 truncate text-[9px] font-medium ${muted}`
-          }
+          {...(live
+            ? {
+                role: "button",
+                tabIndex: 0,
+                title: `Edit ${label}`,
+                "aria-label": `Edit ${label}`,
+                onClick: open,
+                onKeyDown: (e: React.KeyboardEvent) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    open(e);
+                  }
+                },
+              }
+            : {})}
+          className={`flex max-w-[80px] items-center gap-1 ${
+            live
+              ? `-mx-1 -my-1.5 cursor-pointer touch-manipulation rounded-full px-1 py-1.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 ${
+                  dark ? "hover:bg-white/10" : "hover:bg-emerald-100/70"
+                }`
+              : ""
+          }`}
         >
-          {label}
+          {/* Tiny identity chip for linked players; sized to the label's
+              line-height so the fan row's rhythm is untouched. */}
+          {playerId && (
+            <PlayerAvatar
+              player={playersById.get(playerId)}
+              name={label}
+              size="xs"
+              className={`!h-3.5 !w-3.5 ${
+                live ? "transition hover:ring-2 hover:ring-emerald-400/60" : ""
+              }`}
+            />
+          )}
+          <span
+            className={
+              isHero
+                ? "text-[8px] font-semibold uppercase tracking-wide text-emerald-600"
+                : `min-w-0 truncate text-[9px] font-medium ${muted}`
+            }
+          >
+            {label}
+          </span>
         </span>
-      </span>
-    </div>
-  );
+      </div>
+    );
+  };
 
   return (
     <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">

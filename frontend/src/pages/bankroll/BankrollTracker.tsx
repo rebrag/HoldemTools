@@ -40,6 +40,14 @@ const ADD_LOCATION_OPTION = "__ht_add_location__";
 const ADD_GAME_OPTION = "__ht_add_game__";
 const FILTERS_KEY = "ht_bankroll_filters_v1";
 
+const BREAKDOWN_LABELS: Record<BreakdownMode, string> = {
+  sessions: "Sessions",
+  weekday: "Weekday",
+  month: "Month",
+  year: "Year",
+  game: "Game",
+};
+
 type DraftSession = {
   id: string;
   form: FormState;
@@ -1159,26 +1167,23 @@ const BankrollTracker: React.FC<BankrollTrackerProps> = ({ user }) => {
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* Wraps so the Filter button drops to its own line on narrow
+              phones rather than squashing the five-pill toggle. */}
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {/* View toggle */}
             <div className="inline-flex items-center rounded-full bg-gray-100 p-[2px] text-[11px]">
-              {(["sessions", "weekday", "month", "year"] as BreakdownMode[]).map(
+              {(
+                ["sessions", "weekday", "month", "year", "game"] as BreakdownMode[]
+              ).map(
                 (modeKey) => {
-                  const label =
-                    modeKey === "sessions"
-                      ? "Sessions"
-                      : modeKey === "weekday"
-                      ? "Weekday"
-                      : modeKey === "month"
-                      ? "Month"
-                      : "Year";
+                  const label = BREAKDOWN_LABELS[modeKey];
                   const active = breakdownMode === modeKey;
                   return (
                     <button
                       key={modeKey}
                       type="button"
                       onClick={() => setBreakdownMode(modeKey)}
-                      className={`px-2.5 py-1 rounded-full transition text-[11px] ${
+                      className={`px-2 py-1 rounded-full transition text-[11px] ${
                         active
                           ? "bg-white text-emerald-700 shadow-sm"
                           : "text-gray-600 hover:text-gray-800"

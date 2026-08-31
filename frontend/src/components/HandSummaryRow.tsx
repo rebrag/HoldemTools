@@ -56,6 +56,10 @@ export interface HandSummaryRowProps {
   /** Makes the preview's board fan clickable (see HandPreview.onBoardClick).
    *  Mutually exclusive with onPreviewClick — nested buttons are invalid. */
   onBoardClick?: () => void;
+  /** Makes each linked player's identity chip open that player's editor.
+   *  Forward it unchanged — see HandPreview.onPlayerClick on why wrapping it
+   *  in an arrow anywhere in the chain defeats that component's memo. */
+  onPlayerClick?: (playerId: string) => void;
 }
 
 const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
@@ -73,6 +77,7 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
   onPreviewClick,
   previewExpanded,
   onBoardClick,
+  onPlayerClick,
 }) => {
   const summary = useMemo(() => summaryFromRawText(rawText), [rawText]);
   const [flash, setFlash] = useState<"copied" | "shared" | null>(null);
@@ -144,6 +149,7 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
       rawText={rawText}
       tone={tone}
       onBoardClick={onPreviewClick ? undefined : onBoardClick}
+      onPlayerClick={onPlayerClick}
     />
   );
 

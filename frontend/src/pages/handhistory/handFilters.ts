@@ -16,8 +16,8 @@ export interface HandFilterState extends CommonFilterState {
   playerId: string;
   /** With playerId: only hands where that player saw the flop. */
   playerSawFlop: boolean;
-  /** At least one non-hero seat has a recorded hole card. */
-  villainShowed: boolean;
+  /** With playerId: only hands where that player's hole cards were recorded. */
+  playerShowed: boolean;
 }
 
 export const HAND_FILTERS_KEY = "ht_handfilters_v1";
@@ -29,7 +29,7 @@ export const defaultHandFilters: HandFilterState = {
   toDate: "",
   playerId: "",
   playerSawFlop: false,
-  villainShowed: false,
+  playerShowed: false,
 };
 
 // Tolerant parser for the persisted blob (same contract as bankroll's):
@@ -48,7 +48,7 @@ export function parseHandFiltersOrDefault(raw: string): HandFilterState {
     toDate: str("toDate"),
     playerId: str("playerId"),
     playerSawFlop: bool("playerSawFlop"),
-    villainShowed: bool("villainShowed"),
+    playerShowed: bool("playerShowed"),
   };
 }
 
@@ -58,9 +58,9 @@ export function isFiltering(f: HandFilterState): boolean {
     !!f.game ||
     !!f.fromDate ||
     !!f.toDate ||
-    !!f.playerId ||
-    f.villainShowed
-    // playerSawFlop alone filters nothing (it qualifies playerId).
+    !!f.playerId
+    // playerSawFlop / playerShowed alone filter nothing (they qualify
+    // playerId, which is already counted above).
   );
 }
 
@@ -89,15 +89,13 @@ export function rowMatches(
 
   // Structured filters need the embedded payload; legacy hands without one
   // fail them when active (approved scope: no backward compatibility).
-  if (f.playerId || f.villainShowed) {
+  if (f.playerId) {
     const summary = summaryFromRawText(row.rawText);
     if (!summary) return false;
-    if (f.playerId) {
-      const fact = summary.seatFacts.find((s) => s.playerId === f.playerId);
-      if (!fact) return false;
-      if (f.playerSawFlop && !fact.sawFlop) return false;
-    }
-    if (f.villainShowed && !summary.villainShowedAnyCard) return false;
+    const fact = summary.seatFacts.find((s) => s.playerId === f.playerId);
+    if (!fact) return false;
+    if (f.playerSawFlop && !fact.sawFlop) return false;
+    if (f.playerShowed && !fact.showedCards) return false;
   }
 
   return true;

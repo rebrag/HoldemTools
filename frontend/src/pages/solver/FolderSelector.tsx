@@ -3,7 +3,8 @@
 // component that used to live here is gone - every layout now goes through
 // SimSelect in StudyTopStrip - but these pieces stay shared between SimSelect
 // and the per-layout control rows.
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
+import { useDismissOnOutside } from "@/hooks/useDismissOnOutside";
 import { AlignEndHorizontal, LayoutGrid, Square } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import { type FTFilter } from "./useFolderSearch";
@@ -161,19 +162,9 @@ export const MatrixHeightModePill: React.FC<{
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
-  /* Close on any press outside the button + popover. */
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent | TouchEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("touchstart", onDown);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("touchstart", onDown);
-    };
-  }, [open]);
+  /* Close on any press outside the button + popover, or on Escape. */
+  const close = useCallback(() => setOpen(false), []);
+  useDismissOnOutside(wrapRef, open, close);
 
   return (
     <div ref={wrapRef} className={`relative flex-shrink-0 ${className}`}>
