@@ -62,15 +62,55 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
               << "\" has no deal interface for algorithm.family \"sampled\"\n";
     return 1;
   }
-  SampledCfrSolver solver(game, *deals, config.sampled, config.threads);
+  const AgentMap agents = AgentMap::from_config(config, game.num_seats());
+  const bool team = agents.has_team();
+  // The EV stream is independent of the training stream by construction.
+  constexpr std::uint64_t kEvDeals = 200000;
+  const std::uint64_t ev_seed = config.sampled.seed ^ 0x9E3779B97F4A7C15ULL;
+
   std::cout << "sampled core: seed " << config.sampled.seed << ", batch "
             << config.sampled.batch << ", lanes " << config.sampled.lanes << "\n";
+
+  SolveStats stats;
+  std::unique_ptr<SampledCfrSolver> baseline;
+  if (team) {
+    for (int q = 0; q < game.num_seats(); ++q) {
+      if (agents.teammate_of[static_cast<std::size_t>(q)] >= 0) stats.team_seats.push_back(q);
+    }
+    stats.awareness = config.awareness;
+    std::cout << "hand-sharing team: seats " << stats.team_seats[0] << "+"
+              << stats.team_seats[1] << ", opponents " << config.awareness
+              << ". Research/analysis tooling - using this on live tables is cheating.\n";
+    if (config.awareness == "unaware") {
+      // Phase 1: the no-team baseline everyone believes they are playing.
+      const std::uint64_t base_iters =
+          config.baseline_iterations > 0 ? config.baseline_iterations : config.iterations;
+      std::cout << "phase 1: no-team baseline, " << base_iters << " iterations\n";
+      baseline = std::make_unique<SampledCfrSolver>(game, *deals, config.sampled,
+                                                    config.threads);
+      baseline->run(base_iters);
+      stats.baseline_ev_chips = baseline->sampled_ev(kEvDeals, ev_seed);
+      std::cout << "baseline ev";
+      for (double ev : stats.baseline_ev_chips) std::cout << " " << ev;
+      std::cout << "\n";
+    }
+  }
+  SampledCfrSolver solver(game, *deals, config.sampled, config.threads, agents);
+  if (baseline) {
+    std::vector<bool> frozen(static_cast<std::size_t>(game.num_seats()), false);
+    for (int q = 0; q < game.num_seats(); ++q) {
+      frozen[static_cast<std::size_t>(q)] = agents.teammate_of[static_cast<std::size_t>(q)] < 0;
+    }
+    solver.freeze_seats_from(*baseline, frozen);
+    std::cout << "phase 2: joint team best response against the frozen baseline\n";
+  }
   // The preflop evaluator best response runs against is exact at 2-3 seats
   // and first-order at 4+, where its residual would let a target fire on a
-  // number that is not really exploitability. Honest accounting: report
-  // every checkpoint, let targets stop the solve only where the measure is
-  // exact.
-  const bool br_exact = game.num_seats() <= 3;
+  // number that is not really exploitability. A TEAM plays a correlated
+  // joint strategy that per-seat marginals cannot reproduce, so best
+  // response is not a meaningful measure there at all - EVs come from the
+  // sampled pass instead, and nashconv is stamped invalid.
+  const bool br_exact = !team && game.num_seats() <= 3;
   if (!br_exact) {
     std::cout << "note: best response rides a first-order evaluator at "
               << game.num_seats()
@@ -78,7 +118,6 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
                  "budget.iterations. The reported nashconv is a diagnostic.\n";
   }
   const auto start = std::chrono::steady_clock::now();
-  BrResult br;
   double nashconv = 0.0;
   std::uint64_t done = 0;
   const double pot = static_cast<double>(config.pot);
@@ -87,7 +126,11 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
         std::min<std::uint64_t>(config.checkpoint_every, config.iterations - done);
     solver.run(step);
     done += step;
-    br = compute_best_response(game, solver);
+    if (team) {
+      std::cout << "iter " << done << "\n";
+      continue;
+    }
+    const BrResult br = compute_best_response(game, solver);
     nashconv = br.nashconv();
     const double exploitable = nashconv / game.num_seats();
     std::cout << "iter " << done << "  nashconv " << nashconv << "  exploitable "
@@ -109,14 +152,35 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   const double wall_s =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
-  SolveStats stats;
   stats.iterations = solver.iteration();
   stats.nashconv = nashconv;
-  stats.ev_chips = br.ev;
+  stats.nashconv_valid = !team;
+  // Root EVs from the sampled pass for EVERY sampled solve: each deal's
+  // payoffs sum to the pot, so these conserve exactly at any seat count -
+  // and they are the only honest EVs for a team, whose correlated play no
+  // per-seat marginal can reproduce.
+  stats.ev_chips = solver.sampled_ev(kEvDeals, ev_seed);
   stats.wall_time_s = wall_s;
   stats.setup_time_s = setup_s;
   stats.threads = threads;
   stats.peak_rss_bytes = peak_rss_bytes();
+  std::cout << "sampled ev (" << kEvDeals << " deals)";
+  for (double ev : stats.ev_chips) std::cout << " " << ev;
+  std::cout << "\n";
+  if (team) {
+    stats.team_rollup = solver.team_rollup_json();
+    double team_ev = 0.0;
+    for (int q : stats.team_seats) team_ev += stats.ev_chips[static_cast<std::size_t>(q)];
+    std::cout << "team ev " << team_ev;
+    if (!stats.baseline_ev_chips.empty()) {
+      double base_team = 0.0;
+      for (int q : stats.team_seats) {
+        base_team += stats.baseline_ev_chips[static_cast<std::size_t>(q)];
+      }
+      std::cout << " (baseline " << base_team << ", uplift " << team_ev - base_team << ")";
+    }
+    std::cout << " chips\n";
+  }
 
   LocalStore store;
   const double export_s =

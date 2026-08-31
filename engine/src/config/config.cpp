@@ -447,6 +447,18 @@ SolveConfig load_config(const std::string& path_text) {
     if (agents.contains("partition") && !agents.at("partition").is_null()) {
       config.partition = agents.at("partition").get<std::vector<std::vector<int>>>();
     }
+    if (agents.contains("partition") && !agents.at("partition").is_null()) {
+      for (const auto& group : config.partition) {
+        if (group.size() == 2) config.sampled.partition_team = group;
+      }
+    }
+    if (agents.contains("awareness")) {
+      config.awareness = agents.at("awareness").get<std::string>();
+      if (config.awareness != "aware" && config.awareness != "unaware") {
+        fail("agents.awareness must be aware | unaware, got '" + config.awareness + "'");
+      }
+    }
+    config.baseline_iterations = agents.value("baseline_iterations", config.baseline_iterations);
     if (agents.contains("payoff_weights") && !agents.at("payoff_weights").is_null()) {
       fail("agents.payoff_weights is not available yet (collusion lands in a later pass); "
            "use null");

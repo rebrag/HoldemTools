@@ -14,6 +14,8 @@ import DecisionMatrix from "@/pages/solver/DecisionMatrix";
 import {
   actionLabels,
   actionPct,
+  CLASS_NAMES,
+  conditionedGridFor,
   gridFor,
   walkLine,
   type PushFoldDump,
@@ -24,6 +26,9 @@ const chip =
 
 const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
   const [path, setPath] = useState<number[]>([]);
+  // Conditioned viewer: the partner hand class the team charts are
+  // conditioned on; null = the partner-averaged marginal.
+  const [partnerClass, setPartnerClass] = useState<number | null>(null);
   const meta = dump.metadata;
   // Memoized because the `?? []` fallback is a fresh array every render, which
   // would make every useMemo keyed on it recompute.
@@ -46,10 +51,17 @@ const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
       ` · button ${seats[pf.button] ?? pf.button}`;
   }, [meta, seats]);
 
-  const grid = useMemo(
-    () => (node && node.kind === "decision" ? gridFor(node) : []),
-    [node]
-  );
+  const teamRollup =
+    node && node.kind === "decision" && meta.team && meta.team_rollup
+      ? meta.team_rollup[String(node.node_id)]
+      : undefined;
+  const grid = useMemo(() => {
+    if (!node || node.kind !== "decision") return [];
+    if (teamRollup && partnerClass != null) {
+      return conditionedGridFor(node, teamRollup, partnerClass);
+    }
+    return gridFor(node);
+  }, [node, teamRollup, partnerClass]);
   const labels = node && node.kind === "decision" ? actionLabels(node) : [];
   const jamPct = node && node.kind === "decision" ? actionPct(node, "ALLIN") : 0;
   const actorName = node?.actor != null ? seats[node.actor] ?? `P${node.actor}` : null;
@@ -79,9 +91,38 @@ const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
             </span>
           );
         })}
-        <span className={chip} title="Per-player exploitability of the solved strategy, in chips.">
-          exploitable {(meta.final_nashconv / 2 / Math.max(1, seats.length)).toExponential(1)}
-        </span>
+        {meta.final_nashconv != null && (
+          <span
+            className={chip}
+            title="Per-player exploitability of the solved strategy, in chips."
+          >
+            exploitable {(meta.final_nashconv / 2 / Math.max(1, seats.length)).toExponential(1)}
+          </span>
+        )}
+        {meta.team && (
+          <span
+            className={`${chip} border-amber-800 text-amber-300`}
+            title={
+              meta.team.awareness === "unaware"
+                ? "The pair shares hole cards and maximizes summed EV against opponents frozen at the no-team baseline."
+                : "The pair shares hole cards and maximizes summed EV; opponents know and adapt."
+            }
+          >
+            team {meta.team.seats.map((s) => seats[s] ?? s).join("+")}{" "}
+            <span className="tabular-nums">
+              {meta.team.ev_chips >= 0 ? "+" : ""}
+              {meta.team.ev_chips.toFixed(3)}
+            </span>
+            {meta.team.uplift_chips != null && (
+              <span className="tabular-nums text-slate-400">
+                {" "}
+                (uplift {meta.team.uplift_chips >= 0 ? "+" : ""}
+                {meta.team.uplift_chips.toFixed(3)})
+              </span>
+            )}{" "}
+            · {meta.team.awareness}
+          </span>
+        )}
         <span className={chip}>{meta.iterations} iters</span>
       </div>
 
@@ -116,6 +157,32 @@ const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
               {jamPct.toFixed(1)}% of combos jam
             </span>
           </div>
+          {teamRollup && (
+            <div className="mb-1 flex flex-wrap items-center gap-2">
+              <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                {seats[teamRollup.partner] ?? teamRollup.partner} holds
+              </span>
+              <select
+                value={partnerClass == null ? "" : String(partnerClass)}
+                onChange={(e) =>
+                  setPartnerClass(e.target.value === "" ? null : Number(e.target.value))
+                }
+                className="rounded border border-slate-700 bg-slate-800/70 px-1.5 py-0.5 text-[11px] text-slate-200"
+              >
+                <option value="">any hand (marginal)</option>
+                {CLASS_NAMES.map((name, i) => (
+                  <option key={name} value={String(i)}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+              <span className="text-[10px] text-slate-500">
+                {partnerClass == null
+                  ? "Partner-averaged chart; pick a hand to see the conditioned strategy."
+                  : "Conditioned on the partner's hand - the shared-cards strategy itself. Frequencies only; EVs are not stored per pair."}
+              </span>
+            </div>
+          )}
           <DecisionMatrix gridData={grid} heightMode="full" />
           <div className="flex flex-wrap gap-2">
             {labels.map((label, i) => {

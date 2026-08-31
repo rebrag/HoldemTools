@@ -66,18 +66,36 @@ MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc,
     // allocation. No recalc caches - nothing is re-enumerated there.
     const InfosetLayout layout = InfosetLayout::build(game);
     std::size_t total = layout.total;
-    if (sampled->symmetry) {
-      if (const auto* deal_game = dynamic_cast<const DealGame*>(&game)) {
-        std::vector<std::uint16_t> class_of;
-        int num_classes = 0;
-        deal_game->hand_classes(class_of, num_classes);
-        if (num_classes > 0) {
-          total = 0;
-          for (const Node& n : game.tree().nodes) {
-            if (n.kind != NodeKind::Decision) continue;
-            total += static_cast<std::size_t>(layout.node_actions[n.decision_index]) *
-                     static_cast<std::size_t>(num_classes);
+    if (const auto* deal_game = dynamic_cast<const DealGame*>(&game)) {
+      std::vector<std::uint16_t> class_of;
+      int num_classes = 0;
+      if (sampled->symmetry) deal_game->hand_classes(class_of, num_classes);
+      // A hand-sharing team's decision nodes store one row per JOINT suit
+      // orbit - dominant when present, so the estimate must count it.
+      std::vector<int> teammate_of;
+      int joint_classes = 0;
+      if (!sampled->partition_team.empty()) {
+        std::vector<std::uint32_t> jc;
+        if (deal_game->joint_hand_classes(jc, joint_classes)) {
+          teammate_of.assign(static_cast<std::size_t>(game.num_seats()), -1);
+          teammate_of[static_cast<std::size_t>(sampled->partition_team[0])] =
+              sampled->partition_team[1];
+          teammate_of[static_cast<std::size_t>(sampled->partition_team[1])] =
+              sampled->partition_team[0];
+        }
+      }
+      if (num_classes > 0 || joint_classes > 0) {
+        total = 0;
+        for (const Node& n : game.tree().nodes) {
+          if (n.kind != NodeKind::Decision) continue;
+          std::size_t rows = layout.node_hands[n.decision_index];
+          if (!teammate_of.empty() && teammate_of[n.actor] >= 0) {
+            rows = static_cast<std::size_t>(joint_classes);
+          } else if (num_classes > 0) {
+            rows = static_cast<std::size_t>(num_classes);
           }
+          total +=
+              static_cast<std::size_t>(layout.node_actions[n.decision_index]) * rows;
         }
       }
     }

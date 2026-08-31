@@ -769,8 +769,51 @@ The 216s corrected 4-way demotes from product path to reference oracle; `/multiw
 
 **Follow-ups this core unlocks, in the order they are likely to matter:** a sampled EV export (displayed EVs conserving at any seat count); ICM as a terminal payoff transform on `DealGame` (the sampled core evaluates concrete stacks exactly where ICM applies); bucketed multiway POSTFLOP and PLO through the `InfosetIndexer` seam (buckets/node = strength buckets x texture classes over suit-isomorphic boards - in scope for THIS core only, see the per-core rule below); QRE and real preflop sizings ported over.
 
-- **M9 - collusion, best-response mode first**: seat->agent partition + payoff-weight matrices, joint-range representation (1326x1225 - river-only on 16GB), frozen-opponent team best response.
-- **M10 - Bayesian unknown-collusion**: chance root over team type with probability p; opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.
+### M9 - hand-sharing teams (cooperation/collusion). Landed 2026-08-31, on the sampled core.
+
+The original M9 plan ("joint-range representation, 1326x1225 - river-only on 16 GB") was written for the vectorized core and is SUPERSEDED: on the sampled core a teammate is PINNED to a dealt hand during a traversal, so hand-sharing became an indexing change - which storage row the hero reads - not a joint-range representation, and it runs preflop multiway on ~180 MB in under 30 s.
+
+**What it is.** `agents.partition` with one 2-seat group makes that pair share hole cards and maximize SUMMED chips.
+A team actor's infoset is (node, own hand, partner hand); storage rows are the suit orbits of ordered disjoint hand pairs - **93,769** of them, the exact quotient (Burnside with stabilizers; pinned in `test_team_preflop.cpp`), built by `NlhePreflopGame::joint_hand_classes` from the same `perm_hand_map` machinery as `e2_`.
+A team hero's terminal value is its own chips plus the pinned partner's chips on the same deal (`deal_showdown_values_team`, gated exactly - worst gap 0 over 4,515 hands - against pinning the hero per hand and reading the partner's value).
+Chip conservation is untouched: payoffs per deal still sum to the pot; only preferences over them changed.
+
+**The two awareness modes ARE the answer to "does it matter if the others know".**
+
+- `agents.awareness: "unaware"` - two phases in one run: phase 1 solves the no-team baseline, then opponents are FROZEN at its average strategy and only the team trains.
+  A two-headed team with one payoff and shared information is a single optimizer, so this phase has a REAL convergence guarantee, unlike general 3+ agent CFR.
+  The gated theorem: the team could always play its baseline strategies against the same frozen opponents, so the joint best response must beat the baseline.
+- `agents.awareness: "aware"` - everyone trains together with the team as one payoff-coupled meta-player; opponents adapt.
+  No ordering theorem connects this to the baseline (it is an equilibrium of a DIFFERENT game), and the usual 3+ agent CCE caveat applies.
+
+**Measured, 4-way 10bb, CO+SB sharing against BB and BTN (chips; bb = 2):**
+
+| | SB | BB | CO | BTN | team (SB+CO) |
+|---|---|---|---|---|---|
+| baseline (no team) | -0.255 | -0.615 | +0.364 | +0.506 | **0.109** |
+| unaware | -0.188 | -0.976 | +0.459 | +0.704 | **0.271** |
+| aware | -0.376 | -0.649 | +0.501 | +0.524 | **0.125** |
+
+Three findings worth the table:
+the unaware uplift is **+0.162 chips = +8.1 bb/100** for the pair, and it is extracted almost entirely from the BB (-0.62 to -0.98) while the unaware BTN **free-rides** the team's pressure (+0.51 to +0.70);
+opponents who KNOW nearly neutralize the edge (uplift +0.016 chips = +0.8 bb/100);
+and on the 3-way gate the aware team measured BELOW its own baseline (0.213 vs 0.322) - being known to collude can cost more than the sharing gains, which is a property of the changed game, not a bug, and exactly why the two modes had to ship together.
+
+**The estimator trap, paid for and recorded.** During a team hero's traversal the partner's policy conditions on the hero's hand - and the hero is VECTORIZED, so past a partner node the opponents' reach is a per-hand vector, not a scalar (`opp_wv` in the traversal).
+The first implementation conditioned the partner on the hero's DEALT hand; each member then trained against a partner reacting to the wrong cards, and the measured result was a team losing to its own no-team baseline (-0.97 vs +0.32 on the 3-way gate).
+If a future change makes a team lose to its baseline, look here first.
+
+**EV honesty forced a general improvement.** Per-seat marginal strategies cannot reproduce a team's correlated play, so team EVs cannot ride `Game::terminal_values` - and now EVERY sampled solve's root EVs come from a **sampled EV pass** (200k fresh seeded deals under the average profile, all seats pinned, `deal_showdown_pinned`).
+These conserve exactly at any seat count, retiring the displayed "-0.011 evaluator residual" on 4-way solves; metadata says `root_ev_estimator: "sampled_deals"`.
+`final_nashconv` is null on team artifacts (best response against marginals is not a meaningful measure of a correlated team; a proper team best-response evaluator is future work).
+
+**Export shape.** The artifact's per-hand strategy blobs and 169 rollups are MARGINALS over the partner (`team.strategy_export` flags it); the conditioned strategy - the actual shared-cards play - travels as `team_rollup` in metadata: per team decision node, reach-weighted action frequencies per (partner class, own class) cell.
+`/multiway` renders it with a partner-hand selector; the marginal chart is the default.
+Configs: `configs/pushfold_4way_10bb_team_{unaware,aware}.json`.
+
+Still open under M9: teams of three or more seats and multiple teams (the joint quotient generalizes but the orbit space grows), general payoff-weight matrices (only summed-EV teams exist), and a team-aware best-response evaluator so team solves get a convergence number again.
+
+- **M10 - Bayesian unknown-collusion**: chance root over team type with probability p - now precisely the p-interpolation between M9's two awareness modes (p=0 is unaware, p=1 is aware); opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.
 
 Out of scope, permanently (do not build speculatively): TMECor / coordination-without-card-visibility, cloud SDKs inside the engine.
 Hand abstraction/bucketing became a PER-CORE rule with M8c: still permanently out of the vectorized core, in scope for the sampled core as the route to multiway postflop and PLO (the `InfosetIndexer` seam is where it lands).

@@ -167,6 +167,10 @@ struct SampledConfig {
   // of silently no-opping.
   bool symmetry = true;
   bool symmetry_explicit = false;
+  // The hand-sharing pair from agents.partition, copied here at parse time
+  // purely so the memory estimator can size the joint rows without a
+  // SolveConfig dependency. Empty = no team.
+  std::vector<int> partition_team;
 };
 
 struct QreConfig {

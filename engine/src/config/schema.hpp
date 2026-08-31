@@ -91,6 +91,13 @@ struct SolveConfig {
   // because it is what the artifact metadata records and what every
   // downstream refusal (the Pio harness, the solutions exporter) keys off.
   std::string qre_mode = "nash";
+  // Team solves (one 2-seat hand-sharing group in agents.partition):
+  // "aware" trains everyone together (opponents adapt to the team);
+  // "unaware" freezes opponents at a no-team baseline solved first and
+  // trains only the team - the joint best response. Empty when no team.
+  std::string awareness;
+  // Iterations for the unaware baseline phase; 0 = budget.iterations.
+  std::uint64_t baseline_iterations = 0;
   QreConfig qre;  // qre.lambda / qre.anneal - only read when qre_mode == "qre"
 
   std::vector<std::vector<int>> partition;  // seat indices per agent

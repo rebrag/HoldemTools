@@ -39,7 +39,7 @@ export interface PushFoldDump {
     seats: string[];
     stacks?: number[];
     ev_chips: number[];
-    final_nashconv: number;
+    final_nashconv: number | null;
     iterations: number;
     pot: number;
     chip_scale: number;
@@ -47,6 +47,20 @@ export interface PushFoldDump {
     opponent_card_removal?: string;
     solver_family?: string;
     hand_symmetry?: string;
+    final_exploitable_chips?: number | null;
+    team?: {
+      seats: number[];
+      awareness: string;
+      ev_chips: number;
+      baseline_ev_chips?: number[];
+      baseline_team_ev_chips?: number;
+      uplift_chips?: number;
+      strategy_export: string;
+    } | null;
+    team_rollup?: Record<
+      string,
+      { actor: number; partner: number; num_actions: number; freq: number[][][] }
+    >;
     board_sample?: { iter_count: number; pair_count: number; seed: number };
     preflop?: {
       button: number;
@@ -64,6 +78,53 @@ export interface PushFoldDump {
  *  the jam is always the last action. Naming them here keeps the colour
  *  mapping in lib/solver/constants (where ALLIN and Fold already live)
  *  rather than inventing a second vocabulary. */
+/** The engine's 169-class grid convention (cards/combos.hpp): row-major
+ *  13x13, ranks A..2 descending, i < j suited, i > j offsuit. team_rollup
+ *  indexes cells by this raw class index, so the name table is mirrored
+ *  here rather than assumed. */
+const RANKS_DESC = "AKQJT98765432";
+export const CLASS_NAMES: string[] = Array.from({ length: 169 }, (_, c) => {
+  const i = Math.floor(c / 13);
+  const j = c % 13;
+  const hi = RANKS_DESC[Math.min(i, j)];
+  const lo = RANKS_DESC[Math.max(i, j)];
+  if (i === j) return `${hi}${lo}`;
+  return `${hi}${lo}${i < j ? "s" : "o"}`;
+});
+const CLASS_INDEX = new Map(CLASS_NAMES.map((name, i) => [name, i]));
+
+/** The conditioned chart for a hand-sharing team: the actor's strategy at
+ *  this node GIVEN the partner's hand class. freq carries the first
+ *  num_actions-1 frequencies; the last is one minus the rest. EVs are not
+ *  conditioned (the payload does not carry them per pair), so cells show
+ *  frequencies only. */
+export const conditionedGridFor = (
+  node: DumpNode,
+  rollup: { num_actions: number; freq: number[][][] },
+  partnerClass: number
+): HandCellData[] => {
+  const labels = actionLabels(node);
+  const prow = rollup.freq[partnerClass] ?? [];
+  return HAND_ORDER.map((hand) => {
+    const oc = CLASS_INDEX.get(hand);
+    const fr = oc != null ? prow[oc] ?? [] : [];
+    const actions: Record<string, number> = {};
+    let sum = 0;
+    labels.forEach((label, i) => {
+      if (i < labels.length - 1) {
+        const v = fr[i] ?? 0;
+        actions[label] = v;
+        sum += v;
+      }
+    });
+    if (labels.length > 0) {
+      actions[labels[labels.length - 1]] =
+        labels.length === 1 ? fr[0] ?? 1 : Math.max(0, 1 - sum);
+    }
+    return { hand, actions, evs: {} };
+  });
+};
+
 export const actionLabels = (node: DumpNode): string[] =>
   node.num_children === 2 ? ["Fold", "ALLIN"] : ["ALLIN"];
 

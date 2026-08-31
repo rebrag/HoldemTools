@@ -452,10 +452,16 @@ const MultiwaySolver = () => {
               ))}
             </div>
 
-            <div className="grid grid-cols-[2.5rem_1fr_3.2rem] items-center gap-x-2 gap-y-1">
+            <div className="grid grid-cols-[2.5rem_1fr_3.2rem_3.2rem] items-center gap-x-2 gap-y-1">
               <span className={labelCls}>Seat</span>
               <span className={labelCls}>Stack (chips)</span>
               <span className={`${labelCls} text-center`}>Button</span>
+              <span
+                className={`${labelCls} text-center`}
+                title="Mark exactly two seats to share hole cards and maximize their SUMMED EV - collusion research. The pair plays one joint strategy conditioned on both hands."
+              >
+                Share
+              </span>
               {Array.from({ length: view.players }, (_, i) => (
                 <div key={i} className="contents">
                   <span className="text-[11px] font-semibold text-slate-300">{labels[i]}</span>
@@ -481,6 +487,21 @@ const MultiwaySolver = () => {
                     aria-label={`Button on seat ${i + 1}`}
                     className="mx-auto h-3.5 w-3.5 accent-emerald-500"
                   />
+                  <input
+                    type="checkbox"
+                    checked={view.teamSeats.includes(i)}
+                    disabled={solving || (view.teamSeats.length >= 2 && !view.teamSeats.includes(i))}
+                    onChange={() =>
+                      setView((v) => ({
+                        ...v,
+                        teamSeats: v.teamSeats.includes(i)
+                          ? v.teamSeats.filter((s) => s !== i)
+                          : [...v.teamSeats, i],
+                      }))
+                    }
+                    aria-label={`Seat ${i + 1} shares hands`}
+                    className="mx-auto h-3.5 w-3.5 accent-amber-500"
+                  />
                 </div>
               ))}
             </div>
@@ -489,6 +510,35 @@ const MultiwaySolver = () => {
               big blind, and the action runs {order.map((s) => labels[s]).join(" → ")}.
               {view.players === 2 ? " Heads-up the button is the small blind and acts first." : ""}
             </p>
+            {view.teamSeats.length === 2 && (
+              <div className="mt-2 rounded-lg border border-amber-900/60 bg-amber-950/20 p-2">
+                <div className="flex items-center gap-3">
+                  <span className={labelCls}>
+                    {labels[view.teamSeats[0]]}+{labels[view.teamSeats[1]]} share hands. Opponents
+                  </span>
+                  {(["unaware", "aware"] as const).map((mode) => (
+                    <label key={mode} className="flex items-center gap-1 text-[11px] text-slate-300">
+                      <input
+                        type="radio"
+                        name="awareness"
+                        checked={view.awareness === mode}
+                        disabled={solving}
+                        onChange={() => set("awareness", mode)}
+                        className="h-3 w-3 accent-amber-500"
+                      />
+                      {mode === "unaware" ? "don't know" : "know"}
+                    </label>
+                  ))}
+                </div>
+                <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+                  {view.awareness === "unaware"
+                    ? "Opponents play the frozen no-team baseline (solved first); the team computes a joint best response against it - the maximum-extraction answer, with a real convergence guarantee (one payoff, one optimizer)."
+                    : "Everyone trains together with the team as one payoff-coupled player, so opponents adapt - and being known to share hands can cost more than the sharing gains."}{" "}
+                  Research and analysis tooling: using this against live tables is cheating and
+                  bannable everywhere.
+                </p>
+              </div>
+            )}
           </section>
 
           <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">

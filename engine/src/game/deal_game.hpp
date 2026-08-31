@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <stdexcept>
 #include <vector>
 
 #include "game/types.hpp"
@@ -62,6 +63,43 @@ class DealGame {
   virtual void hand_classes(std::vector<std::uint16_t>& class_of, int& num_classes) const {
     class_of.clear();
     num_classes = 0;
+  }
+
+  // Joint quotient for hand-sharing teams: dense class id for the ORDERED
+  // disjoint pair (own hand, partner hand) under SIMULTANEOUS suit
+  // permutation - the exact orbit, by the same argument as hand_classes.
+  // class_of_pair is sized H*H with a sentinel (0xFFFFFFFF) on
+  // non-disjoint pairs. Returns false when the game has no such quotient
+  // (or its ranges are not closed under the suit group), in which case a
+  // team solve must refuse rather than approximate.
+  virtual bool joint_hand_classes(std::vector<std::uint32_t>&, int&) const { return false; }
+
+  // Team showdown: out[h] = hero's share PLUS the pinned partner's share
+  // given hero holds h, minus BOTH commitments. The partner's cut depends
+  // on h (h can beat, tie, or lose to the partner), which is why this is
+  // not deal_showdown_values called twice. Only games that support teams
+  // implement it.
+  virtual void deal_showdown_values_team(NodeId, int, int, const Deal&,
+                                         const std::vector<std::uint32_t>&,
+                                         std::vector<float>&) const {
+    throw std::runtime_error("this game does not support hand-sharing teams");
+  }
+
+  // Every seat's chips at a SHOWDOWN terminal with ALL hands pinned to the
+  // deal - the scalar evaluation the sampled EV pass runs per terminal per
+  // deal. out is sized num_seats. The default derives it from
+  // deal_showdown_values, which is fine for toy games; hot implementations
+  // override with a scalar layer scan.
+  virtual void deal_showdown_pinned(NodeId node, const Deal& deal,
+                                    const std::vector<std::uint32_t>& strengths, int num_seats,
+                                    std::vector<double>& out) const {
+    out.assign(static_cast<std::size_t>(num_seats), 0.0);
+    std::vector<float> per_hand;
+    for (int s = 0; s < num_seats; ++s) {
+      deal_showdown_values(node, s, deal, strengths, per_hand);
+      out[static_cast<std::size_t>(s)] =
+          static_cast<double>(per_hand[deal.hand[static_cast<std::size_t>(s)]]);
+    }
   }
 
   // Per-hero-hand chips at a SHOWDOWN terminal on this concrete deal:

@@ -1047,6 +1047,152 @@ void NlhePreflopGame::hand_classes(std::vector<std::uint16_t>& class_of,
   num_classes = kNumHandClasses;
 }
 
+bool NlhePreflopGame::joint_hand_classes(std::vector<std::uint32_t>& class_of_pair,
+                                         int& num_classes) const {
+  constexpr std::uint32_t kNoJoint = std::numeric_limits<std::uint32_t>::max();
+  const int hands = universe_.size();
+  const std::size_t h2 = static_cast<std::size_t>(hands) * static_cast<std::size_t>(hands);
+  // The 23 non-identity suit permutations as compact-hand maps. A missing
+  // entry means the universe is not closed under the suit group (an
+  // asymmetric range); a team must refuse rather than quotient wrongly.
+  std::vector<std::vector<std::uint16_t>> maps;
+  maps.reserve(23);
+  for (const SuitPerm& perm : all_suit_perms()) {
+    std::vector<std::uint16_t> map = perm_hand_map(perm, universe_);
+    for (std::uint16_t v : map) {
+      if (v >= hands) return false;
+    }
+    maps.push_back(std::move(map));
+  }
+  class_of_pair.assign(h2, kNoJoint);
+  // Representative = the row-major-minimal image of the ordered pair over
+  // the 24 permutations. Ids assigned in first-seen (ascending) order, so
+  // the numbering is deterministic.
+  std::vector<std::uint32_t> id_of_rep(h2, kNoJoint);
+  std::uint32_t next = 0;
+  for (int a = 0; a < hands; ++a) {
+    const std::uint64_t mask_a = universe_.masks[static_cast<std::size_t>(a)];
+    for (int b = 0; b < hands; ++b) {
+      if (a == b) continue;
+      if ((mask_a & universe_.masks[static_cast<std::size_t>(b)]) != 0) continue;
+      std::uint32_t rep = static_cast<std::uint32_t>(a) * static_cast<std::uint32_t>(hands) +
+                          static_cast<std::uint32_t>(b);
+      for (const auto& map : maps) {
+        const std::uint32_t cand =
+            static_cast<std::uint32_t>(map[static_cast<std::size_t>(a)]) *
+                static_cast<std::uint32_t>(hands) +
+            static_cast<std::uint32_t>(map[static_cast<std::size_t>(b)]);
+        if (cand < rep) rep = cand;
+      }
+      if (id_of_rep[rep] == kNoJoint) id_of_rep[rep] = next++;
+      class_of_pair[static_cast<std::size_t>(a) * static_cast<std::size_t>(hands) +
+                    static_cast<std::size_t>(b)] = id_of_rep[rep];
+    }
+  }
+  num_classes = static_cast<int>(next);
+  return true;
+}
+
+void NlhePreflopGame::deal_showdown_values_team(NodeId id, int seat, int mate,
+                                                const Deal& deal,
+                                                const std::vector<std::uint32_t>& strengths,
+                                                std::vector<float>& out) const {
+  const Node& node = tree_[id];
+  const TerminalPlan& plan = terminal_plan_[static_cast<std::size_t>(node.terminal_index)];
+  const int hands = universe_.size();
+  const float base = -static_cast<float>(plan.commit[static_cast<std::size_t>(seat)] +
+                                         plan.commit[static_cast<std::size_t>(mate)]);
+  out.assign(static_cast<std::size_t>(hands), base);
+  const bool hero_alive = (plan.alive_mask & (1u << seat)) != 0;
+  const bool mate_alive = (plan.alive_mask & (1u << mate)) != 0;
+  const std::uint32_t s_m =
+      mate_alive ? strengths[deal.hand[static_cast<std::size_t>(mate)]] : 0;
+
+  float const_add = 0.0f;  // layers hero cannot enter: mate-vs-opps, one scalar
+  for (const Layer& layer : plan.layers) {
+    if (layer.amount <= 0.0) continue;
+    const bool hero_in = hero_alive && (layer.eligible & (1u << seat)) != 0;
+    const bool mate_in = mate_alive && (layer.eligible & (1u << mate)) != 0;
+    if (!hero_in && !mate_in) continue;
+    std::uint32_t best = 0;
+    int cnt = 0;
+    for (int q = 0; q < seats_; ++q) {
+      if (q == seat || q == mate || (layer.eligible & (1u << q)) == 0) continue;
+      const std::uint32_t sq = strengths[deal.hand[static_cast<std::size_t>(q)]];
+      if (sq > best) {
+        best = sq;
+        cnt = 1;
+      } else if (sq == best) {
+        ++cnt;
+      }
+    }
+    const float amount = static_cast<float>(layer.amount);
+    if (!hero_in) {
+      // The partner contests this layer without the hero, against pinned
+      // opponents only - a deal constant.
+      if (s_m > best) {
+        const_add += amount;
+      } else if (s_m == best) {
+        const_add += amount / static_cast<float>(1 + cnt);
+      }
+      continue;
+    }
+    const std::uint32_t s_mate = mate_in ? s_m : 0;
+    for (int h = 0; h < hands; ++h) {
+      const std::uint32_t s_h = strengths[static_cast<std::size_t>(h)];
+      std::uint32_t top = s_h;
+      if (mate_in && s_mate > top) top = s_mate;
+      if (best > top) top = best;
+      const int winners = (s_h == top ? 1 : 0) + (mate_in && s_mate == top ? 1 : 0) +
+                          (best == top ? cnt : 0);
+      // winners >= 1 whenever the layer pays anyone here; blocked hands
+      // carry garbage the caller's reach zeroes.
+      const float share = amount / static_cast<float>(winners);
+      float take = 0.0f;
+      if (s_h == top) take += share;
+      if (mate_in && s_mate == top) take += share;
+      out[static_cast<std::size_t>(h)] += take;
+    }
+  }
+  if (const_add != 0.0f) {
+    for (int h = 0; h < hands; ++h) out[static_cast<std::size_t>(h)] += const_add;
+  }
+}
+
+void NlhePreflopGame::deal_showdown_pinned(NodeId id, const Deal& deal,
+                                           const std::vector<std::uint32_t>& strengths,
+                                           int num_seats, std::vector<double>& out) const {
+  const Node& node = tree_[id];
+  const TerminalPlan& plan = terminal_plan_[static_cast<std::size_t>(node.terminal_index)];
+  out.assign(static_cast<std::size_t>(num_seats), 0.0);
+  for (int s = 0; s < num_seats; ++s) {
+    out[static_cast<std::size_t>(s)] = -plan.commit[static_cast<std::size_t>(s)];
+  }
+  for (const Layer& layer : plan.layers) {
+    if (layer.amount <= 0.0) continue;
+    std::uint32_t top = 0;
+    int winners = 0;
+    for (int q = 0; q < num_seats; ++q) {
+      if ((layer.eligible & (1u << q)) == 0) continue;
+      const std::uint32_t sq = strengths[deal.hand[static_cast<std::size_t>(q)]];
+      if (sq > top) {
+        top = sq;
+        winners = 1;
+      } else if (sq == top) {
+        ++winners;
+      }
+    }
+    if (winners == 0) continue;
+    const double share = layer.amount / winners;
+    for (int q = 0; q < num_seats; ++q) {
+      if ((layer.eligible & (1u << q)) == 0) continue;
+      if (strengths[deal.hand[static_cast<std::size_t>(q)]] == top) {
+        out[static_cast<std::size_t>(q)] += share;
+      }
+    }
+  }
+}
+
 void NlhePreflopGame::deal_strengths(const Deal& deal, std::vector<std::uint32_t>& out) const {
   const int hands = universe_.size();
   std::uint64_t board_mask = 0;

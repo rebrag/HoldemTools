@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "config/schema.hpp"
 #include "game/game.hpp"
 #include "io/artifact_store.hpp"
@@ -16,6 +18,12 @@ struct SolveStats {
   std::uint64_t iterations = 0;
   double nashconv = 0.0;
   std::vector<double> ev_chips;  // per-seat root EVs in chips; they sum to the root pot
+  // Team solves (M9). Empty/default on everything else.
+  std::vector<int> team_seats;             // the hand-sharing pair
+  std::string awareness;                   // "aware" | "unaware" | ""
+  std::vector<double> baseline_ev_chips;   // unaware: the frozen no-team reference EVs
+  bool nashconv_valid = true;              // false when nashconv is not a meaningful measure
+  nlohmann::json team_rollup;              // conditioned 169x169 chart per team node
   // Wall clock for the whole solve loop (CFR + every checkpoint's
   // best-response), and the worker count it ran on. Both are reported so a
   // timing comparison against another solver is interpretable.

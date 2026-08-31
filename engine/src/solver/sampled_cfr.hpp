@@ -5,9 +5,12 @@
 
 #include "game/deal_game.hpp"
 #include "game/game.hpp"
+#include "solver/agents.hpp"
 #include "solver/strategy_source.hpp"
 #include "solver/updates.hpp"
 #include "util/parallel.hpp"
+
+#include <nlohmann/json.hpp>
 
 namespace engine {
 
@@ -49,10 +52,37 @@ namespace engine {
 class SampledCfrSolver final : public StrategySource {
  public:
   // `game` and `deals` must be the same object wearing both interfaces.
+  // A non-identity AgentMap (one 2-seat hand-sharing team) switches the
+  // team seats to JOINT infosets - their storage rows are indexed by the
+  // suit orbit of (own hand, partner hand) - and to SUMMED payoffs: a team
+  // hero's terminal value is its own chips plus the pinned partner's chips
+  // on the same deal. Everything else is the plain solver.
   SampledCfrSolver(const Game& game, const DealGame& deals, const SampledConfig& config,
-                   int threads = 1);
+                   int threads = 1, AgentMap agents = {});
 
   void run(std::uint64_t iterations);
+
+  // Unaware mode: pin `frozen[seat]` seats to `source`'s average strategy.
+  // They stop training (their hero traversals are skipped) and every read
+  // of their policy uses the frozen hand-major rows instead of regret
+  // matching - which makes the remaining training a genuine JOINT BEST
+  // RESPONSE for the team: one optimizer, one payoff, so CFR's convergence
+  // guarantee actually applies here, unlike the general 3+ agent case.
+  void freeze_seats_from(const StrategySource& source, const std::vector<bool>& frozen);
+
+  // Per-seat EVs under the CURRENT average profile, by dealing `num_deals`
+  // fresh seeded deals (a stream independent of training) and walking the
+  // betting tree with every seat pinned - joint rows for the team, frozen
+  // rows for frozen seats. Each deal's payoffs sum to the pot, so these
+  // EVs conserve EXACTLY at any seat count; marginal per-seat strategies
+  // cannot reproduce a team's correlated behavior, which is why the
+  // factorized evaluator must not be used for team EVs.
+  std::vector<double> sampled_ev(std::uint64_t num_deals, std::uint64_t seed) const;
+
+  // The conditioned chart for a hand-sharing team: for every team decision
+  // node, reach-weighted action frequencies per (partner class, own class)
+  // cell, aggregated from the joint rows. Empty json when there is no team.
+  nlohmann::json team_rollup_json() const;
 
   // StrategySource: the artifact writer and best-response pass plug in here.
   std::uint64_t iteration() const override { return t_; }
@@ -83,6 +113,8 @@ class SampledCfrSolver final : public StrategySource {
     std::vector<float> hero_root;                  // masked root reach
     std::vector<std::uint16_t> blocked;            // hero hands colliding with the deal
     std::vector<std::vector<float>> class_sigma;   // per depth: A*rows action-major
+    std::vector<std::uint32_t> team_rows;          // per-hand joint row scratch
+    std::vector<std::vector<float>> oppw_stack;    // per depth: H per-hand opp weights
     std::vector<std::vector<float>> sigma_stack;   // per depth: A*H action-major
     std::vector<std::vector<float>> child_stack;   // per depth: A*H child values
     std::vector<std::vector<float>> reach_stack;   // per depth: H hero reach
@@ -93,13 +125,27 @@ class SampledCfrSolver final : public StrategySource {
   // Counterfactual values for `hero`'s hands at `id` under the lane's deal,
   // scaled by the pinned opponents' reach `opp_w`. Writes into out (length =
   // hero hands).
-  void traverse(NodeId id, int hero, Lane& lane, double opp_w,
+  // opp_wv: per-hero-hand opponent weight, or null. It exists because a
+  // TEAM partner's policy conditions on the hero's hand, and the hero is
+  // vectorized here - so past a partner node the opponents' reach is a
+  // VECTOR over hero hands, not a scalar. Null until the traversal passes
+  // the hero's partner acting; the effective weight is always
+  // opp_w * (opp_wv ? opp_wv[h] : 1).
+  void traverse(NodeId id, int hero, Lane& lane, double opp_w, const float* opp_wv,
                 const std::vector<float>& hero_reach, int chance_depth, int depth,
                 std::vector<float>& out);
+
+  // Sigma for one pinned actor at `node` holding `hand` (partner-aware for
+  // team seats, frozen-aware for frozen seats), written into out[actions].
+  void pinned_sigma(NodeId node, int actor, const Deal& deal, float* out) const;
+  void ev_walk(NodeId id, double weight, const Deal& deal,
+               const std::vector<std::uint32_t>& strengths,
+               std::vector<double>& pinned_scratch, std::vector<double>& ev) const;
 
   const Game& game_;
   const DealGame& deals_;
   SampledConfig config_;
+  AgentMap agents_;
   InfosetLayout layout_;
   // The storage quotient. `class_of_[hand]` is the storage row a hand reads
   // and writes; identity (and store_* == the hand layout) when the game
@@ -109,6 +155,15 @@ class SampledCfrSolver final : public StrategySource {
   std::vector<std::uint32_t> store_hands_;   // by decision_index: classes or hands
   std::size_t store_total_ = 0;
   int num_classes_ = 0;  // 0 = identity
+  // Team state. joint_class_[own * H + partner] -> joint storage row
+  // (0xFFFFFFFF on overlapping pairs); sized only when a team exists.
+  std::vector<std::uint32_t> joint_class_;
+  int joint_classes_ = 0;
+  int universe_hands_ = 0;
+  // Unaware mode: frozen hand-major average-strategy rows per node id for
+  // the seats in frozen_seat_; empty vectors elsewhere.
+  std::vector<std::vector<float>> frozen_rows_;
+  std::vector<bool> frozen_seat_;
   std::vector<float> regrets_;
   std::vector<float> strat_sum_;
   std::vector<Lane> lanes_;

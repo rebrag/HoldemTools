@@ -75,6 +75,14 @@ export interface MultiwayView {
   button: number;
   stacks: string[];
 
+  /* ---- Team (hand-sharing collusion research) ----
+   * Seat indices sharing hole cards and maximizing SUMMED EV: empty or
+   * exactly two. Awareness picks the game: "aware" = opponents adapt to
+   * the team (a new equilibrium); "unaware" = opponents play the frozen
+   * no-team baseline and the team best-responds jointly. */
+  teamSeats: number[];
+  awareness: "aware" | "unaware";
+
   /* ---- Solve settings ---- */
   boardSampleIter: string;
   boardSamplePair: string;
@@ -95,6 +103,8 @@ export const DEFAULT_VIEW: MultiwayView = {
   dead: "0",
   button: 3,
   stacks: ["20", "20", "20", "20"],
+  teamSeats: [],
+  awareness: "unaware",
   boardSampleIter: "500",
   boardSamplePair: "20000",
   seed: "20260830",
@@ -110,7 +120,13 @@ export const withPlayers = (view: MultiwayView, players: number): MultiwayView =
   const n = Math.min(MAX_PLAYERS, Math.max(MIN_PLAYERS, Math.round(players)));
   const last = view.stacks[view.stacks.length - 1] ?? "20";
   const stacks = Array.from({ length: n }, (_, i) => view.stacks[i] ?? last);
-  return { ...view, players: n, stacks, button: Math.min(view.button, n - 1) };
+  return {
+    ...view,
+    players: n,
+    stacks,
+    button: Math.min(view.button, n - 1),
+    teamSeats: view.teamSeats.filter((s) => s < n),
+  };
 };
 
 const num = (text: string): number => {
@@ -146,6 +162,12 @@ export const validate = (view: MultiwayView): string[] => {
     issues.push("Multiway board sample must be at least 1.");
   }
   if (!(num(view.maxIterations) >= 1)) issues.push("Max iterations must be at least 1.");
+  if (view.teamSeats.length !== 0 && view.teamSeats.length !== 2) {
+    issues.push("A hand-sharing team is exactly two seats (or none).");
+  }
+  if (view.teamSeats.length === 2 && view.players < 3) {
+    issues.push("A team needs at least one opponent.");
+  }
   return issues;
 };
 
@@ -191,13 +213,27 @@ export const buildMultiwayConfig = (view: MultiwayView): Record<string, unknown>
     // cards, so opponent-vs-opponent card removal is exact in expectation and
     // root EVs sum to the dead money by construction - the property the
     // factorized estimator provably cannot reach past 3 seats. 2-3 seats
-    // stay on the vectorized core, whose evaluator is exact there and whose
-    // accuracy stop is honest. A sampled "iteration" is one dealt hand, not
-    // one exact tree pass, hence the per-family checkpoint cadence.
+    // stay on the vectorized core - EXCEPT when a team exists, which only
+    // the sampled core can express. A sampled "iteration" is one dealt
+    // hand, not one exact tree pass, hence the per-family checkpoint
+    // cadence.
     algorithm:
-      view.players >= 4
+      view.players >= 4 || view.teamSeats.length === 2
         ? { family: "sampled", sampled: { seed: num(view.seed), batch: 1024, lanes: 16 } }
         : { update: "dcfr" },
+    ...(view.teamSeats.length === 2
+      ? {
+          agents: {
+            partition: [
+              [...view.teamSeats].sort((x, y) => x - y),
+              ...Array.from({ length: view.players }, (_, i) => i)
+                .filter((i) => !view.teamSeats.includes(i))
+                .map((i) => [i]),
+            ],
+            awareness: view.awareness,
+          },
+        }
+      : {}),
     budget: {
       iterations: num(view.maxIterations),
       target_nashconv: num(view.accuracy),
@@ -205,7 +241,8 @@ export const buildMultiwayConfig = (view: MultiwayView): Record<string, unknown>
       // best-response pass over the factorized evaluator (~38 s at 500
       // boards), and targets cannot stop a 4+ seat sampled solve anyway,
       // so mid-solve checkpoints would only multiply the measuring cost.
-      checkpoint_every: view.players >= 4 ? num(view.maxIterations) : 25,
+      checkpoint_every:
+        view.players >= 4 || view.teamSeats.length === 2 ? num(view.maxIterations) : 25,
     },
     memory_limit_gb: 12,
     threads: 0,
