@@ -524,6 +524,12 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
   // rate a QRE solve against Pio, and the solutions exporter will not publish
   // one. Both are correct - a QRE deliberately is not a Nash equilibrium.
   meta["mode"] = config.qre_mode;
+  meta["solver_family"] = config.sampled.enabled ? "sampled" : "vectorized";
+  meta["sampled"] = config.sampled.enabled
+                        ? json({{"seed", config.sampled.seed},
+                                {"batch", config.sampled.batch},
+                                {"lanes", config.sampled.lanes}})
+                        : json(nullptr);
   meta["lambda"] = config.qre.enabled ? json(config.qre.lambda) : json(nullptr);
   meta["iterations"] = stats.iterations;
   meta["final_nashconv"] = stats.nashconv;

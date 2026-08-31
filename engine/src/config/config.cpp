@@ -319,6 +319,59 @@ SolveConfig load_config(const std::string& path_text) {
     if (config.sampling.enabled) config.recalc.enabled = false;
   }
 
+  if (j.contains("algorithm") && j.at("algorithm").contains("family")) {
+    const std::string family = j.at("algorithm").value("family", "vectorized");
+    if (family == "vectorized") {
+      config.sampled.enabled = false;
+    } else if (family == "sampled") {
+      config.sampled.enabled = true;
+    } else {
+      fail("algorithm.family must be vectorized | sampled, got '" + family + "'");
+    }
+  }
+  if (j.contains("algorithm") && j.at("algorithm").contains("sampled")) {
+    if (!config.sampled.enabled) {
+      // Parameters for a core the config did not select would be dead knobs
+      // that look load-bearing.
+      fail("algorithm.sampled is set but algorithm.family is not \"sampled\"");
+    }
+    const json& s = j.at("algorithm").at("sampled");
+    config.sampled.seed = s.value("seed", config.sampled.seed);
+    config.sampled.batch = s.value("batch", config.sampled.batch);
+    config.sampled.lanes = s.value("lanes", config.sampled.lanes);
+    if (config.sampled.batch < 1 || config.sampled.batch > 1u << 20) {
+      fail("algorithm.sampled.batch must be in [1, 1048576]");
+    }
+    if (config.sampled.lanes < 1 || config.sampled.lanes > 256) {
+      fail("algorithm.sampled.lanes must be in [1, 256]");
+    }
+  }
+  if (config.sampled.enabled) {
+    // The sampled core deals concrete cards, so it needs a DealGame; today
+    // that is the preflop game and the toys. It has no chance-node
+    // subsampling, no recalc schedule (nothing is re-enumerated), and QRE
+    // has not been ported to it yet - refuse combinations rather than
+    // silently ignoring the knobs.
+    if (config.game == "nlhe") {
+      fail("algorithm.family \"sampled\" does not run postflop nlhe yet - the postflop "
+           "game has no deal interface. Use the vectorized family there.");
+    }
+    if (config.sampling.enabled) {
+      fail("algorithm.sampling subsamples chance children inside the VECTORIZED core; "
+           "the sampled family deals its own cards. Remove algorithm.sampling.");
+    }
+    if (j.contains("qre") && j.at("qre").value("mode", "nash") == "qre") {
+      fail("qre has not been ported to the sampled family yet; use the vectorized "
+           "family for QRE solves.");
+    }
+    if (j.contains("algorithm") && j.at("algorithm").contains("recalc") &&
+        j.at("algorithm").at("recalc").value("enabled", true)) {
+      fail("algorithm.recalc is a vectorized-core schedule; the sampled family "
+           "re-walks the tree every iteration by design. Remove algorithm.recalc.");
+    }
+    config.recalc.enabled = false;
+  }
+
   if (j.contains("qre")) {
     const json& q = j.at("qre");
     config.qre_mode = q.value("mode", "nash");
