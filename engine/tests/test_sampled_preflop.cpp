@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "cards/combos.hpp"
 #include "config/schema.hpp"
 #include "game/nlhe_preflop.hpp"
 #include "solver/best_response.hpp"
@@ -119,6 +120,58 @@ TEST_CASE("sampled core lands in the published heads-up 10bb push/fold bands") {
   // Blinds are posted at the tree root, so commits INCLUDE them and root EVs
   // sum to the dead money: zero here.
   CHECK(std::abs(br.ev[0] + br.ev[1]) < 1e-3);
+}
+
+TEST_CASE("suit quotient: member combos are identical and variance improves") {
+  const SolveConfig config = sampled_pushfold_config(2, 40);
+  NlhePreflopGame game(config);
+
+  SampledConfig on_cfg = sampled_solver_config();
+  on_cfg.symmetry = true;
+  on_cfg.symmetry_explicit = true;
+  SampledCfrSolver on(game, game, on_cfg, config.threads);
+  on.run(50000);
+  const double nc_on = compute_best_response(game, on).nashconv();
+
+  SampledConfig off_cfg = sampled_solver_config();
+  off_cfg.symmetry = false;
+  SampledCfrSolver off(game, game, off_cfg, config.threads);
+  off.run(50000);
+  const double nc_off = compute_best_response(game, off).nashconv();
+
+  MESSAGE("HU 10bb at 50k deals: nashconv " << nc_off << " without the quotient, " << nc_on
+          << " with it (" << (nc_on > 0.0 ? nc_off / nc_on : 0.0) << "x)");
+  // Deterministic seeds: this is a calibrated measurement, not a flake. The
+  // quotient pools every member combo's sample into one row, so at the same
+  // deal budget it must not be WORSE.
+  CHECK(nc_on <= nc_off);
+
+  // Exactness of the expansion: every member combo of a class reads the same
+  // storage row, so rows must be BITWISE identical - never a tolerance. With
+  // full ranges the compact universe is the canonical 1326 in order, so the
+  // compact hand index IS the canonical combo index.
+  const PublicTree& tree = game.tree();
+  for (const NodeId id : {static_cast<NodeId>(0), tree[0].first_child + 1}) {
+    REQUIRE(tree[id].kind == NodeKind::Decision);
+    std::vector<float> rows;
+    on.average_strategy(id, rows);
+    std::vector<int> seen(169, -1);
+    int mismatches = 0;
+    for (int h = 0; h < 1326; ++h) {
+      const int cls = combo_class_index(h);
+      if (seen[cls] < 0) {
+        seen[cls] = h;
+        continue;
+      }
+      for (int a = 0; a < 2; ++a) {
+        if (rows[static_cast<std::size_t>(h) * 2 + static_cast<std::size_t>(a)] !=
+            rows[static_cast<std::size_t>(seen[cls]) * 2 + static_cast<std::size_t>(a)]) {
+          ++mismatches;
+        }
+      }
+    }
+    CHECK(mismatches == 0);
+  }
 }
 
 TEST_CASE("sampled core conserves chips on the 3-way 10bb spot") {

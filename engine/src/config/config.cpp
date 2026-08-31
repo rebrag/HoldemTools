@@ -339,6 +339,12 @@ SolveConfig load_config(const std::string& path_text) {
     config.sampled.seed = s.value("seed", config.sampled.seed);
     config.sampled.batch = s.value("batch", config.sampled.batch);
     config.sampled.lanes = s.value("lanes", config.sampled.lanes);
+    if (s.contains("symmetry")) {
+      config.sampled.symmetry = s.at("symmetry").get<bool>();
+      // Recorded so the solver can refuse an EXPLICIT request on a game
+      // with no quotient, while the default silently no-ops there.
+      config.sampled.symmetry_explicit = true;
+    }
     if (config.sampled.batch < 1 || config.sampled.batch > 1u << 20) {
       fail("algorithm.sampled.batch must be in [1, 1048576]");
     }

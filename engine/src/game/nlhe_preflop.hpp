@@ -87,6 +87,9 @@ class NlhePreflopGame final : public Game, public DealGame {
   // resolves the same TerminalPlan layers as the vectorized path but against
   // PINNED opponents, so it is O(H) flat with no inclusion-exclusion.
   void sample_deal(std::uint64_t seed, std::uint64_t iter, Deal& out) const override;
+  // The 169 classes ARE the suit orbits of the preflop combos, and no
+  // infoset in this tree sees a board card, so the quotient is exact.
+  void hand_classes(std::vector<std::uint16_t>& class_of, int& num_classes) const override;
   void deal_strengths(const Deal& deal, std::vector<std::uint32_t>& out) const override;
   void deal_showdown_values(NodeId node, int seat, const Deal& deal,
                             const std::vector<std::uint32_t>& strengths,

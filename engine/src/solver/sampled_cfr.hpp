@@ -82,6 +82,7 @@ class SampledCfrSolver final : public StrategySource {
     std::vector<std::uint32_t> strengths;
     std::vector<float> hero_root;                  // masked root reach
     std::vector<std::uint16_t> blocked;            // hero hands colliding with the deal
+    std::vector<std::vector<float>> class_sigma;   // per depth: A*rows action-major
     std::vector<std::vector<float>> sigma_stack;   // per depth: A*H action-major
     std::vector<std::vector<float>> child_stack;   // per depth: A*H child values
     std::vector<std::vector<float>> reach_stack;   // per depth: H hero reach
@@ -100,6 +101,14 @@ class SampledCfrSolver final : public StrategySource {
   const DealGame& deals_;
   SampledConfig config_;
   InfosetLayout layout_;
+  // The storage quotient. `class_of_[hand]` is the storage row a hand reads
+  // and writes; identity (and store_* == the hand layout) when the game
+  // reports no symmetry, so the identity path is bit-for-bit the original.
+  std::vector<std::uint16_t> class_of_;
+  std::vector<std::size_t> store_offset_;    // by decision_index
+  std::vector<std::uint32_t> store_hands_;   // by decision_index: classes or hands
+  std::size_t store_total_ = 0;
+  int num_classes_ = 0;  // 0 = identity
   std::vector<float> regrets_;
   std::vector<float> strat_sum_;
   std::vector<Lane> lanes_;

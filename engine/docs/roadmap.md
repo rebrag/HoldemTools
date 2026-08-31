@@ -744,6 +744,24 @@ The marginal iteration rate is ~57,000 deals/s, so at 600k the split is roughly 
 **The factorized measuring stick is still the majority of it**, and `board_sample.iter_count` scales it linearly while the sampled solve never reads that value - so it is the honest wall-clock knob, priced in EV display noise rather than strategy quality.
 The export pass is not "the root EVs": it stores per-hand, per-seat reach and conditional EV for EVERY decision node, and each terminal it touches runs the 500-board layer sweep.
 
+#### The suit quotient and the rollup payload (2026-08-31)
+
+Prompted by a user question that turned out to be two questions with one answer: why upload per-hand data a preflop chart never renders, and can the variance come down.
+
+**The quotient.** `algorithm.sampled.symmetry` (default on) makes the sampled core store one row per 169-class suit orbit on preflop trees: `DealGame::hand_classes` reports the map (built from `combo_class_index`), storage shrinks 8x, and `average_strategy` expands class rows back to the per-hand contract, so members of a class emit BITWISE-identical rows (gated in `test_sampled_preflop.cpp`). This is a lossless relabeling, not abstraction - preflop, no infoset can tell suits apart, so the classes are exactly the orbits of the suit group. The identity path (games reporting no quotient, or `symmetry: false`) is bit-for-bit the original solver.
+
+**The variance result, measured rather than repeated.** The naive expectation was ~8x sample pooling per row. The realized nashconv gain at equal deal budgets:
+
+| spot | without | with | ratio |
+|---|---|---|---|
+| HU 10bb, 50k deals | 0.01022 | 0.00902 | 1.13x |
+| 3-way 10bb, 150k deals (exact evaluator, 2000 boards) | 0.00797 | 0.00729 | 1.09x |
+| 4-way 10bb, 200k deals (first-order evaluator) | 0.04038 | 0.03900 | 1.04x |
+
+The gap between 8x and 1.1x has a mechanism: members of a class share each deal's board and pinned opponents, so their counterfactual samples are heavily correlated, and pooling correlated samples buys little. The quotient still earns its default - suit asymmetry in the OUTPUT is now structurally impossible (previously pure cosmetic noise), memory is 8x smaller, and it costs nothing (marginally faster). But anyone hunting a large variance win should look at the chance dimension (the board), not the hand dimension: the deal-to-deal board noise is the common factor the quotient cannot touch.
+
+**The payload.** `dump-json --fields rollup` emits node structure plus the 169-class rollups and none of the per-hand fields; the watcher uploads that for pushfold jobs. Measured on the 4-way artifact: 5.93 MB full -> 217 KB rollup (27x). `/multiway` renders identically - it never read the per-hand fields - and old full payloads remain a superset, so previously stored results still load.
+
 **What stays on the factorized path, deliberately.**
 Best-response diagnostics and the artifact export's per-hand reach/EV fields ride `Game::terminal_values` - exact at 2-3 seats, first-order at 4+ (artifacts stamp `solver_family`; the export caveat is `export_ev_estimator` territory).
 The 2-seat `e2_` path and the 3-seat factorized estimator stay: exact, fast, and the only deterministic cross-check oracle the sampled core has.

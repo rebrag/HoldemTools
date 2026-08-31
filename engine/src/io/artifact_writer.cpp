@@ -633,6 +633,12 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
     // evaluator, and export_ev_estimator says so.
     meta["opponent_card_removal"] =
         config.sampled.enabled ? "exact_sampled" : "pairwise_mass";
+    // The suit quotient is a lossless relabeling, not abstraction - but a
+    // consumer deciding how to render per-combo data deserves to know that
+    // members of a class are identical by construction.
+    meta["hand_symmetry"] = config.sampled.enabled && config.sampled.symmetry
+                                ? "suit_classes_169"
+                                : "none";
     meta["export_ev_estimator"] = "factorized_first_order";
   }
   meta["sections"] = {

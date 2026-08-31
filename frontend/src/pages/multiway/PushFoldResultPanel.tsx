@@ -187,10 +187,19 @@ const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
             pick between them. Read these as a strong strategy, not a proven one.
           </li>
         )}
-        <li>
-          Every one of the 1326 combos carries its own strategy; the 13x13 grid is display
-          aggregation, not bucketing.
-        </li>
+        {meta.hand_symmetry === "suit_classes_169" ? (
+          <li>
+            Strategies are per hand class: preflop no infoset can tell suits apart, so the 169
+            classes are exactly the suit orbits and merging them is a relabeling the game itself
+            makes - not bucketing. It also pools every member combo{"'"}s samples into one row,
+            which is where the variance reduction comes from.
+          </li>
+        ) : (
+          <li>
+            Every one of the 1326 combos carries its own strategy; the 13x13 grid is display
+            aggregation, not bucketing.
+          </li>
+        )}
       </ul>
     </section>
   );

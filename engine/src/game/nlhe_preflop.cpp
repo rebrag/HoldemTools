@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "cards/cards.hpp"
+#include "cards/combos.hpp"
 #include "eval/hand_eval.hpp"
 #include "game/preflop_tree.hpp"
 #include "ranges/iso.hpp"
@@ -1033,6 +1034,17 @@ void NlhePreflopGame::sample_deal(std::uint64_t seed, std::uint64_t iter, Deal& 
         idx < 0 ? std::numeric_limits<std::uint16_t>::max() : static_cast<std::uint16_t>(idx);
   }
   for (int b = 0; b < 5; ++b) out.board[static_cast<std::size_t>(b)] = cards[hole + b];
+}
+
+void NlhePreflopGame::hand_classes(std::vector<std::uint16_t>& class_of,
+                                   int& num_classes) const {
+  const int hands = universe_.size();
+  class_of.resize(static_cast<std::size_t>(hands));
+  for (int h = 0; h < hands; ++h) {
+    class_of[static_cast<std::size_t>(h)] = static_cast<std::uint16_t>(
+        combo_class_index(universe_.ids[static_cast<std::size_t>(h)]));
+  }
+  num_classes = kNumHandClasses;
 }
 
 void NlhePreflopGame::deal_strengths(const Deal& deal, std::vector<std::uint32_t>& out) const {

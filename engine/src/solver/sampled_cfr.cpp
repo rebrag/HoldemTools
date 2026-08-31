@@ -48,13 +48,51 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
                                std::to_string(kMaxActionsSampled) + " actions");
     }
   }
-  regrets_.assign(layout_.total, 0.0f);
-  strat_sum_.assign(layout_.total, 0.0f);
+  // The suit-symmetry quotient: storage rows are per CLASS when the game
+  // reports one and the config keeps it on (the default). Identity
+  // otherwise, with store_* equal to the hand layout, so that path is
+  // bit-for-bit the unquotiented solver.
+  {
+    std::vector<std::uint16_t> class_of;
+    int num_classes = 0;
+    deals.hand_classes(class_of, num_classes);
+    if (config_.symmetry && num_classes > 0) {
+      class_of_ = std::move(class_of);
+      num_classes_ = num_classes;
+    } else if (config_.symmetry && config_.symmetry_explicit && num_classes == 0) {
+      throw std::runtime_error(
+          "algorithm.sampled.symmetry was requested but this game reports no "
+          "suit-symmetry quotient");
+    }
+  }
+  if (num_classes_ == 0) {
+    int max_hands = 0;
+    for (int seat = 0; seat < game.num_seats(); ++seat) {
+      max_hands = std::max(max_hands, game.num_hands(seat));
+    }
+    class_of_.resize(static_cast<std::size_t>(max_hands));
+    for (int h = 0; h < max_hands; ++h) class_of_[static_cast<std::size_t>(h)] = static_cast<std::uint16_t>(h);
+  }
+  store_offset_.assign(layout_.node_offset.size(), InfosetLayout::kNoOffset);
+  store_hands_.assign(layout_.node_hands.size(), 0);
+  store_total_ = 0;
+  for (const Node& node : game.tree().nodes) {
+    if (node.kind != NodeKind::Decision) continue;
+    const std::size_t d = node.decision_index;
+    const std::uint32_t rows =
+        num_classes_ > 0 ? static_cast<std::uint32_t>(num_classes_) : layout_.node_hands[d];
+    store_offset_[d] = store_total_;
+    store_hands_[d] = rows;
+    store_total_ += static_cast<std::size_t>(layout_.node_actions[d]) * rows;
+  }
+  regrets_.assign(store_total_, 0.0f);
+  strat_sum_.assign(store_total_, 0.0f);
   max_depth_ = tree_depth(game.tree());
   lanes_.resize(config_.lanes);
   for (Lane& lane : lanes_) {
-    lane.regret_delta.assign(layout_.total, 0.0f);
-    lane.strat_delta.assign(layout_.total, 0.0f);
+    lane.regret_delta.assign(store_total_, 0.0f);
+    lane.strat_delta.assign(store_total_, 0.0f);
+    lane.class_sigma.resize(static_cast<std::size_t>(max_depth_) + 2);
     lane.sigma_stack.resize(static_cast<std::size_t>(max_depth_) + 2);
     lane.child_stack.resize(static_cast<std::size_t>(max_depth_) + 2);
     lane.reach_stack.resize(static_cast<std::size_t>(max_depth_) + 2);
@@ -102,8 +140,8 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
     // bits, mirroring the vectorized core's child-order fold.
     for (int l = 0; l < lanes; ++l) {
       const Lane& lane = lanes_[static_cast<std::size_t>(l)];
-      for (std::size_t i = 0; i < layout_.total; ++i) regrets_[i] += lane.regret_delta[i];
-      for (std::size_t i = 0; i < layout_.total; ++i) strat_sum_[i] += lane.strat_delta[i];
+      for (std::size_t i = 0; i < store_total_; ++i) regrets_[i] += lane.regret_delta[i];
+      for (std::size_t i = 0; i < store_total_; ++i) strat_sum_[i] += lane.strat_delta[i];
     }
     t_ = b1;
   }
@@ -200,7 +238,8 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
 
   const int actor = node.actor;
   const std::uint16_t actions = node.num_children;
-  const std::size_t offset = layout_.node_offset[node.decision_index];
+  const std::size_t offset = store_offset_[node.decision_index];
+  const std::uint32_t rows = store_hands_[node.decision_index];
 
   if (actor != hero) {
     // Pinned seat: one regret-matched row, scalar reach per action, and the
@@ -209,11 +248,11 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
     out.assign(my_hands, 0.0f);
     const std::uint16_t hq = lane.deal.hand[static_cast<std::size_t>(actor)];
     if (hq == kNoHand) return;
-    const std::uint32_t actor_hands = layout_.node_hands[node.decision_index];
+    const std::uint16_t hrow = class_of_[hq];
     std::array<float, kMaxActionsSampled> sigma{};
     float pos_sum = 0.0f;
     for (std::uint16_t a = 0; a < actions; ++a) {
-      const float r = regrets_[offset + static_cast<std::size_t>(a) * actor_hands + hq];
+      const float r = regrets_[offset + static_cast<std::size_t>(a) * rows + hrow];
       sigma[a] = r > 0.0f ? r : 0.0f;
       pos_sum += sigma[a];
     }
@@ -232,35 +271,44 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
     return;
   }
 
-  // Hero node: vectorized regret matching over every hand - the vectorized
-  // core's update shape against a one-deal opponent measure.
+  // Hero node: regret matching per STORAGE row (a suit class under the
+  // quotient, a hand without it), broadcast to a per-hand sigma for reach
+  // descent. On the identity path this computes the exact floats the
+  // unquotiented code did - the broadcast is a copy.
+  std::vector<float>& class_sigma = lane.class_sigma[static_cast<std::size_t>(depth)];
   std::vector<float>& sigma = lane.sigma_stack[static_cast<std::size_t>(depth)];
   std::vector<float>& child_vals = lane.child_stack[static_cast<std::size_t>(depth)];
   std::vector<float>& child_reach = lane.reach_stack[static_cast<std::size_t>(depth)];
   std::vector<float>& child_out = lane.value_stack[static_cast<std::size_t>(depth) + 1];
   const std::size_t cells = static_cast<std::size_t>(actions) * my_hands;
+  class_sigma.resize(static_cast<std::size_t>(actions) * rows);
   sigma.resize(cells);
   child_vals.resize(cells);
   child_reach.resize(my_hands);
 
-  for (std::uint32_t h = 0; h < my_hands; ++h) {
+  for (std::uint32_t c = 0; c < rows; ++c) {
     float pos_sum = 0.0f;
     for (std::uint16_t a = 0; a < actions; ++a) {
-      const float r = regrets_[offset + static_cast<std::size_t>(a) * my_hands + h];
+      const float r = regrets_[offset + static_cast<std::size_t>(a) * rows + c];
       const float p = r > 0.0f ? r : 0.0f;
-      sigma[static_cast<std::size_t>(a) * my_hands + h] = p;
+      class_sigma[static_cast<std::size_t>(a) * rows + c] = p;
       pos_sum += p;
     }
     if (pos_sum > 0.0f) {
       for (std::uint16_t a = 0; a < actions; ++a) {
-        sigma[static_cast<std::size_t>(a) * my_hands + h] /= pos_sum;
+        class_sigma[static_cast<std::size_t>(a) * rows + c] /= pos_sum;
       }
     } else {
       const float uniform = 1.0f / static_cast<float>(actions);
       for (std::uint16_t a = 0; a < actions; ++a) {
-        sigma[static_cast<std::size_t>(a) * my_hands + h] = uniform;
+        class_sigma[static_cast<std::size_t>(a) * rows + c] = uniform;
       }
     }
+  }
+  for (std::uint16_t a = 0; a < actions; ++a) {
+    const float* crow = class_sigma.data() + static_cast<std::size_t>(a) * rows;
+    float* srow = sigma.data() + static_cast<std::size_t>(a) * my_hands;
+    for (std::uint32_t h = 0; h < my_hands; ++h) srow[h] = crow[class_of_[h]];
   }
 
   for (std::uint16_t a = 0; a < actions; ++a) {
@@ -279,36 +327,47 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
     for (std::uint32_t h = 0; h < my_hands; ++h) out[h] += srow[h] * vrow[h];
   }
 
+  // Deltas land on the STORAGE rows: under the quotient every member combo
+  // of a class adds its sample into the shared row - that pooling IS the
+  // variance reduction. Hand order is fixed, so the accumulation stays
+  // deterministic; identity reduces to the original per-hand loop.
   float* rd = lane.regret_delta.data() + offset;
   float* sd = lane.strat_delta.data() + offset;
   for (std::uint16_t a = 0; a < actions; ++a) {
-    const std::size_t row = static_cast<std::size_t>(a) * my_hands;
-    const float* srow = sigma.data() + row;
-    const float* vrow = child_vals.data() + row;
+    const std::size_t srow_off = static_cast<std::size_t>(a) * my_hands;
+    const std::size_t drow_off = static_cast<std::size_t>(a) * rows;
+    const float* srow = sigma.data() + srow_off;
+    const float* vrow = child_vals.data() + srow_off;
     for (std::uint32_t h = 0; h < my_hands; ++h) {
-      rd[row + h] += vrow[h] - out[h];
-      sd[row + h] += hero_reach[h] * srow[h];
+      rd[drow_off + class_of_[h]] += vrow[h] - out[h];
+      sd[drow_off + class_of_[h]] += hero_reach[h] * srow[h];
     }
   }
 }
 
 void SampledCfrSolver::average_strategy(NodeId id, std::vector<float>& out) const {
   const Node& node = game_.tree()[id];
-  const std::size_t offset = layout_.node_offset[node.decision_index];
+  const std::size_t offset = store_offset_[node.decision_index];
+  const std::uint32_t rows = store_hands_[node.decision_index];
   const std::uint32_t hands = layout_.node_hands[node.decision_index];
   const std::uint16_t actions = layout_.node_actions[node.decision_index];
   out.assign(static_cast<std::size_t>(hands) * actions, 0.0f);
   // Same contract as CfrSolver::average_strategy: hand-major rows summing to
   // 1, uniform where nothing accumulated.
+  // Hand-major rows summing to 1, per the StrategySource contract. Under
+  // the quotient every member combo of a class reads the same storage row,
+  // so members emit IDENTICAL rows by construction - the consumers cannot
+  // tell a quotiented solve apart from a converged symmetric one.
   for (std::uint32_t h = 0; h < hands; ++h) {
+    const std::uint16_t c = class_of_[h];
     float sum = 0.0f;
     for (std::uint16_t a = 0; a < actions; ++a) {
-      sum += strat_sum_[offset + static_cast<std::size_t>(a) * hands + h];
+      sum += strat_sum_[offset + static_cast<std::size_t>(a) * rows + c];
     }
     float* row = out.data() + static_cast<std::size_t>(h) * actions;
     if (sum > 0.0f) {
       for (std::uint16_t a = 0; a < actions; ++a) {
-        row[a] = strat_sum_[offset + static_cast<std::size_t>(a) * hands + h] / sum;
+        row[a] = strat_sum_[offset + static_cast<std::size_t>(a) * rows + c] / sum;
       }
     } else {
       const float uniform = 1.0f / static_cast<float>(actions);

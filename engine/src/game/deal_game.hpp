@@ -51,6 +51,19 @@ class DealGame {
     out.clear();
   }
 
+  // Suit-symmetry quotient: hand -> class for games whose infosets are
+  // invariant under suit permutations (a preflop-only tree qualifies; any
+  // tree with a board in an infoset does not). Empty = no symmetry. This is
+  // a LOSSLESS relabeling, not abstraction: members of a class face
+  // identical deal distributions, so constraining them to one strategy
+  // loses nothing and pools their samples - which is the variance
+  // reduction. The sampled solver stores one row per class when this is
+  // non-empty and expands to per-hand rows at the StrategySource boundary.
+  virtual void hand_classes(std::vector<std::uint16_t>& class_of, int& num_classes) const {
+    class_of.clear();
+    num_classes = 0;
+  }
+
   // Per-hero-hand chips at a SHOWDOWN terminal on this concrete deal:
   // out[h] = share(h against the other seats' dealt hands) - commit[seat],
   // side pots and ties exact. Entries for hands colliding with the deal are

@@ -352,8 +352,11 @@ def handle_pushfold(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) 
 
     phase_start = time.perf_counter()
     dump_path = os.path.join(run_dir, "pushfold.json")
+    # --fields rollup: /multiway renders only the 169-class rollup chart,
+    # and the per-hand fields were ~98% of the payload it ignored.
     out = run_streamed(
-        [ENGINE_EXE, "dump-json", artifact, "--compact", "--out", dump_path],
+        [ENGINE_EXE, "dump-json", artifact, "--compact", "--fields", "rollup",
+         "--out", dump_path],
         timeout=300, prefix="dump")
     if out.returncode != 0 or not os.path.exists(dump_path):
         raise RuntimeError(f"htsolver dump-json failed (exit {out.returncode}): "

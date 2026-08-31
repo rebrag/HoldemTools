@@ -50,12 +50,13 @@ struct MemoryEstimate {
 // workspace term: each concurrently traversed subtree checks out its own
 // scratch arena. `recalc` sizes the chance-child cache term (0 when the
 // recalc schedule is disabled).
-// `sampled_lanes` > 0 sizes for the SAMPLED core instead: (lanes + 1) f32
-// copies of the regret and strategy arrays (master plus per-lane deltas), no
-// recalc caches. 0 = the vectorized core.
+// A non-null `sampled` sizes for the SAMPLED core instead: (lanes + 1) f32
+// copies of the regret and strategy arrays (master plus per-lane deltas),
+// per-class rows when the symmetry quotient is on, no recalc caches.
+// Null = the vectorized core.
 MemoryEstimate estimate_memory(const Game& game, int threads = 1, bool recalc = true,
                                Precision precision = Precision::F32,
-                               std::uint32_t sampled_lanes = 0);
+                               const SampledConfig* sampled = nullptr);
 
 // Process memory high-water marks, in bytes (0 where unavailable).
 //

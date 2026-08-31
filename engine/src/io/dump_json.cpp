@@ -57,8 +57,10 @@ json node_data_to_json(const ArtifactReader& reader, const ArtifactNodeData& dat
     json hands = json::array();
     // Trimmed dumps keep the actor's hands everywhere and both seats' at
     // the root (root reaches feed Pio's set_range); other seats stay as
-    // empty arrays so seats[actor] indexing is shape-stable.
-    const bool emit_seat = !trimmed || is_root || s == data.actor;
+    // empty arrays so seats[actor] indexing is shape-stable. A rollup dump
+    // emits NO per-hand rows at all - the chart is the rollup.
+    const bool emit_seat =
+        fields != DumpFields::kRollup && (!trimmed || is_root || s == data.actor);
     if (emit_seat) {
       // Non-actor seats never carry EVs in a trimmed dump: only the root's
       // reaches are wanted there, and the actor's row is what the per-hand
@@ -88,7 +90,7 @@ json node_data_to_json(const ArtifactReader& reader, const ArtifactNodeData& dat
     seats.push_back({{"seat", s}, {"hands", std::move(hands)}});
   }
   j["seats"] = std::move(seats);
-  if (data.has_rollup && !trimmed) {
+  if (data.has_rollup && (!trimmed || fields == DumpFields::kRollup)) {
     json rollup = json::array();
     for (int cls = 0; cls < 169; ++cls) {
       if (data.rollup_weight[cls] <= 0.0f) continue;
@@ -147,6 +149,7 @@ json dump_artifact_json(ArtifactStore& store, const std::string& path,
   if (runouts) out["metadata"]["dump_runouts"] = *runouts;
   if (fields == DumpFields::kDetail) out["metadata"]["dump_fields"] = "detail";
   if (fields == DumpFields::kGate) out["metadata"]["dump_fields"] = "gate";
+  if (fields == DumpFields::kRollup) out["metadata"]["dump_fields"] = "rollup";
   if (!trimmed) {
     json dicts = json::array();
     for (const auto& dict : reader.hand_dicts()) {

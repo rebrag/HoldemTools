@@ -1,5 +1,7 @@
 #include "solver/memory.hpp"
 
+#include "game/deal_game.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <sstream>
@@ -48,7 +50,7 @@ std::string MemoryEstimate::to_string() const {
 }
 
 MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc,
-                               Precision precision, std::uint32_t sampled_lanes) {
+                               Precision precision, const SampledConfig* sampled) {
   MemoryEstimate est;
   est.regret_strategy_bytes = CfrSolver::state_bytes(game, precision);
   est.tree_bytes = game.tree().size() * sizeof(Node);
@@ -56,14 +58,31 @@ MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc,
   est.export_bytes = export_pass_bytes(game);
 
   est.recalc_bytes = CfrSolver::recalc_state_bytes(game, recalc);
-  if (sampled_lanes > 0) {
+  if (sampled != nullptr && sampled->enabled) {
     // The sampled core: master regrets + strategy sums plus one private
-    // delta pair per lane, all f32 (it has no i16 mode). Sized from the same
-    // InfosetLayout the solver builds, so this cannot drift from the
+    // delta pair per lane, all f32 (it has no i16 mode). Rows are per suit
+    // CLASS when the symmetry quotient is on - the same arithmetic the
+    // solver's constructor performs, so this cannot drift from the
     // allocation. No recalc caches - nothing is re-enumerated there.
     const InfosetLayout layout = InfosetLayout::build(game);
+    std::size_t total = layout.total;
+    if (sampled->symmetry) {
+      if (const auto* deal_game = dynamic_cast<const DealGame*>(&game)) {
+        std::vector<std::uint16_t> class_of;
+        int num_classes = 0;
+        deal_game->hand_classes(class_of, num_classes);
+        if (num_classes > 0) {
+          total = 0;
+          for (const Node& n : game.tree().nodes) {
+            if (n.kind != NodeKind::Decision) continue;
+            total += static_cast<std::size_t>(layout.node_actions[n.decision_index]) *
+                     static_cast<std::size_t>(num_classes);
+          }
+        }
+      }
+    }
     est.regret_strategy_bytes =
-        static_cast<std::size_t>(sampled_lanes + 1) * 2 * layout.total * sizeof(float);
+        static_cast<std::size_t>(sampled->lanes + 1) * 2 * total * sizeof(float);
     est.recalc_bytes = 0;
   }
 

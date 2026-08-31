@@ -10,7 +10,7 @@ const char* usage() {
          "  engine solve <config.json>      solve and write the artifact from output.path\n"
          "  engine dry-run <config.json>    print the memory estimate and exit\n"
          "  engine dump-json <file.hta> [--node <id>] [--runouts <n>] [--meta-only]\n"
-         "                   [--compact] [--fields full|detail|gate] [--out <path>]\n"
+         "                   [--compact] [--fields full|detail|gate|rollup] [--out <path>]\n"
          "                                  dump an artifact as JSON (stdout, or --out file);\n"
          "                                  --compact skips pretty-printing; --fields trims\n"
          "                                  per-hand data: detail = actor hands with EVs,\n"
@@ -55,8 +55,9 @@ CliArgs parse_args(int argc, const char* const* argv) {
       if (value == "full") args.fields = DumpFields::kFull;
       else if (value == "detail") args.fields = DumpFields::kDetail;
       else if (value == "gate") args.fields = DumpFields::kGate;
+      else if (value == "rollup") args.fields = DumpFields::kRollup;
       else {
-        args.error = "--fields must be full, detail, or gate (got '" + value + "')";
+        args.error = "--fields must be full, detail, gate, or rollup (got '" + value + "')";
         return args;
       }
     } else if (flag == "--out" && i + 1 < argc && args.subcommand == "dump-json") {
