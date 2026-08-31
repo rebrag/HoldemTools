@@ -61,6 +61,10 @@ interface Props<T extends CommonFilterState> {
   onThisYear: () => void;
   onHide?: () => void;
   theme?: FilterTheme;
+  /** Grid classes for the field row. Media queries key off the VIEWPORT, not
+   *  the container, so a narrow host (the hand-history popout) must ask for
+   *  fewer columns or the date inputs clip on a mid-width screen. */
+  gridClassName?: string;
   /** Tool-specific cells rendered inside the responsive grid, between the date
    *  inputs and the Quick range button. */
   extraFields?: React.ReactNode;
@@ -82,6 +86,7 @@ function SessionFilterPanel<T extends CommonFilterState>({
   onThisYear,
   onHide,
   theme = "light",
+  gridClassName = "grid gap-2 sm:grid-cols-5",
   extraFields,
   extraRows,
 }: Props<T>): React.ReactElement {
@@ -89,7 +94,7 @@ function SessionFilterPanel<T extends CommonFilterState>({
 
   return (
     <div className={t.panel}>
-      <div className="grid gap-2 sm:grid-cols-5">
+      <div className={gridClassName}>
         {/* Location */}
         <div className="flex flex-col gap-1">
           <span className={t.label}>Location</span>

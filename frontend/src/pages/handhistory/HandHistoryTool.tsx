@@ -13,7 +13,8 @@ import { solutionOpenUrl } from "@/lib/solver/postflopLibrary";
 import HandHistorySecondaryNav from "./HandHistorySecondaryNav";
 import HandRow from "./HandRow";
 import FlyingCards from "./FlyingCards";
-import HandFilterBar from "./HandFilterBar";
+import HandFilterMenu from "./HandFilterMenu";
+import PlayerEditorDrawer from "./players/PlayerEditorDrawer";
 import {
   HAND_FILTERS_KEY,
   defaultHandFilters,
@@ -86,6 +87,10 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   const [reloadNonce, setReloadNonce] = useState(0);
 
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  // Two pieces of state, not one: the drawer stays mounted so its exit
+  // animation plays, and it needs a player to render against while closing.
+  const [playerDrawerOpen, setPlayerDrawerOpen] = useState(false);
+  const [editingPlayerId, setEditingPlayerId] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [sessionsById, setSessionsById] = useState<Map<string, BankrollSession>>(
     new Map()
@@ -98,20 +103,31 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     defaultHandFilters,
     parseHandFiltersOrDefault
   );
-  const [showFilters, setShowFilters] = useState(false);
   const filtering = isFilteringHands(filters);
 
   // A persisted player filter can outlive the player (deleted on the Players
   // page). Once the roster has loaded, drop the dangling id - otherwise the
   // filter silently blanks the list with no chip to explain why (the select
   // can't even display the selection any more).
-  const { byId: knownPlayers, loading: playersLoading } = usePlayers();
+  const {
+    byId: knownPlayers,
+    loading: playersLoading,
+    signedIn: playersSignedIn,
+  } = usePlayers();
   useEffect(() => {
-    if (playersLoading || !filters.playerId) return;
+    // `signedIn` gates this too, not just `loading`: usePlayers reports
+    // loading=false while Firebase is still resolving auth, so without it a
+    // reload sees an empty roster and wipes a perfectly good saved filter.
+    if (!playersSignedIn || playersLoading || !filters.playerId) return;
     if (!knownPlayers.has(filters.playerId)) {
-      setFilters((prev) => ({ ...prev, playerId: "", playerSawFlop: false }));
+      setFilters((prev) => ({
+        ...prev,
+        playerId: "",
+        playerSawFlop: false,
+        playerShowed: false,
+      }));
     }
-  }, [playersLoading, knownPlayers, filters.playerId, setFilters]);
+  }, [playersSignedIn, playersLoading, knownPlayers, filters.playerId, setFilters]);
 
   // Which saved hands have a solved board, for the "view solution" button.
   const solutionByHandId = useHandSolutions(Boolean(user));
@@ -400,6 +416,15 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     []
   );
 
+  // Tapping a player's photo in a row opens their editor in place — the roster
+  // page is no longer a stop on the way. useCallback with no deps (both
+  // setters are stable) because this reference travels down through three
+  // memoized components; see HandPreview.onPlayerClick.
+  const handlePlayerClick = useCallback((playerId: string) => {
+    setEditingPlayerId(playerId);
+    setPlayerDrawerOpen(true);
+  }, []);
+
   const resetFilters = () => setFilters(defaultHandFilters);
 
   const setThisYear = () => {
@@ -418,13 +443,30 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     (filters.fromDate || filters.toDate ? 1 : 0) +
     (filters.playerId ? 1 : 0) +
     (filters.playerId && filters.playerSawFlop ? 1 : 0) +
-    (filters.villainShowed ? 1 : 0);
+    (filters.playerId && filters.playerShowed ? 1 : 0);
 
   return (
     <>
       <HandHistorySecondaryNav
         onCreate={() => navigate("/hand-history/create")}
-        onPlayers={user ? () => navigate("/hand-history/players") : undefined}
+        /* Signed-out users have no players and no sessions to filter by, so
+           the affordance is hidden entirely. */
+        filters={
+          user ? (
+            <HandFilterMenu
+              filters={filters}
+              setFilters={setFilters}
+              knownLocations={knownLocations}
+              knownGames={knownGames}
+              filteredCount={filteredRows.length}
+              totalCount={rows.length}
+              isFiltering={filtering}
+              activeFilterCount={activeFilterCount}
+              onReset={resetFilters}
+              onThisYear={setThisYear}
+            />
+          ) : undefined
+        }
       />
 
       {/* No top padding on phones: the list is full-bleed there, so any gap
@@ -496,72 +538,6 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
         </motion.div>
       ) : (
         <>
-        {/* Search/filter entry point. Signed-out users have no players and no
-            sessions to filter by, so the affordance is hidden entirely. */}
-        {user && (
-          <div className="mt-3 sm:mt-0">
-            <div className="mb-2 flex justify-end">
-              <motion.button
-                type="button"
-                whileTap={{ scale: 0.96 }}
-                onClick={() => setShowFilters((v) => !v)}
-                aria-expanded={showFilters}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold shadow-sm transition-colors ${
-                  filtering
-                    ? "border-emerald-400 bg-emerald-500 text-white hover:bg-emerald-400"
-                    : "border-emerald-300 bg-white/90 text-emerald-700 hover:bg-emerald-50"
-                }`}
-              >
-                <svg
-                  viewBox="0 0 16 16"
-                  className="h-3 w-3"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={1.8}
-                  strokeLinecap="round"
-                >
-                  <path d="M2 4h12M4.5 8h7M7 12h2" />
-                </svg>
-                Filters
-                {activeFilterCount > 0 && (
-                  <span
-                    className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold ${
-                      filtering ? "bg-white/25 text-white" : "bg-emerald-100 text-emerald-800"
-                    }`}
-                  >
-                    {activeFilterCount}
-                  </span>
-                )}
-              </motion.button>
-            </div>
-            <AnimatePresence initial={false}>
-              {showFilters && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="overflow-hidden"
-                >
-                  <div className="mb-3 overflow-hidden rounded-xl border border-emerald-200 bg-white shadow-sm shadow-emerald-500/10">
-                    <HandFilterBar
-                      filters={filters}
-                      setFilters={setFilters}
-                      knownLocations={knownLocations}
-                      knownGames={knownGames}
-                      filteredCount={filteredRows.length}
-                      totalCount={rows.length}
-                      isFiltering={filtering}
-                      onReset={resetFilters}
-                      onThisYear={setThisYear}
-                      onHide={() => setShowFilters(false)}
-                    />
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        )}
-
         {filteredRows.length === 0 ? (
           /* Hands exist but none match — distinct from the no-hands-at-all
              state so it's obvious the filters (not the data) are the cause. */
@@ -569,7 +545,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ type: "spring", stiffness: 240, damping: 22 }}
-            className="rounded-2xl border border-dashed border-emerald-300/50 bg-white/70 px-6 py-10 text-center backdrop-blur-sm"
+            className="mt-4 rounded-2xl border border-dashed border-emerald-300/50 bg-white/70 px-6 py-10 text-center backdrop-blur-sm sm:mt-0"
           >
             <p className="text-sm text-gray-600">
               No hands match the current filters.
@@ -633,6 +609,7 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
                     onToggleExpand={toggleExpand}
                     onDelete={handleDelete}
                     onError={setError}
+                    onPlayerClick={user ? handlePlayerClick : undefined}
                   />
                 );
               }),
@@ -662,6 +639,17 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
       )}
 
       </div>
+
+      {/* Mounted permanently (open toggles) so the sheet's exit animation
+          plays. handCount is deliberately omitted: computing it means folding
+          the replay of every hand, and a count over just the loaded page would
+          be misleading. */}
+      <PlayerEditorDrawer
+        open={playerDrawerOpen}
+        player={editingPlayerId ? knownPlayers.get(editingPlayerId) ?? null : null}
+        onClose={() => setPlayerDrawerOpen(false)}
+        onOpenRoster={() => navigate("/hand-history/players")}
+      />
     </>
   );
 };

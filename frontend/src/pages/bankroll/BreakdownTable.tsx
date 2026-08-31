@@ -6,7 +6,11 @@ import type { BankrollSession } from "./types";
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-export type BreakdownTableMode = "weekday" | "month" | "year";
+export type BreakdownTableMode = "weekday" | "month" | "year" | "game";
+
+// Label for sessions with no stakes recorded. Deliberately not selectable by
+// the Game *filter*, whose dropdown is built from non-empty blinds only.
+const NO_GAME_LABEL = "Unspecified";
 
 type BreakdownRow = {
   label: string;
@@ -24,10 +28,14 @@ function buildBreakdownRows(
   const groups: Record<string, BreakdownRow> = {};
 
   for (const s of sessions) {
-    if (!s.start) continue;
-
-    const startDate = new Date(s.start);
-    if (Number.isNaN(startDate.getTime())) continue;
+    // Game mode doesn't group by date, so a session with a missing or
+    // unparseable start must not be dropped from it.
+    let startDate: Date | null = null;
+    if (s.start) {
+      const d = new Date(s.start);
+      if (!Number.isNaN(d.getTime())) startDate = d;
+    }
+    if (mode !== "game" && !startDate) continue;
 
     const profit = s.profit ?? 0;
     const hours = s.hours ?? 0;
@@ -36,19 +44,26 @@ function buildBreakdownRows(
     let label: string;
     let sortValue: number;
 
-    if (mode === "weekday") {
-      const day = startDate.getDay(); // 0 = Sun
+    if (mode === "game") {
+      // The user-facing "Game" is the stakes string on `blinds`, NOT
+      // `session.game` - same historical naming as the Game filter, see
+      // components/filters/types.ts. Don't "fix" this.
+      label = s.blinds?.trim() || NO_GAME_LABEL;
+      key = `g-${label}`;
+      sortValue = 0; // unused: game rows sort by hours, see the comparator
+    } else if (mode === "weekday") {
+      const day = startDate!.getDay(); // 0 = Sun
       key = `wd-${day}`;
       label = WEEKDAY_LABELS[day];
       sortValue = day;
     } else if (mode === "month") {
-      const year = startDate.getFullYear();
-      const month = startDate.getMonth(); // 0-based
+      const year = startDate!.getFullYear();
+      const month = startDate!.getMonth(); // 0-based
       key = `m-${year}-${month}`;
       label = `${MONTH_LABELS[month]} ${year}`;
       sortValue = year * 12 + month; // bigger = more recent
     } else {
-      const year = startDate.getFullYear();
+      const year = startDate!.getFullYear();
       key = `y-${year}`;
       label = `${year}`;
       sortValue = year; // bigger = more recent
@@ -83,12 +98,26 @@ function buildBreakdownRows(
       // Sun → Sat
       return a.sortValue - b.sortValue;
     }
+    if (mode === "game") {
+      // Biggest sample first - the same "most relevant first" intent as
+      // newest-first below. Alphabetical would be actively misleading for
+      // stakes ("1/2" < "1/3" < "10/20" < "2/5").
+      return b.totalHours - a.totalHours || a.label.localeCompare(b.label);
+    }
     // Month / Year: newest first
     return b.sortValue - a.sortValue;
   });
 
   return rows;
 }
+
+// A Record, not a ternary chain: adding a mode is then a compile error here.
+const HEADINGS: Record<BreakdownTableMode, string> = {
+  weekday: "Weekday",
+  month: "Month",
+  year: "Year",
+  game: "Game",
+};
 
 export type TableTheme = "light" | "dark";
 
@@ -147,21 +176,21 @@ const BreakdownTable: React.FC<{
     );
   }
 
-  const heading =
-    mode === "weekday"
-      ? "Weekday"
-      : mode === "month"
-      ? "Month"
-      : "Year";
+  const heading = HEADINGS[mode];
+  // Stakes strings ("2/5 PLO 100 ante") need more room than "Feb 2026", and
+  // the breakdown sits in a third-width card on desktop. The extra comes out
+  // of Hours/Net/Hourly, never Sessions - that header is the widest word in
+  // the row and collides with Hours the moment it drops below 14%.
+  const wide = mode === "game";
 
   return (
     <table className={t.table}>
       <colgroup>
-        <col className="w-[26%]" />{/* Period */}
+        <col className={wide ? "w-[32%]" : "w-[26%]"} />{/* Period / Game */}
         <col className="w-[14%]" />{/* Sessions */}
-        <col className="w-[18%]" />{/* Hours */}
-        <col className="w-[21%]" />{/* Net */}
-        <col className="w-[21%]" />{/* Hourly */}
+        <col className={wide ? "w-[16%]" : "w-[18%]"} />{/* Hours */}
+        <col className={wide ? "w-[19%]" : "w-[21%]"} />{/* Net */}
+        <col className={wide ? "w-[19%]" : "w-[21%]"} />{/* Hourly */}
       </colgroup>
       <thead className={t.thead}>
         <tr>
@@ -184,7 +213,11 @@ const BreakdownTable: React.FC<{
           return (
             <tr key={row.label} className={t.rowHover}>
               <td className={`px-2 py-1.5 text-[11px] sm:text-xs ${t.cell}`}>
-                {row.label}
+                {/* table-fixed, so a long stakes string clips rather than
+                    wrapping the whole row to two lines. */}
+                <span className="block truncate" title={row.label}>
+                  {row.label}
+                </span>
               </td>
               <td className={`px-2 py-1.5 text-[11px] sm:text-xs text-right ${t.cellMuted}`}>
                 {row.numSessions}

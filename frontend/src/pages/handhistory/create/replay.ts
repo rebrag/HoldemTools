@@ -277,10 +277,6 @@ export interface HandSummary {
   playersAtFlop: number | null;
   /** Per-seat search facts (see SeatFact). */
   seatFacts: SeatFact[];
-  /** ANY non-hero seat with >=1 recorded hole card — the user-facing "villain
-   *  showed cards" filter semantic (same population as `players`' non-hero
-   *  entries, whatever way the cards became known). */
-  villainShowedAnyCard: boolean;
 }
 
 // Fold the recorded actions into a single final engine (no per-action frames —
@@ -346,10 +342,6 @@ export function buildHandSummary(data: ReplayData): HandSummary {
     sawFlop: handSawFlop && (p.foldedStreet == null || p.foldedStreet >= 1),
     showedCards: p.hole.some((c) => !!c),
   }));
-  const villainShowedAnyCard = e.players.some(
-    (p, i) => i !== heroIdx && p.hole.some((c) => !!c)
-  );
-
   // Effective stack for SPR: hero-centric when the hero saw the flop
   // (min of hero vs the largest opponent stack — the most hero can play for);
   // otherwise the second-largest live stack (the largest that can be matched).
@@ -380,7 +372,6 @@ export function buildHandSummary(data: ReplayData): HandSummary {
     flopSpr,
     playersAtFlop,
     seatFacts,
-    villainShowedAnyCard,
   };
 }
 

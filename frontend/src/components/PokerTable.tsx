@@ -73,6 +73,11 @@ export interface PokerTableProps {
   onDealerBadgeClick?: () => void;
   /** Pulsing cue on the D badge while the move-button flow is armed. */
   dealerBadgeArmed?: boolean;
+  /** When set, a seat's player photo becomes its own target (opening that
+   *  player's editor) instead of falling through to onSeatClick. Only wired
+   *  where a resolved roster player exists, so there is never a live-looking
+   *  affordance with nothing behind it. */
+  onSeatAvatarClick?: (index: number) => void;
   /** Chips/bb display toggle ("Show in BB") rendered in the table's top-right
    *  corner. Pass the money display to show it; omit (or null) to hide - the
    *  toggle belongs to the table, so each caller decides per use. */
@@ -95,6 +100,7 @@ const PokerTable: React.FC<PokerTableProps> = ({
   className,
   coordsOverride,
   onDealerBadgeClick,
+  onSeatAvatarClick,
   dealerBadgeArmed,
   moneyToggle,
 }) => {
@@ -240,6 +246,11 @@ const PokerTable: React.FC<PokerTableProps> = ({
               onClick={clickable ? () => onSeatClick!(i) : undefined}
               onDealerBadgeClick={onDealerBadgeClick}
               dealerBadgeArmed={dealerBadgeArmed}
+              onAvatarClick={
+                onSeatAvatarClick && seat.avatarPlayer
+                  ? () => onSeatAvatarClick(i)
+                  : undefined
+              }
               pageVisible={pageVisible}
             />
           </React.Fragment>

@@ -85,6 +85,9 @@ export interface PokerTableSeatProps {
   onClick?: () => void;
   onDealerBadgeClick?: () => void;
   dealerBadgeArmed?: boolean;
+  /** Makes the player photo its own target, opening that player's editor.
+   *  Omit to keep the avatar decorative (its default everywhere else). */
+  onAvatarClick?: () => void;
   pageVisible: boolean;
 }
 
@@ -97,10 +100,13 @@ const PokerTableSeat: React.FC<PokerTableSeatProps> = ({
   onClick,
   onDealerBadgeClick,
   dealerBadgeArmed,
+  onAvatarClick,
   pageVisible,
 }) => {
   const px = (n: number) => Math.round(n * scale);
   const gap = Math.max(1, px(2));
+  // Invisible hit padding around a clickable avatar (see below).
+  const avatarPad = Math.max(4, px(6));
 
   // Folded/sitting-out dimming is applied to the seat's contents, never to
   // the dealer badge: the button marker stays fully visible for the whole
@@ -226,16 +232,60 @@ const PokerTableSeat: React.FC<PokerTableSeatProps> = ({
       >
         {seat.avatarPlayer !== undefined && (
           /* Peeks out from BEHIND the name+stack card's top-left corner so it
-             reads as the player's face on the plate without moving anything. */
+             reads as the player's face on the plate without moving anything.
+             Staying behind is deliberate when clickable too: the plate wins
+             the overlap, which gives a learnable split — face opens the
+             player editor, plate opens the seat editor.
+             Like the dealer badge this stays a span with role="button" (the
+             seat root is a <button>), and pads outward by `avatarPad` while
+             shifting the same amount, so the target grows to ~40px with the
+             photo itself pixel-identical. */
           <span
-            className="pointer-events-none absolute"
-            style={{ left: -px(16), top: -px(14) }}
+            role={onAvatarClick ? "button" : undefined}
+            tabIndex={onAvatarClick ? 0 : undefined}
+            aria-label={onAvatarClick ? `Edit ${seat.label}` : undefined}
+            title={onAvatarClick ? `Edit ${seat.label}` : undefined}
+            onClick={
+              onAvatarClick
+                ? (e) => {
+                    e.stopPropagation();
+                    onAvatarClick();
+                  }
+                : undefined
+            }
+            onKeyDown={
+              onAvatarClick
+                ? (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onAvatarClick();
+                    }
+                  }
+                : undefined
+            }
+            className={
+              onAvatarClick
+                ? "absolute cursor-pointer touch-manipulation"
+                : "pointer-events-none absolute"
+            }
+            style={
+              onAvatarClick
+                ? {
+                    left: -px(16) - avatarPad,
+                    top: -px(14) - avatarPad,
+                    padding: avatarPad,
+                  }
+                : { left: -px(16), top: -px(14) }
+            }
           >
             <PlayerAvatar
               player={seat.avatarPlayer}
               name={seat.label}
               size={px(28)}
-              className="ring-white/40 shadow-md"
+              className={`ring-white/40 shadow-md ${
+                onAvatarClick ? "transition hover:ring-2 hover:ring-emerald-300" : ""
+              }`}
             />
           </span>
         )}
