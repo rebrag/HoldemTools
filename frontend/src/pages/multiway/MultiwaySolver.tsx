@@ -537,6 +537,24 @@ const MultiwaySolver = () => {
                   Research and analysis tooling: using this against live tables is cheating and
                   bannable everywhere.
                 </p>
+                {view.awareness === "unaware" && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className={labelCls} title="Phase-1 iterations for the no-team baseline the opponents get frozen at. The baseline converges quickly; the team phase (Max iterations) is what sharpens the conditioned charts, so long solves want this much smaller than Max iterations.">
+                      Baseline iterations
+                    </span>
+                    <input
+                      value={view.baselineIterations}
+                      disabled={solving}
+                      onChange={(e) => set("baselineIterations", e.target.value)}
+                      placeholder="= max iterations"
+                      inputMode="numeric"
+                      className="w-36 rounded border border-slate-700 bg-slate-800/70 px-1.5 py-0.5 text-[11px] text-slate-200 placeholder:text-slate-600"
+                    />
+                    <span className="text-[10px] text-slate-500">
+                      phase 1 (baseline); Max iterations is phase 2 (the team)
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </section>

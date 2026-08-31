@@ -105,11 +105,19 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
   }
   regrets_.assign(store_total_, 0.0f);
   strat_sum_.assign(store_total_, 0.0f);
+  if (agents_.has_team()) {
+    ev_sum_.assign(store_total_, 0.0f);
+    ev_w_.assign(store_total_, 0.0f);
+  }
   max_depth_ = tree_depth(game.tree());
   lanes_.resize(config_.lanes);
   for (Lane& lane : lanes_) {
     lane.regret_delta.assign(store_total_, 0.0f);
     lane.strat_delta.assign(store_total_, 0.0f);
+    if (agents_.has_team()) {
+      lane.ev_delta.assign(store_total_, 0.0f);
+      lane.evw_delta.assign(store_total_, 0.0f);
+    }
     lane.class_sigma.resize(static_cast<std::size_t>(max_depth_) + 2);
     lane.mate_stack.resize(static_cast<std::size_t>(max_depth_) + 2);
     lane.sigma_stack.resize(static_cast<std::size_t>(max_depth_) + 2);
@@ -140,6 +148,8 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
           static_cast<float>(static_cast<double>(b0) / static_cast<double>(b1));
       for (float& r : regrets_) r *= scale;
       for (float& s : strat_sum_) s *= scale;
+      for (float& v : ev_sum_) v *= scale;
+      for (float& w : ev_w_) w *= scale;
     }
 
     // Lanes read the master (frozen for the whole batch - nothing below
@@ -148,6 +158,8 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
       Lane& lane = lanes_[static_cast<std::size_t>(l)];
       std::fill(lane.regret_delta.begin(), lane.regret_delta.end(), 0.0f);
       std::fill(lane.strat_delta.begin(), lane.strat_delta.end(), 0.0f);
+      std::fill(lane.ev_delta.begin(), lane.ev_delta.end(), 0.0f);
+      std::fill(lane.evw_delta.begin(), lane.evw_delta.end(), 0.0f);
       for (std::uint64_t t = b0; t < b1; ++t) {
         if (static_cast<int>(t % static_cast<std::uint64_t>(lanes)) != l) continue;
         run_iteration(t, lane);
@@ -161,6 +173,8 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
       const Lane& lane = lanes_[static_cast<std::size_t>(l)];
       for (std::size_t i = 0; i < store_total_; ++i) regrets_[i] += lane.regret_delta[i];
       for (std::size_t i = 0; i < store_total_; ++i) strat_sum_[i] += lane.strat_delta[i];
+      for (std::size_t i = 0; i < ev_sum_.size(); ++i) ev_sum_[i] += lane.ev_delta[i];
+      for (std::size_t i = 0; i < ev_w_.size(); ++i) ev_w_[i] += lane.evw_delta[i];
     }
     t_ = b1;
   }
@@ -356,6 +370,12 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
       // sigma, so the stored mass is the conditioning's actual reach.
       float* rd = lane.regret_delta.data() + offset;
       float* sd = lane.strat_delta.data() + offset;
+      float* ed = lane.ev_delta.data() + offset;
+      float* ewd = lane.evw_delta.data() + offset;
+      // Conditioned EVs: vrow already carries opp_w (the external prefix
+      // reach), so accumulating hero_reach * vrow against a denominator of
+      // hero_reach * opp_w averages to E[team chips | infoset, action].
+      const float wpre = static_cast<float>(opp_w);
       for (std::uint16_t a = 0; a < actions; ++a) {
         const std::size_t srow_off = static_cast<std::size_t>(a) * my_hands;
         const std::size_t drow_off = static_cast<std::size_t>(a) * rows;
@@ -364,9 +384,12 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
         for (std::uint32_t h = 0; h < my_hands; ++h) {
           const std::uint32_t jc = joint_class_[mbase + h];
           if (jc == kNoJointRow) continue;
-          rd[drow_off + jc] += hero_reach[h] * (vrow[h] - out[h]);
           const float own = mate_reach != nullptr ? mate_reach[h] : 1.0f;
-          sd[drow_off + jc] += hero_reach[h] * own * srow[h];
+          const float w = hero_reach[h] * own;
+          rd[drow_off + jc] += hero_reach[h] * (vrow[h] - out[h]);
+          sd[drow_off + jc] += w * srow[h];
+          ed[drow_off + jc] += w * vrow[h];
+          if (a == 0) ewd[jc] += w * wpre;
         }
       }
       return;
@@ -485,9 +508,14 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
     }
     // Strategy sums carry the partner's reach too (mate_reach), so the
     // joint mass measures how often the conditioning reaches this node -
-    // see the traverse contract in the header.
+    // see the traverse contract in the header. Conditioned EVs accumulate
+    // with the same weight against an opp_w denominator (values carry the
+    // external prefix reach), averaging to E[team chips | infoset, action].
     float* rd = lane.regret_delta.data() + offset;
     float* sd = lane.strat_delta.data() + offset;
+    float* ed = lane.ev_delta.data() + offset;
+    float* ewd = lane.evw_delta.data() + offset;
+    const float wpre = static_cast<float>(opp_w);
     for (std::uint16_t a = 0; a < actions; ++a) {
       const std::size_t srow_off = static_cast<std::size_t>(a) * my_hands;
       const std::size_t drow_off = static_cast<std::size_t>(a) * rows;
@@ -495,8 +523,11 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
       const float* vrow = child_vals.data() + srow_off;
       for (std::uint32_t h = 0; h < my_hands; ++h) {
         const float mr = mate_reach != nullptr ? mate_reach[h] : 1.0f;
+        const float w = hero_reach[h] * mr;
         rd[drow_off + team_rows[h]] += vrow[h] - out[h];
-        sd[drow_off + team_rows[h]] += hero_reach[h] * mr * srow[h];
+        sd[drow_off + team_rows[h]] += w * srow[h];
+        ed[drow_off + team_rows[h]] += w * vrow[h];
+        if (a == 0) ewd[team_rows[h]] += w * wpre;
       }
     }
     return;
@@ -791,6 +822,8 @@ nlohmann::json SampledCfrSolver::team_rollup_json() const {
     const std::uint16_t actions = layout_.node_actions[node.decision_index];
     std::vector<double> freq(cells * actions, 0.0);
     std::vector<double> weight(cells, 0.0);
+    std::vector<double> evnum(cells * actions, 0.0);
+    std::vector<double> evden(cells, 0.0);
     for (std::size_t h = 0; h < H; ++h) {
       const std::size_t oc = cls[h];
       const std::size_t base = h * H;
@@ -803,8 +836,11 @@ nlohmann::json SampledCfrSolver::team_rollup_json() const {
           const double v = strat_sum_[offset + static_cast<std::size_t>(a) * rows + jc];
           freq[cell * actions + a] += v;
           wsum += v;
+          evnum[cell * actions + a] +=
+              ev_sum_[offset + static_cast<std::size_t>(a) * rows + jc];
         }
         weight[cell] += wsum;
+        evden[cell] += ev_w_[offset + jc];
       }
     }
     // Emit the first actions-1 frequencies (the last is 1 minus the rest),
@@ -844,11 +880,32 @@ nlohmann::json SampledCfrSolver::team_rollup_json() const {
       }
       fr.push_back(std::move(prow));
     }
+    // Per-cell per-action TEAM EVs (own + partner chips), all actions, null
+    // where the conditioning never accumulated reach. Same nesting as freq.
+    nlohmann::json evj = nlohmann::json::array();
+    for (int pc = 0; pc < ncls; ++pc) {
+      nlohmann::json prow = nlohmann::json::array();
+      for (int oc = 0; oc < ncls; ++oc) {
+        const std::size_t cell = static_cast<std::size_t>(pc) * ncls + static_cast<std::size_t>(oc);
+        nlohmann::json e = nlohmann::json::array();
+        for (std::uint16_t a = 0; a < actions; ++a) {
+          const double den = evden[cell];
+          if (den > 0.0) {
+            e.push_back(std::round(evnum[cell * actions + a] / den * 10000.0) / 10000.0);
+          } else {
+            e.push_back(nullptr);
+          }
+        }
+        prow.push_back(std::move(e));
+      }
+      evj.push_back(std::move(prow));
+    }
     nlohmann::json node_j;
     node_j["actor"] = node.actor;
     node_j["partner"] = mate;
     node_j["num_actions"] = actions;
     node_j["freq"] = std::move(fr);
+    node_j["ev"] = std::move(evj);
     node_j["partner_reach"] = std::move(pw);
     out[std::to_string(id)] = std::move(node_j);
   }

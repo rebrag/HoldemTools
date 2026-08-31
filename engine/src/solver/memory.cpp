@@ -99,8 +99,11 @@ MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc,
         }
       }
     }
-    est.regret_strategy_bytes =
-        static_cast<std::size_t>(sampled->lanes + 1) * 2 * total * sizeof(float);
+    // Master + per-lane pairs: regrets/strategy always; a team adds the
+    // conditioned-EV numerator/denominator pair (same size, same lanes).
+    const std::size_t arrays_per_tier = sampled->partition_team.empty() ? 2 : 4;
+    est.regret_strategy_bytes = static_cast<std::size_t>(sampled->lanes + 1) *
+                                arrays_per_tier * total * sizeof(float);
     est.recalc_bytes = 0;
   }
 

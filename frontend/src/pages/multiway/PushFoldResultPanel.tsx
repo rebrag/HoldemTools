@@ -188,7 +188,9 @@ const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
                     ? "The partner never reaches this spot holding that hand - this conditioning never happens, so the chart is untrained noise."
                     : (teamRollup.partner_reach?.[partnerClass] ?? 1) < 0.05
                       ? "The partner rarely arrives here with that hand, so this conditioned chart trains on thin data - read it loosely."
-                      : "Conditioned on the partner's hand - the shared-cards strategy itself. Frequencies only; EVs are not stored per pair."}
+                      : teamRollup.ev
+                        ? "Conditioned on the partner's hand - the shared-cards strategy itself. Tooltip EVs are TEAM chips (own + partner), the quantity the pair maximizes."
+                        : "Conditioned on the partner's hand - the shared-cards strategy itself. Frequencies only; this payload predates conditioned EVs."}
               </span>
             </div>
           )}

@@ -362,6 +362,24 @@ TEST_CASE("conditioned team charts converge: two seeds agree where reached") {
     total += node_total;
     wsum += node_w;
   }
+  // Conditioned EVs: TEAM chips per (partner, own, action) cell. Gate the
+  // shape and the one ordering that is unambiguous: with the same partner
+  // hand, jamming AA is worth more to the team than jamming 72o.
+  {
+    const auto& node0 = first.at("0");
+    const auto& ev = node0.at("ev");
+    const int pc = 168;  // 72o partner (row-major 13x13, last offsuit cell)
+    const int aa = 0, t72o = 168;
+    REQUIRE(!ev[pc][aa][1].is_null());
+    REQUIRE(!ev[pc][t72o][1].is_null());
+    const double ev_aa = ev[pc][aa][1].get<double>();
+    const double ev_72 = ev[pc][t72o][1].get<double>();
+    MESSAGE("conditioned team EV of jam, partner 72o: AA " << ev_aa << ", 72o " << ev_72);
+    CHECK(std::isfinite(ev_aa));
+    CHECK(ev_aa > ev_72 + 1.0);
+    CHECK(std::abs(ev_aa) < 45.0);
+    CHECK(std::abs(ev_72) < 45.0);
+  }
   REQUIRE(wsum > 0.0);
   const double mad = total / wsum;
   MESSAGE("reach-weighted conditioned |diff| across seeds: " << mad);

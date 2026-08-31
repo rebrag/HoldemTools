@@ -822,9 +822,11 @@ So conditioned charts at deeper team nodes keep a mixing band that two seeds res
 These conserve exactly at any seat count, retiring the displayed "-0.011 evaluator residual" on 4-way solves; metadata says `root_ev_estimator: "sampled_deals"`.
 `final_nashconv` is null on team artifacts (best response against marginals is not a meaningful measure of a correlated team; a proper team best-response evaluator is future work).
 
-**Export shape.** The artifact's per-hand strategy blobs and 169 rollups are MARGINALS over the partner (`team.strategy_export` flags it); the conditioned strategy - the actual shared-cards play - travels as `team_rollup` in metadata: per team decision node, reach-weighted action frequencies per (partner class, own class) cell.
-`/multiway` renders it with a partner-hand selector; the marginal chart is the default.
+**Export shape.** The artifact's per-hand strategy blobs and 169 rollups are MARGINALS over the partner (`team.strategy_export` flags it); the conditioned strategy - the actual shared-cards play - travels as `team_rollup` in metadata: per team decision node, reach-weighted action frequencies per (partner class, own class) cell, plus per-cell per-action conditioned TEAM EVs (`ev`, own + partner chips: `ev_sum_`/`ev_w_` accumulate reach-weighted counterfactual values against an opp_w denominator during training, under the same linear discount) and `partner_reach`.
+`/multiway` renders it with a partner-hand selector; the marginal chart is the default, and conditioned tooltips show the team EVs.
 Configs: `configs/pushfold_4way_10bb_team_{unaware,aware}.json`.
+Phase control: `agents.baseline_iterations` is phase 1 (the frozen baseline; defaults to `budget.iterations` when unset), `budget.iterations` is phase 2 (the team) - independently, so a long team solve sets a modest baseline and pours the budget into phase 2, which is also the cheaper phase (2 hero traversals per deal instead of one per seat).
+`/multiway` exposes both (Baseline iterations appears when a team is marked unaware).
 
 Still open under M9: teams of three or more seats and multiple teams (the joint quotient generalizes but the orbit space grows), general payoff-weight matrices (only summed-EV teams exist), and a team-aware best-response evaluator so team solves get a convergence number again.
 

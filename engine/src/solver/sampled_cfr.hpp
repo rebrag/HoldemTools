@@ -108,6 +108,10 @@ class SampledCfrSolver final : public StrategySource {
   // buffers plus per-depth scratch so the recursion allocates nothing.
   struct Lane {
     std::vector<float> regret_delta, strat_delta;
+    // Conditioned-EV accumulators, allocated only for team solves: value
+    // numerators per (row, action) and reach denominators per row (stored
+    // in the action-0 block of a store_total_-sized array).
+    std::vector<float> ev_delta, evw_delta;
     Deal deal;
     std::vector<std::uint32_t> strengths;
     std::vector<float> hero_root;                  // masked root reach
@@ -174,6 +178,14 @@ class SampledCfrSolver final : public StrategySource {
   std::vector<bool> frozen_seat_;
   std::vector<float> regrets_;
   std::vector<float> strat_sum_;
+  // Conditioned EVs for team nodes, allocated only when a team exists:
+  // ev_sum_[offset + a*rows + row] accumulates reach-weighted TEAM values
+  // per action, ev_w_[offset + row] (the action-0 block) the matching
+  // reach mass, both under the same linear discount as the strategy sums.
+  // ev_sum_/ev_w_ is the reach-weighted average team EV of taking that
+  // action from that (own, partner) infoset - what team_rollup ships.
+  std::vector<float> ev_sum_;
+  std::vector<float> ev_w_;
   std::vector<Lane> lanes_;
   std::unique_ptr<ThreadPool> pool_;
   QreConfig qre_{};  // never enabled here; StrategySource contract only

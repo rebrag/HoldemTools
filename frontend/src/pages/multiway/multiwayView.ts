@@ -82,6 +82,11 @@ export interface MultiwayView {
    * no-team baseline and the team best-responds jointly. */
   teamSeats: number[];
   awareness: "aware" | "unaware";
+  /** Unaware phase-1 (no-team baseline) iterations. Empty = same as
+   *  maxIterations. Long team solves want this SMALLER than phase 2: the
+   *  baseline converges quickly, while the team's conditioned charts are
+   *  what sharpen with iterations. */
+  baselineIterations: string;
 
   /* ---- Solve settings ---- */
   boardSampleIter: string;
@@ -105,6 +110,7 @@ export const DEFAULT_VIEW: MultiwayView = {
   stacks: ["20", "20", "20", "20"],
   teamSeats: [],
   awareness: "unaware",
+  baselineIterations: "",
   boardSampleIter: "500",
   boardSamplePair: "20000",
   seed: "20260830",
@@ -162,6 +168,9 @@ export const validate = (view: MultiwayView): string[] => {
     issues.push("Multiway board sample must be at least 1.");
   }
   if (!(num(view.maxIterations) >= 1)) issues.push("Max iterations must be at least 1.");
+  if (view.baselineIterations.trim() !== "" && !(num(view.baselineIterations) >= 1)) {
+    issues.push("Baseline iterations must be at least 1 (or left empty for = max).");
+  }
   if (view.teamSeats.length !== 0 && view.teamSeats.length !== 2) {
     issues.push("A hand-sharing team is exactly two seats (or none).");
   }
@@ -231,6 +240,9 @@ export const buildMultiwayConfig = (view: MultiwayView): Record<string, unknown>
                 .map((i) => [i]),
             ],
             awareness: view.awareness,
+            ...(view.awareness === "unaware" && num(view.baselineIterations) >= 1
+              ? { baseline_iterations: num(view.baselineIterations) }
+              : {}),
           },
         }
       : {}),

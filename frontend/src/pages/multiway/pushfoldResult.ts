@@ -64,6 +64,10 @@ export interface PushFoldDump {
         partner: number;
         num_actions: number;
         freq: number[][][];
+        /** Per (partner class, own class, action): reach-weighted TEAM EV in
+         *  chips (own + partner), null where the conditioning never
+         *  accumulated reach. Absent on payloads older than the field. */
+        ev?: (number | null)[][][];
         /** Per partner class: how often that conditioning reaches this node,
          *  relative to the node's most-reached partner class (0..1). ~0 means
          *  the partner never arrives here with that hand (e.g. "partner
@@ -105,20 +109,24 @@ const CLASS_INDEX = new Map(CLASS_NAMES.map((name, i) => [name, i]));
 
 /** The conditioned chart for a hand-sharing team: the actor's strategy at
  *  this node GIVEN the partner's hand class. freq carries the first
- *  num_actions-1 frequencies; the last is one minus the rest. EVs are not
- *  conditioned (the payload does not carry them per pair), so cells show
- *  frequencies only. */
+ *  num_actions-1 frequencies; the last is one minus the rest. When the
+ *  payload carries conditioned EVs (`ev`, per cell per action, TEAM chips -
+ *  own plus partner), they land in the tooltip; older payloads simply have
+ *  no EVs here. */
 export const conditionedGridFor = (
   node: DumpNode,
-  rollup: { num_actions: number; freq: number[][][] },
+  rollup: { num_actions: number; freq: number[][][]; ev?: (number | null)[][][] },
   partnerClass: number
 ): HandCellData[] => {
   const labels = actionLabels(node);
   const prow = rollup.freq[partnerClass] ?? [];
+  const erow = rollup.ev?.[partnerClass];
   return HAND_ORDER.map((hand) => {
     const oc = CLASS_INDEX.get(hand);
     const fr = oc != null ? prow[oc] ?? [] : [];
+    const ev = oc != null ? erow?.[oc] : undefined;
     const actions: Record<string, number> = {};
+    const evs: Record<string, number> = {};
     let sum = 0;
     labels.forEach((label, i) => {
       if (i < labels.length - 1) {
@@ -126,12 +134,14 @@ export const conditionedGridFor = (
         actions[label] = v;
         sum += v;
       }
+      const e = ev?.[i];
+      if (e != null) evs[label] = e;
     });
     if (labels.length > 0) {
       actions[labels[labels.length - 1]] =
         labels.length === 1 ? fr[0] ?? 1 : Math.max(0, 1 - sum);
     }
-    return { hand, actions, evs: {} };
+    return { hand, actions, evs };
   });
 };
 
