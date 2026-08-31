@@ -45,6 +45,7 @@ export interface PushFoldDump {
     chip_scale: number;
     multiway_no_nash_guarantee: boolean;
     opponent_card_removal?: string;
+    solver_family?: string;
     board_sample?: { iter_count: number; pair_count: number; seed: number };
     preflop?: {
       button: number;

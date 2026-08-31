@@ -22,7 +22,7 @@ namespace {
 // and the fold-back below stays serial and in child order.
 struct BrTraverser {
   const Game& game;
-  const CfrSolver& solver;
+  const StrategySource& solver;
   ThreadPool& pool;
   int seat;
   // Null = the plain Nash best response, bit-for-bit what this pass has always
@@ -247,7 +247,7 @@ struct BrTraverser {
 
 namespace {
 
-BrResult run_br(const Game& game, const CfrSolver& solver, const QreConfig* qre) {
+BrResult run_br(const Game& game, const StrategySource& solver, const QreConfig* qre) {
   const int seats = game.num_seats();
   const double z = game.total_profile_weight();
   BrResult result;
@@ -273,18 +273,18 @@ BrResult run_br(const Game& game, const CfrSolver& solver, const QreConfig* qre)
 
 }  // namespace
 
-BrResult compute_best_response(const Game& game, const CfrSolver& solver) {
-  return run_br(game, solver, nullptr);
+BrResult compute_best_response(const Game& game, const StrategySource& source) {
+  return run_br(game, source, nullptr);
 }
 
-BrResult compute_qre_best_response(const Game& game, const CfrSolver& solver) {
+BrResult compute_qre_best_response(const Game& game, const StrategySource& source) {
   // With no regularization in force the "QRE gap" would just be NashConv.
   // Returning that silently would let a misconfigured solve look like it
   // converged to something it never targeted, so callers must check
   // QreConfig::enabled - but returning the honest Nash number is the safe
   // fallback if one does not.
-  if (!solver.qre().enabled) return run_br(game, solver, nullptr);
-  return run_br(game, solver, &solver.qre());
+  if (!source.qre().enabled) return run_br(game, source, nullptr);
+  return run_br(game, source, &source.qre());
 }
 
 }  // namespace engine

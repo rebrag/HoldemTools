@@ -99,7 +99,9 @@ export const DEFAULT_VIEW: MultiwayView = {
   boardSamplePair: "20000",
   seed: "20260830",
   accuracy: "0.004",
-  maxIterations: "2000",
+  // High enough for the sampled family (one deal per iteration); the
+  // vectorized 2-3 seat solves stop on the accuracy target long before it.
+  maxIterations: "200000",
 };
 
 /** Grow or shrink the per-seat arrays when the player count changes, keeping
@@ -185,11 +187,25 @@ export const buildMultiwayConfig = (view: MultiwayView): Record<string, unknown>
         seed: num(view.seed),
       },
     },
-    algorithm: { update: "dcfr" },
+    // 4+ seats run the SAMPLED core (M8c): every iteration deals concrete
+    // cards, so opponent-vs-opponent card removal is exact in expectation and
+    // root EVs sum to the dead money by construction - the property the
+    // factorized estimator provably cannot reach past 3 seats. 2-3 seats
+    // stay on the vectorized core, whose evaluator is exact there and whose
+    // accuracy stop is honest. A sampled "iteration" is one dealt hand, not
+    // one exact tree pass, hence the per-family checkpoint cadence.
+    algorithm:
+      view.players >= 4
+        ? { family: "sampled", sampled: { seed: num(view.seed), batch: 1024, lanes: 16 } }
+        : { update: "dcfr" },
     budget: {
       iterations: num(view.maxIterations),
       target_nashconv: num(view.accuracy),
-      checkpoint_every: 25,
+      // One checkpoint for a sampled solve: each checkpoint runs a
+      // best-response pass over the factorized evaluator (~38 s at 500
+      // boards), and targets cannot stop a 4+ seat sampled solve anyway,
+      // so mid-solve checkpoints would only multiply the measuring cost.
+      checkpoint_every: view.players >= 4 ? num(view.maxIterations) : 25,
     },
     memory_limit_gb: 12,
     threads: 0,

@@ -206,7 +206,7 @@ TEST_CASE("a 4-seat artifact round-trips without a format bump") {
   CHECK(reader.metadata().at("partition") == nlohmann::json({{0}, {1}, {2}, {3}}));
   // CFR carries no Nash guarantee past two players; the flag has to travel.
   CHECK(reader.metadata().at("multiway_no_nash_guarantee") == true);
-  CHECK(reader.metadata().at("opponent_card_removal") == "hero_only");
+  CHECK(reader.metadata().at("opponent_card_removal") == "pairwise_mass");
   CHECK(reader.metadata().at("board_sample").at("pair_count") == 1000);
   CHECK(reader.metadata().at("preflop").at("bb_seat") == 1);
   CHECK(reader.metadata().at("hand_universe") == "nlhe_combos_1326");

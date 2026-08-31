@@ -288,6 +288,49 @@ namespace PokerRangeAPI2.Controllers
             return File(bytes.Value.Content.ToArray(), "application/octet-stream");
         }
 
+        // DELETE api/enginecompare/{id} - drop one of the caller's own jobs and
+        // its result blobs. Ownership is checked the same way every other
+        // endpoint here checks it: the row is looked up by (id, uid) from the
+        // token, so a non-owner gets 404 rather than a 403 that would confirm
+        // the job exists.
+        //
+        // An ACTIVE job is refused. The watcher may be mid-solve and will PATCH
+        // its status when it finishes; deleting the row underneath it turns a
+        // normal report into a confusing 404 in the watcher log, and the claim
+        // would never be released. Terminal jobs only.
+        [HttpDelete("{id:guid}")]
+        public async Task<IActionResult> Delete(Guid id)
+        {
+            var uid = this.CurrentUid();
+            if (string.IsNullOrWhiteSpace(uid)) return Unauthorized();
+            var job = await _db.EngineCompareJobs
+                .FirstOrDefaultAsync(j => j.Id == id && j.UserId == uid);
+            if (job == null) return NotFound();
+            if (!EngineCompareJobStatus.Terminal.Contains(job.Status))
+                return Conflict("This job is still running. Wait for it to finish, then delete it.");
+
+            // Blobs first: a row removed while its blobs survive is a leak with
+            // nothing left pointing at it, whereas a blob delete that fails
+            // leaves the row intact and the delete retryable.
+            var connectionString = _config["AzureStorage:ConnectionString"];
+            var containerName = _config["AzureStorage:ContainerName"] ?? "onlinerangedata";
+            if (!string.IsNullOrWhiteSpace(connectionString))
+            {
+                var container = new BlobServiceClient(connectionString)
+                    .GetBlobContainerClient(containerName);
+                foreach (var path in new[] { job.HtResultBlobPath, job.PioResultBlobPath, job.ResultBlobPath })
+                {
+                    if (string.IsNullOrEmpty(path)) continue;
+                    // Already-missing is success: the point is that it is gone.
+                    await container.GetBlobClient(path).DeleteIfExistsAsync();
+                }
+            }
+
+            _db.EngineCompareJobs.Remove(job);
+            await _db.SaveChangesAsync();
+            return NoContent();
+        }
+
         private bool IsAdmin()
         {
             // The default JWT inbound claim map renames "email" to

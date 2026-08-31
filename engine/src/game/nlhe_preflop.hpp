@@ -6,6 +6,7 @@
 
 #include "cards/cards.hpp"
 #include "config/schema.hpp"
+#include "game/deal_game.hpp"
 #include "game/game.hpp"
 #include "ranges/universe.hpp"
 
@@ -53,7 +54,7 @@ namespace engine {
 //     silently misscale every exported EV.
 //   - Side pots and ties are EXACT: layers come from the node's public commit
 //     levels, and ties are a subset expansion over the eligible opponents.
-class NlhePreflopGame final : public Game {
+class NlhePreflopGame final : public Game, public DealGame {
  public:
   explicit NlhePreflopGame(const SolveConfig& config);
 
@@ -79,6 +80,17 @@ class NlhePreflopGame final : public Game {
 
   void compat_weights(int seat, const std::vector<std::vector<float>>& reach,
                       std::vector<float>& out) const override;
+
+  // The DealGame face, for the sampled solver core. A deal is 2 cards per
+  // seat plus a full 5-card board; deal_strengths is the once-per-iteration
+  // whole-universe 7-card evaluation on that board, and deal_showdown_values
+  // resolves the same TerminalPlan layers as the vectorized path but against
+  // PINNED opponents, so it is O(H) flat with no inclusion-exclusion.
+  void sample_deal(std::uint64_t seed, std::uint64_t iter, Deal& out) const override;
+  void deal_strengths(const Deal& deal, std::vector<std::uint32_t>& out) const override;
+  void deal_showdown_values(NodeId node, int seat, const Deal& deal,
+                            const std::vector<std::uint32_t>& strengths,
+                            std::vector<float>& out) const override;
 
   std::vector<std::uint16_t> hand_dictionary(int) const override { return universe_.ids; }
 
@@ -116,6 +128,13 @@ class NlhePreflopGame final : public Game {
   const std::array<Card, 5>& sampled_board(int i) const {
     return boards_[static_cast<std::size_t>(i)].board;
   }
+  // The profile mass a terminal's values were measured against. A showdown is
+  // normalized by a board-sample mass rather than by compat_weights (see
+  // terminal_values), so a test that wants to compare chips-per-unit-mass
+  // against a brute-force reference has to be told which mass was used.
+  void terminal_values_with_mass(NodeId id, int seat,
+                                 const std::vector<std::vector<float>>& reach,
+                                 std::vector<float>& out, std::vector<float>& mass) const;
 
  private:
 
@@ -137,15 +156,24 @@ class NlhePreflopGame final : public Game {
 
   void build_boards(int threads);
   void build_pair_equity(int threads);
-  // Ascending-strength sweep giving, for every hero hand, the opponent mass
-  // strictly worse than it and the mass tied with it - both with hero's own
-  // two cards removed exactly. This is showdown_2p's sweep with the two
-  // halves kept apart, because the multiway combine needs them separately.
-  void worse_and_tie(const BoardTable& board, const float* opp_reach, float* worse, float* tie,
-                     float* total) const;
-  // One seat's compatible mass per hero hand on one board. Every seat needs
-  // one, contesting the layer or not - see the definition for why.
-  void board_compat(const BoardTable& board, const float* opp_reach, float* out) const;
+  // One layer's win probability and total profile mass per hero hand,
+  // accumulated over the whole board sample, with card removal applied
+  // BETWEEN the other seats as well as against hero.
+  //
+  // That last part is what makes root EVs sum to the dead money. Conservation
+  // holds if and only if every seat integrates the identical set of deals, and
+  // a rule phrased as "the others must miss MY cards" is a different set for
+  // every hero. Removing cards between the others too takes the hero out of
+  // the definition, and then the sum is a property of the arithmetic rather
+  // than something to be hoped for.
+  //
+  // `eligible` are the seats contesting the layer; `bystanders` cannot win it
+  // but still hold cards, so they still say which deals and which runouts were
+  // possible. The two lists differ only in whether a seat enters the win
+  // condition - both enter the measure.
+  void layer_masses(const std::vector<int>& eligible, const std::vector<int>& bystanders,
+                    const std::vector<std::vector<float>>& reach, std::vector<double>& num,
+                    std::vector<double>& den) const;
   // Fold one opponent's compatible mass into a running per-hero-hand product.
   // The single copy of the hero-vs-opponent inclusion-exclusion.
   void multiply_compat(const float* opp_reach, float* inout) const;
@@ -162,6 +190,10 @@ class NlhePreflopGame final : public Game {
   // boards in the pair sample. Exactly 0 when the two combos share a card, so
   // a plain dense dot product against an opponent reach vector already
   // excludes blocked combos.
+  // Universe index of the combo {a, b}, or -1. 52x52, built once: the
+  // bunching correction asks for it 52 times per hand per pair, and
+  // combo_index plus a binary search each time would dominate it.
+  std::vector<std::int32_t> combo_at_;
   std::vector<float> e2_;
   std::vector<BoardTable> boards_;
   std::vector<TerminalPlan> terminal_plan_;  // by dense terminal_index

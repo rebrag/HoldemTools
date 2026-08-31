@@ -20,6 +20,8 @@
 #include "solver/agents.hpp"
 #include "solver/best_response.hpp"
 #include "solver/cfr.hpp"
+#include "game/deal_game.hpp"
+#include "solver/sampled_cfr.hpp"
 #include "solver/memory.hpp"
 #include "util/parallel.hpp"
 
@@ -34,9 +36,14 @@ std::unique_ptr<Game> make_game(const SolveConfig& config) {
   return std::make_unique<NlhePostflopGame>(config);
 }
 
+std::uint32_t sampled_lanes_of(const SolveConfig& config) {
+  return config.sampled.enabled ? config.sampled.lanes : 0;
+}
+
 int check_memory(const Game& game, const SolveConfig& config, bool print_always) {
   const MemoryEstimate estimate =
-      estimate_memory(game, config.threads, config.recalc.enabled, config.update.precision);
+      estimate_memory(game, config.threads, config.recalc.enabled, config.update.precision,
+                      sampled_lanes_of(config));
   if (print_always) std::cout << estimate.to_string() << "\n";
   const double limit_bytes = config.memory_limit_gb * 1024.0 * 1024.0 * 1024.0;
   if (static_cast<double>(estimate.total()) > limit_bytes) {
@@ -45,6 +52,90 @@ int check_memory(const Game& game, const SolveConfig& config, bool print_always)
               << "fewer raises) or raise the limit.\n";
     return 1;
   }
+  return 0;
+}
+
+// The sampled-deal core's solve loop. Deliberately smaller than the
+// vectorized one below: no recalc budget to feed, no chance-sampling or
+// annealing guards, no QRE - config validation refused all of those.
+int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
+                      double setup_s) {
+  const DealGame* deals = dynamic_cast<const DealGame*>(&game);
+  if (deals == nullptr) {
+    std::cerr << "FATAL: game \"" << config.game
+              << "\" has no deal interface for algorithm.family \"sampled\"\n";
+    return 1;
+  }
+  SampledCfrSolver solver(game, *deals, config.sampled, config.threads);
+  std::cout << "sampled core: seed " << config.sampled.seed << ", batch "
+            << config.sampled.batch << ", lanes " << config.sampled.lanes << "\n";
+  // The preflop evaluator best response runs against is exact at 2-3 seats
+  // and first-order at 4+, where its residual would let a target fire on a
+  // number that is not really exploitability. Honest accounting: report
+  // every checkpoint, let targets stop the solve only where the measure is
+  // exact.
+  const bool br_exact = game.num_seats() <= 3;
+  if (!br_exact) {
+    std::cout << "note: best response rides a first-order evaluator at "
+              << game.num_seats()
+              << " seats, so accuracy targets will NOT stop this solve - it runs to "
+                 "budget.iterations. The reported nashconv is a diagnostic.\n";
+  }
+  const auto start = std::chrono::steady_clock::now();
+  BrResult br;
+  double nashconv = 0.0;
+  std::uint64_t done = 0;
+  const double pot = static_cast<double>(config.pot);
+  while (done < config.iterations) {
+    const std::uint64_t step =
+        std::min<std::uint64_t>(config.checkpoint_every, config.iterations - done);
+    solver.run(step);
+    done += step;
+    br = compute_best_response(game, solver);
+    nashconv = br.nashconv();
+    const double exploitable = nashconv / game.num_seats();
+    std::cout << "iter " << done << "  nashconv " << nashconv << "  exploitable "
+              << exploitable;
+    if (pot > 0.0) std::cout << " (" << 100.0 * exploitable / pot << "% of pot)";
+    std::cout << "  ev";
+    for (double ev : br.ev) std::cout << " " << ev;
+    std::cout << "\n";
+    if (br_exact && config.target_nashconv > 0.0 && nashconv <= config.target_nashconv) {
+      std::cout << "target_nashconv reached\n";
+      break;
+    }
+    if (br_exact && config.target_exploitable_pct > 0.0 && pot > 0.0 &&
+        exploitable <= config.target_exploitable_pct / 100.0 * pot) {
+      std::cout << "target_exploitable_pct reached\n";
+      break;
+    }
+  }
+  const double wall_s =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+
+  SolveStats stats;
+  stats.iterations = solver.iteration();
+  stats.nashconv = nashconv;
+  stats.ev_chips = br.ev;
+  stats.wall_time_s = wall_s;
+  stats.setup_time_s = setup_s;
+  stats.threads = threads;
+  stats.peak_rss_bytes = peak_rss_bytes();
+
+  LocalStore store;
+  const double export_s =
+      write_artifact(store, config.output_path, game, solver, config, stats);
+  const PeakMemory peak = peak_memory();
+  std::cout << "solve time " << wall_s << " s (" << done << " iters on " << threads
+            << " thread" << (threads == 1 ? "" : "s") << ", "
+            << (wall_s > 0.0 ? static_cast<double>(done) / wall_s : 0.0) << " iters/s)\n";
+  std::cout << "wrote " << config.output_path << "  (wall " << wall_s + setup_s
+            << " s including setup, peak RSS " << peak.working_set / (1024.0 * 1024.0)
+            << " MB";
+  if (peak.commit > 0) std::cout << ", commit " << peak.commit / (1024.0 * 1024.0) << " MB";
+  std::cout << ")\n";
+  std::cout << "total " << wall_s + setup_s + export_s << " s (setup " << setup_s
+            << " + solve " << wall_s << " + artifact export " << export_s << " s)\n";
   return 0;
 }
 
@@ -58,7 +149,8 @@ int run_solve(const SolveConfig& config, bool dry_run) {
 
   if (dry_run) {
     const MemoryEstimate estimate =
-        estimate_memory(*game, config.threads, config.recalc.enabled, config.update.precision);
+        estimate_memory(*game, config.threads, config.recalc.enabled,
+                        config.update.precision, sampled_lanes_of(config));
     std::cout << estimate.to_string() << "\n";
     std::cout << "tree: " << game->tree().size() << " nodes ("
               << game->tree().num_decision_nodes << " decision, "
@@ -67,6 +159,7 @@ int run_solve(const SolveConfig& config, bool dry_run) {
     return check_memory(*game, config, false);
   }
   if (int rc = check_memory(*game, config, true); rc != 0) return rc;
+  if (config.sampled.enabled) return run_sampled_solve(config, *game, threads, setup_s);
 
   std::cout << "setup " << setup_s << " s (tree + showdown tables) on " << threads
             << " thread" << (threads == 1 ? "" : "s") << "\n";

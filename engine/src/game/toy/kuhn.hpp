@@ -2,7 +2,9 @@
 #include <cstdint>
 #include <vector>
 
+#include "game/deal_game.hpp"
 #include "game/game.hpp"
+#include "solver/deal.hpp"
 
 namespace engine::toy {
 
@@ -12,7 +14,7 @@ namespace engine::toy {
 // bets K with 3a, bets Q never; game value for P0 is -1/18 (net of ante).
 // Utilities here follow the engine convention (pot share minus post-root
 // commitment), so EV_p0 at the root = ante + net value = 1 - 1/18 = 17/18.
-class KuhnGame final : public Game {
+class KuhnGame final : public Game, public DealGame {
  public:
   KuhnGame() {
     range_ = {1.0f, 1.0f, 1.0f};
@@ -23,10 +25,17 @@ class KuhnGame final : public Game {
   int num_seats() const override { return 2; }
   int num_hands(int) const override { return 3; }
   const std::vector<float>& initial_range(int) const override { return range_; }
-  bool hand_blocks_card(int, int, int) const override { return false; }
-  const std::vector<std::uint16_t>& hands_blocking_card(int, int) const override {
-    static const std::vector<std::uint16_t> none;  // Kuhn has no board
-    return none;
+  // A Kuhn hand IS its card. The vectorized core never asks (no chance
+  // nodes), but the sampled core masks the hero universe against the other
+  // seat's dealt card through these.
+  bool hand_blocks_card(int, int hand, int card) const override { return hand == card; }
+  const std::vector<std::uint16_t>& hands_blocking_card(int, int card) const override {
+    static const std::vector<std::vector<std::uint16_t>> blocking = [] {
+      std::vector<std::vector<std::uint16_t>> v(3);
+      for (int c = 0; c < 3; ++c) v[c] = {static_cast<std::uint16_t>(c)};
+      return v;
+    }();
+    return blocking[static_cast<std::size_t>(card)];
   }
   double chance_weight(NodeId) const override { return 1.0; }
   double total_profile_weight() const override { return 6.0; }  // 3 * 2 deals
@@ -43,6 +52,31 @@ class KuhnGame final : public Game {
   }
 
   std::vector<std::uint16_t> hand_dictionary(int) const override { return {0, 1, 2}; }
+
+  void sample_deal(std::uint64_t seed, std::uint64_t iter, Deal& out) const override {
+    std::uint8_t cards[2];
+    deal_cards(seed, iter, 3, 2, cards);
+    out.hole_per_seat = 1;
+    out.board_count = 0;
+    for (int s = 0; s < 2; ++s) {
+      out.hole[static_cast<std::size_t>(s)] = cards[s];
+      out.hand[static_cast<std::size_t>(s)] = cards[s];  // a Kuhn hand IS its card
+    }
+  }
+
+  void deal_showdown_values(NodeId id, int seat, const Deal& deal,
+                            const std::vector<std::uint32_t>&,
+                            std::vector<float>& out) const override {
+    const Node& node = tree_[id];
+    const int o = deal.hand[static_cast<std::size_t>(1 - seat)];
+    const double my_commit = static_cast<double>(node.commit[seat]);
+    out.assign(3, 0.0f);
+    for (int h = 0; h < 3; ++h) {
+      const double share =
+          h > o ? static_cast<double>(node.pot) : (h < o ? 0.0 : node.pot / 2.0);
+      out[static_cast<std::size_t>(h)] = static_cast<float>(share - my_commit);
+    }
+  }
 
   void terminal_values(NodeId id, int seat,
                        const std::vector<std::vector<float>>& reach,

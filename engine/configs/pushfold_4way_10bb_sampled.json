@@ -1,0 +1,37 @@
+{
+  // The M8c target spot on the SAMPLED core: same 4-way 10bb jam/fold tree
+  // as pushfold_4way_10bb.json, but every iteration deals one concrete hand
+  // per seat plus a real 5-card board, so opponent-vs-opponent card removal
+  // is exact in expectation at any seat count and root EVs sum to the dead
+  // money by construction - the property the factorized estimator cannot
+  // reach at 4+ seats.
+  //
+  // board_sample here feeds only the MEASURING evaluator (best response and
+  // the export pass EVs), which stays first-order at 4 seats; the solve
+  // itself never reads it. Accuracy targets therefore do not stop a 4-seat
+  // sampled solve - it runs to budget.iterations.
+  "schema": 1,
+  "game": "nlhe_preflop",
+  "chip_scale": 2.0,
+  "players": [
+    { "seat": "SB",  "stack": 20, "range": "@file:ranges/full.txt" },
+    { "seat": "BB",  "stack": 20, "range": "@file:ranges/full.txt" },
+    { "seat": "CO",  "stack": 20, "range": "@file:ranges/full.txt" },
+    { "seat": "BTN", "stack": 20, "range": "@file:ranges/full.txt" }
+  ],
+  "preflop": {
+    "small_blind": 1,
+    "big_blind": 2,
+    "button": 3,
+    "action_set": "jam_fold",
+    "board_sample": { "iter_count": 500, "pair_count": 20000, "seed": 20260830 }
+  },
+  "algorithm": {
+    "family": "sampled",
+    "sampled": { "seed": 20260830, "batch": 1024, "lanes": 16 }
+  },
+  "budget": { "iterations": 200000, "checkpoint_every": 200000 },
+  "memory_limit_gb": 12,
+  "threads": 0,
+  "output": { "path": "out/pushfold_4way_10bb_sampled.hta", "rollups_169": true }
+}

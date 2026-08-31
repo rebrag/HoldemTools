@@ -82,6 +82,7 @@ struct SolveConfig {
   UpdateConfig update;   // algorithm.update / dcfr params
   RecalcConfig recalc;   // algorithm.recalc - chance-child revisit schedule
   SamplingConfig sampling;  // algorithm.sampling - chance-node subsampling
+  SampledConfig sampled;    // algorithm.family "sampled" - the deal-sampling core
   // Collapse suit-equivalent runout subtrees (lossless relabeling). Disabled
   // automatically when the ranges are not suit-symmetric.
   bool isomorphism = true;

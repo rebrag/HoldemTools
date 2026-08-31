@@ -79,6 +79,7 @@ add_library(engine_core STATIC
   src/eval/terminal.cpp
   src/solver/cfr.cpp
   src/solver/best_response.cpp
+  src/solver/sampled_cfr.cpp
   src/solver/agents.cpp
   src/solver/memory.cpp
   src/io/local_store.cpp
@@ -112,6 +113,8 @@ add_executable(engine_tests
   tests/test_recalc.cpp
   tests/test_iso.cpp
   tests/test_qre.cpp
+  tests/test_sampled_kuhn.cpp
+  tests/test_sampled_preflop.cpp
 )
 target_link_libraries(engine_tests PRIVATE engine_core doctest::doctest)
 add_test(NAME engine_tests COMMAND engine_tests)

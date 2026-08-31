@@ -49,10 +49,33 @@ const labelCls = "text-[10px] font-medium uppercase tracking-wide text-slate-500
 type JobStatus = "Queued" | "Claimed" | "Running" | "Uploading" | "Done" | "Failed";
 interface CompareJob {
   id: string;
+  mode?: string;
+  board?: string | null;
   status: JobStatus;
   error?: string | null;
   hasHtResult?: boolean;
+  createdAtUtc?: string;
+  completedAtUtc?: string | null;
 }
+
+const ago = (iso?: string | null): string => {
+  if (!iso) return "";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  if (ms < 60_000) return "just now";
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  return `${Math.floor(ms / 86_400_000)}d ago`;
+};
+
+const STATUS_TONE: Record<JobStatus, string> = {
+  Queued: "text-slate-400",
+  Claimed: "text-slate-300",
+  Running: "text-sky-300",
+  Uploading: "text-sky-300",
+  Done: "text-emerald-400",
+  Failed: "text-red-400",
+};
 
 const TERMINAL: JobStatus[] = ["Done", "Failed"];
 const POLL_MS = 3000;
@@ -100,10 +123,24 @@ const MultiwaySolver = () => {
   const [solving, setSolving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dump, setDump] = useState<PushFoldDump | null>(null);
+  const [viewingId, setViewingId] = useState<string | null>(null);
+  const [jobs, setJobs] = useState<CompareJob[]>([]);
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const cancelled = useRef(false);
 
-  useEffect(() => () => { cancelled.current = true; }, []);
+  /* Re-arm on mount, not just disarm on unmount. StrictMode mounts, unmounts
+   * and remounts every effect in development, so a cleanup-only version sets
+   * this true a tick after the first mount and never clears it - and the poll
+   * loop below then bails on its first iteration, silently, leaving the page
+   * looking like the solve never happened. It is wrong in production too, just
+   * harder to reach: any remount would kill polling for good. */
+  useEffect(() => {
+    cancelled.current = false;
+    return () => {
+      cancelled.current = true;
+    };
+  }, []);
 
   const set = <K extends keyof MultiwayView>(key: K, value: MultiwayView[K]) =>
     setView((v) => ({ ...v, [key]: value }));
@@ -153,8 +190,86 @@ const MultiwaySolver = () => {
     const resp = await authedFetch(`/api/enginecompare/${id}/result/ht`);
     if (!resp.ok) throw new Error(`Result fetch failed (${resp.status})`);
     // Served with Content-Encoding: gzip, which the browser unwraps for us.
-    setDump((await resp.json()) as PushFoldDump);
+    const text = await resp.text();
+    // A compare-mode watcher uploads the binary per-node .htc payload to the
+    // same slot. Naming that explicitly is worth a branch: the alternative is
+    // a raw "Unexpected token 'H'" from JSON.parse, which says nothing about
+    // what to do, and the cause - a watcher running a build without
+    // handle_pushfold - is entirely actionable.
+    if (text.startsWith("HTCMP")) {
+      throw new Error(
+        "This job was solved by a watcher build that predates the pushfold mode, so it " +
+          "uploaded a compare-mode .htc payload instead of a push/fold chart. Restart the " +
+          "watcher and solve again."
+      );
+    }
+    let parsed: PushFoldDump;
+    try {
+      parsed = JSON.parse(text) as PushFoldDump;
+    } catch {
+      throw new Error("The stored result is not a push/fold payload.");
+    }
+    setDump(parsed);
+    setViewingId(id);
   }, []);
+
+  /* The queue is the durable record: the job row and its ADLS blob both
+   * outlive the page, so a finished solve stays reachable after a reload
+   * rather than living only in component state. Filtered to this mode - the
+   * same endpoint carries /compare's postflop jobs. */
+  const refreshJobs = useCallback(async () => {
+    try {
+      const resp = await authedFetch("/api/enginecompare?limit=50");
+      if (!resp.ok) return;
+      const all = (await resp.json()) as CompareJob[];
+      setJobs(all.filter((j) => j.mode === "pushfold"));
+    } catch {
+      // A failed history fetch must not break the builder; the list simply
+      // stays as it was.
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshJobs();
+  }, [refreshJobs]);
+
+  const deleteJob = useCallback(
+    async (id: string) => {
+      setError(null);
+      try {
+        const resp = await authedFetch(`/api/enginecompare/${id}`, { method: "DELETE" });
+        if (!resp.ok && resp.status !== 404) {
+          throw new Error((await resp.text()) || `Delete failed (${resp.status})`);
+        }
+        // Drop it locally rather than waiting for the refetch, so the row
+        // disappears on click; the refresh below then reconciles.
+        setJobs((list) => list.filter((j) => j.id !== id));
+        setViewingId((current) => {
+          if (current !== id) return current;
+          setDump(null);
+          return null;
+        });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        void refreshJobs();
+      }
+    },
+    [refreshJobs]
+  );
+
+  const openJob = useCallback(
+    async (id: string) => {
+      setError(null);
+      setDump(null);
+      try {
+        await loadResult(id);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [loadResult]
+  );
 
   const solve = useCallback(async () => {
     setError(null);
@@ -178,6 +293,7 @@ const MultiwaySolver = () => {
       if (!create.ok) throw new Error((await create.text()) || `Queue failed (${create.status})`);
       let current = (await create.json()) as CompareJob;
       setJob(current);
+      void refreshJobs();
 
       while (!TERMINAL.includes(current.status)) {
         if (cancelled.current) return;
@@ -195,8 +311,9 @@ const MultiwaySolver = () => {
     } finally {
       window.clearInterval(tick);
       setSolving(false);
+      void refreshJobs();
     }
-  }, [view, loadResult]);
+  }, [view, loadResult, refreshJobs]);
 
   const downloadConfig = () => {
     const blob = new Blob([JSON.stringify(buildMultiwayConfig(view), null, 2)], {
@@ -426,6 +543,100 @@ const MultiwaySolver = () => {
               </span>
             )}
           </div>
+
+          {/* Recent solves. The job row and its blob both outlive this page, so
+              a finished solve is reachable after a reload rather than living
+              only in component state. */}
+          <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h2 className="text-xs font-semibold text-slate-200">Recent solves</h2>
+              <button
+                type="button"
+                onClick={() => void refreshJobs()}
+                className="text-[10px] text-slate-500 transition-colors hover:text-slate-300"
+              >
+                Refresh
+              </button>
+            </div>
+            {jobs.length === 0 ? (
+              <p className="text-[11px] text-slate-500">
+                Nothing yet. Solves you queue show up here and stay reachable afterwards.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-1">
+                {jobs.map((j) => {
+                  const openable = j.status === "Done" && j.hasHtResult !== false;
+                  const finished = j.status === "Done" || j.status === "Failed";
+                  return (
+                    <li
+                      key={j.id}
+                      className={`flex items-stretch gap-1 rounded-md border transition-colors ${
+                        viewingId === j.id
+                          ? "border-emerald-600/70 bg-emerald-500/10"
+                          : "border-slate-800 bg-slate-950/40"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        disabled={!openable}
+                        onClick={() => void openJob(j.id)}
+                        title={j.error ?? (openable ? "Load this solve" : j.status)}
+                        className={`flex min-w-0 flex-1 items-center justify-between gap-2 rounded-l-md px-2 py-1.5 text-left text-[11px] transition-colors ${
+                          openable ? "hover:bg-slate-800/60" : "cursor-not-allowed opacity-60"
+                        }`}
+                      >
+                        <span className="truncate font-medium text-slate-300">
+                          {j.board || "preflop"}
+                        </span>
+                        <span className="flex shrink-0 items-center gap-2">
+                          <span className="tabular-nums text-slate-500">
+                            {ago(j.completedAtUtc ?? j.createdAtUtc)}
+                          </span>
+                          <span className={STATUS_TONE[j.status]}>{j.status}</span>
+                        </span>
+                      </button>
+                      {/* Two clicks, not a confirm dialog: the solve is cheap
+                          to re-run and a modal for every row would be worse
+                          than the mistake it prevents. A running job has no
+                          delete at all - the watcher would report into a row
+                          that no longer exists. */}
+                      <button
+                        type="button"
+                        aria-disabled={!finished}
+                        onClick={() => {
+                          if (!finished) return;
+                          if (confirmingDelete === j.id) void deleteJob(j.id);
+                          else setConfirmingDelete(j.id);
+                        }}
+                        onBlur={() =>
+                          setConfirmingDelete((c) => (c === j.id ? null : c))
+                        }
+                        title={
+                          finished
+                            ? confirmingDelete === j.id
+                              ? "Click again to delete this solve and its stored result"
+                              : "Delete this solve"
+                            : "Still running - it can be deleted once it finishes"
+                        }
+                        aria-label={`Delete the ${j.board || "preflop"} solve from ${ago(
+                          j.completedAtUtc ?? j.createdAtUtc
+                        )}`}
+                        className={`shrink-0 rounded-r-md px-2 text-[11px] transition-colors ${
+                          !finished
+                            ? "cursor-not-allowed text-slate-700"
+                            : confirmingDelete === j.id
+                              ? "bg-red-500/20 font-semibold text-red-300"
+                              : "text-slate-600 hover:bg-red-500/10 hover:text-red-300"
+                        }`}
+                      >
+                        {confirmingDelete === j.id ? "Sure?" : "×"}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
         </div>
 
         {/* ---- The table, then the result ---- */}

@@ -41,7 +41,7 @@ static_assert(sizeof(NodeExportData) == 4 * sizeof(std::vector<float>),
 // actor's per-action conditional EVs. Runs once per solve.
 struct ExportPass {
   const Game& game;
-  const CfrSolver& solver;
+  const StrategySource& solver;
   // Indexed by Node::decision_index, which is dense over EVERY decision node
   // including suit-isomorphic members (they carry a valid index; only their
   // solver storage is redirected). This was a std::map<NodeId, ...>: one
@@ -414,7 +414,7 @@ void pad_to(ArtifactStore& store, std::uint64_t alignment) {
 std::size_t export_pass_bytes(const Game& game) { return export_store_bytes(game); }
 
 double write_artifact(ArtifactStore& store, const std::string& path, const Game& game,
-                    const CfrSolver& solver, const SolveConfig& config,
+                    const StrategySource& source, const SolveConfig& config,
                     const SolveStats& stats) {
   if (game.num_seats() < 2 || game.num_seats() > kMaxSeats) {
     throw std::runtime_error("artifact writer supports 2 to " + std::to_string(kMaxSeats) +
@@ -430,13 +430,13 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
   const bool ev_f16 = !config.ev_float32;
 
   // Export pass under the average strategy.
-  ExportPass pass{game, solver, std::vector<NodeExportData>(tree.num_decision_nodes)};
+  ExportPass pass{game, source, std::vector<NodeExportData>(tree.num_decision_nodes)};
   {
     std::vector<std::vector<float>> reach(game.num_seats());
     for (int s = 0; s < game.num_seats(); ++s) reach[s] = game.initial_range(s);
     // Same fan-out budget the solver uses, so the export saturates the same
     // pool rather than inventing its own policy.
-    pass.visit(tree.root(), reach, solver.split_budget(), 0);
+    pass.visit(tree.root(), reach, source.split_budget(), 0);
   }
 
   // Hand dictionaries: entry h is the universe id of solver hand h, so a
@@ -524,6 +524,12 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
   // rate a QRE solve against Pio, and the solutions exporter will not publish
   // one. Both are correct - a QRE deliberately is not a Nash equilibrium.
   meta["mode"] = config.qre_mode;
+  meta["solver_family"] = config.sampled.enabled ? "sampled" : "vectorized";
+  meta["sampled"] = config.sampled.enabled
+                        ? json({{"seed", config.sampled.seed},
+                                {"batch", config.sampled.batch},
+                                {"lanes", config.sampled.lanes}})
+                        : json(nullptr);
   meta["lambda"] = config.qre.enabled ? json(config.qre.lambda) : json(nullptr);
   meta["iterations"] = stats.iterations;
   meta["final_nashconv"] = stats.nashconv;
@@ -618,11 +624,16 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
                             {"pair_count", pf.board_sample.pair_count},
                             {"seed", pf.board_sample.seed},
                             {"fixed_across_iterations", true}};
-    // Hero-vs-opponent card removal is exact; opponent-vs-opponent removal
-    // (bunching) is dropped at 3+ seats, where the inclusion-exclusion grows
-    // combinatorially. Exact at 2 seats, which is what the published Nash
-    // push/fold charts also assume.
-    meta["opponent_card_removal"] = "hero_only";
+    // Named rather than described so a consumer can tell artifacts written
+    // under different removal rules apart. The sampled core deals concrete
+    // cards, so removal between every pair of seats is exact in expectation;
+    // the vectorized preflop estimator applies first-order pairwise
+    // inclusion-exclusion (exact at 2-3 seats, first-order at 4+). Either
+    // way the export pass's per-hand reach/EV fields ride the factorized
+    // evaluator, and export_ev_estimator says so.
+    meta["opponent_card_removal"] =
+        config.sampled.enabled ? "exact_sampled" : "pairwise_mass";
+    meta["export_ev_estimator"] = "factorized_first_order";
   }
   meta["sections"] = {
       {"node_table",

@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "game": "nlhe_preflop",
+  "chip_scale": 2.0,
+  "players": [
+    {
+      "seat": "SB",
+      "stack": 20,
+      "range": "@file:ranges/full.txt"
+    },
+    {
+      "seat": "BB",
+      "stack": 20,
+      "range": "@file:ranges/full.txt"
+    },
+    {
+      "seat": "BTN",
+      "stack": 20,
+      "range": "@file:ranges/full.txt"
+    }
+  ],
+  "preflop": {
+    "small_blind": 1,
+    "big_blind": 2,
+    "button": 2,
+    "action_set": "jam_fold",
+    "board_sample": {
+      "iter_count": 500,
+      "pair_count": 20000,
+      "seed": 20260830
+    }
+  },
+  "algorithm": {
+    "update": "dcfr"
+  },
+  "budget": {
+    "iterations": 2000,
+    "target_nashconv": 0.004,
+    "checkpoint_every": 25
+  },
+  "memory_limit_gb": 12,
+  "threads": 0,
+  "output": {
+    "path": "out/pushfold_3way.hta",
+    "rollups_169": true
+  }
+}
