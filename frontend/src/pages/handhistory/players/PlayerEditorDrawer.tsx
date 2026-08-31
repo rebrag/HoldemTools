@@ -57,9 +57,23 @@ interface Props {
   /** Hands this player appears in (shown next to Delete as context). */
   handCount?: number;
   onClose: () => void;
+  /** Adds an "All players & link hands" link to the footer. Omitted where it
+   *  would be a no-op (the roster page itself) or destructive (the recorder,
+   *  where navigating away discards the in-progress hand). */
+  onOpenRoster?: () => void;
+  /** Stacking context, when the host layers other overlays (the recorder's
+   *  seat editor sits at z-[1300]). Defaults to ResponsiveDrawer's z-50. */
+  zClassName?: string;
 }
 
-const PlayerEditorDrawer: React.FC<Props> = ({ open, player, handCount, onClose }) => {
+const PlayerEditorDrawer: React.FC<Props> = ({
+  open,
+  player,
+  handCount,
+  onClose,
+  onOpenRoster,
+  zClassName,
+}) => {
   const titleId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
@@ -176,6 +190,7 @@ const PlayerEditorDrawer: React.FC<Props> = ({ open, player, handCount, onClose 
       onClose={onClose}
       scrollMode="custom"
       desktopMaxWidthClassName="sm:max-w-sm"
+      zClassName={zClassName}
       showCloseButton={false}
       ariaLabelledBy={titleId}
     >
@@ -289,6 +304,18 @@ const PlayerEditorDrawer: React.FC<Props> = ({ open, player, handCount, onClose 
             </div>
           )}
         </div>
+
+        {onOpenRoster && (
+          <div className="border-t border-hairline px-5 py-2">
+            <button
+              type="button"
+              onClick={onOpenRoster}
+              className="text-xs font-medium text-accent underline underline-offset-2 transition-colors hover:brightness-110"
+            >
+              All players &amp; link hands →
+            </button>
+          </div>
+        )}
 
         <div className="flex gap-2 border-t border-hairline px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button

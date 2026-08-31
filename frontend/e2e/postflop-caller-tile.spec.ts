@@ -145,3 +145,21 @@ test("the caller tile's body rewinds to the caller's decision", async ({ page })
   await expect(page.getByTitle("SB: Call", { exact: true })).toBeVisible();
   await expect(page.getByTitle(`Jump to the ${TURN_CARD} deal`)).toHaveCount(0);
 });
+
+/**
+ * The solved-board layout budgets itself to fit the viewport exactly, so any
+ * sideways scroll is a bug rather than a scrollable overflow - and on mobile
+ * the wrapper centres its rows, which turns "too wide" into a matrix clipped
+ * off the left edge where nothing can scroll to it. Asserted with the line
+ * strip at its longest, since that is the row that grows as play advances.
+ */
+test("the solved board never scrolls the page sideways", async ({ page }) => {
+  const overflow = () =>
+    page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    );
+
+  expect(await overflow(), "at the flop root").toBeLessThanOrEqual(1);
+  await playToCall(page);
+  expect(await overflow(), "after bet-call closes the street").toBeLessThanOrEqual(1);
+});

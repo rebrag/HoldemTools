@@ -88,3 +88,41 @@ test("the dock layout never scrolls the page", async ({ page }) => {
     expect(overflow.x, `horizontal overflow on ${tab}`).toBeLessThanOrEqual(1);
   }
 });
+
+/**
+ * The dock budgets its rows in pixels from a measured container width, so a
+ * measurement that outlives the viewport it was taken in is a layout bug:
+ * the rows keep the old width, the `justify-center` wrapper hangs them off
+ * both edges, and the matrix is clipped where nothing can scroll to it.
+ *
+ * The way a phone gets there is pinch-zoom. `useElementSize` used to discard
+ * every resize while `visualViewport.scale != 1`, so zooming in and then
+ * turning the phone (or dropping the keyboard, or any viewport change) froze
+ * the width at its pre-rotation value - 792px of layout inside a 375px
+ * screen. Zoom is emulated through CDP because that is the only way to move
+ * the visual viewport without a real touch device.
+ */
+test("the dock survives a viewport change made while pinch-zoomed", async ({
+  page,
+}) => {
+  // Lay out wide (still under the 1024 single-range breakpoint, so the mobile
+  // view stays mounted and keeps its measurement across the change).
+  await page.setViewportSize({ width: 900, height: 800 });
+  await expect(page.getByTestId("mobile-dock")).toBeVisible();
+  await page.waitForTimeout(300);
+
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1.5 });
+  await page.setViewportSize({ width: 375, height: 812 });
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+        ),
+      { message: "horizontal overflow while zoomed" }
+    )
+    .toBeLessThanOrEqual(1);
+
+  await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
+});

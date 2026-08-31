@@ -222,17 +222,69 @@ export function formatPioAction(
   return pioLabel;
 }
 
-/** Map each raw pio action of a node's doc to its display label (order preserved). */
+/**
+ * A bet or raise as a percentage of the pot it is going into - the second
+ * number on a line card, beside the amount ("Bet 5.7 (104%)").
+ *
+ * A bet is simply its size over the pot. A raise is the raise-BY amount over
+ * the pot the raiser would be raising into, i.e. after their own call: the
+ * convention every solver front-end uses, and the one that makes a 3-bet read
+ * as a size rather than as a running total.
+ *
+ * Null for fold, check, call and all-in - none of which are a size choice -
+ * and null when the solve did not record its starting pot.
+ *
+ * Deliberately NOT folded into formatPioAction: that label doubles as a
+ * JsonData plate key, as pickActionAt's reverse-lookup key and as comboDetail's
+ * row key, so it has to stay byte-identical. The percentage is presentation
+ * and travels beside the label as its own number.
+ */
+export function betPotPct(
+  pioLabel: string,
+  nodeId: string,
+  /** manifest.pot_chips - the pot at the root of the tree, in Pio chips. */
+  startingPotChips?: number | null,
+  effectiveStackChips?: number | null
+): number | null {
+  if (startingPotChips == null || startingPotChips <= 0) return null;
+  const m = pioLabel.match(/^b(\d+)$/);
+  if (!m) return null; // fold / check / call
+  const chips = Number(m[1]);
+  // An all-in is labelled ALLIN, with no amount and so no percentage.
+  if (effectiveStackChips != null && effectiveStackChips > 0) {
+    if (chips >= effectiveStackChips - 1) return null;
+  }
+
+  const { potChips, oopChips, ipChips } = potSplitChips(nodeId, startingPotChips);
+  // Heads-up postflop the actor alternates strictly, OOP first on every street,
+  // so the number of actions already taken on this street names who is acting.
+  const actingOop = streetActionsOf(nodeId).length % 2 === 0;
+  const facing = actingOop ? ipChips : oopChips;
+  const mine = actingOop ? oopChips : ipChips;
+
+  // What the raiser is raising into: the middle, both live bets, and the call
+  // they are about to make. For a bet (facing === 0) that is just the middle.
+  const target = potChips + facing + mine + (facing - mine);
+  if (target <= 0) return null;
+  const net = chips - priorStreetCommitChips(nodeId);
+  return Math.round(((net - facing) / target) * 100);
+}
+
+/** Map each raw pio action of a node's doc to its display label and, for bets
+ *  and raises, its size as a percentage of the pot (order preserved). */
 export function displayActionMap(
   doc: PioSolutionDoc,
   nodeId: string,
   effectiveStackChips?: number | null,
-  chipScale?: number | null
-): { pioLabel: string; display: string }[] {
+  chipScale?: number | null,
+  /** manifest.pot_chips. Without it the entries carry a null percentage. */
+  startingPotChips?: number | null
+): { pioLabel: string; display: string; pct: number | null }[] {
   const actions = doc.root_169?.strategy.actions ?? [];
   return actions.map((pioLabel) => ({
     pioLabel,
     display: formatPioAction(pioLabel, nodeId, effectiveStackChips, chipScale),
+    pct: betPotPct(pioLabel, nodeId, startingPotChips, effectiveStackChips),
   }));
 }
 

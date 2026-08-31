@@ -6,10 +6,10 @@ import React, { useMemo, useState } from "react";
 import clsx from "clsx";
 import PlayingCard from "@/components/PlayingCard";
 import CardPicker from "@/components/CardPicker";
-import RankSuitKeypad from "@/components/RankSuitKeypad";
 import { buildDeck, sampleN } from "@/lib/cards";
 import { useTaiwaneseSolve } from "./useTaiwaneseSolve";
 import { useSelfPlayLibrary, cachedLibrary, LIBRARY_ENTRIES } from "./useSelfPlayLibrary";
+import InfoButton from "@/components/InfoButton";
 import ScoringExplainer from "./ScoringExplainer";
 import SplitRows from "./SplitRows";
 import { Segmented, Chip, ProgressBar, glassCard } from "./controls";
@@ -34,17 +34,33 @@ const TaiwaneseTab: React.FC = () => {
   // Self-play by default: it is the equilibrium model, and the fixed rule of
   // thumb only exists as a fast preview.
   const [selfPlay, setSelfPlay] = useState(true);
-  // Human-like mixed play by default: opponents sample among their near-best
-  // splits weighted by EV gap, which mimics real tables better than everyone
-  // finding the exact best split every hand.
-  const [mixing, setMixing] = useState<"pure" | "mixed">("mixed");
+  // Best-split opponents by default: the advisor answers "what should I set
+  // against opponents who set correctly", which is the question the client
+  // wants. "Human mix" (opponents sampling among their near-best splits) is
+  // the softer, more table-realistic field, one toggle away.
+  const [mixing, setMixing] = useState<"pure" | "mixed">("pure");
   const [solvedModel, setSolvedModel] = useState<"heuristic" | "selfplay">("selfplay");
   const [showAll, setShowAll] = useState(false);
+  // Collapsed by default: the settings are set once and then left alone, and
+  // keeping them out of the flow is what lets the results sit near the top.
+  const [showSettings, setShowSettings] = useState(false);
   const { running, progress, result, error, solve, cancel } = useTaiwaneseSolve();
   const lib = useSelfPlayLibrary();
 
   const used = useMemo(() => new Set(cards), [cards]);
   const full = cards.length === 7;
+
+  // One-line stand-in for the collapsed settings panel, so the current
+  // configuration is still readable without opening it.
+  const settingsSummary = [
+    `${opponents} ${opponents === 1 ? "opponent" : "opponents"}`,
+    boards === 1 ? "single board" : "double board",
+    `royalties ${royalties ? "on" : "off"}`,
+    `${samples / 1000}k samples`,
+    selfPlay
+      ? `self-play (${mixing === "mixed" ? "human mix" : "best split"})`
+      : "heuristic opponents",
+  ].join(" · ");
 
   const pick = (code: string) => {
     if (running || full || used.has(code)) return;
@@ -92,7 +108,7 @@ const TaiwaneseTab: React.FC = () => {
               </p>
               <div className="flex items-center gap-3">
                 <p className="text-xs text-emerald-100/60">
-                  {full ? "Ready to solve" : `Choose card ${cards.length + 1} of 7`}
+                  {full ? "Tap a card to change it" : `Choose card ${cards.length + 1} of 7`}
                 </p>
                 <button
                   type="button"
@@ -148,138 +164,155 @@ const TaiwaneseTab: React.FC = () => {
               })}
             </div>
 
-            {/* Desktop: the full deck as four suit rows of thirteen. The
-                component's default class is inline-grid, which collapses an
+            {/* The full deck as four suit rows of thirteen, on every viewport:
+                one picker, so a phone and a desktop select cards the same way.
+                The component's default class is inline-grid, which collapses an
                 auto-fill track list to a single column, so this passes an
-                explicit full-width block grid. */}
-            <div className="mt-3 hidden md:block">
-              <CardPicker
-                used={used}
-                onPick={pick}
-                disabled={running || full}
-                size="sm"
-                fitToWidth
-                cardWidth="100%"
-                gapPx={5}
-                className={clsx(
-                  "grid w-full max-w-3xl rounded-xl border border-white/10 bg-white/[0.04] p-2.5 transition-opacity",
-                  (running || full) && "opacity-40"
-                )}
-              />
-            </div>
-            <div className="mt-2 md:hidden">
-              <RankSuitKeypad
-                used={used}
-                onPick={pick}
-                targetLabel={full || running ? undefined : `Card ${cards.length + 1} of 7`}
-              />
-            </div>
-          </div>
+                explicit full-width block grid; the columns are fractions, so
+                the thirteen ranks stay on one line down to the narrowest phone.
 
-          <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-2">
-                Opponents
-              </p>
-              <div className="flex gap-1.5">
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <Chip
-                    key={n}
-                    label={String(n)}
-                    active={opponents === n}
-                    onClick={() => setOpponents(n)}
-                    disabled={busy}
-                  />
-                ))}
-              </div>
-            </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-2">
-                Boards
-              </p>
-              <Segmented
-                value={String(boards) as "1" | "2"}
-                options={[
-                  { value: "1", label: "Single" },
-                  { value: "2", label: "Double" },
-                ]}
-                onChange={(v) => setBoards(Number(v) as 1 | 2)}
-                disabled={busy}
-              />
-            </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-2">
-                Royalties
-              </p>
-              <Segmented
-                value={royalties ? "on" : "off"}
-                options={[
-                  { value: "off", label: "Off (house)" },
-                  { value: "on", label: "On (PokerNews)" },
-                ]}
-                onChange={(v) => setRoyalties(v === "on")}
-                disabled={busy}
-              />
-            </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-2">
-                Samples
-              </p>
-              <div className="flex gap-1.5">
-                {SAMPLE_PRESETS.map((pr) => (
-                  <Chip
-                    key={pr.label}
-                    label={pr.label}
-                    active={samples === pr.value}
-                    onClick={() => setSamples(pr.value)}
-                    disabled={busy}
-                  />
-                ))}
-              </div>
-            </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-2">
-                Opponent model
-              </p>
-              <Segmented
-                value={selfPlay ? "selfplay" : "heuristic"}
-                options={[
-                  { value: "selfplay", label: "Self-play" },
-                  { value: "heuristic", label: "Heuristic (fast)" },
-                ]}
-                onChange={(v) => setSelfPlay(v === "selfplay")}
-                disabled={busy}
-              />
-              <p className="mt-1.5 text-xs text-emerald-100/60 max-w-lg">
-                {selfPlay
-                  ? "Opponents set the split that is best against the field, found by iterated best response. The first solve per settings loads a precomputed policy or builds one (under a minute), then it is cached."
-                  : "Opponents set their hands with a fixed rule of thumb."}
-              </p>
-            </div>
-            {selfPlay && (
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-2">
-                  Opponent play
-                </p>
-                <Segmented
-                  value={mixing}
-                  options={[
-                    { value: "mixed", label: "Human mix" },
-                    { value: "pure", label: "Best split" },
-                  ]}
-                  onChange={setMixing}
-                  disabled={busy}
+                It is only mounted while cards are still missing. Once the hand
+                is set the deck is dead weight between the hand and the results,
+                and removing a card brings it straight back. */}
+            {!full && (
+              <div className="mt-3">
+                <CardPicker
+                  used={used}
+                  onPick={pick}
+                  disabled={running}
+                  size="sm"
+                  fitToWidth
+                  cardWidth="100%"
+                  gapPx={3}
+                  className={clsx(
+                    "grid w-full max-w-3xl rounded-xl border border-white/10 bg-white/[0.04] p-1.5 sm:p-2.5 transition-opacity",
+                    running && "opacity-40"
+                  )}
                 />
-                <p className="mt-1.5 text-xs text-emerald-100/60 max-w-lg">
-                  {mixing === "mixed"
-                    ? "Opponents sample among their near-best splits, weighted by how little EV each gives up - closer to a real table."
-                    : "Every opponent always finds their exact best split."}
-                </p>
               </div>
             )}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <button
+              type="button"
+              onClick={() => setShowSettings((v) => !v)}
+              aria-expanded={showSettings}
+              className="text-xs font-semibold uppercase tracking-widest text-emerald-400 underline decoration-emerald-400/30 transition-colors hover:text-emerald-300"
+            >
+              {showSettings ? "Hide settings" : "Settings"}
+            </button>
+            {!showSettings && (
+              <p className="font-mono text-xs text-emerald-100/60">{settingsSummary}</p>
+            )}
+          </div>
+
+          {showSettings && (
+            <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-2">
+                  Opponents
+                </p>
+                <div className="flex gap-1.5">
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <Chip
+                      key={n}
+                      label={String(n)}
+                      active={opponents === n}
+                      onClick={() => setOpponents(n)}
+                      disabled={busy}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-2">
+                  Boards
+                </p>
+                <Segmented
+                  value={String(boards) as "1" | "2"}
+                  options={[
+                    { value: "1", label: "Single" },
+                    { value: "2", label: "Double" },
+                  ]}
+                  onChange={(v) => setBoards(Number(v) as 1 | 2)}
+                  disabled={busy}
+                />
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-2">
+                  Royalties
+                </p>
+                <Segmented
+                  value={royalties ? "on" : "off"}
+                  options={[
+                    { value: "off", label: "Off (house)" },
+                    { value: "on", label: "On (PokerNews)" },
+                  ]}
+                  onChange={(v) => setRoyalties(v === "on")}
+                  disabled={busy}
+                />
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-2">
+                  Samples
+                </p>
+                <div className="flex gap-1.5">
+                  {SAMPLE_PRESETS.map((pr) => (
+                    <Chip
+                      key={pr.label}
+                      label={pr.label}
+                      active={samples === pr.value}
+                      onClick={() => setSamples(pr.value)}
+                      disabled={busy}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-2">
+                  Opponent model
+                </p>
+                <Segmented
+                  value={selfPlay ? "selfplay" : "heuristic"}
+                  options={[
+                    { value: "selfplay", label: "Self-play" },
+                    { value: "heuristic", label: "Heuristic (fast)" },
+                  ]}
+                  onChange={(v) => setSelfPlay(v === "selfplay")}
+                  disabled={busy}
+                />
+                <p className="mt-1.5 text-xs text-emerald-100/60 max-w-lg">
+                  {selfPlay
+                    ? "Opponents set the split that is best against the field, found by iterated best response. The first solve per settings loads a precomputed policy or builds one (under a minute), then it is cached."
+                    : "Opponents set their hands with a fixed rule of thumb."}
+                </p>
+              </div>
+              {selfPlay && (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400 mb-2">
+                    Opponent play
+                  </p>
+                  <Segmented
+                    value={mixing}
+                    options={[
+                      { value: "mixed", label: "Human mix" },
+                      { value: "pure", label: "Best split" },
+                    ]}
+                    onChange={setMixing}
+                    disabled={busy}
+                  />
+                  <p className="mt-1.5 text-xs text-emerald-100/60 max-w-lg">
+                    {mixing === "mixed"
+                      ? "Opponents sample among their near-best splits, weighted by how little EV each gives up - closer to a real table."
+                      : "Every opponent always finds their exact best split."}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
               onClick={busy ? onCancel : onSolve}
@@ -294,6 +327,13 @@ const TaiwaneseTab: React.FC = () => {
             {lib.building && (
               <p className="text-xs text-emerald-100/60">Building opponent policy...</p>
             )}
+            <InfoButton
+              label="How scoring is configured"
+              title="How scoring is configured"
+              className="ml-auto shrink-0"
+            >
+              <ScoringExplainer royalties={royalties} boards={boards} />
+            </InfoButton>
           </div>
 
           {(error || lib.error) && <p className="text-sm text-red-400">{error ?? lib.error}</p>}
@@ -397,7 +437,6 @@ const TaiwaneseTab: React.FC = () => {
         </div>
       )}
 
-      <ScoringExplainer royalties={royalties} boards={boards} />
     </div>
   );
 };

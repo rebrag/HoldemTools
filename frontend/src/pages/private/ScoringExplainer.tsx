@@ -1,11 +1,13 @@
 // src/pages/private/ScoringExplainer.tsx
-// On-page reference for how Taiwanese scoring is configured, tracking the
-// tab's ACTIVE settings (royalties on/off, board count). Every demo number is
-// produced by running the scoring function, so this panel is a readout of the
-// code rather than a description of it. See CLAUDE.md in this folder.
+// Reference for how Taiwanese scoring is configured, tracking the tab's ACTIVE
+// settings (royalties on/off, board count). Every demo number is produced by
+// running the scoring function, so this panel is a readout of the code rather
+// than a description of it. See CLAUDE.md in this folder.
+//
+// Renders bare content, no container: it lives inside the advisor's InfoButton
+// overlay, which supplies the heading, the padding and the scroll region.
 import React from "react";
 import { scoringLines, royaltyChart, sourceChecks } from "./taiwaneseScoring";
-import { glassCard } from "./controls";
 
 const fmt = (n: number) => (n > 0 ? `+${n}` : String(n));
 
@@ -21,19 +23,14 @@ const ScoringExplainer: React.FC<ScoringExplainerProps> = ({ royalties, boards }
   const allOk = checks.every((c) => c.ok);
 
   return (
-    <details className={glassCard} open>
-      <summary className="cursor-pointer list-none">
-        <span className="text-xs font-semibold uppercase tracking-widest text-emerald-400">
-          How scoring is configured
-        </span>
-        <p className="mt-1 text-sm text-emerald-100/70">
-          {royalties
-            ? "PokerNews rules: the best hand in each row collects 1 / 2 / 3 plus royalties from every player, and a 3-point scoop from everyone."
-            : "House rules: every pair of players settles separately, rows pay 1 / 2 / 3, no royalties, and an 8-point scoop per opponent swept."}{" "}
-          Every number below is read straight from the scoring code with the settings picked
-          above, so it always matches what the solver paid.
-        </p>
-      </summary>
+    <div>
+      <p className="text-sm text-emerald-100/70">
+        {royalties
+          ? "PokerNews rules: the best hand in each row collects 1 / 2 / 3 plus royalties from every player, and a 3-point scoop from everyone."
+          : "House rules: every pair of players settles separately, rows pay 1 / 2 / 3, no royalties, and an 8-point scoop per opponent swept."}{" "}
+        Every number below is read straight from the scoring code with the settings picked
+        on the advisor, so it always matches what the solver paid.
+      </p>
 
       <div className="mt-4 overflow-x-auto">
         <table className="w-full text-sm border-collapse">
@@ -148,7 +145,7 @@ const ScoringExplainer: React.FC<ScoringExplainerProps> = ({ royalties, boards }
           </p>
         )}
       </div>
-    </details>
+    </div>
   );
 };
 

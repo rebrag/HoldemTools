@@ -15,6 +15,8 @@ import type { User } from "firebase/auth";
 import PokerTable from "@/components/PokerTable";
 import CopyButton from "@/components/CopyButton";
 import { usePlayers } from "@/hooks/usePlayers";
+import type { Player } from "@/lib/playersApi";
+import PlayerEditorDrawer from "../players/PlayerEditorDrawer";
 import { authedFetch } from "@/lib/api";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import { useSavedTableLayout } from "@/hooks/useSavedTableLayout";
@@ -255,6 +257,10 @@ const CreateHandHistory: React.FC<Props> = ({
       createInitialState(DEFAULT_TABLE_SIZE, setupDefaults)
   );
   const [editingSeat, setEditingSeat] = useState<number | null>(null);
+  // Roster editor opened from a seat's photo. Two pieces of state so the
+  // drawer keeps a player to render against while its exit animation plays.
+  const [playerDrawerOpen, setPlayerDrawerOpen] = useState(false);
+  const [editingPlayer, setEditingPlayer] = useState<Player | null>(null);
   // Last seat the editor showed, so the permanently-mounted drawer keeps valid
   // props while its exit animation plays after editingSeat returns to null.
   const lastEditedSeatRef = useRef(0);
@@ -1346,6 +1352,20 @@ const CreateHandHistory: React.FC<Props> = ({
             : undefined
         }
         onSeatClick={(i) => (placement ? handlePlacementTarget(i) : setEditingSeat(i))}
+        /* The photo is its own target: it edits the PERSON (name, notes,
+           photo), while the rest of the seat edits the seat. Suppressed while
+           a placement is armed, so an armed move can't be swallowed. */
+        onSeatAvatarClick={
+          placement
+            ? undefined
+            : (i) => {
+                const id = state.seats[i]?.playerId;
+                const p = id ? playersById.get(id) : undefined;
+                if (!p) return;
+                setEditingPlayer(p);
+                setPlayerDrawerOpen(true);
+              }
+        }
         onDealerBadgeClick={
           phase === "setup"
             ? () =>
@@ -1779,6 +1799,17 @@ const CreateHandHistory: React.FC<Props> = ({
           setEditingBoard2(false);
         }}
         onClose={() => setEditingBoard2(false)}
+      />
+
+      {/* Last in the JSX and matching SeatEditorModal's z so that a tap
+          landing during the seat editor's exit animation still comes up on
+          top. No onOpenRoster here: leaving the recorder mid-hand would throw
+          away the in-progress hand. */}
+      <PlayerEditorDrawer
+        open={playerDrawerOpen}
+        player={editingPlayer}
+        onClose={() => setPlayerDrawerOpen(false)}
+        zClassName="z-[1300]"
       />
     </div>
   );

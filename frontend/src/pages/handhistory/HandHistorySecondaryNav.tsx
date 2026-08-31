@@ -4,8 +4,13 @@ import { motion } from "framer-motion";
 interface Props {
   /** Go to the visual hand recorder ("Create HH"). */
   onCreate: () => void;
-  /** Go to the player roster page. Omitted (signed out) hides the button. */
-  onPlayers?: () => void;
+  /** Page-owned controls rendered left of "Create HH" (the Filters menu).
+   *  A slot rather than a pile of filter props: this bar is a stateless
+   *  presentation shell and the filter state lives in HandHistoryTool.
+   *  The content row below is `relative` and the bar no longer clips, so a
+   *  popout in this slot anchors to the ROW (aligning with the page gutter)
+   *  rather than to its own trigger, which has buttons to its right. */
+  filters?: React.ReactNode;
 }
 
 /**
@@ -16,9 +21,12 @@ interface Props {
  * (felt gradient + fanned cards + suit watermark) — no image asset, so it
  * stays lightweight and theme-consistent with AuroraBackground.
  */
-const HandHistorySecondaryNav: React.FC<Props> = ({ onCreate, onPlayers }) => {
+const HandHistorySecondaryNav: React.FC<Props> = ({ onCreate, filters }) => {
   return (
-    <div className="sticky top-12 z-30 overflow-hidden border-b border-emerald-400/30 shadow-lg shadow-emerald-950/30">
+    /* No overflow-hidden here: the Filters popout is anchored inside this bar
+       and has to escape it. The clip lives on PokerFeltBanner instead, which
+       is the only child that ever needed fencing. */
+    <div className="sticky top-12 z-30 border-b border-emerald-400/30 shadow-lg shadow-emerald-950/30">
       {/* ── Coded poker banner background ────────────────────────────── */}
       <PokerFeltBanner />
 
@@ -34,16 +42,7 @@ const HandHistorySecondaryNav: React.FC<Props> = ({ onCreate, onPlayers }) => {
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          {onPlayers && (
-            <motion.button
-              type="button"
-              onClick={onPlayers}
-              whileTap={{ scale: 0.96 }}
-              className="inline-flex items-center rounded-full border border-emerald-300/40 bg-white/10 px-3.5 py-1.5 text-sm font-semibold text-emerald-100 shadow-md shadow-emerald-950/30 transition-colors hover:bg-white/20 hover:text-white"
-            >
-              Players
-            </motion.button>
-          )}
+          {filters}
           <motion.button
             type="button"
             onClick={onCreate}
@@ -65,7 +64,7 @@ const HandHistorySecondaryNav: React.FC<Props> = ({ onCreate, onPlayers }) => {
  * vignette keeps the foreground text readable.
  */
 const PokerFeltBanner: React.FC = () => (
-  <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+  <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
     {/* felt base */}
     <div className="absolute inset-0 bg-gradient-to-br from-emerald-800 via-emerald-900 to-slate-950" />
     {/* radial felt sheen */}

@@ -38,7 +38,10 @@ export interface BankrollStats {
   hourly: number;
 }
 
-export type BreakdownMode = "sessions" | "weekday" | "month" | "year";
+// The mobile toggle's superset: BreakdownTableMode plus the raw session list.
+// Kept a parallel literal rather than importing from the component (wrong
+// dependency direction) - keep it in sync with BreakdownTableMode.
+export type BreakdownMode = "sessions" | "weekday" | "month" | "year" | "game";
 
 // The common fields (location/game/dates) live in the shared filter shape so
 // the hand-history list and this page stay one source of truth; see

@@ -32,6 +32,10 @@ type HandRowProps = {
   onToggleExpand: (key: string) => void;
   onDelete: (row: ToolRow) => void;
   onError: (message: string) => void;
+  /** Opens a linked player's editor from their identity chip in the preview.
+   *  Must be a stable reference (HandHistoryTool useCallbacks it) — see
+   *  HandPreview.onPlayerClick. Forward it, never wrap it. */
+  onPlayerClick?: (playerId: string) => void;
 };
 
 const HandRow: React.FC<HandRowProps> = ({
@@ -41,6 +45,7 @@ const HandRow: React.FC<HandRowProps> = ({
   onToggleExpand,
   onDelete,
   onError,
+  onPlayerClick,
 }) => (
   <motion.li
     variants={itemVariants}
@@ -69,6 +74,7 @@ const HandRow: React.FC<HandRowProps> = ({
       onError={onError}
       onPreviewClick={() => onToggleExpand(row.key)}
       previewExpanded={expanded}
+      onPlayerClick={onPlayerClick}
     />
 
     <AnimatePresence initial={false}>

@@ -145,6 +145,7 @@ const LayoutCommandDeck: React.FC<DesktopLayoutProps> = (props) => {
                 { key: "weekday", label: "Weekday" },
                 { key: "month", label: "Month" },
                 { key: "year", label: "Year" },
+                { key: "game", label: "Game" },
               ]}
               value={breakdown}
               onChange={setBreakdown}

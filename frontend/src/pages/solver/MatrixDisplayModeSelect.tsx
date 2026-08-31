@@ -1,7 +1,8 @@
 // Display-mode dropdown above the study matrix (GTO Wizard's "Strategy" menu):
 // a labeled pill opening a Strategy / EV / Equity radio popover. Equity needs
 // per-combo data (postflop, acting seat), so it grays out elsewhere.
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
+import { useDismissOnOutside } from "@/hooks/useDismissOnOutside";
 import { motion, useReducedMotion } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 import {
@@ -21,19 +22,9 @@ const MatrixDisplayModeSelect: React.FC<{
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
-  /* Close on any press outside the button + popover. */
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent | TouchEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("touchstart", onDown);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("touchstart", onDown);
-    };
-  }, [open]);
+  /* Close on any press outside the button + popover, or on Escape. */
+  const close = useCallback(() => setOpen(false), []);
+  useDismissOnOutside(wrapRef, open, close);
 
   const activeLabel =
     MATRIX_DISPLAY_MODE_OPTIONS.find((o) => o.mode === mode)?.label ??

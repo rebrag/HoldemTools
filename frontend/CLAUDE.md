@@ -75,3 +75,15 @@ Prefer this for card entry in tight/mobile UIs; used by the Equity Calculator an
 Hand History seat editor. Props: `used` (Set of taken codes), `onPick(code)`, `targetLabel`.
 - `CardPicker` - full 52-card grid selector. Better when there's room to show every card
 (e.g. board editors). Props: `used`, `onPick(code)`, plus sizing (`minCardWidth`, `size`, ...).
+
+## Reusable overlay components (src/components/)
+- `ResponsiveDrawer` - the shared overlay shell: bottom sheet under 640px, centered modal
+above it, with one implementation of backdrop, Escape, scroll lock and motion.
+Build any new dialog on it rather than hand-rolling a second overlay.
+- `InfoButton` - a small "i" button that opens supporting material in a `ResponsiveDrawer`.
+Reach for it when an explanation, a reference table, or a side tool is worth keeping
+available but would otherwise sit between the page's inputs and its results.
+Children mount only while the panel is open, so an expensive or stateful child costs
+nothing closed and starts fresh each time.
+Props: `title`, `children`, plus optional `label` (text beside the icon; without it the
+button is an icon-only circle), `description`, `desktopMaxWidthClassName`, `size`.

@@ -124,7 +124,13 @@ const SingleRangeMobileView = ({
    * big blinds, so tell it how much money makes one. */
   const sizeRef = money?.bbSize && money.bbSize > 0 ? money.bbSize : 1;
   const vh = windowHeight || 640;
-  const baseW = container.width || windowWidth;
+  /* Clamped to the live viewport, not just taken from the container. Every
+   * row below turns this into an inline pixel width, and the wrapper centres
+   * them - so a measurement that outlives the viewport it was taken in does
+   * not merely overflow, it hangs half the matrix off the left edge where no
+   * scroll can reach it. The measurement is the fast path; the viewport is
+   * the ceiling it can never exceed. */
+  const baseW = Math.min(container.width || windowWidth, windowWidth);
   const availW = Math.max(200, baseW - SIDE_PAD * 2);
 
   /* Height budget: the matrix row (matrix + action column, full width) is

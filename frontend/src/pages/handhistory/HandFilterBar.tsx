@@ -1,7 +1,7 @@
 // src/pages/handhistory/HandFilterBar.tsx
 // The hand list's filter panel: the shared SessionFilterPanel (location /
 // stakes / dates — one source of truth with bankroll) plus the hand-specific
-// controls: a player picker and the "saw flop" / "villain showed" toggles.
+// controls: a player picker and its "saw flop" / "showed cards" qualifiers.
 import React from "react";
 import PlayerAvatar from "@/components/PlayerAvatar";
 import SessionFilterPanel, {
@@ -85,6 +85,9 @@ const HandFilterBar: React.FC<Props> = ({
       filteredCount={filteredCount}
       totalCount={totalCount}
       countNoun="hands"
+      /* The panel lives in a ~416px popout, so it asks for two columns rather
+         than the default five - see SessionFilterPanel.gridClassName. */
+      gridClassName="grid gap-2 sm:grid-cols-2"
       isFiltering={isFiltering}
       onReset={onReset}
       onThisYear={onThisYear}
@@ -99,8 +102,9 @@ const HandFilterBar: React.FC<Props> = ({
               setFilters((prev) => ({
                 ...prev,
                 playerId: e.target.value,
-                // A cleared player clears its qualifier too.
+                // A cleared player clears its qualifiers too.
                 playerSawFlop: e.target.value ? prev.playerSawFlop : false,
+                playerShowed: e.target.value ? prev.playerShowed : false,
               }))
             }
           >
@@ -124,7 +128,12 @@ const HandFilterBar: React.FC<Props> = ({
                 type="button"
                 aria-label="Clear player filter"
                 onClick={() =>
-                  setFilters((prev) => ({ ...prev, playerId: "", playerSawFlop: false }))
+                  setFilters((prev) => ({
+                    ...prev,
+                    playerId: "",
+                    playerSawFlop: false,
+                    playerShowed: false,
+                  }))
                 }
                 className="text-emerald-700/70 transition-colors hover:text-emerald-900"
               >
@@ -140,9 +149,11 @@ const HandFilterBar: React.FC<Props> = ({
             onChange={(on) => setFilters((prev) => ({ ...prev, playerSawFlop: on }))}
           />
           <FilterToggle
-            label="Villain showed cards"
-            checked={filters.villainShowed}
-            onChange={(on) => setFilters((prev) => ({ ...prev, villainShowed: on }))}
+            label={selectedPlayer ? `${selectedPlayer.name} showed cards` : "Player showed cards"}
+            checked={filters.playerShowed}
+            disabled={!filters.playerId}
+            title={filters.playerId ? undefined : "Pick a player first"}
+            onChange={(on) => setFilters((prev) => ({ ...prev, playerShowed: on }))}
           />
         </div>
       }
