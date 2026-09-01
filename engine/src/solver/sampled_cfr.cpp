@@ -677,6 +677,35 @@ void SampledCfrSolver::average_strategy(NodeId id, std::vector<float>& out) cons
   }
 }
 
+void SampledCfrSolver::restore(std::uint64_t iteration, std::vector<float> regrets,
+                               std::vector<float> strat_sum, std::vector<float> ev_sum,
+                               std::vector<float> ev_w, std::vector<bool> frozen_seat,
+                               std::vector<std::vector<float>> frozen_rows) {
+  if (regrets.size() != store_total_ || strat_sum.size() != store_total_) {
+    throw std::runtime_error("checkpoint: solver state size does not match this tree");
+  }
+  if (ev_sum.size() != ev_sum_.size() || ev_w.size() != ev_w_.size()) {
+    throw std::runtime_error("checkpoint: conditioned-EV state does not match this solve "
+                             "(team present in one and not the other)");
+  }
+  if (!frozen_seat.empty() &&
+      frozen_seat.size() != static_cast<std::size_t>(game_.num_seats())) {
+    throw std::runtime_error("checkpoint: frozen-seat count does not match the tree");
+  }
+  if (!frozen_rows.empty() && frozen_rows.size() != game_.tree().size()) {
+    throw std::runtime_error("checkpoint: frozen-row table does not match the tree");
+  }
+  regrets_ = std::move(regrets);
+  strat_sum_ = std::move(strat_sum);
+  ev_sum_ = std::move(ev_sum);
+  ev_w_ = std::move(ev_w);
+  if (!frozen_seat.empty()) frozen_seat_ = std::move(frozen_seat);
+  if (!frozen_rows.empty()) frozen_rows_ = std::move(frozen_rows);
+  // The iteration counter is state, not bookkeeping: run() derives both the
+  // deal stream and the discount from it.
+  t_ = iteration;
+}
+
 void SampledCfrSolver::freeze_seats_from(const StrategySource& source,
                                          const std::vector<bool>& frozen) {
   frozen_seat_ = frozen;

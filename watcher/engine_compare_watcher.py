@@ -32,6 +32,11 @@ Env (same .env as the main watcher):
       is handed `budget.max_seconds` = ceiling - margin and stops itself
       there, so a long solve is TRUNCATED (and uploaded) rather than killed
       and lost. Raise the ceiling for multi-hour solves.
+  ENGINE_CHECKPOINT_DIR   unset by default. Set it to a directory to make
+      sampled solves resumable: each job continues from the checkpoint its
+      own config identifies, so re-queuing the same spot with a bigger
+      budget.iterations adds iterations instead of restarting. Checkpoints
+      are small (~15 MB for a 4-way team spot) but never cleaned up.
 
 Run alongside the main watcher:  python engine_compare_watcher.py
 Only ONE compare watcher instance should run (it spawns Pio processes).
@@ -75,6 +80,14 @@ SOLVE_TIMEOUT_SECS = float(os.getenv("ENGINE_SOLVE_TIMEOUT_SECS", "3600"))
 # `stopped_reason: "time_budget"`. The kill stays as the backstop for a child
 # that is genuinely hung and never reaches its own check.
 SOLVE_WRITE_MARGIN_SECS = float(os.getenv("ENGINE_SOLVE_WRITE_MARGIN_SECS", "300"))
+# Opt-in solver checkpoints. When set, every solve resumes from - and writes
+# back to - a checkpoint named after the solve's own identity, so re-queuing
+# a job with a larger budget.iterations CONTINUES it rather than starting
+# over. That is what turns the one-hour ceiling into arbitrarily long solves
+# done in chunks. Off by default: it makes re-running an identical job a
+# no-op (already at the target) instead of a fresh solve, which should be a
+# deliberate choice.
+CHECKPOINT_DIR = os.getenv("ENGINE_CHECKPOINT_DIR", "").strip()
 ENGINE_EXE = os.path.abspath(
     os.getenv("ENGINE_EXE") or os.path.join(WATCHER_DIR, "..", "engine", "build", "engine.exe"))
 
@@ -254,6 +267,11 @@ def run_engine(config: Dict[str, Any], run_dir: str) -> str:
     if not budget.get("max_seconds") or budget["max_seconds"] > engine_budget:
         budget["max_seconds"] = engine_budget
     config["budget"] = budget
+    # The engine names the file from the config itself, so identical spots
+    # share one checkpoint and different spots can never collide - no key
+    # derivation duplicated here.
+    if CHECKPOINT_DIR and not config["output"].get("checkpoint_path"):
+        config["output"]["checkpoint_dir"] = CHECKPOINT_DIR.replace("\\", "/")
     config_path = os.path.join(run_dir, "config.json")
     with open(config_path, "w", encoding="utf8") as f:
         json.dump(config, f)

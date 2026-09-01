@@ -16,6 +16,7 @@
 #include "io/artifact_format.hpp"
 #include "io/artifact_reader.hpp"
 #include "io/artifact_writer.hpp"
+#include "io/checkpoint.hpp"
 #include "io/dump_json.hpp"
 #include "solver/agents.hpp"
 #include "solver/best_response.hpp"
@@ -104,7 +105,6 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
             << config.sampled.batch << ", lanes " << config.sampled.lanes << "\n";
 
   SolveStats stats;
-  std::unique_ptr<SampledCfrSolver> baseline;
   if (team) {
     for (int q = 0; q < game.num_seats(); ++q) {
       if (agents.teammate_of[static_cast<std::size_t>(q)] >= 0) stats.team_seats.push_back(q);
@@ -113,6 +113,34 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
     std::cout << "hand-sharing team: seats " << stats.team_seats[0] << "+"
               << stats.team_seats[1] << ", opponents " << config.awareness
               << ". Research/analysis tooling - using this on live tables is cheating.\n";
+  }
+  SampledCfrSolver solver(game, *deals, config.sampled, config.threads, agents);
+
+  // Resume BEFORE anything else: a checkpoint carries phase 1's frozen rows
+  // and EVs as well as the team's own state, so a resumed run must not
+  // re-run phase 1 - that would train the team against a second, different
+  // baseline halfway through.
+  bool resumed = false;
+  CheckpointExtras extras;
+  if (!config.checkpoint_path.empty()) {
+    std::string err;
+    if (read_checkpoint(config.checkpoint_path, solver, config, extras, err)) {
+      resumed = true;
+      stats.baseline_iterations = extras.baseline_iterations;
+      stats.baseline_ev_chips = extras.baseline_ev_chips;
+      std::cout << "resumed " << config.checkpoint_path << " at iteration "
+                << solver.iteration() << " of " << config.iterations << "\n";
+      if (solver.iteration() >= config.iterations) {
+        std::cout << "note: budget.iterations is a TOTAL and the checkpoint already "
+                     "reaches it - nothing to iterate. Raise it to continue.\n";
+      }
+    } else {
+      std::cout << "checkpoint: starting fresh (" << err << ")\n";
+    }
+  }
+
+  std::unique_ptr<SampledCfrSolver> baseline;
+  if (team && !resumed) {
     if (config.awareness == "unaware") {
       // Phase 1: the no-team baseline everyone believes they are playing.
       const std::uint64_t base_iters =
@@ -145,7 +173,6 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
       std::cout << "\n";
     }
   }
-  SampledCfrSolver solver(game, *deals, config.sampled, config.threads, agents);
   if (baseline) {
     std::vector<bool> frozen(static_cast<std::size_t>(game.num_seats()), false);
     for (int q = 0; q < game.num_seats(); ++q) {
@@ -169,7 +196,11 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   }
   const auto start = std::chrono::steady_clock::now();
   double nashconv = 0.0;
-  std::uint64_t done = 0;
+  // budget.iterations is the TOTAL for the solve, not this run's share, so
+  // re-running a config with a larger budget walks toward the target rather
+  // than redoing what the checkpoint already holds.
+  std::uint64_t done = solver.iteration();
+  const std::uint64_t started_at = done;
   const double pot = static_cast<double>(config.pot);
   const bool timed = config.max_seconds > 0.0;
   bool out_of_time = false;
@@ -254,13 +285,40 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
     std::cout << " chips\n";
   }
 
+  // The checkpoint goes out before the artifact: the artifact is for
+  // viewers, the checkpoint is the only thing that lets this solve continue.
+  if (!config.checkpoint_path.empty()) {
+    extras.baseline_iterations = stats.baseline_iterations;
+    extras.baseline_ev_chips = stats.baseline_ev_chips;
+    const double ck_s = write_checkpoint(config.checkpoint_path, solver, config, extras);
+    std::cout << "checkpoint " << config.checkpoint_path << " at iteration "
+              << solver.iteration() << " (" << ck_s << " s)";
+    if (solver.iteration() < config.iterations) {
+      std::cout << " - run again to continue toward " << config.iterations;
+    }
+    std::cout << "\n";
+    // Resuming is bit-for-bit only from a BATCH boundary, because a batch is
+    // where the discount and the lane fold happen; stopping inside one splits
+    // a fold and the continuation differs in the last bits. Time-budget stops
+    // always land on a boundary (deadline_slice rounds to whole batches), so
+    // this only fires on a hand-picked budget.iterations.
+    if (config.sampled.batch > 0 && solver.iteration() % config.sampled.batch != 0) {
+      std::cout << "note: stopped mid-batch (iteration is not a multiple of "
+                << config.sampled.batch
+                << "), so continuing from here will differ from an uninterrupted run in "
+                   "the last bits. Use a multiple of the batch size for an exact resume.\n";
+    }
+  }
+
   LocalStore store;
   const double export_s =
       write_artifact(store, config.output_path, game, solver, config, stats);
   const PeakMemory peak = peak_memory();
-  std::cout << "solve time " << wall_s << " s (" << done << " iters on " << threads
-            << " thread" << (threads == 1 ? "" : "s") << ", "
-            << (wall_s > 0.0 ? static_cast<double>(done) / wall_s : 0.0) << " iters/s)\n";
+  const std::uint64_t ran_now = done - started_at;
+  std::cout << "solve time " << wall_s << " s (" << ran_now << " iters this run on "
+            << threads << " thread" << (threads == 1 ? "" : "s") << ", "
+            << (wall_s > 0.0 ? static_cast<double>(ran_now) / wall_s : 0.0)
+            << " iters/s, " << done << " total)\n";
   std::cout << "wrote " << config.output_path << "  (wall " << wall_s + setup_s
             << " s including setup, peak RSS " << peak.working_set / (1024.0 * 1024.0)
             << " MB";

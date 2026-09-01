@@ -84,6 +84,7 @@ add_library(engine_core STATIC
   src/solver/memory.cpp
   src/io/local_store.cpp
   src/io/artifact_writer.cpp
+  src/io/checkpoint.cpp
   src/io/artifact_reader.cpp
   src/io/dump_json.cpp
   src/ranges/iso.cpp
@@ -108,6 +109,7 @@ add_executable(engine_tests
   tests/test_multiway_terminal.cpp
   tests/test_preflop_game.cpp
   tests/test_memory.cpp
+  tests/test_checkpoint.cpp
   tests/test_artifact_roundtrip.cpp
   tests/test_parallel.cpp
   tests/test_recalc.cpp

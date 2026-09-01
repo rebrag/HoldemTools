@@ -121,6 +121,17 @@ struct SolveConfig {
   std::uint64_t checkpoint_every = 1000;
   double memory_limit_gb = 12.0;
 
+  // Solver checkpoint (sampled family only). When set, the solve RESUMES
+  // from this file if it exists and matches, and writes it back afterwards -
+  // so re-running the same config with a larger budget.iterations continues
+  // toward the target instead of starting over. budget.iterations is
+  // therefore a TOTAL, not a per-run amount.
+  std::string checkpoint_path;
+  // Alternative to naming the file: a directory in which the checkpoint is
+  // named after the solve's own identity hash, so identical spots share one
+  // automatically and different spots can never collide. A caller that
+  // queues many jobs (the watcher) sets this and nothing else.
+  std::string checkpoint_dir;
   std::string output_path = "out/solve.hta";
   bool strategy_quantize_u8 = true;
   bool ev_float32 = true;
@@ -137,5 +148,13 @@ SolveConfig load_config(const std::string& path);
 
 // SHA-256 hex of the canonical (sorted-key, compact) config JSON.
 std::string config_hash(const SolveConfig& config);
+
+// The identity of the SOLVE rather than of the file: config_hash over
+// everything except the fields that legitimately differ between chunks of one
+// long run (budget, output paths, threads, memory limit,
+// agents.baseline_iterations). Two configs sharing this key describe the same
+// spot and the same deal stream, so a checkpoint from one may be resumed by
+// the other - which is exactly what raising budget.iterations does.
+std::string config_solve_key(const SolveConfig& config);
 
 }  // namespace engine

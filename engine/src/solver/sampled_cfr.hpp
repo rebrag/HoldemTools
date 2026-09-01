@@ -103,6 +103,28 @@ class SampledCfrSolver final : public StrategySource {
   const std::vector<float>& regrets() const { return regrets_; }
   const std::vector<float>& strategy_sums() const { return strat_sum_; }
 
+  // ---- Checkpoint seam (io/checkpoint.cpp) ----
+  // The solver's ENTIRE mutable state is these arrays plus the iteration
+  // counter, which is what makes resume exact: the deal stream is
+  // sample_deal(seed, t) and the discount scales by absolute iteration, so
+  // continuing at t reproduces the bits an uninterrupted run would have had.
+  const std::vector<float>& ev_sums() const { return ev_sum_; }
+  const std::vector<float>& ev_weights() const { return ev_w_; }
+  const std::vector<bool>& frozen_seats() const { return frozen_seat_; }
+  const std::vector<std::vector<float>>& frozen_rows() const { return frozen_rows_; }
+  // Layout fingerprint: a checkpoint written against a different tree,
+  // universe, or team must be refused rather than silently reinterpreted.
+  std::size_t store_total() const { return store_total_; }
+  int joint_classes() const { return joint_classes_; }
+  int universe_hands() const { return universe_hands_; }
+  // Restore state read from a checkpoint. Throws on any size mismatch -
+  // there is no partial restore, because a half-restored solver would keep
+  // running and produce a plausible wrong answer.
+  void restore(std::uint64_t iteration, std::vector<float> regrets,
+               std::vector<float> strat_sum, std::vector<float> ev_sum,
+               std::vector<float> ev_w, std::vector<bool> frozen_seat,
+               std::vector<std::vector<float>> frozen_rows);
+
  private:
   // Everything one lane touches while its iterations run: private delta
   // buffers plus per-depth scratch so the recursion allocates nothing.

@@ -497,13 +497,43 @@ SolveConfig load_config(const std::string& path_text) {
   if (j.contains("output")) {
     const json& output = j.at("output");
     config.output_path = output.value("path", config.output_path);
+    config.checkpoint_path = output.value("checkpoint_path", config.checkpoint_path);
+    config.checkpoint_dir = output.value("checkpoint_dir", config.checkpoint_dir);
     config.strategy_quantize_u8 = output.value("strategy_quantize_u8", true);
     config.ev_float32 = output.value("ev_float32", true);
     config.rollups_169 = output.value("rollups_169", true);
   }
+  if ((!config.checkpoint_path.empty() || !config.checkpoint_dir.empty()) &&
+      !config.sampled.enabled) {
+    // The vectorized core carries deferred discount history, recalc-schedule
+    // state and QRE anneal state that this checkpoint does not serialize, so
+    // "resuming" it would silently continue from a different solver.
+    fail("output.checkpoint_path needs algorithm.family \"sampled\" - checkpoints are "
+         "not implemented for the vectorized core");
+  }
+  if (config.checkpoint_path.empty() && !config.checkpoint_dir.empty()) {
+    // Resolved here rather than in main so `dry-run` and any other consumer
+    // sees the same path the solve will use.
+    config.checkpoint_path = config.checkpoint_dir + "/" + config_solve_key(config) + ".htck";
+  }
   config.threads = j.value("threads", 0);
 
   return config;
+}
+
+std::string config_solve_key(const SolveConfig& config) {
+  // Fail-safe by construction: start from the whole canonical config and
+  // remove only the keys that are allowed to vary, so a solve-defining key
+  // added later is covered the day it appears.
+  nlohmann::json j = config.raw;
+  j.erase("budget");
+  j.erase("output");
+  j.erase("threads");
+  j.erase("memory_limit_gb");
+  if (j.contains("agents") && j.at("agents").is_object()) {
+    j.at("agents").erase("baseline_iterations");
+  }
+  return sha256::hex_digest(j.dump());
 }
 
 std::string config_hash(const SolveConfig& config) {

@@ -828,6 +828,11 @@ Configs: `configs/pushfold_4way_10bb_team_{unaware,aware}.json`.
 Phase control: `agents.baseline_iterations` is phase 1 (the frozen baseline; defaults to `budget.iterations` when unset), `budget.iterations` is phase 2 (the team) - independently, so a long team solve sets a modest baseline and pours the budget into phase 2, which is also the cheaper phase (2 hero traversals per deal instead of one per seat).
 `/multiway` exposes both (Baseline iterations appears when a team is marked unaware).
 
+**Long solves resume.** `output.checkpoint_dir` (or `checkpoint_path`) makes a sampled solve continue where the last run stopped: the solver's whole state round-trips, `budget.iterations` becomes a TOTAL, and because the deal stream and the discount key on the absolute iteration index the continuation is bit-for-bit an uninterrupted run - exact from a batch boundary, which is where every time-budget stop lands.
+Together with the time budget that is the answer to the watcher's one-hour ceiling: run the same job repeatedly with a larger target and the solve grows without limit, ~15 MB of checkpoint for a 4-way team spot.
+Set `ENGINE_CHECKPOINT_DIR` on the watcher to turn it on there.
+Artifacts stay unresumable by construction (they carry the quantized average strategy, which cannot be inverted into regrets), and the vectorized core is out of scope until its discount history, recalc schedule and anneal state serialize too.
+
 **Long solves are never discarded.** `budget.max_seconds` caps the whole run; on expiry the loop stops at the next batch-aligned slice, the EV pass still runs, and the artifact is written with `metadata.stopped_reason: "time_budget"` and `requested_iterations`, so a truncated solve is a usable (just less converged) result instead of nothing.
 This exists because the artifact is only written at the end: the compare watcher's `ENGINE_SOLVE_TIMEOUT_SECS` kill threw away a 70M-iteration team solve after an hour.
 The watcher now passes `ceiling - ENGINE_SOLVE_WRITE_MARGIN_SECS` (default 300 s) as the engine's budget and keeps its kill only as a hang backstop, and `/multiway` shows a "stopped on time budget" chip.
