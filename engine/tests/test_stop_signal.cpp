@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <string>
 
 #include "config/schema.hpp"
 #include "util/stop_signal.hpp"
