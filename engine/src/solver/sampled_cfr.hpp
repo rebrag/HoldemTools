@@ -5,9 +5,12 @@
 
 #include "game/deal_game.hpp"
 #include "game/game.hpp"
+#include "solver/agents.hpp"
 #include "solver/strategy_source.hpp"
 #include "solver/updates.hpp"
 #include "util/parallel.hpp"
+
+#include <nlohmann/json.hpp>
 
 namespace engine {
 
@@ -49,18 +52,48 @@ namespace engine {
 class SampledCfrSolver final : public StrategySource {
  public:
   // `game` and `deals` must be the same object wearing both interfaces.
+  // A non-identity AgentMap (one 2-seat hand-sharing team) switches the
+  // team seats to JOINT infosets - their storage rows are indexed by the
+  // suit orbit of (own hand, partner hand) - and to SUMMED payoffs: a team
+  // hero's terminal value is its own chips plus the pinned partner's chips
+  // on the same deal. Everything else is the plain solver.
   SampledCfrSolver(const Game& game, const DealGame& deals, const SampledConfig& config,
-                   int threads = 1);
+                   int threads = 1, AgentMap agents = {});
 
   void run(std::uint64_t iterations);
+
+  // Unaware mode: pin `frozen[seat]` seats to `source`'s average strategy.
+  // They stop training (their hero traversals are skipped) and every read
+  // of their policy uses the frozen hand-major rows instead of regret
+  // matching - which makes the remaining training a genuine JOINT BEST
+  // RESPONSE for the team: one optimizer, one payoff, so CFR's convergence
+  // guarantee actually applies here, unlike the general 3+ agent case.
+  void freeze_seats_from(const StrategySource& source, const std::vector<bool>& frozen);
+
+  // Per-seat EVs under the CURRENT average profile, by dealing `num_deals`
+  // fresh seeded deals (a stream independent of training) and walking the
+  // betting tree with every seat pinned - joint rows for the team, frozen
+  // rows for frozen seats. Each deal's payoffs sum to the pot, so these
+  // EVs conserve EXACTLY at any seat count; marginal per-seat strategies
+  // cannot reproduce a team's correlated behavior, which is why the
+  // factorized evaluator must not be used for team EVs.
+  std::vector<double> sampled_ev(std::uint64_t num_deals, std::uint64_t seed) const;
+
+  // The conditioned chart for a hand-sharing team: for every team decision
+  // node, reach-weighted action frequencies per (partner class, own class)
+  // cell, aggregated from the joint rows. Empty json when there is no team.
+  nlohmann::json team_rollup_json() const;
 
   // StrategySource: the artifact writer and best-response pass plug in here.
   std::uint64_t iteration() const override { return t_; }
   void average_strategy(NodeId node, std::vector<float>& out) const override;
   ThreadPool& pool() const override { return *pool_; }
-  // The BR pass forks its own subtree parallelism from this; 1 keeps it
-  // serial per seat, which is right for the small trees this core runs today.
-  int split_budget() const override { return 1; }
+  // NOT about this core's own traversal - iterations parallelize across
+  // lanes. This is the fan-out budget the CONSUMERS read: the best-response
+  // pass and the artifact export pass both fork sibling subtrees onto the
+  // pool with it. Returning 1 pinned both to a single core, which on a
+  // 4-way solve is most of the wall clock. Same policy as CfrSolver.
+  int split_budget() const override { return split_budget_; }
   const QreConfig& qre() const override { return qre_; }
 
   const InfosetLayout& layout() const { return layout_; }
@@ -70,15 +103,49 @@ class SampledCfrSolver final : public StrategySource {
   const std::vector<float>& regrets() const { return regrets_; }
   const std::vector<float>& strategy_sums() const { return strat_sum_; }
 
+  // ---- Checkpoint seam (io/checkpoint.cpp) ----
+  // The solver's ENTIRE mutable state is these arrays plus the iteration
+  // counter, which is what makes resume exact: the deal stream is
+  // sample_deal(seed, t) and the discount scales by absolute iteration, so
+  // continuing at t reproduces the bits an uninterrupted run would have had.
+  const std::vector<float>& ev_sums() const { return ev_sum_; }
+  const std::vector<float>& ev_weights() const { return ev_w_; }
+  const std::vector<bool>& frozen_seats() const { return frozen_seat_; }
+  const std::vector<std::vector<float>>& frozen_rows() const { return frozen_rows_; }
+  // Layout fingerprint: a checkpoint written against a different tree,
+  // universe, or team must be refused rather than silently reinterpreted.
+  std::size_t store_total() const { return store_total_; }
+  int joint_classes() const { return joint_classes_; }
+  int universe_hands() const { return universe_hands_; }
+  // Restore state read from a checkpoint. Throws on any size mismatch -
+  // there is no partial restore, because a half-restored solver would keep
+  // running and produce a plausible wrong answer.
+  void restore(std::uint64_t iteration, std::vector<float> regrets,
+               std::vector<float> strat_sum, std::vector<float> ev_sum,
+               std::vector<float> ev_w, std::vector<bool> frozen_seat,
+               std::vector<std::vector<float>> frozen_rows);
+  // Back to a freshly constructed solver, keeping the frozen rows (which
+  // belong to the environment, not to this solver's training). Used when a
+  // team's regrets are invalidated because the baseline underneath them
+  // moved - see the rebase path in main.cpp.
+  void reset();
+
  private:
   // Everything one lane touches while its iterations run: private delta
   // buffers plus per-depth scratch so the recursion allocates nothing.
   struct Lane {
     std::vector<float> regret_delta, strat_delta;
+    // Conditioned-EV accumulators, allocated only for team solves: value
+    // numerators per (row, action) and reach denominators per row (stored
+    // in the action-0 block of a store_total_-sized array).
+    std::vector<float> ev_delta, evw_delta;
     Deal deal;
     std::vector<std::uint32_t> strengths;
     std::vector<float> hero_root;                  // masked root reach
     std::vector<std::uint16_t> blocked;            // hero hands colliding with the deal
+    std::vector<std::vector<float>> class_sigma;   // per depth: A*rows action-major
+    std::vector<std::uint32_t> team_rows;          // per-hand joint row scratch
+    std::vector<std::vector<float>> mate_stack;    // per depth: H mate reach
     std::vector<std::vector<float>> sigma_stack;   // per depth: A*H action-major
     std::vector<std::vector<float>> child_stack;   // per depth: A*H child values
     std::vector<std::vector<float>> reach_stack;   // per depth: H hero reach
@@ -89,21 +156,69 @@ class SampledCfrSolver final : public StrategySource {
   // Counterfactual values for `hero`'s hands at `id` under the lane's deal,
   // scaled by the pinned opponents' reach `opp_w`. Writes into out (length =
   // hero hands).
+  // A TEAM partner's policy conditions on the hero's hand, and the hero is
+  // vectorized here - so a partner node's sigma is a VECTOR over hero
+  // hands. It folds into the returned values AFTER that node's descent
+  // (values are elementwise-linear in the weights), which keeps the child
+  // values counterfactual for the partner and powers the two-sided team
+  // update at its node.
+  // mate_reach: per-hero-hand product of the partner's sigmas along the
+  // path (null = all ones, and always null without a team). Strategy sums
+  // at team nodes are weighted by BOTH seats' reach so the stored mass
+  // measures how often each (own, partner) conditioning actually reaches
+  // the node - that is what makes the exported marginal a real
+  // reach-weighted average and the rollup's weight an honest reach signal.
+  // Regret updates never use it: counterfactual weights exclude the
+  // actor's own side.
   void traverse(NodeId id, int hero, Lane& lane, double opp_w,
-                const std::vector<float>& hero_reach, int chance_depth, int depth,
-                std::vector<float>& out);
+                const std::vector<float>& hero_reach, const float* mate_reach,
+                int chance_depth, int depth, std::vector<float>& out);
+
+  // Sigma for one pinned actor at `node` holding `hand` (partner-aware for
+  // team seats, frozen-aware for frozen seats), written into out[actions].
+  void pinned_sigma(NodeId node, int actor, const Deal& deal, float* out) const;
+  void ev_walk(NodeId id, double weight, const Deal& deal,
+               const std::vector<std::uint32_t>& strengths,
+               std::vector<double>& pinned_scratch, std::vector<double>& ev) const;
 
   const Game& game_;
   const DealGame& deals_;
   SampledConfig config_;
+  AgentMap agents_;
   InfosetLayout layout_;
+  // The storage quotient. `class_of_[hand]` is the storage row a hand reads
+  // and writes; identity (and store_* == the hand layout) when the game
+  // reports no symmetry, so the identity path is bit-for-bit the original.
+  std::vector<std::uint16_t> class_of_;
+  std::vector<std::size_t> store_offset_;    // by decision_index
+  std::vector<std::uint32_t> store_hands_;   // by decision_index: classes or hands
+  std::size_t store_total_ = 0;
+  int num_classes_ = 0;  // 0 = identity
+  // Team state. joint_class_[own * H + partner] -> joint storage row
+  // (0xFFFFFFFF on overlapping pairs); sized only when a team exists.
+  std::vector<std::uint32_t> joint_class_;
+  int joint_classes_ = 0;
+  int universe_hands_ = 0;
+  // Unaware mode: frozen hand-major average-strategy rows per node id for
+  // the seats in frozen_seat_; empty vectors elsewhere.
+  std::vector<std::vector<float>> frozen_rows_;
+  std::vector<bool> frozen_seat_;
   std::vector<float> regrets_;
   std::vector<float> strat_sum_;
+  // Conditioned EVs for team nodes, allocated only when a team exists:
+  // ev_sum_[offset + a*rows + row] accumulates reach-weighted TEAM values
+  // per action, ev_w_[offset + row] (the action-0 block) the matching
+  // reach mass, both under the same linear discount as the strategy sums.
+  // ev_sum_/ev_w_ is the reach-weighted average team EV of taking that
+  // action from that (own, partner) infoset - what team_rollup ships.
+  std::vector<float> ev_sum_;
+  std::vector<float> ev_w_;
   std::vector<Lane> lanes_;
   std::unique_ptr<ThreadPool> pool_;
   QreConfig qre_{};  // never enabled here; StrategySource contract only
   std::uint64_t t_ = 0;
   int max_depth_ = 0;
+  int split_budget_ = 1;
 };
 
 }  // namespace engine

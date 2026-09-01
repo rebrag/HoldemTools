@@ -1,10 +1,12 @@
 #include <doctest/doctest.h>
 
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <string>
 #include <vector>
 
+#include "cards/combos.hpp"
 #include "config/schema.hpp"
 #include "game/nlhe_preflop.hpp"
 #include "solver/best_response.hpp"
@@ -121,6 +123,58 @@ TEST_CASE("sampled core lands in the published heads-up 10bb push/fold bands") {
   CHECK(std::abs(br.ev[0] + br.ev[1]) < 1e-3);
 }
 
+TEST_CASE("suit quotient: member combos are identical and variance improves") {
+  const SolveConfig config = sampled_pushfold_config(2, 40);
+  NlhePreflopGame game(config);
+
+  SampledConfig on_cfg = sampled_solver_config();
+  on_cfg.symmetry = true;
+  on_cfg.symmetry_explicit = true;
+  SampledCfrSolver on(game, game, on_cfg, config.threads);
+  on.run(50000);
+  const double nc_on = compute_best_response(game, on).nashconv();
+
+  SampledConfig off_cfg = sampled_solver_config();
+  off_cfg.symmetry = false;
+  SampledCfrSolver off(game, game, off_cfg, config.threads);
+  off.run(50000);
+  const double nc_off = compute_best_response(game, off).nashconv();
+
+  MESSAGE("HU 10bb at 50k deals: nashconv " << nc_off << " without the quotient, " << nc_on
+          << " with it (" << (nc_on > 0.0 ? nc_off / nc_on : 0.0) << "x)");
+  // Deterministic seeds: this is a calibrated measurement, not a flake. The
+  // quotient pools every member combo's sample into one row, so at the same
+  // deal budget it must not be WORSE.
+  CHECK(nc_on <= nc_off);
+
+  // Exactness of the expansion: every member combo of a class reads the same
+  // storage row, so rows must be BITWISE identical - never a tolerance. With
+  // full ranges the compact universe is the canonical 1326 in order, so the
+  // compact hand index IS the canonical combo index.
+  const PublicTree& tree = game.tree();
+  for (const NodeId id : {static_cast<NodeId>(0), tree[0].first_child + 1}) {
+    REQUIRE(tree[id].kind == NodeKind::Decision);
+    std::vector<float> rows;
+    on.average_strategy(id, rows);
+    std::vector<int> seen(169, -1);
+    int mismatches = 0;
+    for (int h = 0; h < 1326; ++h) {
+      const int cls = combo_class_index(h);
+      if (seen[cls] < 0) {
+        seen[cls] = h;
+        continue;
+      }
+      for (int a = 0; a < 2; ++a) {
+        if (rows[static_cast<std::size_t>(h) * 2 + static_cast<std::size_t>(a)] !=
+            rows[static_cast<std::size_t>(seen[cls]) * 2 + static_cast<std::size_t>(a)]) {
+          ++mismatches;
+        }
+      }
+    }
+    CHECK(mismatches == 0);
+  }
+}
+
 TEST_CASE("sampled core conserves chips on the 3-way 10bb spot") {
   // The evaluator's own board sample is the measuring stick here: the
   // sampled core solves the TRUE game (a fresh board every iteration), so
@@ -160,4 +214,34 @@ TEST_CASE("sampled core on the 4-way 10bb spot: position order and near-conserva
   MESSAGE("sampled 4-way: EVs sum to " << sum << " (dead money 0; the evaluator itself is "
           "first-order at 4 seats, so this measures evaluator residual, not the profile)");
   CHECK(std::abs(sum) < 0.05);
+}
+
+TEST_CASE("run() slicing on batch boundaries is bitwise identical") {
+  // The wall-clock budget (budget.max_seconds) stops a solve between
+  // slices, so a long run is a SEQUENCE of run() calls where an
+  // unconstrained one would be a single call. That is only safe because a
+  // slice ends on a batch boundary - where the discount and the lane fold
+  // already happen - so the sliced run must produce the same bits. If this
+  // ever fails, deadline_slice() in main.cpp has stopped rounding to whole
+  // batches and time-capped solves silently became a different solve.
+  const SolveConfig config = sampled_pushfold_config(3, 200);
+  NlhePreflopGame game(config);
+  SampledConfig sc = sampled_solver_config();
+  sc.batch = 256;
+  sc.lanes = 8;
+  const std::uint64_t kIters = 4096;  // 16 batches
+
+  SampledCfrSolver whole(game, game, sc, config.threads);
+  whole.run(kIters);
+
+  SampledCfrSolver sliced(game, game, sc, config.threads);
+  for (std::uint64_t done = 0; done < kIters; done += sc.batch * 3) {
+    sliced.run(std::min<std::uint64_t>(sc.batch * 3, kIters - done));
+  }
+
+  REQUIRE(whole.regrets().size() == sliced.regrets().size());
+  CHECK(std::memcmp(whole.regrets().data(), sliced.regrets().data(),
+                    whole.regrets().size() * sizeof(float)) == 0);
+  CHECK(std::memcmp(whole.strategy_sums().data(), sliced.strategy_sums().data(),
+                    whole.strategy_sums().size() * sizeof(float)) == 0);
 }

@@ -87,6 +87,21 @@ class NlhePreflopGame final : public Game, public DealGame {
   // resolves the same TerminalPlan layers as the vectorized path but against
   // PINNED opponents, so it is O(H) flat with no inclusion-exclusion.
   void sample_deal(std::uint64_t seed, std::uint64_t iter, Deal& out) const override;
+  // The 169 classes ARE the suit orbits of the preflop combos, and no
+  // infoset in this tree sees a board card, so the quotient is exact.
+  void hand_classes(std::vector<std::uint16_t>& class_of, int& num_classes) const override;
+  // Suit orbits of ordered disjoint hand PAIRS - the exact information
+  // quotient for a hand-sharing team. Built on demand (~40M ops, the
+  // solver stores the result); false when the universe is not closed under
+  // the suit group (an asymmetric range), where a team must refuse.
+  bool joint_hand_classes(std::vector<std::uint32_t>& class_of_pair,
+                          int& num_classes) const override;
+  void deal_showdown_values_team(NodeId node, int seat, int mate, const Deal& deal,
+                                 const std::vector<std::uint32_t>& strengths,
+                                 std::vector<float>& out) const override;
+  void deal_showdown_pinned(NodeId node, const Deal& deal,
+                            const std::vector<std::uint32_t>& strengths, int num_seats,
+                            std::vector<double>& out) const override;
   void deal_strengths(const Deal& deal, std::vector<std::uint32_t>& out) const override;
   void deal_showdown_values(NodeId node, int seat, const Deal& deal,
                             const std::vector<std::uint32_t>& strengths,

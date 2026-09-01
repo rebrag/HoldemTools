@@ -159,6 +159,18 @@ struct SampledConfig {
   std::uint64_t seed = 20260830;
   std::uint32_t batch = 512;
   std::uint32_t lanes = 16;
+  // Solve one row per suit-symmetry class when the game reports a quotient
+  // (169 preflop). Lossless there and a direct variance reduction - every
+  // member combo's sample lands in the shared row. Identity when the game
+  // reports none; `symmetry_explicit` records whether the config SET the
+  // flag, so asking for symmetry on a game without one can refuse instead
+  // of silently no-opping.
+  bool symmetry = true;
+  bool symmetry_explicit = false;
+  // The hand-sharing pair from agents.partition, copied here at parse time
+  // purely so the memory estimator can size the joint rows without a
+  // SolveConfig dependency. Empty = no team.
+  std::vector<int> partition_team;
 };
 
 struct QreConfig {

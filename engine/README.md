@@ -80,9 +80,10 @@ See the commented `configs/example_river_hu.json`. Summary:
 | `algorithm` | `rm` \| `cfr_plus` \| `dcfr` (+ `dcfr.alpha/beta/gamma`; default DCFR, linear averaging) |
 | `qre` | `mode: "nash" \| "qre"`; for `"qre"`, `lambda` (per seat, in 1/chips - a scalar broadcasts) and optional `anneal: {factor, full_at}`. A QRE solve stops on the **QRE gap**, not on plain exploitability - see below |
 | `agents` | `partition` (identity only this pass), `payoff_weights`, `collusion` (reserved) |
-| `budget` | `iterations`, `target_nashconv` (chips, early stop), `checkpoint_every` |
+| `budget` | `iterations` (a TOTAL when resuming from a checkpoint), `target_nashconv` (chips, early stop), `checkpoint_every`, `max_seconds` (wall-clock ceiling for the whole run: stops cleanly and still writes the artifact, stamping `stopped_reason`) |
+| `solve` | `id` (names the solve so it can be continued; default derived from the spot), `resume` (`auto` \| `never` \| `require`), `rebase` (allow extending the baseline, which restarts the team phase) |
 | `memory_limit_gb` | fail-fast ceiling for the pre-solve estimate |
-| `output` | artifact path, `strategy_quantize_u8`, `ev_float32` (default true), `rollups_169` |
+| `output` | artifact path, `strategy_quantize_u8`, `ev_float32` (default true), `rollups_169`, and for the sampled family `checkpoint_path` / `checkpoint_dir` - a solver checkpoint the next run resumes from, so a long solve can be done in chunks |
 | `threads` | workers: `0` = one per hardware thread, negative = leave that many cores free. Results are **bitwise identical at any thread count** - the traversal forks sibling subtrees but folds every child back serially and in order |
 
 Range grammar: comma-separated `token[:weight]`, tokens are classes (`AA`, `AKs`, `T9o`) or explicit combos (`AhKd`); weights in `[0,1]`. `TT+` / `A5s-A2s` shorthand is not supported yet.

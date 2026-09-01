@@ -91,6 +91,13 @@ struct SolveConfig {
   // because it is what the artifact metadata records and what every
   // downstream refusal (the Pio harness, the solutions exporter) keys off.
   std::string qre_mode = "nash";
+  // Team solves (one 2-seat hand-sharing group in agents.partition):
+  // "aware" trains everyone together (opponents adapt to the team);
+  // "unaware" freezes opponents at a no-team baseline solved first and
+  // trains only the team - the joint best response. Empty when no team.
+  std::string awareness;
+  // Iterations for the unaware baseline phase; 0 = budget.iterations.
+  std::uint64_t baseline_iterations = 0;
   QreConfig qre;  // qre.lambda / qre.anneal - only read when qre_mode == "qre"
 
   std::vector<std::vector<int>> partition;  // seat indices per agent
@@ -103,9 +110,56 @@ struct SolveConfig {
   // = NashConv / 2) as a percent of the root pot. 0 = disabled. Pio's
   // default UI value is 0.02 (% of the pot).
   double target_exploitable_pct = 0.0;
+  // Wall-clock ceiling for the WHOLE run in seconds; 0 = none. On expiry the
+  // solve stops at the next slice and writes the artifact for the iterations
+  // it completed, with metadata.stopped_reason = "time_budget". This exists
+  // so an externally imposed deadline (a watcher's kill) cannot discard the
+  // whole solve: the artifact is only written at the end, so a killed run
+  // yields nothing at all. Set it BELOW the external deadline, leaving room
+  // for the EV pass and the artifact export.
+  double max_seconds = 0.0;
+  // Cooperative stop. When set, the solve looks for this PATH between slices
+  // and, the moment it exists, stops exactly the way the time budget stops:
+  // checkpoint written, EV pass run, artifact exported, with
+  // metadata.stopped_reason = "cancelled". A file rather than a signal
+  // because the caller is a watcher on Windows driving a child process, where
+  // there is no portable way to deliver one - and because "the file is there"
+  // is a state a caller can set once and never have to re-deliver.
+  //
+  // Killing the process would be the alternative and is not equivalent: the
+  // artifact and the checkpoint are both written at the END, so a kill
+  // discards every iteration. Stopping this way is what makes a user-cancelled
+  // solve resumable rather than lost.
+  std::string stop_file;
   std::uint64_t checkpoint_every = 1000;
   double memory_limit_gb = 12.0;
 
+  // Solver checkpoint (sampled family only). When set, the solve RESUMES
+  // from this file if it exists and matches, and writes it back afterwards -
+  // so re-running the same config with a larger budget.iterations continues
+  // toward the target instead of starting over. budget.iterations is
+  // therefore a TOTAL, not a per-run amount.
+  std::string checkpoint_path;
+  // Identity of the SOLVE LINEAGE, not of one run: checkpoints are named
+  // after it, so "resume solve X" is a thing you can say. Defaults to a short
+  // hash of the spot, which makes re-solving the same spot continue it; set
+  // it explicitly to keep separate lineages for the same spot. Reusing an id
+  // for a DIFFERENT spot is refused, not silently reinterpreted.
+  std::string solve_id;
+  // "auto"    - continue from a checkpoint when one matches (the default)
+  // "never"   - ignore any checkpoint and start over, overwriting it
+  // "require" - fail unless there is a checkpoint to continue, so a typo in
+  //             the id cannot silently start a ten-hour solve from zero
+  std::string resume_mode = "auto";
+  // Extending phase 1 moves the baseline that phase 2's regrets were a best
+  // response to, which makes them stale. That is refused unless this says
+  // otherwise, in which case phase 2 restarts against the new baseline.
+  bool rebase = false;
+  // Alternative to naming the file: a directory in which the checkpoint is
+  // named after the solve's own identity hash, so identical spots share one
+  // automatically and different spots can never collide. A caller that
+  // queues many jobs (the watcher) sets this and nothing else.
+  std::string checkpoint_dir;
   std::string output_path = "out/solve.hta";
   bool strategy_quantize_u8 = true;
   bool ev_float32 = true;
@@ -122,5 +176,13 @@ SolveConfig load_config(const std::string& path);
 
 // SHA-256 hex of the canonical (sorted-key, compact) config JSON.
 std::string config_hash(const SolveConfig& config);
+
+// The identity of the SOLVE rather than of the file: config_hash over
+// everything except the fields that legitimately differ between chunks of one
+// long run (budget, output paths, threads, memory limit,
+// agents.baseline_iterations). Two configs sharing this key describe the same
+// spot and the same deal stream, so a checkpoint from one may be resumed by
+// the other - which is exactly what raising budget.iterations does.
+std::string config_solve_key(const SolveConfig& config);
 
 }  // namespace engine

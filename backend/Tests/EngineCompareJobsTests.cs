@@ -346,4 +346,167 @@ public class EngineCompareJobsTests
         job = await db.EngineCompareJobs.SingleAsync();
         Assert.Equal("Failed", job.Status);
     }
+
+    [Fact]
+    public async Task Cancelling_a_queued_job_ends_it_immediately()
+    {
+        // Nothing has run, so there is nothing to save and no watcher to tell.
+        using var db = NewDb();
+        var created = await UserController(db, "uid-1").Create(
+            new EngineCompareController.CreateDto { Config = SpotConfig() });
+        var job = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>(created.Result).Value);
+
+        var cancelled = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>(
+                (await UserController(db, "uid-1").Cancel(job.Id)).Result).Value);
+        Assert.Equal("Cancelled", cancelled.Status);
+        Assert.NotNull(cancelled.CancelRequestedAtUtc);
+        Assert.NotNull(cancelled.CompletedAtUtc);
+
+        // And no watcher can pick it up afterwards.
+        Assert.IsType<NoContentResult>(await WatcherController(db).Claim(
+            new EngineCompareWatcherController.ClaimRequestDto { WatcherId = "w1" }));
+    }
+
+    [Fact]
+    public async Task Cancelling_a_running_job_keeps_it_running_until_the_watcher_acts()
+    {
+        // The whole point of Stop: the solve stops COOPERATIVELY and the
+        // partial result is still uploaded, so the row must stay active - and
+        // keep its claim - until the watcher reports back.
+        using var db = NewDb();
+        var created = await UserController(db, "uid-1").Create(
+            new EngineCompareController.CreateDto { Config = SpotConfig() });
+        var id = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>(created.Result).Value).Id;
+        var watcher = WatcherController(db);
+        await watcher.Claim(new EngineCompareWatcherController.ClaimRequestDto { WatcherId = "w1" });
+        await watcher.Report(id, new EngineCompareWatcherController.ReportRequestDto
+        {
+            WatcherId = "w1",
+            Status = "Running",
+        });
+
+        var afterCancel = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>(
+                (await UserController(db, "uid-1").Cancel(id)).Result).Value);
+        Assert.Equal("Running", afterCancel.Status);
+        Assert.NotNull(afterCancel.CancelRequestedAtUtc);
+
+        // The watcher learns about it from its next heartbeat, with no extra
+        // endpoint to poll.
+        var beat = Assert.IsType<OkObjectResult>(await watcher.Report(id,
+            new EngineCompareWatcherController.ReportRequestDto
+            {
+                WatcherId = "w1",
+                Heartbeat = true,
+            }));
+        Assert.Equal(true,
+            beat.Value!.GetType().GetProperty("cancelRequested")!.GetValue(beat.Value));
+
+        // It then finishes the job normally, uploading what the solve reached.
+        await watcher.Report(id, new EngineCompareWatcherController.ReportRequestDto
+        {
+            WatcherId = "w1",
+            Status = "Uploading",
+        });
+        await watcher.Report(id, new EngineCompareWatcherController.ReportRequestDto
+        {
+            WatcherId = "w1",
+            Status = "Cancelled",
+            HtResultBlobPath = "enginecompare/x.ht.json.gz",
+        });
+
+        var final = await db.EngineCompareJobs.SingleAsync();
+        Assert.Equal("Cancelled", final.Status);
+        Assert.NotNull(final.CompletedAtUtc);
+        // A stopped solve is a result, not a failure - this is what the page
+        // opens, and what would be missing if Stop had killed the process.
+        Assert.Equal("enginecompare/x.ht.json.gz", final.HtResultBlobPath);
+        Assert.Null(final.Error);
+    }
+
+    [Fact]
+    public async Task Cancel_is_idempotent_owner_scoped_and_refused_once_terminal()
+    {
+        using var db = NewDb();
+        var created = await UserController(db, "uid-1").Create(
+            new EngineCompareController.CreateDto { Config = SpotConfig() });
+        var id = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>(created.Result).Value).Id;
+        var watcher = WatcherController(db);
+        await watcher.Claim(new EngineCompareWatcherController.ClaimRequestDto { WatcherId = "w1" });
+
+        // A stranger cannot stop someone else's solve, and gets the same 404
+        // every other route here gives rather than a 403 confirming it exists.
+        Assert.IsType<NotFoundResult>((await UserController(db, "uid-2").Cancel(id)).Result);
+
+        var first = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>(
+                (await UserController(db, "uid-1").Cancel(id)).Result).Value);
+        var second = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>(
+                (await UserController(db, "uid-1").Cancel(id)).Result).Value);
+        // A double-click must not look like a second, later cancel.
+        Assert.Equal(first.CancelRequestedAtUtc, second.CancelRequestedAtUtc);
+
+        await watcher.Report(id, new EngineCompareWatcherController.ReportRequestDto
+        {
+            WatcherId = "w1",
+            Status = "Running",
+        });
+        await watcher.Report(id, new EngineCompareWatcherController.ReportRequestDto
+        {
+            WatcherId = "w1",
+            Status = "Uploading",
+        });
+        await watcher.Report(id, new EngineCompareWatcherController.ReportRequestDto
+        {
+            WatcherId = "w1",
+            Status = "Cancelled",
+        });
+        Assert.IsType<ConflictObjectResult>((await UserController(db, "uid-1").Cancel(id)).Result);
+    }
+
+    [Fact]
+    public async Task A_cancelled_job_whose_watcher_dies_is_not_requeued()
+    {
+        // Re-queuing would restart a solve nobody wants, and the owner would
+        // watch a job they stopped start over.
+        using var db = NewDb();
+        await UserController(db, "uid-1").Create(
+            new EngineCompareController.CreateDto { Config = SpotConfig() });
+        var watcher = WatcherController(db);
+        await watcher.Claim(new EngineCompareWatcherController.ClaimRequestDto { WatcherId = "w1" });
+        var job = await db.EngineCompareJobs.SingleAsync();
+        await UserController(db, "uid-1").Cancel(job.Id);
+
+        job = await db.EngineCompareJobs.SingleAsync();
+        job.LastHeartbeatUtc = DateTimeOffset.UtcNow.AddMinutes(-30);
+        await db.SaveChangesAsync();
+
+        Assert.IsType<NoContentResult>(await watcher.Claim(
+            new EngineCompareWatcherController.ClaimRequestDto { WatcherId = "w2" }));
+        job = await db.EngineCompareJobs.SingleAsync();
+        Assert.Equal("Cancelled", job.Status);
+        Assert.Equal(1, job.AttemptCount); // never handed out again
+    }
+
+    [Fact]
+    public async Task A_cancelled_job_can_be_deleted_like_any_finished_one()
+    {
+        using var db = NewDb();
+        var created = await UserController(db, "uid-1").Create(
+            new EngineCompareController.CreateDto { Config = SpotConfig() });
+        var id = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>(created.Result).Value).Id;
+        // Still queued, so a delete is refused while it could still run...
+        Assert.IsType<ConflictObjectResult>(await UserController(db, "uid-1").Delete(id));
+        await UserController(db, "uid-1").Cancel(id);
+        // ...and allowed once stopping has made it terminal.
+        Assert.IsType<NoContentResult>(await UserController(db, "uid-1").Delete(id));
+        Assert.Empty(await db.EngineCompareJobs.ToListAsync());
+    }
 }
+

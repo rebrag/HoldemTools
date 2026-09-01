@@ -534,13 +534,21 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
   meta["iterations"] = stats.iterations;
   meta["final_nashconv"] = stats.nashconv;
   // Pio-comparable convergence: per-player "exploitable for", in chips and
-  // as a percent of the root pot.
-  const double exploitable_chips = stats.nashconv / game.num_seats();
-  meta["final_exploitable_chips"] = exploitable_chips;
-  meta["final_exploitable_pct_pot"] =
-      config.pot > 0
-          ? json(exploitable_chips / static_cast<double>(config.pot) * 100.0)
-          : json(nullptr);
+  // as a percent of the root pot. Null for a team solve: best response
+  // against per-seat marginals cannot rate a correlated joint strategy, so
+  // there is no honest nashconv to print.
+  if (stats.nashconv_valid) {
+    const double exploitable_chips = stats.nashconv / game.num_seats();
+    meta["final_exploitable_chips"] = exploitable_chips;
+    meta["final_exploitable_pct_pot"] =
+        config.pot > 0
+            ? json(exploitable_chips / static_cast<double>(config.pot) * 100.0)
+            : json(nullptr);
+  } else {
+    meta["final_nashconv"] = nullptr;
+    meta["final_exploitable_chips"] = nullptr;
+    meta["final_exploitable_pct_pot"] = nullptr;
+  }
   // QRE only: exploitability in the entropy-augmented game. This is the number
   // a QRE solve drives to zero and stops on; `final_nashconv` above is the
   // PLAIN measurement of the same strategy, which plateaus at a
@@ -561,11 +569,53 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
     meta["final_qre_gap_pct_pot"] = nullptr;
   }
   meta["ev_chips"] = stats.ev_chips;
-  json partition = json::array();
-  for (int s = 0; s < game.num_seats(); ++s) partition.push_back(json::array({s}));
-  meta["partition"] = std::move(partition);
+  // Root EVs come from the sampled pass on sampled-family solves (each
+  // deal's payoffs sum to the pot, so they conserve exactly); the
+  // vectorized family keeps its best-response EVs.
+  meta["root_ev_estimator"] = config.sampled.enabled ? "sampled_deals" : "best_response";
+  // The lineage, not this run: two artifacts sharing it are the same solve at
+  // different iteration counts.
+  if (!stats.solve_id.empty()) meta["solve_id"] = stats.solve_id;
+  // Present only on a solve that ended early, so its absence keeps meaning
+  // "ran the budget it was given".
+  if (!stats.stopped_reason.empty()) {
+    meta["stopped_reason"] = stats.stopped_reason;
+    meta["requested_iterations"] = config.iterations;
+  }
+  if (!config.partition.empty()) {
+    meta["partition"] = config.partition;
+  } else {
+    json partition = json::array();
+    for (int s = 0; s < game.num_seats(); ++s) partition.push_back(json::array({s}));
+    meta["partition"] = std::move(partition);
+  }
   meta["payoff_weights"] = nullptr;
   meta["collusion"] = {{"mode", "none"}, {"p", nullptr}};
+  if (!stats.team_seats.empty()) {
+    json team;
+    team["seats"] = stats.team_seats;
+    team["awareness"] = stats.awareness;
+    double team_ev = 0.0;
+    for (int q : stats.team_seats) team_ev += stats.ev_chips[static_cast<std::size_t>(q)];
+    team["ev_chips"] = team_ev;
+    if (!stats.baseline_ev_chips.empty()) {
+      team["baseline_ev_chips"] = stats.baseline_ev_chips;
+      team["baseline_iterations"] = stats.baseline_iterations;
+      double base_team = 0.0;
+      for (int q : stats.team_seats) {
+        base_team += stats.baseline_ev_chips[static_cast<std::size_t>(q)];
+      }
+      team["baseline_team_ev_chips"] = base_team;
+      team["uplift_chips"] = team_ev - base_team;
+    }
+    // The per-hand strategy blobs and rollups are MARGINALS over the
+    // partner; the conditioned chart is team_rollup.
+    team["strategy_export"] = "marginal_over_partner";
+    meta["team"] = std::move(team);
+    meta["team_rollup"] = stats.team_rollup;
+  } else {
+    meta["team"] = nullptr;
+  }
   // CFR has no Nash guarantee with 3+ players (it converges to the coarse
   // correlated equilibrium set); flagged here so downstream consumers can
   // surface it.
@@ -633,6 +683,12 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
     // evaluator, and export_ev_estimator says so.
     meta["opponent_card_removal"] =
         config.sampled.enabled ? "exact_sampled" : "pairwise_mass";
+    // The suit quotient is a lossless relabeling, not abstraction - but a
+    // consumer deciding how to render per-combo data deserves to know that
+    // members of a class are identical by construction.
+    meta["hand_symmetry"] = config.sampled.enabled && config.sampled.symmetry
+                                ? "suit_classes_169"
+                                : "none";
     meta["export_ev_estimator"] = "factorized_first_order";
   }
   meta["sections"] = {

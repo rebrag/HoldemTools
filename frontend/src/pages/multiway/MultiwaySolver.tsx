@@ -3,50 +3,46 @@
 // The multiway preflop workbench: build an N-seat jam-or-fold tree, queue it
 // to htsolver, and read the resulting push/fold charts back.
 //
-// Laid out after MonkerSolver's two-step tree setup - a "New tree" dialog
-// (game / limit / street / players), then a stacks-and-blinds screen with the
-// table as the visual aid - but using this app's own PokerTable rather than
-// Monker's felt.
+// Laid out after /compare - a workbench that owns the viewport rather than a
+// document, with the tree builder in a ResponsiveDrawer. It used to be a
+// two-column grid with the builder in flow, and since that builder is ~370
+// lines tall and the grid only engaged at xl, the charts sat below the fold
+// on everything narrower than a wide desktop.
 //
 // URL-only, no navbar slot, following /compare's precedent for solver-engine
-// surfaces. The engine-mode control at the top is what makes the two
-// reachable from each other: this page is the multiway preflop engine, and
-// /compare is the heads-up postflop one.
+// surfaces. The engine-core tabs live at the top of the builder drawer - both
+// engine pages render EngineCoreTabs there - which is what says which core a
+// tree is being built for and what makes the two reachable from each other.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import EngineCoreTabs from "@/components/EngineCoreTabs";
 import PokerTable from "@/components/PokerTable";
 import type { PokerTableSeatData } from "@/components/PokerTableSeat";
-import SegmentedControl from "@/components/SegmentedControl";
+import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import { authedFetch } from "@/lib/api";
+import MultiwayTreeBuilder from "./MultiwayTreeBuilder";
 import PushFoldResultPanel from "./PushFoldResultPanel";
 import type { PushFoldDump } from "./pushfoldResult";
 import {
   DEFAULT_VIEW,
-  MAX_PLAYERS,
-  MIN_PLAYERS,
   actionOrder,
   blindSeats,
   buildMultiwayConfig,
   effectiveBb,
+  potChips,
   seatLabels,
   validate,
-  withPlayers,
+  viewFromDump,
   type MultiwayView,
 } from "./multiwayView";
 
-const inputCls =
-  "w-full rounded-md border border-slate-700 bg-slate-950/60 px-2 py-1 text-xs text-slate-100 " +
-  "transition-colors hover:border-slate-600 focus:border-emerald-500 focus:outline-none " +
-  "focus:ring-1 focus:ring-emerald-500/40 disabled:opacity-40";
-
-const buttonCls =
-  "inline-flex items-center justify-center gap-1.5 rounded-md border border-slate-700 " +
-  "bg-slate-800/70 px-3 py-1.5 text-xs font-medium text-slate-200 transition-colors " +
-  "hover:border-slate-500 hover:bg-slate-700/70 disabled:cursor-not-allowed disabled:opacity-40";
-
-const labelCls = "text-[10px] font-medium uppercase tracking-wide text-slate-500";
-
-type JobStatus = "Queued" | "Claimed" | "Running" | "Uploading" | "Done" | "Failed";
+type JobStatus =
+  | "Queued"
+  | "Claimed"
+  | "Running"
+  | "Uploading"
+  | "Done"
+  | "Failed"
+  | "Cancelled";
 interface CompareJob {
   id: string;
   mode?: string;
@@ -56,6 +52,11 @@ interface CompareJob {
   hasHtResult?: boolean;
   createdAtUtc?: string;
   completedAtUtc?: string | null;
+  /* Set the moment Stop is pressed, while the job is still active. The solve
+   * does not end here - the watcher asks the engine to stop cleanly and the
+   * partial result is still uploaded - so this is what "Stopping" is read
+   * from, and the row keeps its real status until that lands. */
+  cancelRequestedAtUtc?: string | null;
 }
 
 const ago = (iso?: string | null): string => {
@@ -75,49 +76,18 @@ const STATUS_TONE: Record<JobStatus, string> = {
   Uploading: "text-sky-300",
   Done: "text-emerald-400",
   Failed: "text-red-400",
+  /* Amber, not red: a stopped solve normally still has a chart to open, and
+   * colouring it like a failure would say the opposite. */
+  Cancelled: "text-amber-300",
 };
 
-const TERMINAL: JobStatus[] = ["Done", "Failed"];
+const TERMINAL: JobStatus[] = ["Done", "Failed", "Cancelled"];
+/* A stopped solve keeps whatever it had solved, so these open like any other
+ * result. Failed is the only status with nothing behind it. */
+const HAS_RESULT: JobStatus[] = ["Done", "Cancelled"];
 const POLL_MS = 3000;
-const DEADLINE_MS = 20 * 60 * 1000;
-
-/** A select whose unimplemented options stay visible but disabled. Showing
- *  them is the point - it says what this engine will grow into - and
- *  disabling them is what stops it silently accepting a tree it cannot
- *  solve. */
-const GatedSelect = <T extends string>({
-  label,
-  value,
-  options,
-  onChange,
-  disabled,
-}: {
-  label: string;
-  value: T;
-  options: { value: T; label: string; enabled: boolean; why?: string }[];
-  onChange: (v: T) => void;
-  disabled?: boolean;
-}) => (
-  <label className="flex flex-col gap-1">
-    <span className={labelCls}>{label}</span>
-    <select
-      value={value}
-      disabled={disabled}
-      onChange={(e) => onChange(e.target.value as T)}
-      className={inputCls}
-    >
-      {options.map((o) => (
-        <option key={o.value} value={o.value} disabled={!o.enabled} title={o.why}>
-          {o.label}
-          {o.enabled ? "" : "  (not yet)"}
-        </option>
-      ))}
-    </select>
-  </label>
-);
 
 const MultiwaySolver = () => {
-  const navigate = useNavigate();
   const [view, setView] = useState<MultiwayView>(DEFAULT_VIEW);
   const [job, setJob] = useState<CompareJob | null>(null);
   const [solving, setSolving] = useState(false);
@@ -126,7 +96,15 @@ const MultiwaySolver = () => {
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<CompareJob[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
+  /* Jobs whose Stop has been accepted but whose status has not caught up yet.
+   * Local, because the poll is on a 3 s cycle and a button that does nothing
+   * visible for three seconds reads as broken. */
+  const [cancelling, setCancelling] = useState<Set<string>>(new Set());
   const [elapsed, setElapsed] = useState(0);
+  /* Open on arrival: with no result loaded the page has nothing to show, and
+   * building a tree is what you came for. loadResult closes it once there is
+   * a chart, so a solve ends on its answer rather than behind the form. */
+  const [builderOpen, setBuilderOpen] = useState(true);
   const cancelled = useRef(false);
 
   /* Re-arm on mount, not just disarm on unmount. StrictMode mounts, unmounts
@@ -142,9 +120,6 @@ const MultiwaySolver = () => {
     };
   }, []);
 
-  const set = <K extends keyof MultiwayView>(key: K, value: MultiwayView[K]) =>
-    setView((v) => ({ ...v, [key]: value }));
-
   const labels = useMemo(() => seatLabels(view.players, view.button), [view.players, view.button]);
   const { sb, bb } = useMemo(
     () => blindSeats(view.players, view.button),
@@ -155,15 +130,15 @@ const MultiwaySolver = () => {
     [view.players, view.button]
   );
   const issues = useMemo(() => validate(view), [view]);
+  /* The job this page is driving, mid-stop: Stop was accepted but the solve
+   * has not finished writing its results out yet. */
+  const activeStopping = !!job && (cancelling.has(job.id) || !!job.cancelRequestedAtUtc);
   const bbCount = effectiveBb(view);
-
   const anteEach = Number(view.ante) || 0;
-  const potChips =
-    (Number(view.dead) || 0) + (Number(view.smallBlind) || 0) + (Number(view.bigBlind) || 0) +
-    anteEach * view.players;
+  const pot = potChips(view);
 
   /* Seats are display-only in PokerTable (the whole cluster is one button), so
-   * stacks are edited in the list beside it and the table shows the posted
+   * stacks are edited in the builder's list and the table shows the posted
    * blind as that seat's bet - which is exactly what a blind is. */
   const seats: PokerTableSeatData[] = useMemo(
     () =>
@@ -211,6 +186,14 @@ const MultiwaySolver = () => {
     }
     setDump(parsed);
     setViewingId(id);
+    /* Move the builder onto the spot that was actually solved. The table, the
+     * seat labels and the action order all read `view`, so without this a
+     * 6-way chart renders beside a 4-way table left over from whatever was
+     * last typed. Functional form so this callback keeps an empty dependency
+     * list and is not rebuilt on every keystroke; a payload too old to carry
+     * the preflop metadata returns null and the current view stands. */
+    setView((cur) => viewFromDump(parsed.metadata, cur) ?? cur);
+    setBuilderOpen(false);
   }, []);
 
   /* The queue is the durable record: the job row and its ADLS blob both
@@ -258,6 +241,36 @@ const MultiwaySolver = () => {
     [refreshJobs]
   );
 
+  /* Stop, not abandon: the watcher asks the engine to stop at its next slice,
+   * and the engine writes its checkpoint and exports the artifact for the
+   * iterations it completed - so this ends with a chart to look at and a
+   * solve that can be continued later, which is the whole reason it is a
+   * request rather than a kill. The row stays active until that lands. */
+  const cancelJob = useCallback(
+    async (id: string) => {
+      setError(null);
+      setCancelling((s) => new Set(s).add(id));
+      try {
+        const resp = await authedFetch(`/api/enginecompare/${id}/cancel`, { method: "POST" });
+        if (!resp.ok) throw new Error((await resp.text()) || `Stop failed (${resp.status})`);
+        const updated = (await resp.json()) as CompareJob;
+        setJobs((list) => list.map((j) => (j.id === id ? { ...j, ...updated } : j)));
+        setJob((current) => (current && current.id === id ? { ...current, ...updated } : current));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        // Only clear on failure: a successful stop stays "Stopping" until the
+        // status itself goes terminal, which is the honest thing to show
+        // while the engine is still writing its results out.
+        setCancelling((s) => {
+          const next = new Set(s);
+          next.delete(id);
+          return next;
+        });
+      }
+    },
+    []
+  );
+
   const openJob = useCallback(
     async (id: string) => {
       setError(null);
@@ -274,6 +287,12 @@ const MultiwaySolver = () => {
   const solve = useCallback(async () => {
     setError(null);
     setDump(null);
+    // Drop the PREVIOUS job before the new one exists. Without this the
+    // status line reads the finished job for the second or two the create
+    // takes - "Cancelled · 0s" on a solve that is starting - and, because
+    // that status is terminal, it hides the Stop button on the run that has
+    // just begun.
+    setJob(null);
     setSolving(true);
     setElapsed(0);
     const started = Date.now();
@@ -295,9 +314,14 @@ const MultiwaySolver = () => {
       setJob(current);
       void refreshJobs();
 
+      /* No client-side deadline. There used to be a 20-minute one, which
+       * meant a legitimately long solve reported "Timed out waiting for the
+       * solve" on a page whose job was still running perfectly well - and
+       * took the Stop button down with it. A solve that really is stuck is
+       * the server's stale-claim sweep to catch; one the user no longer wants
+       * is what Stop is for. */
       while (!TERMINAL.includes(current.status)) {
         if (cancelled.current) return;
-        if (Date.now() - started > DEADLINE_MS) throw new Error("Timed out waiting for the solve.");
         await new Promise((r) => setTimeout(r, POLL_MS));
         const poll = await authedFetch(`/api/enginecompare/${current.id}`);
         if (!poll.ok) throw new Error(`Poll failed (${poll.status})`);
@@ -305,6 +329,11 @@ const MultiwaySolver = () => {
         setJob(current);
       }
       if (current.status === "Failed") throw new Error(current.error || "The solve failed.");
+      if (current.status === "Cancelled" && current.hasHtResult === false) {
+        throw new Error(
+          current.error || "Stopped before the solve had written anything to show."
+        );
+      }
       await loadResult(current.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -315,7 +344,7 @@ const MultiwaySolver = () => {
     }
   }, [view, loadResult, refreshJobs]);
 
-  const downloadConfig = () => {
+  const downloadConfig = useCallback(() => {
     const blob = new Blob([JSON.stringify(buildMultiwayConfig(view), null, 2)], {
       type: "application/json",
     });
@@ -325,342 +354,285 @@ const MultiwaySolver = () => {
     a.download = `pushfold_${view.players}way.json`;
     a.click();
     URL.revokeObjectURL(url);
-  };
+  }, [view]);
 
   return (
-    <div className="mx-auto flex w-full max-w-[92rem] flex-col gap-4 px-3 py-4">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-semibold text-slate-100">Multiway preflop solver</h1>
-          <p className="max-w-3xl text-[11px] leading-relaxed text-slate-400">
-            Jam-or-fold trees for 2 to 9 seats, solved by htsolver. Every combo keeps its own
-            strategy - nothing is bucketed. The one approximation is the board runout at an
-            all-in showdown, which is averaged over a fixed, seeded sample rather than dealt into
-            the tree.
-          </p>
+    /* A workbench, not a document: the page owns the viewport below the 3rem
+       navbar and lays itself out inside it, so the charts never end up under
+       the builder. The builder itself lives in the drawer at the bottom of
+       this file, exactly as /compare hosts TreeBuilding. */
+    <div className="flex h-[calc(100dvh-48px)] w-full flex-col gap-2 overflow-hidden px-3 py-2 text-slate-200">
+      {/* ---------- header: identity, the spot, the way into the builder ---------- */}
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+        <h1 className="text-sm font-semibold tracking-tight text-white">
+          Multiway preflop solver
+        </h1>
+        <span className="text-[11px] text-slate-500">
+          <span className="font-medium text-emerald-400">htsolver</span> jam-or-fold
+        </span>
+
+        {/* The spot, so the tree is legible with the builder closed. Reads
+            `view`, which loadResult now moves onto whatever solve is open. */}
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] tabular-nums text-slate-400">
+          <span className="font-medium text-slate-300">{view.players}-way</span>
+          <span>
+            {view.smallBlind}/{view.bigBlind}
+            {anteEach > 0 ? ` +${view.ante} ante` : ""}
+          </span>
+          <span>pot {pot}</span>
+          {Number.isFinite(bbCount) && <span>{bbCount.toFixed(1)} bb</span>}
+          <span>button {labels[view.button]}</span>
+          {view.teamSeats.length === 2 && (
+            <span className="rounded-full border border-amber-800 px-2 py-0.5 text-amber-300">
+              team {labels[view.teamSeats[0]]}+{labels[view.teamSeats[1]]}
+            </span>
+          )}
+        </span>
+
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setBuilderOpen(true)}
+            className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-emerald-500"
+          >
+            Tree builder
+          </button>
         </div>
-        <SegmentedControl
-          className="text-xs"
-          value="multiway"
-          options={[
-            { key: "multiway", label: "Multiway preflop" },
-            { key: "postflop", label: "Heads-up postflop" },
-          ]}
-          onChange={(k) => {
-            if (k === "postflop") navigate("/compare");
-          }}
-        />
-      </header>
+      </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
-        {/* ---- Step 1: New tree ---- */}
-        <div className="flex flex-col gap-4">
-          <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
-            <h2 className="mb-2 text-xs font-semibold text-slate-200">New tree</h2>
-            <div className="grid grid-cols-2 gap-2">
-              <GatedSelect
-                label="Game"
-                value={view.game}
-                disabled={solving}
-                onChange={(v) => set("game", v)}
-                options={[
-                  { value: "holdem", label: "Hold'em", enabled: true },
-                  { value: "omaha", label: "Omaha Hi", enabled: false, why: "PLO needs a 270k-combo hand universe and a four-card terminal evaluator." },
-                  { value: "omaha_hi_lo", label: "Omaha Hi/Lo", enabled: false },
-                ]}
-              />
-              <GatedSelect
-                label="Limit"
-                value={view.limit}
-                disabled={solving}
-                onChange={(v) => set("limit", v)}
-                options={[
-                  { value: "nl", label: "No limit", enabled: true },
-                  { value: "pl", label: "Pot limit", enabled: false },
-                ]}
-              />
-              <GatedSelect
-                label="Street"
-                value={view.street}
-                disabled={solving}
-                onChange={(v) => set("street", v)}
-                options={[
-                  { value: "preflop", label: "Preflop", enabled: true },
-                  { value: "flop", label: "Flop", enabled: false, why: "Multiway postflop is the next milestone." },
-                  { value: "turn", label: "Turn", enabled: false },
-                  { value: "river", label: "River", enabled: false },
-                ]}
-              />
-              <label className="flex flex-col gap-1">
-                <span className={labelCls}>Players</span>
-                <input
-                  type="number"
-                  min={MIN_PLAYERS}
-                  max={MAX_PLAYERS}
-                  value={view.players}
-                  disabled={solving}
-                  onChange={(e) => setView((v) => withPlayers(v, Number(e.target.value)))}
-                  className={`${inputCls} tabular-nums`}
-                />
-              </label>
-            </div>
-            <p className="mt-2 text-[10px] text-slate-500">
-              Actions are all-in or fold. Real preflop sizings are a later pass - the tree builder
-              already carries the fields and refuses them.
-            </p>
-          </section>
-
-          {/* ---- Step 2: stacks, blinds, button ---- */}
-          <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
-            <div className="mb-2 flex items-baseline justify-between gap-2">
-              <h2 className="text-xs font-semibold text-slate-200">Stacks and blinds</h2>
-              <span className="text-[10px] tabular-nums text-emerald-400">
-                {Number.isFinite(bbCount) ? `${bbCount.toFixed(1)} bb effective` : ""}
-              </span>
-            </div>
-            <div className="mb-2 grid grid-cols-4 gap-2">
-              <label className="flex flex-col gap-1">
-                <span className={labelCls}>Pot</span>
-                <input
-                  readOnly
-                  value={potChips}
-                  title="Blinds, antes and dead money. Derived, not typed: the engine computes it the same way."
-                  className={`${inputCls} tabular-nums opacity-70`}
-                />
-              </label>
-              {(
-                [
-                  ["smallBlind", "SB"],
-                  ["bigBlind", "BB"],
-                  ["ante", "Ante"],
-                ] as const
-              ).map(([key, text]) => (
-                <label key={key} className="flex flex-col gap-1">
-                  <span className={labelCls}>{text}</span>
-                  <input
-                    inputMode="decimal"
-                    value={view[key]}
-                    disabled={solving}
-                    onChange={(e) => set(key, e.target.value)}
-                    className={`${inputCls} tabular-nums`}
-                  />
-                </label>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-[2.5rem_1fr_3.2rem] items-center gap-x-2 gap-y-1">
-              <span className={labelCls}>Seat</span>
-              <span className={labelCls}>Stack (chips)</span>
-              <span className={`${labelCls} text-center`}>Button</span>
-              {Array.from({ length: view.players }, (_, i) => (
-                <div key={i} className="contents">
-                  <span className="text-[11px] font-semibold text-slate-300">{labels[i]}</span>
-                  <input
-                    inputMode="decimal"
-                    value={view.stacks[i] ?? ""}
-                    disabled={solving}
-                    onChange={(e) =>
-                      setView((v) => {
-                        const stacks = [...v.stacks];
-                        stacks[i] = e.target.value;
-                        return { ...v, stacks };
-                      })
-                    }
-                    className={`${inputCls} tabular-nums`}
-                  />
-                  <input
-                    type="radio"
-                    name="button-seat"
-                    checked={view.button === i}
-                    disabled={solving}
-                    onChange={() => set("button", i)}
-                    aria-label={`Button on seat ${i + 1}`}
-                    className="mx-auto h-3.5 w-3.5 accent-emerald-500"
-                  />
-                </div>
-              ))}
-            </div>
-            <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
-              The button sets everything else: {labels[sb]} posts the small blind, {labels[bb]} the
-              big blind, and the action runs {order.map((s) => labels[s]).join(" → ")}.
-              {view.players === 2 ? " Heads-up the button is the small blind and acts first." : ""}
-            </p>
-          </section>
-
-          <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
-            <h2 className="mb-2 text-xs font-semibold text-slate-200">Solve settings</h2>
-            <div className="grid grid-cols-2 gap-2">
-              {(
-                [
-                  ["boardSamplePair", "Pairwise boards", "Boards behind the exact heads-up equity matrix. Built once; costs setup time, not iterations."],
-                  ["boardSampleIter", "Multiway boards", "Boards averaged per iteration at 3+ way showdowns, where the value does not factorize."],
-                  ["accuracy", "Target (chips)", "Per-player exploitability to stop at."],
-                  ["maxIterations", "Max iterations", ""],
-                ] as const
-              ).map(([key, text, why]) => (
-                <label key={key} className="flex flex-col gap-1">
-                  <span className={labelCls} title={why}>
-                    {text}
+      {/* Recent solves stay on the page rather than inside the builder: they
+          are how a previous solve gets re-opened, which belongs beside the
+          charts - and a list inside a drawer would be unreachable from here.
+          One line that scrolls, rather than a block that wraps. */}
+      {jobs.length > 0 && (
+        <div className="no-scrollbar flex shrink-0 items-center gap-1.5 overflow-x-auto">
+          <span className="shrink-0 text-[11px] font-medium text-slate-500">Recent</span>
+          {jobs.map((j) => {
+            const openable = HAS_RESULT.includes(j.status) && j.hasHtResult !== false;
+            const finished = TERMINAL.includes(j.status);
+            /* Accepted here, or already recorded by the server. */
+            const stopping = cancelling.has(j.id) || !!j.cancelRequestedAtUtc;
+            return (
+              /* Two buttons per entry rather than /compare's one, because
+                 delete is a real feature here and a button cannot nest. */
+              <span
+                key={j.id}
+                className={`inline-flex shrink-0 items-stretch overflow-hidden rounded-md border transition-colors ${
+                  viewingId === j.id
+                    ? "border-emerald-600/70 bg-emerald-500/10"
+                    : "border-slate-700 bg-slate-950/40"
+                }`}
+              >
+                <button
+                  type="button"
+                  disabled={!openable}
+                  onClick={() => void openJob(j.id)}
+                  title={j.error ?? (openable ? "Load this solve" : j.status)}
+                  className={`flex items-center gap-2 whitespace-nowrap px-2 py-0.5 text-[11px] transition-colors ${
+                    openable
+                      ? "text-slate-200 hover:bg-emerald-500/10"
+                      : "cursor-not-allowed text-slate-500"
+                  }`}
+                >
+                  <span className="font-medium">{j.board || "preflop"}</span>
+                  <span className="tabular-nums text-slate-500">
+                    {ago(j.completedAtUtc ?? j.createdAtUtc)}
                   </span>
-                  <input
-                    inputMode="decimal"
-                    value={view[key]}
-                    disabled={solving}
-                    onChange={(e) => set(key, e.target.value)}
-                    className={`${inputCls} tabular-nums`}
-                  />
-                </label>
-              ))}
-            </div>
-          </section>
+                  <span className={STATUS_TONE[j.status]}>
+                    {!finished && stopping ? "Stopping" : j.status}
+                  </span>
+                </button>
+                {/* One slot, two jobs, because a row is only ever in one of
+                    the two states: a running solve can be stopped, a finished
+                    one can be deleted. Deleting a running job was never
+                    offered - the watcher would report into a row that no
+                    longer exists - and stopping is what that gap was really
+                    asking for. */}
+                {finished ? (
+                  /* Two clicks, not a confirm dialog: the solve is cheap to
+                     re-run and a modal for every row would be worse than the
+                     mistake it prevents. */
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirmingDelete === j.id) void deleteJob(j.id);
+                      else setConfirmingDelete(j.id);
+                    }}
+                    onBlur={() => setConfirmingDelete((c) => (c === j.id ? null : c))}
+                    title={
+                      confirmingDelete === j.id
+                        ? "Click again to delete this solve and its stored result"
+                        : "Delete this solve"
+                    }
+                    aria-label={`Delete the ${j.board || "preflop"} solve from ${ago(
+                      j.completedAtUtc ?? j.createdAtUtc
+                    )}`}
+                    className={`shrink-0 border-l border-slate-800 px-1.5 text-[11px] transition-colors ${
+                      confirmingDelete === j.id
+                        ? "bg-red-500/20 font-semibold text-red-300"
+                        : "text-slate-600 hover:bg-red-500/10 hover:text-red-300"
+                    }`}
+                  >
+                    {confirmingDelete === j.id ? "Sure?" : "×"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={stopping}
+                    onClick={() => void cancelJob(j.id)}
+                    title={
+                      stopping
+                        ? "Stopping - the engine is writing out what it solved so far"
+                        : "Stop this solve and keep what it has solved so far"
+                    }
+                    aria-label={`Stop the ${j.board || "preflop"} solve`}
+                    className={`flex shrink-0 items-center border-l border-slate-800 px-1.5 transition-colors ${
+                      stopping
+                        ? "cursor-default text-amber-400/60"
+                        : "text-slate-600 hover:bg-amber-500/10 hover:text-amber-300"
+                    }`}
+                  >
+                    {/* A square, drawn rather than typed: "■" is a font glyph
+                        whose width and baseline move between platforms, and
+                        this sits inside a 20 px row. */}
+                    <svg viewBox="0 0 10 10" className="h-2 w-2" aria-hidden="true">
+                      <rect width="10" height="10" rx="1.5" fill="currentColor" />
+                    </svg>
+                  </button>
+                )}
+              </span>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => void refreshJobs()}
+            className="shrink-0 px-1 text-[10px] text-slate-500 transition-colors hover:text-slate-300"
+          >
+            Refresh
+          </button>
+        </div>
+      )}
 
-          {issues.length > 0 && (
-            <ul className="rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
-              {issues.map((issue) => (
-                <li key={issue}>{issue}</li>
-              ))}
-            </ul>
-          )}
-          {error && (
-            <p className="rounded-lg bg-red-500/10 px-3 py-2 text-[11px] text-red-300">{error}</p>
-          )}
-
-          <div className="flex flex-wrap items-center gap-2">
+      {/* A queued job outlives the drawer, so its status has to live on the
+          page too - closing the builder must not look like it stopped. */}
+      {solving && !builderOpen && (
+        <p className="flex shrink-0 items-center gap-2 rounded-lg bg-slate-800/60 px-3 py-1.5 text-xs text-slate-300">
+          <span
+            aria-hidden="true"
+            className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-500 border-t-emerald-400"
+          />
+          {activeStopping ? "Stopping" : "Solving"}
+          {job ? ` · ${job.status}` : ""} · {(elapsed / 1000).toFixed(0)}s - this keeps running if
+          you leave the page.
+          {job && !TERMINAL.includes(job.status) && (
             <button
               type="button"
-              onClick={() => void solve()}
-              disabled={solving || issues.length > 0}
-              className="inline-flex items-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={activeStopping}
+              onClick={() => void cancelJob(job.id)}
+              className={`ml-auto shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                activeStopping
+                  ? "cursor-default border-amber-800/60 text-amber-400/60"
+                  : "border-slate-600 text-slate-300 hover:border-amber-700 hover:bg-amber-500/10 hover:text-amber-300"
+              }`}
+              title="Stop this solve and keep what it has solved so far"
             >
-              {solving ? "Solving…" : "Solve"}
+              {activeStopping ? "Stopping…" : "Stop"}
             </button>
-            <button type="button" onClick={downloadConfig} className={buttonCls} disabled={solving}>
-              Download config
-            </button>
-            {solving && job && (
-              <span className="text-[11px] tabular-nums text-slate-400">
-                {job.status} · {(elapsed / 1000).toFixed(0)}s
-              </span>
-            )}
-          </div>
+          )}
+        </p>
+      )}
+      {error && !builderOpen && (
+        <p className="shrink-0 rounded-lg bg-red-500/10 px-3 py-1.5 text-[11px] text-red-300">
+          {error}
+        </p>
+      )}
 
-          {/* Recent solves. The job row and its blob both outlive this page, so
-              a finished solve is reachable after a reload rather than living
-              only in component state. */}
-          <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <h2 className="text-xs font-semibold text-slate-200">Recent solves</h2>
-              <button
-                type="button"
-                onClick={() => void refreshJobs()}
-                className="text-[10px] text-slate-500 transition-colors hover:text-slate-300"
-              >
-                Refresh
-              </button>
-            </div>
-            {jobs.length === 0 ? (
-              <p className="text-[11px] text-slate-500">
-                Nothing yet. Solves you queue show up here and stay reachable afterwards.
-              </p>
-            ) : (
-              <ul className="flex flex-col gap-1">
-                {jobs.map((j) => {
-                  const openable = j.status === "Done" && j.hasHtResult !== false;
-                  const finished = j.status === "Done" || j.status === "Failed";
-                  return (
-                    <li
-                      key={j.id}
-                      className={`flex items-stretch gap-1 rounded-md border transition-colors ${
-                        viewingId === j.id
-                          ? "border-emerald-600/70 bg-emerald-500/10"
-                          : "border-slate-800 bg-slate-950/40"
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        disabled={!openable}
-                        onClick={() => void openJob(j.id)}
-                        title={j.error ?? (openable ? "Load this solve" : j.status)}
-                        className={`flex min-w-0 flex-1 items-center justify-between gap-2 rounded-l-md px-2 py-1.5 text-left text-[11px] transition-colors ${
-                          openable ? "hover:bg-slate-800/60" : "cursor-not-allowed opacity-60"
-                        }`}
-                      >
-                        <span className="truncate font-medium text-slate-300">
-                          {j.board || "preflop"}
-                        </span>
-                        <span className="flex shrink-0 items-center gap-2">
-                          <span className="tabular-nums text-slate-500">
-                            {ago(j.completedAtUtc ?? j.createdAtUtc)}
-                          </span>
-                          <span className={STATUS_TONE[j.status]}>{j.status}</span>
-                        </span>
-                      </button>
-                      {/* Two clicks, not a confirm dialog: the solve is cheap
-                          to re-run and a modal for every row would be worse
-                          than the mistake it prevents. A running job has no
-                          delete at all - the watcher would report into a row
-                          that no longer exists. */}
-                      <button
-                        type="button"
-                        aria-disabled={!finished}
-                        onClick={() => {
-                          if (!finished) return;
-                          if (confirmingDelete === j.id) void deleteJob(j.id);
-                          else setConfirmingDelete(j.id);
-                        }}
-                        onBlur={() =>
-                          setConfirmingDelete((c) => (c === j.id ? null : c))
-                        }
-                        title={
-                          finished
-                            ? confirmingDelete === j.id
-                              ? "Click again to delete this solve and its stored result"
-                              : "Delete this solve"
-                            : "Still running - it can be deleted once it finishes"
-                        }
-                        aria-label={`Delete the ${j.board || "preflop"} solve from ${ago(
-                          j.completedAtUtc ?? j.createdAtUtc
-                        )}`}
-                        className={`shrink-0 rounded-r-md px-2 text-[11px] transition-colors ${
-                          !finished
-                            ? "cursor-not-allowed text-slate-700"
-                            : confirmingDelete === j.id
-                              ? "bg-red-500/20 font-semibold text-red-300"
-                              : "text-slate-600 hover:bg-red-500/10 hover:text-red-300"
-                        }`}
-                      >
-                        {confirmingDelete === j.id ? "Sure?" : "×"}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </section>
+      {/* ---------- the table, then the charts ----------
+           Side by side on a desktop so neither scrolls the page; stacked into
+           one scroller below lg, where the table is small and the charts are
+           what the height is for. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto lg:flex-row lg:overflow-hidden">
+        {/* justify-center, because the rail is as tall as the charts beside
+            it and the felt is not: without it the table sits pinned to the
+            top of a mostly empty card. */}
+        <div className="flex shrink-0 flex-col justify-center rounded-xl border border-slate-800 bg-slate-900/40 p-3 lg:w-[20rem] xl:w-[24rem]">
+          <PokerTable
+            size={view.players}
+            seats={seats}
+            potAmount={pot}
+            potLabel={`Pot ${pot}`}
+            maxWidthClassName="max-w-xl"
+          />
         </div>
-
-        {/* ---- The table, then the result ---- */}
-        <div className="flex flex-col gap-4">
-          <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
-            <PokerTable
-              size={view.players}
-              seats={seats}
-              potAmount={potChips}
-              potLabel={`Pot ${potChips}`}
-              maxWidthClassName="max-w-xl"
-            />
-          </div>
+        <div className="flex min-h-0 flex-1 flex-col">
           {dump ? (
-            <PushFoldResultPanel dump={dump} />
+            /* From lg the panel gets a definite height and sizes its grid from
+               whatever is left after its own chrome. Below lg it stays
+               auto-height and this column scrolls, which is the only thing
+               that fits a 13x13 grid on a phone. */
+            <PushFoldResultPanel dump={dump} className="lg:min-h-0 lg:flex-1" />
           ) : (
-            <div className="rounded-xl border border-dashed border-slate-800 px-4 py-10 text-center text-[11px] text-slate-500">
+            <div className="flex min-h-[10rem] flex-1 items-center justify-center rounded-xl border border-dashed border-slate-800 px-4 py-10 text-center text-[11px] text-slate-500">
               {solving
                 ? "Waiting for the watcher to pick this up and solve it."
-                : "Solve to see each seat's jam/fold chart."}
+                : "Solve to see each seat's jam/fold chart, or open one from Recent."}
             </div>
           )}
         </div>
       </div>
+
+      {/* ---------- tree builder, in a drawer so opening it does not push the
+           charts down the page ---------- */}
+      <ResponsiveDrawer
+        open={builderOpen}
+        onClose={() => setBuilderOpen(false)}
+        scrollMode="custom"
+        desktopMaxWidthClassName="sm:max-w-4xl"
+        zClassName="z-[70]"
+        ariaLabel="Multiway preflop tree builder"
+      >
+        <div className="flex h-[88vh] max-h-[88vh] flex-col">
+          {/* The engine-core tabs ARE this drawer's header: they name which
+              solver the tree below is being built for. /compare renders the
+              same control above its own builder. */}
+          <div className="border-b border-slate-800 px-4 py-3 pr-12">
+            <EngineCoreTabs value="multiway" />
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+            <MultiwayTreeBuilder
+              value={view}
+              onChange={setView}
+              disabled={solving}
+              issues={issues}
+              error={error}
+              onSolve={() => void solve()}
+              onDownloadConfig={downloadConfig}
+              statusSlot={
+                solving && job ? (
+                  <span className="flex items-center gap-2 text-[11px] tabular-nums text-slate-400">
+                    {job.status} · {(elapsed / 1000).toFixed(0)}s
+                    {!TERMINAL.includes(job.status) && (
+                      <button
+                        type="button"
+                        disabled={activeStopping}
+                        onClick={() => void cancelJob(job.id)}
+                        className={`rounded-md border px-2 py-0.5 font-medium transition-colors ${
+                          activeStopping
+                            ? "cursor-default border-amber-800/60 text-amber-400/60"
+                            : "border-slate-600 text-slate-300 hover:border-amber-700 hover:bg-amber-500/10 hover:text-amber-300"
+                        }`}
+                        title="Stop this solve and keep what it has solved so far"
+                      >
+                        {activeStopping ? "Stopping…" : "Stop"}
+                      </button>
+                    )}
+                  </span>
+                ) : null
+              }
+            />
+          </div>
+        </div>
+      </ResponsiveDrawer>
     </div>
   );
 };

@@ -66,6 +66,15 @@ namespace PokerRangeAPI2.Models
         public string? ResultStacks { get; set; }
         public string? ResultNodeName { get; set; }
 
+        /// <summary>
+        /// When the owner asked for this job to stop, or null. A REQUEST, not
+        /// a state: an active job keeps its status while the watcher notices
+        /// the flag (it comes back on every heartbeat response), stops the
+        /// solver cooperatively, and uploads whatever the solve reached. A job
+        /// still Queued is cancelled outright, since there is nothing to save.
+        /// </summary>
+        public DateTimeOffset? CancelRequestedAtUtc { get; set; }
+
         public DateTimeOffset CreatedAtUtc { get; set; }
         public DateTimeOffset? ClaimedAtUtc { get; set; }
         public DateTimeOffset? CompletedAtUtc { get; set; }
@@ -92,15 +101,25 @@ namespace PokerRangeAPI2.Models
         public const string Done = "Done";
         public const string Failed = "Failed";
 
+        /// <summary>
+        /// Stopped by its owner. Terminal, and NOT a failure: a cancelled
+        /// solve normally still has a result blob - the engine stops
+        /// cooperatively, writes its checkpoint and exports the artifact for
+        /// the iterations it completed - so the frontend opens these the same
+        /// way it opens Done. It is a distinct status rather than Done
+        /// because "you stopped this" is the thing the row has to say.
+        /// </summary>
+        public const string Cancelled = "Cancelled";
+
         /// <summary>States owned by a live watcher claim (heartbeat expected).</summary>
         public static readonly IReadOnlyList<string> Active =
             new[] { Claimed, Running, Uploading };
 
-        public static readonly IReadOnlyList<string> Terminal = new[] { Done, Failed };
+        public static readonly IReadOnlyList<string> Terminal = new[] { Done, Failed, Cancelled };
 
         /// <summary>
-        /// The linear stage chain a watcher walks. Failed is reachable from
-        /// any active state and is validated separately.
+        /// The linear stage chain a watcher walks. Failed and Cancelled are
+        /// reachable from any active state and are validated separately.
         /// </summary>
         public static readonly IReadOnlyList<string> Chain =
             new[] { Queued, Claimed, Running, Uploading, Done };

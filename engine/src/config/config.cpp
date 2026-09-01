@@ -339,6 +339,12 @@ SolveConfig load_config(const std::string& path_text) {
     config.sampled.seed = s.value("seed", config.sampled.seed);
     config.sampled.batch = s.value("batch", config.sampled.batch);
     config.sampled.lanes = s.value("lanes", config.sampled.lanes);
+    if (s.contains("symmetry")) {
+      config.sampled.symmetry = s.at("symmetry").get<bool>();
+      // Recorded so the solver can refuse an EXPLICIT request on a game
+      // with no quotient, while the default silently no-ops there.
+      config.sampled.symmetry_explicit = true;
+    }
     if (config.sampled.batch < 1 || config.sampled.batch > 1u << 20) {
       fail("algorithm.sampled.batch must be in [1, 1048576]");
     }
@@ -441,6 +447,18 @@ SolveConfig load_config(const std::string& path_text) {
     if (agents.contains("partition") && !agents.at("partition").is_null()) {
       config.partition = agents.at("partition").get<std::vector<std::vector<int>>>();
     }
+    if (agents.contains("partition") && !agents.at("partition").is_null()) {
+      for (const auto& group : config.partition) {
+        if (group.size() == 2) config.sampled.partition_team = group;
+      }
+    }
+    if (agents.contains("awareness")) {
+      config.awareness = agents.at("awareness").get<std::string>();
+      if (config.awareness != "aware" && config.awareness != "unaware") {
+        fail("agents.awareness must be aware | unaware, got '" + config.awareness + "'");
+      }
+    }
+    config.baseline_iterations = agents.value("baseline_iterations", config.baseline_iterations);
     if (agents.contains("payoff_weights") && !agents.at("payoff_weights").is_null()) {
       fail("agents.payoff_weights is not available yet (collusion lands in a later pass); "
            "use null");
@@ -461,7 +479,10 @@ SolveConfig load_config(const std::string& path_text) {
     config.target_exploitable_pct =
         budget.value("target_exploitable_pct", config.target_exploitable_pct);
     config.checkpoint_every = budget.value("checkpoint_every", config.checkpoint_every);
+    config.max_seconds = budget.value("max_seconds", config.max_seconds);
+    config.stop_file = budget.value("stop_file", config.stop_file);
     if (config.iterations == 0) fail("budget.iterations must be positive");
+    if (config.max_seconds < 0) fail("budget.max_seconds cannot be negative");
     if (config.target_exploitable_pct < 0) fail("budget.target_exploitable_pct cannot be negative");
     if (config.target_exploitable_pct > 0 && !nlhe) {
       fail("budget.target_exploitable_pct needs a pot to be a percent of; toy games "
@@ -477,13 +498,64 @@ SolveConfig load_config(const std::string& path_text) {
   if (j.contains("output")) {
     const json& output = j.at("output");
     config.output_path = output.value("path", config.output_path);
+    config.checkpoint_path = output.value("checkpoint_path", config.checkpoint_path);
+    config.checkpoint_dir = output.value("checkpoint_dir", config.checkpoint_dir);
     config.strategy_quantize_u8 = output.value("strategy_quantize_u8", true);
     config.ev_float32 = output.value("ev_float32", true);
     config.rollups_169 = output.value("rollups_169", true);
   }
+  if ((!config.checkpoint_path.empty() || !config.checkpoint_dir.empty()) &&
+      !config.sampled.enabled) {
+    // The vectorized core carries deferred discount history, recalc-schedule
+    // state and QRE anneal state that this checkpoint does not serialize, so
+    // "resuming" it would silently continue from a different solver.
+    fail("output.checkpoint_path needs algorithm.family \"sampled\" - checkpoints are "
+         "not implemented for the vectorized core");
+  }
+  if (j.contains("solve")) {
+    const json& solve = j.at("solve");
+    config.solve_id = solve.value("id", config.solve_id);
+    config.resume_mode = solve.value("resume", config.resume_mode);
+    config.rebase = solve.value("rebase", config.rebase);
+    if (config.resume_mode != "auto" && config.resume_mode != "never" &&
+        config.resume_mode != "require") {
+      fail("solve.resume must be auto | never | require, got '" + config.resume_mode + "'");
+    }
+    // A solve id names a file, so it has to be a filename.
+    for (char c : config.solve_id) {
+      const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                      (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.';
+      if (!ok) fail("solve.id may only contain letters, digits, '-', '_' and '.'");
+    }
+    if (config.solve_id.size() > 64) fail("solve.id must be 64 characters or fewer");
+  }
+  // Derived by default, so the same spot continues itself and a user who does
+  // not care about ids never sees one. Short enough to type and quote.
+  if (config.solve_id.empty()) config.solve_id = config_solve_key(config).substr(0, 12);
+  if (config.checkpoint_path.empty() && !config.checkpoint_dir.empty()) {
+    // Resolved here rather than in main so `dry-run` and any other consumer
+    // sees the same path the solve will use.
+    config.checkpoint_path = config.checkpoint_dir + "/" + config.solve_id + ".htck";
+  }
   config.threads = j.value("threads", 0);
 
   return config;
+}
+
+std::string config_solve_key(const SolveConfig& config) {
+  // Fail-safe by construction: start from the whole canonical config and
+  // remove only the keys that are allowed to vary, so a solve-defining key
+  // added later is covered the day it appears.
+  nlohmann::json j = config.raw;
+  j.erase("budget");
+  j.erase("output");
+  j.erase("solve");
+  j.erase("threads");
+  j.erase("memory_limit_gb");
+  if (j.contains("agents") && j.at("agents").is_object()) {
+    j.at("agents").erase("baseline_iterations");
+  }
+  return sha256::hex_digest(j.dump());
 }
 
 std::string config_hash(const SolveConfig& config) {

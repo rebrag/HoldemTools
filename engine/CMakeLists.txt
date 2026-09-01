@@ -84,6 +84,7 @@ add_library(engine_core STATIC
   src/solver/memory.cpp
   src/io/local_store.cpp
   src/io/artifact_writer.cpp
+  src/io/checkpoint.cpp
   src/io/artifact_reader.cpp
   src/io/dump_json.cpp
   src/ranges/iso.cpp
@@ -108,6 +109,8 @@ add_executable(engine_tests
   tests/test_multiway_terminal.cpp
   tests/test_preflop_game.cpp
   tests/test_memory.cpp
+  tests/test_checkpoint.cpp
+  tests/test_stop_signal.cpp
   tests/test_artifact_roundtrip.cpp
   tests/test_parallel.cpp
   tests/test_recalc.cpp
@@ -115,6 +118,7 @@ add_executable(engine_tests
   tests/test_qre.cpp
   tests/test_sampled_kuhn.cpp
   tests/test_sampled_preflop.cpp
+  tests/test_team_preflop.cpp
 )
 target_link_libraries(engine_tests PRIVATE engine_core doctest::doctest)
 add_test(NAME engine_tests COMMAND engine_tests)

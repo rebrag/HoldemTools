@@ -9,6 +9,10 @@ enum class DumpFields {
   kFull,    // everything (default; the golden fixture's shape)
   kDetail,  // actor hands with EVs, no dictionaries/rollups/non-actor seats
   kGate,    // actor strategies only - no EVs at all
+  kRollup,  // node structure + the 169-class rollups, NO per-hand fields.
+            // The /multiway payload: the page renders only the rollup chart,
+            // and per-hand data for 4 seats x 1326 combos was ~98% of the
+            // bytes it uploaded, downloaded, and ignored.
 };
 
 }  // namespace engine

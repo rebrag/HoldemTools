@@ -16,6 +16,7 @@
 #include "io/artifact_format.hpp"
 #include "io/artifact_reader.hpp"
 #include "io/artifact_writer.hpp"
+#include "io/checkpoint.hpp"
 #include "io/dump_json.hpp"
 #include "solver/agents.hpp"
 #include "solver/best_response.hpp"
@@ -24,10 +25,43 @@
 #include "solver/sampled_cfr.hpp"
 #include "solver/memory.hpp"
 #include "util/parallel.hpp"
+#include "util/stop_signal.hpp"
 
 namespace {
 
 using namespace engine;
+
+// Wall clock from process start. `budget.max_seconds` is a ceiling on the
+// WHOLE run, not just the iteration loop, because the thing it exists to
+// beat is an external kill: a watcher (or a scheduler) that shoots the
+// process at a deadline discards every iteration, since the artifact is
+// only written at the end. Stopping ourselves a little early and writing a
+// shorter solve turns an hour of thrown-away compute into a usable answer.
+// Setup counts against it for the same reason - the caller's deadline does
+// not care which phase we were in.
+const std::chrono::steady_clock::time_point kProcessStart =
+    std::chrono::steady_clock::now();
+
+double elapsed_s() {
+  return std::chrono::duration<double>(std::chrono::steady_clock::now() - kProcessStart)
+      .count();
+}
+
+// How much iterating to do between deadline checks. Small enough that the
+// budget is honored closely, large enough that the check costs nothing.
+// For the sampled core it is rounded to a whole number of BATCHES: a batch
+// boundary is where the discount and the lane fold happen, so slicing on
+// one keeps the run bitwise identical to an unsliced solve.
+constexpr std::uint64_t kSliceTargetIters = 250000;
+
+std::uint64_t deadline_slice(std::uint64_t remaining, std::uint64_t batch) {
+  std::uint64_t slice = kSliceTargetIters;
+  if (batch > 0) {
+    const std::uint64_t batches = std::max<std::uint64_t>(1, kSliceTargetIters / batch);
+    slice = batches * batch;
+  }
+  return std::min(slice, remaining);
+}
 
 std::unique_ptr<Game> make_game(const SolveConfig& config) {
   if (config.game == "kuhn") return std::make_unique<toy::KuhnGame>();
@@ -36,14 +70,10 @@ std::unique_ptr<Game> make_game(const SolveConfig& config) {
   return std::make_unique<NlhePostflopGame>(config);
 }
 
-std::uint32_t sampled_lanes_of(const SolveConfig& config) {
-  return config.sampled.enabled ? config.sampled.lanes : 0;
-}
-
 int check_memory(const Game& game, const SolveConfig& config, bool print_always) {
   const MemoryEstimate estimate =
       estimate_memory(game, config.threads, config.recalc.enabled, config.update.precision,
-                      sampled_lanes_of(config));
+                      &config.sampled);
   if (print_always) std::cout << estimate.to_string() << "\n";
   const double limit_bytes = config.memory_limit_gb * 1024.0 * 1024.0 * 1024.0;
   if (static_cast<double>(estimate.total()) > limit_bytes) {
@@ -66,15 +96,182 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
               << "\" has no deal interface for algorithm.family \"sampled\"\n";
     return 1;
   }
-  SampledCfrSolver solver(game, *deals, config.sampled, config.threads);
+  const AgentMap agents = AgentMap::from_config(config, game.num_seats());
+  const bool team = agents.has_team();
+  // The EV stream is independent of the training stream by construction.
+  constexpr std::uint64_t kEvDeals = 200000;
+  const std::uint64_t ev_seed = config.sampled.seed ^ 0x9E3779B97F4A7C15ULL;
+
   std::cout << "sampled core: seed " << config.sampled.seed << ", batch "
             << config.sampled.batch << ", lanes " << config.sampled.lanes << "\n";
+
+  SolveStats stats;
+  if (team) {
+    for (int q = 0; q < game.num_seats(); ++q) {
+      if (agents.teammate_of[static_cast<std::size_t>(q)] >= 0) stats.team_seats.push_back(q);
+    }
+    stats.awareness = config.awareness;
+    std::cout << "hand-sharing team: seats " << stats.team_seats[0] << "+"
+              << stats.team_seats[1] << ", opponents " << config.awareness
+              << ". Research/analysis tooling - using this on live tables is cheating.\n";
+  }
+  SampledCfrSolver solver(game, *deals, config.sampled, config.threads, agents);
+  stats.solve_id = config.solve_id;
+  std::cout << "solve id " << config.solve_id;
+  if (!config.checkpoint_path.empty()) std::cout << " (checkpoints on)";
+  std::cout << "\n";
+  const bool resume_allowed = config.resume_mode != "never";
+  // Phase 1 keeps its OWN checkpoint beside phase 2's, so a baseline can be
+  // extended on its own terms. Both are named after the solve id.
+  const std::string base_ck =
+      config.checkpoint_path.empty() ? std::string() : config.checkpoint_path + ".baseline";
+
+  // PHASE 2's checkpoint is read FIRST, before phase 1 does any work. It
+  // records which baseline the team trained against, and that is what decides
+  // whether extending phase 1 is allowed at all - discovering the conflict
+  // after phase 1 had already advanced and saved would strand the solve:
+  // the baseline would be past the value the error message tells you to
+  // restore.
+  bool resumed = false;
+  // A cancel in phase 1 also ends phase 2 before it starts. Stopping the
+  // baseline and then training a full team phase against it would ignore the
+  // thing the user actually asked for, and the checkpoints below keep both
+  // phases exactly where they stopped.
+  bool cancelled = false;
+  CheckpointExtras extras;
+  if (!config.checkpoint_path.empty() && resume_allowed) {
+    std::string err;
+    if (read_checkpoint(config.checkpoint_path, solver, config, extras, err)) {
+      resumed = true;
+      std::cout << "resumed solve " << config.solve_id << " at iteration "
+                << solver.iteration() << " of " << config.iterations << "\n";
+      if (solver.iteration() >= config.iterations) {
+        std::cout << "note: budget.iterations is a TOTAL and this solve already reaches "
+                     "it - nothing to iterate. Raise it to continue.\n";
+      }
+    } else if (config.resume_mode == "require") {
+      std::cerr << "FATAL: solve.resume is \"require\" but there is nothing to resume: " << err
+                << "\n";
+      return 1;
+    } else {
+      std::cout << "checkpoint: starting fresh (" << err << ")\n";
+    }
+  }
+
+  // PHASE 1 (unaware teams only): the no-team baseline everyone believes they
+  // are playing. It runs on every invocation - resuming its own checkpoint
+  // and iterating only the shortfall - which is what makes a baseline
+  // extendable rather than frozen forever at whatever the first run reached.
+  std::unique_ptr<SampledCfrSolver> baseline;
+  if (team && config.awareness == "unaware") {
+    baseline = std::make_unique<SampledCfrSolver>(game, *deals, config.sampled,
+                                                  config.threads);
+    CheckpointExtras base_extras;
+    if (!base_ck.empty() && resume_allowed) {
+      std::string err;
+      if (read_checkpoint(base_ck, *baseline, config, base_extras, err)) {
+        std::cout << "phase 1: resumed the baseline at iteration " << baseline->iteration()
+                  << "\n";
+      } else if (config.resume_mode == "require") {
+        std::cerr << "FATAL: solve.resume is \"require\" but the baseline checkpoint could "
+                     "not be used: " << err << "\n";
+        return 1;
+      }
+    }
+    const std::uint64_t base_target =
+        config.baseline_iterations > 0 ? config.baseline_iterations : config.iterations;
+    // Where phase 1 will END this run. A target below what it has already
+    // reached is not a rewind - it simply does nothing.
+    const std::uint64_t base_end = std::max(baseline->iteration(), base_target);
+    // `solver.iteration() > 0` is what makes this a real conflict. Phase 2
+    // having done NO work - a fresh solve, or one stopped during phase 1 -
+    // means there are no regrets to invalidate, so refusing there would
+    // strand a solve to protect nothing: the baseline moved, phase 2 is
+    // empty, and the user is simply continuing what they stopped.
+    if (resumed && solver.iteration() > 0 && extras.baseline_iterations != base_end) {
+      // A team's regrets are a best response to ONE baseline. Moving the
+      // baseline makes them stale: continuing would blend a best response to
+      // the old baseline with one to the new. Refuse BEFORE phase 1 runs, so
+      // nothing is spent and the suggested fix actually works.
+      if (!config.rebase) {
+        std::cerr << "FATAL: this would move the baseline out from under phase 2, which was "
+                     "trained against "
+                  << extras.baseline_iterations << " baseline iterations (this run would end "
+                  << "with " << base_end
+                  << "). Phase 2's regrets are a best response to the OLD baseline, so "
+                     "continuing would mix two different games.\n"
+                     "       Either set agents.baseline_iterations to "
+                  << extras.baseline_iterations
+                  << " to keep extending phase 2, or set solve.rebase true to restart phase 2 "
+                     "against the longer baseline.\n";
+        return 1;
+      }
+      std::cout << "rebasing: the baseline moves from " << extras.baseline_iterations << " to "
+                << base_end << " iterations, so phase 2 restarts against it\n";
+      solver.reset();
+      resumed = false;
+    }
+    std::cout << "phase 1: no-team baseline, " << base_target << " iterations total\n";
+    // Phase 1 gets at most half the time budget. The budget exists so the run
+    // always reaches the artifact, and an artifact whose team phase never ran
+    // would be a no-team solve wearing a team's metadata.
+    const double base_deadline = config.max_seconds > 0.0 ? config.max_seconds * 0.5 : 0.0;
+    // Slicing is what makes phase 1 interruptible at all: an unsliced run()
+    // is one call that returns when the whole baseline is done, and neither
+    // the clock nor a cancel can be looked at from inside it.
+    const bool base_sliced = base_deadline > 0.0 || !config.stop_file.empty();
+    while (baseline->iteration() < base_target) {
+      const std::uint64_t remaining = base_target - baseline->iteration();
+      const std::uint64_t slice = base_sliced
+                                      ? deadline_slice(remaining, config.sampled.batch)
+                                      : remaining;
+      baseline->run(slice);
+      if (stop_requested(config.stop_file)) {
+        std::cout << "phase 1 cancelled after " << baseline->iteration() << " iterations\n";
+        stats.stopped_reason = "cancelled";
+        cancelled = true;
+        break;
+      }
+      if (base_deadline > 0.0 && elapsed_s() >= base_deadline) {
+        std::cout << "phase 1 stopped at its " << base_deadline << " s share of the "
+                  << "time budget after " << baseline->iteration() << " iterations\n";
+        stats.stopped_reason = "time_budget";
+        break;
+      }
+    }
+    stats.baseline_iterations = baseline->iteration();
+    stats.baseline_ev_chips = baseline->sampled_ev(kEvDeals, ev_seed);
+    std::cout << "baseline ev";
+    for (double ev : stats.baseline_ev_chips) std::cout << " " << ev;
+    std::cout << "\n";
+    if (!base_ck.empty()) {
+      CheckpointExtras out_extras;
+      write_checkpoint(base_ck, *baseline, config, out_extras);
+    }
+  } else if (resumed) {
+    // No phase 1 to re-derive them from (aware team, or no team at all).
+    stats.baseline_iterations = extras.baseline_iterations;
+    stats.baseline_ev_chips = extras.baseline_ev_chips;
+  }
+
+  if (baseline) {
+    std::vector<bool> frozen(static_cast<std::size_t>(game.num_seats()), false);
+    for (int q = 0; q < game.num_seats(); ++q) {
+      frozen[static_cast<std::size_t>(q)] = agents.teammate_of[static_cast<std::size_t>(q)] < 0;
+    }
+    // Always re-freeze from the live baseline solver rather than trusting the
+    // rows inside phase 2's checkpoint: the two are equal by the check above,
+    // and taking them from the baseline keeps ONE source of truth.
+    solver.freeze_seats_from(*baseline, frozen);
+    std::cout << "phase 2: joint team best response against the frozen baseline\n";
+  }
   // The preflop evaluator best response runs against is exact at 2-3 seats
   // and first-order at 4+, where its residual would let a target fire on a
-  // number that is not really exploitability. Honest accounting: report
-  // every checkpoint, let targets stop the solve only where the measure is
-  // exact.
-  const bool br_exact = game.num_seats() <= 3;
+  // number that is not really exploitability. A TEAM plays a correlated
+  // joint strategy that per-seat marginals cannot reproduce, so best
+  // response is not a meaningful measure there at all - EVs come from the
+  // sampled pass instead, and nashconv is stamped invalid.
+  const bool br_exact = !team && game.num_seats() <= 3;
   if (!br_exact) {
     std::cout << "note: best response rides a first-order evaluator at "
               << game.num_seats()
@@ -82,16 +279,55 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
                  "budget.iterations. The reported nashconv is a diagnostic.\n";
   }
   const auto start = std::chrono::steady_clock::now();
-  BrResult br;
   double nashconv = 0.0;
-  std::uint64_t done = 0;
+  // budget.iterations is the TOTAL for the solve, not this run's share, so
+  // re-running a config with a larger budget walks toward the target rather
+  // than redoing what the checkpoint already holds.
+  std::uint64_t done = solver.iteration();
+  const std::uint64_t started_at = done;
   const double pot = static_cast<double>(config.pot);
-  while (done < config.iterations) {
+  const bool timed = config.max_seconds > 0.0;
+  // Same reason as phase 1: a slice is the only place a cancel can be seen.
+  const bool sliced = timed || !config.stop_file.empty();
+  bool out_of_time = false;
+  while (!cancelled && done < config.iterations) {
     const std::uint64_t step =
         std::min<std::uint64_t>(config.checkpoint_every, config.iterations - done);
-    solver.run(step);
-    done += step;
-    br = compute_best_response(game, solver);
+    // A team solve takes ONE checkpoint for the whole budget (there is no
+    // best response to measure), so the deadline has to be checked inside
+    // the step or a 60M-iteration solve would never look at the clock.
+    std::uint64_t ran = 0;
+    while (ran < step) {
+      const std::uint64_t slice =
+          sliced ? deadline_slice(step - ran, config.sampled.batch) : step - ran;
+      solver.run(slice);
+      ran += slice;
+      if (stop_requested(config.stop_file)) {
+        cancelled = true;
+        break;
+      }
+      if (timed && elapsed_s() >= config.max_seconds) {
+        out_of_time = true;
+        break;
+      }
+    }
+    done += ran;
+    if (cancelled) {
+      std::cout << "iter " << done << "\ncancelled: writing the artifact for the " << done
+                << " iterations completed\n";
+      break;
+    }
+    if (out_of_time) {
+      std::cout << "iter " << done << "\nstopping at the " << config.max_seconds
+                << " s budget: writing the artifact for the " << done
+                << " iterations completed\n";
+      break;
+    }
+    if (team) {
+      std::cout << "iter " << done << "\n";
+      continue;
+    }
+    const BrResult br = compute_best_response(game, solver);
     nashconv = br.nashconv();
     const double exploitable = nashconv / game.num_seats();
     std::cout << "iter " << done << "  nashconv " << nashconv << "  exploitable "
@@ -113,22 +349,91 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   const double wall_s =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
-  SolveStats stats;
+  if (cancelled && team && solver.iteration() == 0) {
+    // Worth saying out loud: the team phase never ran, so the team seats have
+    // no strategy sums and export as a uniform mix. The artifact is still
+    // written (and the baseline checkpoint is still good), but the charts in
+    // it are not a team solve yet.
+    std::cout << "warning: stopped before the team phase ran a single iteration, so the "
+                 "team seats export as an unsolved uniform mix. The baseline is saved - "
+                 "solve again with the same id to continue.\n";
+  }
   stats.iterations = solver.iteration();
   stats.nashconv = nashconv;
-  stats.ev_chips = br.ev;
+  stats.nashconv_valid = !team;
+  if (out_of_time) stats.stopped_reason = "time_budget";
+  // A cancel outranks the time budget in the label: both stopped the solve
+  // early, but only one of them is something the user did.
+  if (cancelled) stats.stopped_reason = "cancelled";
+  // Root EVs from the sampled pass for EVERY sampled solve: each deal's
+  // payoffs sum to the pot, so these conserve exactly at any seat count -
+  // and they are the only honest EVs for a team, whose correlated play no
+  // per-seat marginal can reproduce.
+  stats.ev_chips = solver.sampled_ev(kEvDeals, ev_seed);
   stats.wall_time_s = wall_s;
   stats.setup_time_s = setup_s;
   stats.threads = threads;
   stats.peak_rss_bytes = peak_rss_bytes();
+  std::cout << "sampled ev (" << kEvDeals << " deals)";
+  for (double ev : stats.ev_chips) std::cout << " " << ev;
+  std::cout << "\n";
+  if (team) {
+    stats.team_rollup = solver.team_rollup_json();
+    double team_ev = 0.0;
+    for (int q : stats.team_seats) team_ev += stats.ev_chips[static_cast<std::size_t>(q)];
+    std::cout << "team ev " << team_ev;
+    if (!stats.baseline_ev_chips.empty()) {
+      double base_team = 0.0;
+      for (int q : stats.team_seats) {
+        base_team += stats.baseline_ev_chips[static_cast<std::size_t>(q)];
+      }
+      std::cout << " (baseline " << base_team << ", uplift " << team_ev - base_team << ")";
+    }
+    std::cout << " chips\n";
+  }
+
+  // The checkpoint goes out before the artifact: the artifact is for
+  // viewers, the checkpoint is the only thing that lets this solve continue.
+  if (!config.checkpoint_path.empty() && solver.iteration() == 0) {
+    // Nothing to save: a phase 2 that never ran has zero regrets, and writing
+    // it would only record which baseline it did not train against - the
+    // value the interlock above then reads back.
+    std::cout << (baseline
+                      ? "no team iterations to checkpoint; the baseline is saved, so solving "
+                        "again with this id continues from there\n"
+                      : "no iterations to checkpoint; nothing was solved\n");
+  } else if (!config.checkpoint_path.empty()) {
+    extras.baseline_iterations = stats.baseline_iterations;
+    extras.baseline_ev_chips = stats.baseline_ev_chips;
+    const double ck_s = write_checkpoint(config.checkpoint_path, solver, config, extras);
+    std::cout << "checkpoint " << config.checkpoint_path << " at iteration "
+              << solver.iteration() << " (" << ck_s << " s)";
+    if (solver.iteration() < config.iterations) {
+      std::cout << " - run again to continue toward " << config.iterations;
+    }
+    std::cout << "\n";
+    // Resuming is bit-for-bit only from a BATCH boundary, because a batch is
+    // where the discount and the lane fold happen; stopping inside one splits
+    // a fold and the continuation differs in the last bits. Time-budget stops
+    // always land on a boundary (deadline_slice rounds to whole batches), so
+    // this only fires on a hand-picked budget.iterations.
+    if (config.sampled.batch > 0 && solver.iteration() % config.sampled.batch != 0) {
+      std::cout << "note: stopped mid-batch (iteration is not a multiple of "
+                << config.sampled.batch
+                << "), so continuing from here will differ from an uninterrupted run in "
+                   "the last bits. Use a multiple of the batch size for an exact resume.\n";
+    }
+  }
 
   LocalStore store;
   const double export_s =
       write_artifact(store, config.output_path, game, solver, config, stats);
   const PeakMemory peak = peak_memory();
-  std::cout << "solve time " << wall_s << " s (" << done << " iters on " << threads
-            << " thread" << (threads == 1 ? "" : "s") << ", "
-            << (wall_s > 0.0 ? static_cast<double>(done) / wall_s : 0.0) << " iters/s)\n";
+  const std::uint64_t ran_now = done - started_at;
+  std::cout << "solve time " << wall_s << " s (" << ran_now << " iters this run on "
+            << threads << " thread" << (threads == 1 ? "" : "s") << ", "
+            << (wall_s > 0.0 ? static_cast<double>(ran_now) / wall_s : 0.0)
+            << " iters/s, " << done << " total)\n";
   std::cout << "wrote " << config.output_path << "  (wall " << wall_s + setup_s
             << " s including setup, peak RSS " << peak.working_set / (1024.0 * 1024.0)
             << " MB";
@@ -150,7 +455,7 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   if (dry_run) {
     const MemoryEstimate estimate =
         estimate_memory(*game, config.threads, config.recalc.enabled,
-                        config.update.precision, sampled_lanes_of(config));
+                        config.update.precision, &config.sampled);
     std::cout << estimate.to_string() << "\n";
     std::cout << "tree: " << game->tree().size() << " nodes ("
               << game->tree().num_decision_nodes << " decision, "
@@ -170,6 +475,8 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   double qre_gap = 0.0;
   BrResult br;
   std::uint64_t done = 0;
+  bool out_of_time = false;
+  bool cancelled = false;
   const double pot = static_cast<double>(config.pot);
 
   // A fixed-lambda QRE is not a Nash equilibrium, and its PLAIN exploitability
@@ -292,6 +599,25 @@ int run_solve(const SolveConfig& config, bool dry_run) {
       std::cout << "target_exploitable_pct reached (" << metric_name << ")\n";
       break;
     }
+    // Checkpoint granularity is the natural deadline unit here: this loop
+    // measures a best response every checkpoint anyway, so it is already
+    // stopping at a point where the solve is worth writing out. A cancel
+    // rides the same granularity. This core has no checkpoint file, so
+    // stopping here yields a shorter solve that cannot be continued - still
+    // an artifact, where a kill would have left nothing.
+    if (stop_requested(config.stop_file)) {
+      cancelled = true;
+      std::cout << "cancelled: writing the artifact for the " << done
+                << " iterations completed\n";
+      break;
+    }
+    if (config.max_seconds > 0.0 && elapsed_s() >= config.max_seconds) {
+      out_of_time = true;
+      std::cout << "stopping at the " << config.max_seconds
+                << " s budget: writing the artifact for the " << done
+                << " iterations completed\n";
+      break;
+    }
   }
   const double wall_s =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
@@ -299,6 +625,8 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   SolveStats stats;
   stats.iterations = solver.iteration();
   stats.nashconv = nashconv;
+  if (out_of_time) stats.stopped_reason = "time_budget";
+  if (cancelled) stats.stopped_reason = "cancelled";
   stats.ev_chips = br.ev;
   stats.wall_time_s = wall_s;
   stats.setup_time_s = setup_s;

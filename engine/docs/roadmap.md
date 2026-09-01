@@ -725,10 +725,42 @@ The -0.56 sum is NOT the profile: it is the measuring evaluator's own first-orde
 The profile's own measure conserves by construction; a sampled EV export that would make the DISPLAYED numbers conserve too is the recorded follow-up.
 Both solvers now sit within the tolerance band of a Monker reference that is itself abstracted at the runout (see the correction note above), so the band is the strongest claim the comparison supports.
 
-**Cost, measured (16 threads, 4-way 10bb, 200,000 deals):** the sampled solve itself is about **5 s** (~25,000 iterations/s).
-Everything else in the wall clock is the FACTORIZED measuring stick: one best-response diagnostic costs ~38 s at `board_sample.iter_count` 500 (~3 s at 40), and the artifact export's per-hand EV pass ~45 s at 500 (~4 s at 40) - so the shipped config (500 boards, one checkpoint) lands at ~93 s end to end, against the corrected factorized solve's 216 s and its unclosable residual.
-Dropping the evaluator to 40 boards gives ~17 s at the price of roughly 1 bb/100 of DISPLAY noise on the EVs; the strategy is identical either way, because the solve never reads `board_sample` - it only feeds the evaluator.
-Checkpoint sparingly: ten checkpoints put ten best-response passes inside the solve loop, which is how the first measurement read 439 s.
+**Cost, measured (16 threads, 4-way 10bb), and the bug that hid in it.**
+`SampledCfrSolver::split_budget()` returned 1.
+That reads as a statement about this core's own traversal - which is true, iterations parallelize across lanes, not across subtrees - but `split_budget()` is not read by the solver at all.
+It is the fan-out budget the CONSUMERS take: `compute_best_response` and the artifact export pass both fork sibling subtrees onto the pool with it.
+Returning 1 pinned both to a single core, and since both are `Game::terminal_values` walks over the factorized evaluator, they were most of the wall clock: a user watching Task Manager saw ~70% for a few seconds and then ~6% (one core of sixteen) for a minute and a half.
+It now returns `threads * 4`, the same policy `CfrSolver` uses, and the outputs are bit-identical (the BR fold-back was already serial and in child order).
+
+| phase | before | after |
+|---|---|---|
+| 200k deals, end to end | 93 s | **25 s** |
+| 600k deals, end to end | ~98 s | **32 s** |
+| best response (one pass, 500 boards) | ~38 s | **~8 s** |
+| artifact export (per-hand, all nodes) | ~45 s | **~8.6 s** |
+| engine test suite | 80 s | **62 s** |
+
+The marginal iteration rate is ~57,000 deals/s, so at 600k the split is roughly setup 4.6 s + iterations 10.6 s + best response 8.2 s + export 8.6 s.
+**The factorized measuring stick is still the majority of it**, and `board_sample.iter_count` scales it linearly while the sampled solve never reads that value - so it is the honest wall-clock knob, priced in EV display noise rather than strategy quality.
+The export pass is not "the root EVs": it stores per-hand, per-seat reach and conditional EV for EVERY decision node, and each terminal it touches runs the 500-board layer sweep.
+
+#### The suit quotient and the rollup payload (2026-08-31)
+
+Prompted by a user question that turned out to be two questions with one answer: why upload per-hand data a preflop chart never renders, and can the variance come down.
+
+**The quotient.** `algorithm.sampled.symmetry` (default on) makes the sampled core store one row per 169-class suit orbit on preflop trees: `DealGame::hand_classes` reports the map (built from `combo_class_index`), storage shrinks 8x, and `average_strategy` expands class rows back to the per-hand contract, so members of a class emit BITWISE-identical rows (gated in `test_sampled_preflop.cpp`). This is a lossless relabeling, not abstraction - preflop, no infoset can tell suits apart, so the classes are exactly the orbits of the suit group. The identity path (games reporting no quotient, or `symmetry: false`) is bit-for-bit the original solver.
+
+**The variance result, measured rather than repeated.** The naive expectation was ~8x sample pooling per row. The realized nashconv gain at equal deal budgets:
+
+| spot | without | with | ratio |
+|---|---|---|---|
+| HU 10bb, 50k deals | 0.01022 | 0.00902 | 1.13x |
+| 3-way 10bb, 150k deals (exact evaluator, 2000 boards) | 0.00797 | 0.00729 | 1.09x |
+| 4-way 10bb, 200k deals (first-order evaluator) | 0.04038 | 0.03900 | 1.04x |
+
+The gap between 8x and 1.1x has a mechanism: members of a class share each deal's board and pinned opponents, so their counterfactual samples are heavily correlated, and pooling correlated samples buys little. The quotient still earns its default - suit asymmetry in the OUTPUT is now structurally impossible (previously pure cosmetic noise), memory is 8x smaller, and it costs nothing (marginally faster). But anyone hunting a large variance win should look at the chance dimension (the board), not the hand dimension: the deal-to-deal board noise is the common factor the quotient cannot touch.
+
+**The payload.** `dump-json --fields rollup` emits node structure plus the 169-class rollups and none of the per-hand fields; the watcher uploads that for pushfold jobs. Measured on the 4-way artifact: 5.93 MB full -> 217 KB rollup (27x). `/multiway` renders identically - it never read the per-hand fields - and old full payloads remain a superset, so previously stored results still load.
 
 **What stays on the factorized path, deliberately.**
 Best-response diagnostics and the artifact export's per-hand reach/EV fields ride `Game::terminal_values` - exact at 2-3 seats, first-order at 4+ (artifacts stamp `solver_family`; the export caveat is `export_ev_estimator` territory).
@@ -737,8 +769,82 @@ The 216s corrected 4-way demotes from product path to reference oracle; `/multiw
 
 **Follow-ups this core unlocks, in the order they are likely to matter:** a sampled EV export (displayed EVs conserving at any seat count); ICM as a terminal payoff transform on `DealGame` (the sampled core evaluates concrete stacks exactly where ICM applies); bucketed multiway POSTFLOP and PLO through the `InfosetIndexer` seam (buckets/node = strength buckets x texture classes over suit-isomorphic boards - in scope for THIS core only, see the per-core rule below); QRE and real preflop sizings ported over.
 
-- **M9 - collusion, best-response mode first**: seat->agent partition + payoff-weight matrices, joint-range representation (1326x1225 - river-only on 16GB), frozen-opponent team best response.
-- **M10 - Bayesian unknown-collusion**: chance root over team type with probability p; opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.
+### M9 - hand-sharing teams (cooperation/collusion). Landed 2026-08-31, on the sampled core.
+
+The original M9 plan ("joint-range representation, 1326x1225 - river-only on 16 GB") was written for the vectorized core and is SUPERSEDED: on the sampled core a teammate is PINNED to a dealt hand during a traversal, so hand-sharing became an indexing change - which storage row the hero reads - not a joint-range representation, and it runs preflop multiway on ~180 MB in under 30 s.
+
+**What it is.** `agents.partition` with one 2-seat group makes that pair share hole cards and maximize SUMMED chips.
+A team actor's infoset is (node, own hand, partner hand); storage rows are the suit orbits of ordered disjoint hand pairs - **93,769** of them, the exact quotient (Burnside with stabilizers; pinned in `test_team_preflop.cpp`), built by `NlhePreflopGame::joint_hand_classes` from the same `perm_hand_map` machinery as `e2_`.
+A team hero's terminal value is its own chips plus the pinned partner's chips on the same deal (`deal_showdown_values_team`, gated exactly - worst gap 0 over 4,515 hands - against pinning the hero per hand and reading the partner's value).
+Chip conservation is untouched: payoffs per deal still sum to the pot; only preferences over them changed.
+
+**The two awareness modes ARE the answer to "does it matter if the others know".**
+
+- `agents.awareness: "unaware"` - two phases in one run: phase 1 solves the no-team baseline, then opponents are FROZEN at its average strategy and only the team trains.
+  A two-headed team with one payoff and shared information is a single optimizer, so this phase has a REAL convergence guarantee, unlike general 3+ agent CFR.
+  The gated theorem: the team could always play its baseline strategies against the same frozen opponents, so the joint best response must beat the baseline.
+- `agents.awareness: "aware"` - everyone trains together with the team as one payoff-coupled meta-player; opponents adapt.
+  No ordering theorem connects this to the baseline (it is an equilibrium of a DIFFERENT game), and the usual 3+ agent CCE caveat applies.
+
+**Measured, 4-way 10bb, CO+SB sharing against BB and BTN (chips; bb = 2):**
+
+| | SB | BB | CO | BTN | team (SB+CO) |
+|---|---|---|---|---|---|
+| baseline (no team) | -0.255 | -0.615 | +0.364 | +0.506 | **0.109** |
+| unaware | -0.220 | -0.995 | +0.553 | +0.663 | **0.333** |
+| aware | -0.316 | -0.673 | +0.477 | +0.512 | **0.161** |
+
+(Numbers are from the two-sided-update build; the first shipped build measured unaware 0.271 / aware 0.125 - the stronger conditioned training is worth ~40% more uplift.)
+
+Three findings worth the table:
+the unaware uplift is **+0.223 chips = +11.2 bb/100** for the pair, and it is extracted almost entirely from the BB (-0.62 to -1.00) while the unaware BTN **free-rides** the team's pressure (+0.51 to +0.66);
+opponents who KNOW keep most of it away (uplift +0.052 chips = +2.6 bb/100);
+and on the 3-way gate the aware team measured BELOW its own baseline (0.304 vs 0.322) - being known to collude can cost more than the sharing gains, which is a property of the changed game, not a bug, and exactly why the two modes had to ship together.
+
+**The estimator trap, paid for and recorded.** During a team hero's traversal the partner's policy conditions on the hero's hand - and the hero is VECTORIZED, so a partner node's sigma is a per-hand vector, not a scalar.
+The first implementation conditioned the partner on the hero's DEALT hand; each member then trained against a partner reacting to the wrong cards, and the measured result was a team losing to its own no-team baseline (-0.97 vs +0.32 on the 3-way gate).
+If a future change makes a team lose to its baseline, look here first.
+(The vector originally traveled as a per-hand opponent-weight channel folded before the descent; the two-sided update below replaced that with folding the sigma into the returned values AFTER each partner node's descent - same expectation by linearity, and it keeps the child values counterfactual for the partner.)
+
+**The two-sided team update (landed one day later, after the first user run).** The initial traversal only updated the HERO's rows, so a conditioned cell (own X, partner Y) trained only on deals where BOTH classes were literally dealt - about freq(X) x freq(Y) = 0.001% of deals - and the conditioned charts shipped as visible noise (the first 4-way run showed CO jamming "nearly any-two" with AA behind; the converged answer is the OPPOSITE, CO folds everything and lets AA collect).
+Since a partner node's descent already computes the mate's per-hand sigma and, per action, the team's per-hand counterfactual values, the mate's full conditioned row (own = dealt, partner = every hero hand) is updated there too: regret weight `hero_reach[h]` times the returned value (which carries the external reach via `opp_w`) is exactly the everyone-but-the-mate counterfactual weight.
+Per-cell coverage goes from freq(X)*freq(Y) to ~freq(X)+freq(Y) - three orders of magnitude - and the stronger joint best response it finds raised the measured 4-way unaware uplift by ~40%.
+Strategy sums at team nodes are additionally weighted by BOTH seats' reach (`mate_reach` threading), so the exported marginal is a real reach-weighted average and the rollup's per-partner-class mass is an honest reach signal - `team_rollup.partner_reach` ships it, and `/multiway` flags conditionings that never happen ("partner folded AA").
+
+**What converges and what legitimately does not.** The unaware team EV is seed-stable (0.766 vs 0.765 on the 3-way gate at 640k iterations) because the joint best-response VALUE is unique - but the argmax is NOT: which seat carries the aggression can be interchangeable at identical team EV, and once the outsider folds, the last team seat calling its own partner's jam only moves chips WITHIN the team, a genuine indifference.
+So conditioned charts at deeper team nodes keep a mixing band that two seeds resolve differently, on top of a small-edge threshold band that sharpens only as 1/sqrt(iterations).
+`test_team_preflop.cpp` gates EV agreement tight and strategy agreement reach-weighted and loose, on purpose; do not tighten the strategy gate without first checking the disagreement is not one of these two EV-free kinds.
+
+**Frozen seats export their baseline.** In unaware phase 2 the frozen seats never accumulate strategy sums, and `average_strategy` originally fell to its uniform fallback - artifacts showed the opponents playing 50/50 while the solve itself (training traversals and the EV pass read `frozen_rows_`) was correct all along.
+`average_strategy` now returns the frozen rows, and a gate pins every frozen node's export bitwise-equal to the baseline solver's.
+
+**EV honesty forced a general improvement.** Per-seat marginal strategies cannot reproduce a team's correlated play, so team EVs cannot ride `Game::terminal_values` - and now EVERY sampled solve's root EVs come from a **sampled EV pass** (200k fresh seeded deals under the average profile, all seats pinned, `deal_showdown_pinned`).
+These conserve exactly at any seat count, retiring the displayed "-0.011 evaluator residual" on 4-way solves; metadata says `root_ev_estimator: "sampled_deals"`.
+`final_nashconv` is null on team artifacts (best response against marginals is not a meaningful measure of a correlated team; a proper team best-response evaluator is future work).
+
+**Export shape.** The artifact's per-hand strategy blobs and 169 rollups are MARGINALS over the partner (`team.strategy_export` flags it); the conditioned strategy - the actual shared-cards play - travels as `team_rollup` in metadata: per team decision node, reach-weighted action frequencies per (partner class, own class) cell, plus per-cell per-action conditioned TEAM EVs (`ev`, own + partner chips: `ev_sum_`/`ev_w_` accumulate reach-weighted counterfactual values against an opp_w denominator during training, under the same linear discount) and `partner_reach`.
+`/multiway` renders it with a partner-hand selector; the marginal chart is the default, and conditioned tooltips show the team EVs.
+Configs: `configs/pushfold_4way_10bb_team_{unaware,aware}.json`.
+Phase control: `agents.baseline_iterations` is phase 1 (the frozen baseline; defaults to `budget.iterations` when unset), `budget.iterations` is phase 2 (the team) - independently, so a long team solve sets a modest baseline and pours the budget into phase 2, which is also the cheaper phase (2 hero traversals per deal instead of one per seat).
+`/multiway` exposes both (Baseline iterations appears when a team is marked unaware).
+
+**A solve has an id and two independently extendable phases.** `solve.id` names the lineage (default: derived from the spot) and its checkpoints; phase 1 keeps its own file, so a baseline can be lengthened on its own terms while `agents.baseline_iterations` and `budget.iterations` are both totals.
+The interlock worth remembering: a team's regrets are a best response to ONE baseline, so moving the baseline invalidates phase 2 - the engine refuses before spending anything unless `solve.rebase` says to restart phase 2 against the longer baseline.
+`solve.resume: "require"` refuses to start from zero, which is the guard against a mistyped id quietly beginning a ten-hour solve over again.
+
+**Long solves resume.** `output.checkpoint_dir` (or `checkpoint_path`) makes a sampled solve continue where the last run stopped: the solver's whole state round-trips, `budget.iterations` becomes a TOTAL, and because the deal stream and the discount key on the absolute iteration index the continuation is bit-for-bit an uninterrupted run - exact from a batch boundary, which is where every time-budget stop lands.
+Together with the time budget that is the answer to the watcher's one-hour ceiling: run the same job repeatedly with a larger target and the solve grows without limit, ~15 MB of checkpoint for a 4-way team spot.
+Set `ENGINE_CHECKPOINT_DIR` on the watcher to turn it on there.
+Artifacts stay unresumable by construction (they carry the quantized average strategy, which cannot be inverted into regrets), and the vectorized core is out of scope until its discount history, recalc schedule and anneal state serialize too.
+
+**Long solves are never discarded.** `budget.max_seconds` caps the whole run; on expiry the loop stops at the next batch-aligned slice, the EV pass still runs, and the artifact is written with `metadata.stopped_reason: "time_budget"` and `requested_iterations`, so a truncated solve is a usable (just less converged) result instead of nothing.
+This exists because the artifact is only written at the end: the compare watcher's `ENGINE_SOLVE_TIMEOUT_SECS` kill threw away a 70M-iteration team solve after an hour.
+The watcher now passes `ceiling - ENGINE_SOLVE_WRITE_MARGIN_SECS` (default 300 s) as the engine's budget and keeps its kill only as a hang backstop, and `/multiway` shows a "stopped on time budget" chip.
+Unaware phase 1 is capped at half the budget so a team artifact can never be a baseline solve wearing team metadata.
+
+Still open under M9: teams of three or more seats and multiple teams (the joint quotient generalizes but the orbit space grows), general payoff-weight matrices (only summed-EV teams exist), and a team-aware best-response evaluator so team solves get a convergence number again.
+
+- **M10 - Bayesian unknown-collusion**: chance root over team type with probability p - now precisely the p-interpolation between M9's two awareness modes (p=0 is unaware, p=1 is aware); opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.
 
 Out of scope, permanently (do not build speculatively): TMECor / coordination-without-card-visibility, cloud SDKs inside the engine.
 Hand abstraction/bucketing became a PER-CORE rule with M8c: still permanently out of the vectorized core, in scope for the sampled core as the route to multiway postflop and PLO (the `InfosetIndexer` seam is where it lands).

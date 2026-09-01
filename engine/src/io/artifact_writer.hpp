@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "config/schema.hpp"
 #include "game/game.hpp"
 #include "io/artifact_store.hpp"
@@ -13,9 +15,29 @@
 namespace engine {
 
 struct SolveStats {
+  // The solve LINEAGE this run advanced (config.solve_id): stable across
+  // resumes, so an artifact can be tied back to the checkpoint that produced
+  // it and to every earlier artifact of the same solve.
+  std::string solve_id;
   std::uint64_t iterations = 0;
   double nashconv = 0.0;
   std::vector<double> ev_chips;  // per-seat root EVs in chips; they sum to the root pot
+  // Team solves (M9). Empty/default on everything else.
+  std::vector<int> team_seats;             // the hand-sharing pair
+  std::string awareness;                   // "aware" | "unaware" | ""
+  std::vector<double> baseline_ev_chips;   // unaware: the frozen no-team reference EVs
+  // Iterations phase 1 ACTUALLY ran. Reported separately from `iterations`
+  // (which is the team phase) because the two are independent budgets and
+  // phase 1 can stop early on the time budget - the requested number in
+  // config.agents.baseline_iterations would then be a lie.
+  std::uint64_t baseline_iterations = 0;
+  bool nashconv_valid = true;              // false when nashconv is not a meaningful measure
+  // Why the loop ended, when it was not "ran the whole budget": currently
+  // only "time_budget" (budget.max_seconds expired). Stamped into metadata
+  // so a consumer can tell a short solve from a converged one - `iterations`
+  // alone looks like the user simply asked for fewer.
+  std::string stopped_reason;
+  nlohmann::json team_rollup;              // conditioned 169x169 chart per team node
   // Wall clock for the whole solve loop (CFR + every checkpoint's
   // best-response), and the worker count it ran on. Both are reported so a
   // timing comparison against another solver is interpretable.

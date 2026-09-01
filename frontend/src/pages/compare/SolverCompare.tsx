@@ -16,6 +16,7 @@ import { HAND_ORDER } from "@/lib/solver/handOrder";
 import { authedFetch } from "@/lib/api";
 import type { MoneyOpts } from "@/pages/solver/boardDisplay";
 import ResponsiveDrawer from "@/components/ResponsiveDrawer";
+import EngineCoreTabs from "@/components/EngineCoreTabs";
 import PostflopLine from "@/pages/solver/PostflopLine";
 import TreeBuilding, { Check, inputCls } from "@/components/TreeBuilding";
 import { useLocalStorageState } from "@/hooks/useLocalStorageState";
@@ -358,7 +359,7 @@ interface CompareJob {
   id: string;
   mode: "compare" | "publish";
   board: string | null;
-  status: "Queued" | "Claimed" | "Running" | "Uploading" | "Done" | "Failed";
+  status: "Queued" | "Claimed" | "Running" | "Uploading" | "Done" | "Failed" | "Cancelled";
   error: string | null;
   resultStacks: string | null;
   resultNodeName: string | null;
@@ -375,9 +376,15 @@ interface CompareJob {
   hasPioResult: boolean;
   /** A pre-split job whose single merged payload this build cannot read. */
   legacyResult: boolean;
+  /** Set the moment Stop is pressed; the job stays active until the watcher
+   * has stopped the engine and uploaded what it solved. */
+  cancelRequestedAtUtc?: string | null;
 }
 
-const TERMINAL_STATUSES = ["Done", "Failed"];
+/* Cancelled is terminal and is NOT a failure: an owner-stopped solve still
+ * uploads what it had reached, so it opens like any other result. */
+const TERMINAL_STATUSES = ["Done", "Failed", "Cancelled"];
+const RESULT_STATUSES = ["Done", "Cancelled"];
 
 const solutionsUrl = (job: CompareJob): string =>
   `/solutions?open=${encodeURIComponent(
@@ -417,6 +424,10 @@ const SolverCompare = () => {
   const [runLog, setRunLog] = useState<string | null>(null);
   const [jobs, setJobs] = useState<CompareJob[]>([]);
   const [activeJob, setActiveJob] = useState<CompareJob | null>(null);
+  /* Stop was accepted but the solve has not finished writing out yet. Local,
+   * because the poll is on a 3 s cycle and a button that does nothing visible
+   * for three seconds reads as broken. */
+  const [stopRequested, setStopRequested] = useState(false);
   const [publishedJob, setPublishedJob] = useState<CompareJob | null>(null);
   // The last run's stage-by-stage wall clock; survives the poll loop's
   // cleanup so the panel stays up with the results.
@@ -587,6 +598,7 @@ const SolverCompare = () => {
         return;
       }
       setSolving(true);
+      setStopRequested(false);
       setPublishedJob(null);
       setPipeline(null);
       try {
@@ -619,6 +631,9 @@ const SolverCompare = () => {
         if (job.status === "Failed") {
           throw new Error(job.error ?? "The compare watcher reported a failure.");
         }
+        if (job.status === "Cancelled" && !job.hasHtResult && job.mode !== "publish") {
+          throw new Error(job.error ?? "Stopped before the solve had written anything.");
+        }
         if (mode === "compare") {
           await loadJobResult(job, { submitMs, tClickMs: tClick });
         } else {
@@ -634,6 +649,26 @@ const SolverCompare = () => {
     },
     [builder, refreshJobs, loadJobResult]
   );
+
+  /* Stop, not abandon: the watcher asks the engine to stop at its next slice
+   * and it writes out the iterations it completed, so this ends with a
+   * payload rather than an hour of discarded compute. */
+  const stopJob = useCallback(async (id: string) => {
+    setError(null);
+    setStopRequested(true);
+    try {
+      const resp = await authedFetch(`/api/enginecompare/${id}/cancel`, { method: "POST" });
+      if (!resp.ok) throw new Error((await resp.text()) || `Stop failed (${resp.status})`);
+      const updated = (await resp.json()) as CompareJob;
+      setActiveJob((job) => (job && job.id === id ? { ...job, ...updated } : job));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setStopRequested(false);
+    }
+  }, []);
+
+  /* Accepted locally, or already recorded by the server. */
+  const stopping = stopRequested || !!activeJob?.cancelRequestedAtUtc;
 
   const downloadConfig = useCallback(() => {
     try {
@@ -1154,7 +1189,7 @@ const SolverCompare = () => {
             // the blob while the API was too old to record the path is Done
             // with nothing to fetch - say so rather than 404 on click.
             const openable =
-              job.status === "Done" &&
+              RESULT_STATUSES.includes(job.status) &&
               (job.mode === "publish" || job.hasHtResult || job.legacyResult);
             return (
               <button
@@ -1166,7 +1201,7 @@ const SolverCompare = () => {
                     ? job.error ?? "failed"
                     : job.mode === "publish"
                       ? "Published solve - opens /solutions"
-                      : job.status === "Done" && !openable
+                      : RESULT_STATUSES.includes(job.status) && !openable
                         ? "No payload recorded for this run - re-run the spot"
                         : "Load this comparison"
                 }
@@ -1184,7 +1219,7 @@ const SolverCompare = () => {
                 }`}
               >
                 {job.board ?? "?"} · {job.mode === "publish" ? "publish" : "compare"} ·{" "}
-                {job.status === "Done" && !openable ? "no payload" : job.status}
+                {RESULT_STATUSES.includes(job.status) && !openable ? "no payload" : job.status}
               </button>
             );
           })}
@@ -1199,8 +1234,23 @@ const SolverCompare = () => {
             aria-hidden="true"
             className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-500 border-t-emerald-400"
           />
-          Solving{activeJob ? ` · ${activeJob.status}` : ""} - this keeps running if you
-          leave the page.
+          {stopping ? "Stopping" : "Solving"}
+          {activeJob ? ` · ${activeJob.status}` : ""} - this keeps running if you leave the page.
+          {activeJob && !TERMINAL_STATUSES.includes(activeJob.status) && (
+            <button
+              type="button"
+              disabled={stopping}
+              onClick={() => void stopJob(activeJob.id)}
+              title="Stop this solve and keep what it has solved so far"
+              className={`ml-auto shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                stopping
+                  ? "cursor-default border-amber-800/60 text-amber-400/60"
+                  : "border-slate-600 text-slate-300 hover:border-amber-700 hover:bg-amber-500/10 hover:text-amber-300"
+              }`}
+            >
+              {stopping ? "Stopping…" : "Stop"}
+            </button>
+          )}
         </p>
       )}
       {publishedJob && (
@@ -1637,7 +1687,11 @@ const SolverCompare = () => {
         ariaLabel="Tree building parameters"
       >
         <div className="flex h-[88vh] max-h-[88vh] flex-col">
-          <div className="border-b border-slate-800 px-4 py-3">
+          <div className="border-b border-slate-800 px-4 py-3 pr-12">
+            {/* Which engine core this tree is for, and the way across to the
+                other one. /multiway renders the same control above its own
+                builder, so the pair is symmetric. */}
+            <EngineCoreTabs value="postflop" className="mb-2" />
             <h2 className="text-sm font-semibold tracking-tight text-white">
               Tree building parameters
             </h2>

@@ -158,6 +158,14 @@ The frontend fetches the htsolver half first and merges Pio's when it lands, and
 Run it with `python engine_compare_watcher.py` (same `.env`; set `ENGINE_EXE` if the engine binary is not at `../engine/build/engine.exe`).
 Only one instance - it spawns Pio processes.
 
+A job can be **stopped by its owner** from the page that queued it, and stopping keeps the work.
+`POST /api/enginecompare/{id}/cancel` records the request; the watcher reads it off its next heartbeat RESPONSE - so there is nothing extra to poll, and `ENGINE_WATCHER_HEARTBEAT_SECS` (default 15) is also the cancel latency - then creates the engine's `budget.stop_file`.
+The engine stops at its next slice, writes its checkpoint and exports the artifact for the iterations it completed, and the watcher uploads that result and reports `Cancelled`.
+So a stopped solve is a viewable, resumable result rather than a discarded hour: killing the process would lose both, since the checkpoint and the artifact are only written at the end of a run.
+`ENGINE_CANCEL_GRACE_SECS` (default: the write margin) bounds how long that takes before the kill happens anyway, which is what stops one wedged solve from holding the watcher forever.
+A job cancelled while still `Queued` never runs at all, and one whose watcher dies mid-cancel is marked `Cancelled` by the stale sweep rather than re-queued.
+`test_cancel.py` covers the protocol and both grace outcomes.
+
 **This is the only watcher `/compare` needs.**
 It claims from its own queue, runs `engine.exe` itself, and `engine_compare.py` spawns its own PioSOLVER process over UPI; the result upload to ADLS is its own too.
 `watch_adls_and_run_pio_headless.py` serves a different queue entirely (the gametree/SolveJobs pipeline behind `/solutions`, driving PioViewer through pywinauto), and nothing on the compare path goes through it.

@@ -1,5 +1,7 @@
 #include "solver/memory.hpp"
 
+#include "game/deal_game.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <sstream>
@@ -48,7 +50,7 @@ std::string MemoryEstimate::to_string() const {
 }
 
 MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc,
-                               Precision precision, std::uint32_t sampled_lanes) {
+                               Precision precision, const SampledConfig* sampled) {
   MemoryEstimate est;
   est.regret_strategy_bytes = CfrSolver::state_bytes(game, precision);
   est.tree_bytes = game.tree().size() * sizeof(Node);
@@ -56,14 +58,52 @@ MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc,
   est.export_bytes = export_pass_bytes(game);
 
   est.recalc_bytes = CfrSolver::recalc_state_bytes(game, recalc);
-  if (sampled_lanes > 0) {
+  if (sampled != nullptr && sampled->enabled) {
     // The sampled core: master regrets + strategy sums plus one private
-    // delta pair per lane, all f32 (it has no i16 mode). Sized from the same
-    // InfosetLayout the solver builds, so this cannot drift from the
+    // delta pair per lane, all f32 (it has no i16 mode). Rows are per suit
+    // CLASS when the symmetry quotient is on - the same arithmetic the
+    // solver's constructor performs, so this cannot drift from the
     // allocation. No recalc caches - nothing is re-enumerated there.
     const InfosetLayout layout = InfosetLayout::build(game);
-    est.regret_strategy_bytes =
-        static_cast<std::size_t>(sampled_lanes + 1) * 2 * layout.total * sizeof(float);
+    std::size_t total = layout.total;
+    if (const auto* deal_game = dynamic_cast<const DealGame*>(&game)) {
+      std::vector<std::uint16_t> class_of;
+      int num_classes = 0;
+      if (sampled->symmetry) deal_game->hand_classes(class_of, num_classes);
+      // A hand-sharing team's decision nodes store one row per JOINT suit
+      // orbit - dominant when present, so the estimate must count it.
+      std::vector<int> teammate_of;
+      int joint_classes = 0;
+      if (!sampled->partition_team.empty()) {
+        std::vector<std::uint32_t> jc;
+        if (deal_game->joint_hand_classes(jc, joint_classes)) {
+          teammate_of.assign(static_cast<std::size_t>(game.num_seats()), -1);
+          teammate_of[static_cast<std::size_t>(sampled->partition_team[0])] =
+              sampled->partition_team[1];
+          teammate_of[static_cast<std::size_t>(sampled->partition_team[1])] =
+              sampled->partition_team[0];
+        }
+      }
+      if (num_classes > 0 || joint_classes > 0) {
+        total = 0;
+        for (const Node& n : game.tree().nodes) {
+          if (n.kind != NodeKind::Decision) continue;
+          std::size_t rows = layout.node_hands[n.decision_index];
+          if (!teammate_of.empty() && teammate_of[n.actor] >= 0) {
+            rows = static_cast<std::size_t>(joint_classes);
+          } else if (num_classes > 0) {
+            rows = static_cast<std::size_t>(num_classes);
+          }
+          total +=
+              static_cast<std::size_t>(layout.node_actions[n.decision_index]) * rows;
+        }
+      }
+    }
+    // Master + per-lane pairs: regrets/strategy always; a team adds the
+    // conditioned-EV numerator/denominator pair (same size, same lanes).
+    const std::size_t arrays_per_tier = sampled->partition_team.empty() ? 2 : 4;
+    est.regret_strategy_bytes = static_cast<std::size_t>(sampled->lanes + 1) *
+                                arrays_per_tier * total * sizeof(float);
     est.recalc_bytes = 0;
   }
 
