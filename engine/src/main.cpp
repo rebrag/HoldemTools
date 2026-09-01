@@ -183,7 +183,12 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
     // Where phase 1 will END this run. A target below what it has already
     // reached is not a rewind - it simply does nothing.
     const std::uint64_t base_end = std::max(baseline->iteration(), base_target);
-    if (resumed && extras.baseline_iterations != base_end) {
+    // `solver.iteration() > 0` is what makes this a real conflict. Phase 2
+    // having done NO work - a fresh solve, or one stopped during phase 1 -
+    // means there are no regrets to invalidate, so refusing there would
+    // strand a solve to protect nothing: the baseline moved, phase 2 is
+    // empty, and the user is simply continuing what they stopped.
+    if (resumed && solver.iteration() > 0 && extras.baseline_iterations != base_end) {
       // A team's regrets are a best response to ONE baseline. Moving the
       // baseline makes them stale: continuing would blend a best response to
       // the old baseline with one to the new. Refuse BEFORE phase 1 runs, so
@@ -389,7 +394,15 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
 
   // The checkpoint goes out before the artifact: the artifact is for
   // viewers, the checkpoint is the only thing that lets this solve continue.
-  if (!config.checkpoint_path.empty()) {
+  if (!config.checkpoint_path.empty() && solver.iteration() == 0) {
+    // Nothing to save: a phase 2 that never ran has zero regrets, and writing
+    // it would only record which baseline it did not train against - the
+    // value the interlock above then reads back.
+    std::cout << (baseline
+                      ? "no team iterations to checkpoint; the baseline is saved, so solving "
+                        "again with this id continues from there\n"
+                      : "no iterations to checkpoint; nothing was solved\n");
+  } else if (!config.checkpoint_path.empty()) {
     extras.baseline_iterations = stats.baseline_iterations;
     extras.baseline_ev_chips = stats.baseline_ev_chips;
     const double ck_s = write_checkpoint(config.checkpoint_path, solver, config, extras);
