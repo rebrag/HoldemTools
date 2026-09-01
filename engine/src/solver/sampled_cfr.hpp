@@ -124,6 +124,11 @@ class SampledCfrSolver final : public StrategySource {
                std::vector<float> strat_sum, std::vector<float> ev_sum,
                std::vector<float> ev_w, std::vector<bool> frozen_seat,
                std::vector<std::vector<float>> frozen_rows);
+  // Back to a freshly constructed solver, keeping the frozen rows (which
+  // belong to the environment, not to this solver's training). Used when a
+  // team's regrets are invalidated because the baseline underneath them
+  // moved - see the rebase path in main.cpp.
+  void reset();
 
  private:
   // Everything one lane touches while its iterations run: private delta

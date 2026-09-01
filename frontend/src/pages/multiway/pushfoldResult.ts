@@ -53,6 +53,9 @@ export interface PushFoldDump {
      *  result is usable but less converged than requested. */
     stopped_reason?: string;
     requested_iterations?: number;
+    /** The solve lineage: stable across resumes, so two artifacts sharing it
+     *  are the same solve at different iteration counts. */
+    solve_id?: string;
     team?: {
       seats: number[];
       awareness: string;
@@ -151,6 +154,7 @@ export const settingsRows = (meta: PushFoldDump["metadata"]): SettingRow[] => {
     rows.push({ label, value: String(value), note });
   };
 
+  push("Solve ID", meta.solve_id, "continues when re-solved with this id");
   const team = meta.team;
   const reqIters = asNum(budget.iterations);
   // The ambiguity this view exists to kill: with a team, `iterations` is the

@@ -15,6 +15,10 @@
 namespace engine {
 
 struct SolveStats {
+  // The solve LINEAGE this run advanced (config.solve_id): stable across
+  // resumes, so an artifact can be tied back to the checkpoint that produced
+  // it and to every earlier artifact of the same solve.
+  std::string solve_id;
   std::uint64_t iterations = 0;
   double nashconv = 0.0;
   std::vector<double> ev_chips;  // per-seat root EVs in chips; they sum to the root pot

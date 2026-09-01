@@ -828,6 +828,10 @@ Configs: `configs/pushfold_4way_10bb_team_{unaware,aware}.json`.
 Phase control: `agents.baseline_iterations` is phase 1 (the frozen baseline; defaults to `budget.iterations` when unset), `budget.iterations` is phase 2 (the team) - independently, so a long team solve sets a modest baseline and pours the budget into phase 2, which is also the cheaper phase (2 hero traversals per deal instead of one per seat).
 `/multiway` exposes both (Baseline iterations appears when a team is marked unaware).
 
+**A solve has an id and two independently extendable phases.** `solve.id` names the lineage (default: derived from the spot) and its checkpoints; phase 1 keeps its own file, so a baseline can be lengthened on its own terms while `agents.baseline_iterations` and `budget.iterations` are both totals.
+The interlock worth remembering: a team's regrets are a best response to ONE baseline, so moving the baseline invalidates phase 2 - the engine refuses before spending anything unless `solve.rebase` says to restart phase 2 against the longer baseline.
+`solve.resume: "require"` refuses to start from zero, which is the guard against a mistyped id quietly beginning a ten-hour solve over again.
+
 **Long solves resume.** `output.checkpoint_dir` (or `checkpoint_path`) makes a sampled solve continue where the last run stopped: the solver's whole state round-trips, `budget.iterations` becomes a TOTAL, and because the deal stream and the discount key on the absolute iteration index the continuation is bit-for-bit an uninterrupted run - exact from a batch boundary, which is where every time-budget stop lands.
 Together with the time budget that is the answer to the watcher's one-hour ceiling: run the same job repeatedly with a larger target and the solve grows without limit, ~15 MB of checkpoint for a 4-way team spot.
 Set `ENGINE_CHECKPOINT_DIR` on the watcher to turn it on there.

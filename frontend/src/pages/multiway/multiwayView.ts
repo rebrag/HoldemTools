@@ -83,6 +83,11 @@ export interface MultiwayView {
    * no-team baseline and the team best-responds jointly. */
   teamSeats: number[];
   awareness: "aware" | "unaware";
+  /** The solve LINEAGE this run advances. Empty = the engine derives one from
+   *  the spot, so re-solving the same spot continues it. Loading a past solve
+   *  fills this in from its artifact, which is what makes "raise the budget
+   *  and solve again" a deliberate continuation rather than a coincidence. */
+  solveId: string;
   /** Unaware phase-1 (no-team baseline) iterations. Empty = same as
    *  maxIterations. Long team solves want this SMALLER than phase 2: the
    *  baseline converges quickly, while the team's conditioned charts are
@@ -111,6 +116,7 @@ export const DEFAULT_VIEW: MultiwayView = {
   stacks: ["20", "20", "20", "20"],
   teamSeats: [],
   awareness: "unaware",
+  solveId: "",
   baselineIterations: "",
   boardSampleIter: "500",
   boardSamplePair: "20000",
@@ -171,6 +177,9 @@ export const validate = (view: MultiwayView): string[] => {
   if (!(num(view.maxIterations) >= 1)) issues.push("Max iterations must be at least 1.");
   if (view.baselineIterations.trim() !== "" && !(num(view.baselineIterations) >= 1)) {
     issues.push("Baseline iterations must be at least 1 (or left empty for = max).");
+  }
+  if (view.solveId.trim() !== "" && !/^[A-Za-z0-9._-]{1,64}$/.test(view.solveId.trim())) {
+    issues.push("Solve ID may only use letters, digits, '-', '_' and '.', up to 64 characters.");
   }
   if (view.teamSeats.length !== 0 && view.teamSeats.length !== 2) {
     issues.push("A hand-sharing team is exactly two seats (or none).");
@@ -257,6 +266,17 @@ export const viewFromDump = (
     stacks,
     teamSeats,
     awareness: meta.team?.awareness === "aware" ? "aware" : "unaware",
+    // Carrying the id forward is what turns "load a past solve, raise the
+    // budget, solve" into a CONTINUATION of that solve rather than a new one
+    // that happens to look the same.
+    solveId: meta.solve_id ?? base.solveId,
+    // Phase 1 is its own budget with its own checkpoint. Restoring what the
+    // loaded solve actually ran keeps a re-solve extending phase 2 - changing
+    // it moves the baseline, which the engine refuses unless asked to rebase.
+    baselineIterations:
+      meta.team?.baseline_iterations != null
+        ? String(meta.team.baseline_iterations)
+        : base.baselineIterations,
     ...(meta.board_sample
       ? {
           boardSampleIter: String(meta.board_sample.iter_count),
@@ -341,6 +361,7 @@ export const buildMultiwayConfig = (view: MultiwayView): Record<string, unknown>
           },
         }
       : {}),
+    ...(view.solveId.trim() !== "" ? { solve: { id: view.solveId.trim() } } : {}),
     budget: {
       iterations: num(view.maxIterations),
       target_nashconv: num(view.accuracy),

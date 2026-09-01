@@ -157,6 +157,14 @@ const PushFoldResultPanel = ({
             </span>
           )}
         </span>
+        {meta.solve_id && (
+          <span
+            className={chip}
+            title="The solve lineage. Re-solving this spot with this id continues it from where it stopped rather than starting over."
+          >
+            solve <span className="text-slate-200">{meta.solve_id}</span>
+          </span>
+        )}
         {meta.stopped_reason === "time_budget" && (
           <span
             className={`${chip} border-sky-800 text-sky-300`}

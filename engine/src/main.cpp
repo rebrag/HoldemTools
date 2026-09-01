@@ -115,69 +115,132 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
               << ". Research/analysis tooling - using this on live tables is cheating.\n";
   }
   SampledCfrSolver solver(game, *deals, config.sampled, config.threads, agents);
+  stats.solve_id = config.solve_id;
+  std::cout << "solve id " << config.solve_id;
+  if (!config.checkpoint_path.empty()) std::cout << " (checkpoints on)";
+  std::cout << "\n";
+  const bool resume_allowed = config.resume_mode != "never";
+  // Phase 1 keeps its OWN checkpoint beside phase 2's, so a baseline can be
+  // extended on its own terms. Both are named after the solve id.
+  const std::string base_ck =
+      config.checkpoint_path.empty() ? std::string() : config.checkpoint_path + ".baseline";
 
-  // Resume BEFORE anything else: a checkpoint carries phase 1's frozen rows
-  // and EVs as well as the team's own state, so a resumed run must not
-  // re-run phase 1 - that would train the team against a second, different
-  // baseline halfway through.
+  // PHASE 2's checkpoint is read FIRST, before phase 1 does any work. It
+  // records which baseline the team trained against, and that is what decides
+  // whether extending phase 1 is allowed at all - discovering the conflict
+  // after phase 1 had already advanced and saved would strand the solve:
+  // the baseline would be past the value the error message tells you to
+  // restore.
   bool resumed = false;
   CheckpointExtras extras;
-  if (!config.checkpoint_path.empty()) {
+  if (!config.checkpoint_path.empty() && resume_allowed) {
     std::string err;
     if (read_checkpoint(config.checkpoint_path, solver, config, extras, err)) {
       resumed = true;
-      stats.baseline_iterations = extras.baseline_iterations;
-      stats.baseline_ev_chips = extras.baseline_ev_chips;
-      std::cout << "resumed " << config.checkpoint_path << " at iteration "
+      std::cout << "resumed solve " << config.solve_id << " at iteration "
                 << solver.iteration() << " of " << config.iterations << "\n";
       if (solver.iteration() >= config.iterations) {
-        std::cout << "note: budget.iterations is a TOTAL and the checkpoint already "
-                     "reaches it - nothing to iterate. Raise it to continue.\n";
+        std::cout << "note: budget.iterations is a TOTAL and this solve already reaches "
+                     "it - nothing to iterate. Raise it to continue.\n";
       }
+    } else if (config.resume_mode == "require") {
+      std::cerr << "FATAL: solve.resume is \"require\" but there is nothing to resume: " << err
+                << "\n";
+      return 1;
     } else {
       std::cout << "checkpoint: starting fresh (" << err << ")\n";
     }
   }
 
+  // PHASE 1 (unaware teams only): the no-team baseline everyone believes they
+  // are playing. It runs on every invocation - resuming its own checkpoint
+  // and iterating only the shortfall - which is what makes a baseline
+  // extendable rather than frozen forever at whatever the first run reached.
   std::unique_ptr<SampledCfrSolver> baseline;
-  if (team && !resumed) {
-    if (config.awareness == "unaware") {
-      // Phase 1: the no-team baseline everyone believes they are playing.
-      const std::uint64_t base_iters =
-          config.baseline_iterations > 0 ? config.baseline_iterations : config.iterations;
-      std::cout << "phase 1: no-team baseline, " << base_iters << " iterations\n";
-      baseline = std::make_unique<SampledCfrSolver>(game, *deals, config.sampled,
-                                                    config.threads);
-      // Phase 1 gets at most half the time budget. The budget exists so the
-      // run always reaches the artifact, and an artifact whose team phase
-      // never ran would be a no-team solve wearing a team's metadata.
-      const double base_deadline = config.max_seconds > 0.0 ? config.max_seconds * 0.5 : 0.0;
-      std::uint64_t base_done = 0;
-      while (base_done < base_iters) {
-        const std::uint64_t slice =
-            base_deadline > 0.0 ? deadline_slice(base_iters - base_done, config.sampled.batch)
-                                : base_iters - base_done;
-        baseline->run(slice);
-        base_done += slice;
-        if (base_deadline > 0.0 && elapsed_s() >= base_deadline) {
-          std::cout << "phase 1 stopped at its " << base_deadline << " s share of the "
-                    << "time budget after " << base_done << " iterations\n";
-          stats.stopped_reason = "time_budget";
-          break;
-        }
+  if (team && config.awareness == "unaware") {
+    baseline = std::make_unique<SampledCfrSolver>(game, *deals, config.sampled,
+                                                  config.threads);
+    CheckpointExtras base_extras;
+    if (!base_ck.empty() && resume_allowed) {
+      std::string err;
+      if (read_checkpoint(base_ck, *baseline, config, base_extras, err)) {
+        std::cout << "phase 1: resumed the baseline at iteration " << baseline->iteration()
+                  << "\n";
+      } else if (config.resume_mode == "require") {
+        std::cerr << "FATAL: solve.resume is \"require\" but the baseline checkpoint could "
+                     "not be used: " << err << "\n";
+        return 1;
       }
-      stats.baseline_iterations = baseline->iteration();
-      stats.baseline_ev_chips = baseline->sampled_ev(kEvDeals, ev_seed);
-      std::cout << "baseline ev";
-      for (double ev : stats.baseline_ev_chips) std::cout << " " << ev;
-      std::cout << "\n";
     }
+    const std::uint64_t base_target =
+        config.baseline_iterations > 0 ? config.baseline_iterations : config.iterations;
+    // Where phase 1 will END this run. A target below what it has already
+    // reached is not a rewind - it simply does nothing.
+    const std::uint64_t base_end = std::max(baseline->iteration(), base_target);
+    if (resumed && extras.baseline_iterations != base_end) {
+      // A team's regrets are a best response to ONE baseline. Moving the
+      // baseline makes them stale: continuing would blend a best response to
+      // the old baseline with one to the new. Refuse BEFORE phase 1 runs, so
+      // nothing is spent and the suggested fix actually works.
+      if (!config.rebase) {
+        std::cerr << "FATAL: this would move the baseline out from under phase 2, which was "
+                     "trained against "
+                  << extras.baseline_iterations << " baseline iterations (this run would end "
+                  << "with " << base_end
+                  << "). Phase 2's regrets are a best response to the OLD baseline, so "
+                     "continuing would mix two different games.\n"
+                     "       Either set agents.baseline_iterations to "
+                  << extras.baseline_iterations
+                  << " to keep extending phase 2, or set solve.rebase true to restart phase 2 "
+                     "against the longer baseline.\n";
+        return 1;
+      }
+      std::cout << "rebasing: the baseline moves from " << extras.baseline_iterations << " to "
+                << base_end << " iterations, so phase 2 restarts against it\n";
+      solver.reset();
+      resumed = false;
+    }
+    std::cout << "phase 1: no-team baseline, " << base_target << " iterations total\n";
+    // Phase 1 gets at most half the time budget. The budget exists so the run
+    // always reaches the artifact, and an artifact whose team phase never ran
+    // would be a no-team solve wearing a team's metadata.
+    const double base_deadline = config.max_seconds > 0.0 ? config.max_seconds * 0.5 : 0.0;
+    while (baseline->iteration() < base_target) {
+      const std::uint64_t remaining = base_target - baseline->iteration();
+      const std::uint64_t slice = base_deadline > 0.0
+                                      ? deadline_slice(remaining, config.sampled.batch)
+                                      : remaining;
+      baseline->run(slice);
+      if (base_deadline > 0.0 && elapsed_s() >= base_deadline) {
+        std::cout << "phase 1 stopped at its " << base_deadline << " s share of the "
+                  << "time budget after " << baseline->iteration() << " iterations\n";
+        stats.stopped_reason = "time_budget";
+        break;
+      }
+    }
+    stats.baseline_iterations = baseline->iteration();
+    stats.baseline_ev_chips = baseline->sampled_ev(kEvDeals, ev_seed);
+    std::cout << "baseline ev";
+    for (double ev : stats.baseline_ev_chips) std::cout << " " << ev;
+    std::cout << "\n";
+    if (!base_ck.empty()) {
+      CheckpointExtras out_extras;
+      write_checkpoint(base_ck, *baseline, config, out_extras);
+    }
+  } else if (resumed) {
+    // No phase 1 to re-derive them from (aware team, or no team at all).
+    stats.baseline_iterations = extras.baseline_iterations;
+    stats.baseline_ev_chips = extras.baseline_ev_chips;
   }
+
   if (baseline) {
     std::vector<bool> frozen(static_cast<std::size_t>(game.num_seats()), false);
     for (int q = 0; q < game.num_seats(); ++q) {
       frozen[static_cast<std::size_t>(q)] = agents.teammate_of[static_cast<std::size_t>(q)] < 0;
     }
+    // Always re-freeze from the live baseline solver rather than trusting the
+    // rows inside phase 2's checkpoint: the two are equal by the check above,
+    // and taking them from the baseline keeps ONE source of truth.
     solver.freeze_seats_from(*baseline, frozen);
     std::cout << "phase 2: joint team best response against the frozen baseline\n";
   }

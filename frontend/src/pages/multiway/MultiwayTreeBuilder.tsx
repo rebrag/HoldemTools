@@ -387,6 +387,31 @@ const MultiwayTreeBuilder = ({
             </label>
           ))}
         </div>
+        {/* Continuation, made explicit. A solve is a lineage, not one run:
+            with an id set, solving again picks up where that id left off and
+            Max iterations is the TOTAL to reach. Loading a past solve fills
+            this in, which is what makes "load it, raise the budget, solve"
+            a deliberate continuation. */}
+        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-slate-800 pt-2">
+          <span
+            className={labelCls}
+            title="Names the solve so it can be continued. Leave it blank and the engine derives one from the spot, so re-solving the same spot continues it anyway - the id just makes that intentional and visible."
+          >
+            Solve ID
+          </span>
+          <input
+            value={value.solveId}
+            disabled={disabled}
+            onChange={(e) => set("solveId", e.target.value)}
+            placeholder="auto (derived from the spot)"
+            className="w-52 rounded border border-slate-700 bg-slate-800/70 px-1.5 py-0.5 text-[11px] text-slate-200 placeholder:text-slate-600"
+          />
+          <span className="text-[10px] text-slate-500">
+            {value.solveId.trim() !== ""
+              ? "Solving continues this id from where it stopped; Max iterations is the total to reach."
+              : "Blank = derived from the spot. Re-solving the same spot still continues it."}
+          </span>
+        </div>
       </section>
 
       {issues.length > 0 && (

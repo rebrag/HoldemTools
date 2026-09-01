@@ -706,6 +706,14 @@ void SampledCfrSolver::restore(std::uint64_t iteration, std::vector<float> regre
   t_ = iteration;
 }
 
+void SampledCfrSolver::reset() {
+  std::fill(regrets_.begin(), regrets_.end(), 0.0f);
+  std::fill(strat_sum_.begin(), strat_sum_.end(), 0.0f);
+  std::fill(ev_sum_.begin(), ev_sum_.end(), 0.0f);
+  std::fill(ev_w_.begin(), ev_w_.end(), 0.0f);
+  t_ = 0;
+}
+
 void SampledCfrSolver::freeze_seats_from(const StrategySource& source,
                                          const std::vector<bool>& frozen) {
   frozen_seat_ = frozen;

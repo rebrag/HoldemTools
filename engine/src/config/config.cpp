@@ -511,10 +511,30 @@ SolveConfig load_config(const std::string& path_text) {
     fail("output.checkpoint_path needs algorithm.family \"sampled\" - checkpoints are "
          "not implemented for the vectorized core");
   }
+  if (j.contains("solve")) {
+    const json& solve = j.at("solve");
+    config.solve_id = solve.value("id", config.solve_id);
+    config.resume_mode = solve.value("resume", config.resume_mode);
+    config.rebase = solve.value("rebase", config.rebase);
+    if (config.resume_mode != "auto" && config.resume_mode != "never" &&
+        config.resume_mode != "require") {
+      fail("solve.resume must be auto | never | require, got '" + config.resume_mode + "'");
+    }
+    // A solve id names a file, so it has to be a filename.
+    for (char c : config.solve_id) {
+      const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                      (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.';
+      if (!ok) fail("solve.id may only contain letters, digits, '-', '_' and '.'");
+    }
+    if (config.solve_id.size() > 64) fail("solve.id must be 64 characters or fewer");
+  }
+  // Derived by default, so the same spot continues itself and a user who does
+  // not care about ids never sees one. Short enough to type and quote.
+  if (config.solve_id.empty()) config.solve_id = config_solve_key(config).substr(0, 12);
   if (config.checkpoint_path.empty() && !config.checkpoint_dir.empty()) {
     // Resolved here rather than in main so `dry-run` and any other consumer
     // sees the same path the solve will use.
-    config.checkpoint_path = config.checkpoint_dir + "/" + config_solve_key(config) + ".htck";
+    config.checkpoint_path = config.checkpoint_dir + "/" + config.solve_id + ".htck";
   }
   config.threads = j.value("threads", 0);
 
@@ -528,6 +548,7 @@ std::string config_solve_key(const SolveConfig& config) {
   nlohmann::json j = config.raw;
   j.erase("budget");
   j.erase("output");
+  j.erase("solve");
   j.erase("threads");
   j.erase("memory_limit_gb");
   if (j.contains("agents") && j.at("agents").is_object()) {

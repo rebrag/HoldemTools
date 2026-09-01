@@ -573,6 +573,9 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
   // deal's payoffs sum to the pot, so they conserve exactly); the
   // vectorized family keeps its best-response EVs.
   meta["root_ev_estimator"] = config.sampled.enabled ? "sampled_deals" : "best_response";
+  // The lineage, not this run: two artifacts sharing it are the same solve at
+  // different iteration counts.
+  if (!stats.solve_id.empty()) meta["solve_id"] = stats.solve_id;
   // Present only on a solve that ended early, so its absence keeps meaning
   // "ran the budget it was given".
   if (!stats.stopped_reason.empty()) {

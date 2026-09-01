@@ -204,3 +204,30 @@ TEST_CASE("a checkpoint from a different spot is refused, not reinterpreted") {
   CHECK_FALSE(read_checkpoint("no_such_file.htck", third, config, extras, err));
   std::remove(path.c_str());
 }
+
+TEST_CASE("solve identity ignores the budget but not the spot") {
+  // Everything above rests on this: raising the budget (or renaming the
+  // output, or naming the lineage) must NOT change what counts as the same
+  // solve, while any change to the spot must. The rule is written as a
+  // subtraction from the whole config so a new solve-defining key is covered
+  // the day it appears - which only works if the subtraction list stays this
+  // short.
+  SolveConfig a = ck_config(3);
+  const std::string key = config_solve_key(a);
+
+  SolveConfig same = a;
+  same.raw["budget"] = nlohmann::json{{"iterations", 999999}, {"max_seconds", 120}};
+  same.raw["output"] = nlohmann::json{{"path", "elsewhere.hta"}};
+  same.raw["solve"] = nlohmann::json{{"id", "a-different-name"}};
+  same.raw["threads"] = 4;
+  same.raw["memory_limit_gb"] = 32;
+  CHECK(config_solve_key(same) == key);
+
+  SolveConfig other = a;
+  other.raw["players"] = 4;
+  CHECK(config_solve_key(other) != key);
+
+  SolveConfig reseeded = a;
+  reseeded.raw["algorithm"] = nlohmann::json{{"family", "sampled"}, {"sampled", {{"seed", 7}}}};
+  CHECK(config_solve_key(reseeded) != key);
+}

@@ -127,6 +127,21 @@ struct SolveConfig {
   // toward the target instead of starting over. budget.iterations is
   // therefore a TOTAL, not a per-run amount.
   std::string checkpoint_path;
+  // Identity of the SOLVE LINEAGE, not of one run: checkpoints are named
+  // after it, so "resume solve X" is a thing you can say. Defaults to a short
+  // hash of the spot, which makes re-solving the same spot continue it; set
+  // it explicitly to keep separate lineages for the same spot. Reusing an id
+  // for a DIFFERENT spot is refused, not silently reinterpreted.
+  std::string solve_id;
+  // "auto"    - continue from a checkpoint when one matches (the default)
+  // "never"   - ignore any checkpoint and start over, overwriting it
+  // "require" - fail unless there is a checkpoint to continue, so a typo in
+  //             the id cannot silently start a ten-hour solve from zero
+  std::string resume_mode = "auto";
+  // Extending phase 1 moves the baseline that phase 2's regrets were a best
+  // response to, which makes them stale. That is refused unless this says
+  // otherwise, in which case phase 2 restarts against the new baseline.
+  bool rebase = false;
   // Alternative to naming the file: a directory in which the checkpoint is
   // named after the solve's own identity hash, so identical spots share one
   // automatically and different spots can never collide. A caller that
