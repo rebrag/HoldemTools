@@ -180,7 +180,11 @@ export const settingsRows = (meta: PushFoldDump["metadata"]): SettingRow[] => {
     push("Opponents", team.awareness === "unaware" ? "don't know (unaware)" : "know (aware)");
   }
   if (meta.stopped_reason) {
-    push("Stopped early", meta.stopped_reason.replace("_", " "), "wrote what it had");
+    push(
+      "Stopped early",
+      meta.stopped_reason === "cancelled" ? "stopped by you" : meta.stopped_reason.replace("_", " "),
+      "wrote what it had"
+    );
   }
   push("Wall-clock budget", asNum(budget.max_seconds), "seconds");
   push("Target accuracy", asNum(budget.target_nashconv), "chips");

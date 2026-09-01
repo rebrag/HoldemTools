@@ -32,6 +32,13 @@ Env (same .env as the main watcher):
       is handed `budget.max_seconds` = ceiling - margin and stops itself
       there, so a long solve is TRUNCATED (and uploaded) rather than killed
       and lost. Raise the ceiling for multi-hour solves.
+  ENGINE_WATCHER_HEARTBEAT_SECS   how often a claim reports in, default 15.
+      This is also how long the owner's Stop takes to reach the solver: a
+      cancel rides back on the heartbeat response.
+  ENGINE_CANCEL_GRACE_SECS   how long a cancelled solve may take to write its
+      checkpoint and artifact before being killed, default = the write margin
+      above. The engine is asked to stop (a `budget.stop_file`), never killed
+      outright, so a stopped solve is still viewable and still resumable.
   ENGINE_CHECKPOINT_DIR   unset by default. Set it to a directory to make
       sampled solves resumable: each job continues from the checkpoint its
       own config identifies, so re-queuing the same spot with a bigger
@@ -53,7 +60,7 @@ import tempfile
 import threading
 import time
 from collections import deque
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import requests
 
@@ -88,6 +95,19 @@ SOLVE_WRITE_MARGIN_SECS = float(os.getenv("ENGINE_SOLVE_WRITE_MARGIN_SECS", "300
 # no-op (already at the target) instead of a fresh solve, which should be a
 # deliberate choice.
 CHECKPOINT_DIR = os.getenv("ENGINE_CHECKPOINT_DIR", "").strip()
+# How often a claim reports in. This is ALSO how long the owner's Stop takes
+# to reach the solver, which is what sets it: the server's claim timeout is
+# 300 s and a heartbeat only has to beat that, but a Stop press that sits for
+# a minute feels broken.
+HEARTBEAT_SECS = float(os.getenv("ENGINE_WATCHER_HEARTBEAT_SECS", "15"))
+# After the engine is asked to stop, how long it may take to actually do it.
+# It is not instant by design: it finishes the slice it is in, runs the EV
+# pass, writes its checkpoint and exports the artifact - which is the whole
+# point of asking rather than killing. Past this it is killed, and a killed
+# solve leaves nothing. Defaults to the same margin the time budget reserves
+# for exactly the same work.
+CANCEL_GRACE_SECS = float(os.getenv("ENGINE_CANCEL_GRACE_SECS", "")
+                          or SOLVE_WRITE_MARGIN_SECS)
 ENGINE_EXE = os.path.abspath(
     os.getenv("ENGINE_EXE") or os.path.join(WATCHER_DIR, "..", "engine", "build", "engine.exe"))
 
@@ -113,7 +133,17 @@ def claim() -> Optional[Dict[str, Any]]:
 def report(job_id: str, status: Optional[str] = None, error: Optional[str] = None,
            heartbeat: bool = False, result_blob_path: Optional[str] = None,
            ht_blob_path: Optional[str] = None, pio_blob_path: Optional[str] = None,
-           timings: Optional[Dict[str, Any]] = None) -> bool:
+           timings: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """PATCH one job. Returns the API's response body, or None if the call
+    itself failed.
+
+    The body carries `cancelRequested`, which is how the owner's Stop reaches
+    this process: every report answers with it, heartbeats included, so there
+    is no second thing to poll and a dropped response costs one heartbeat
+    interval rather than the cancel. A 409 is reported as
+    {"conflict": True} - the job is no longer ours to work on (cancelled out
+    from under the claim, or requeued to another watcher), which is also a
+    reason to stop."""
     body: Dict[str, Any] = {"watcherId": watcher_id(), "heartbeat": heartbeat}
     if status is not None:
         body["status"] = status
@@ -132,26 +162,68 @@ def report(job_id: str, status: Optional[str] = None, error: Optional[str] = Non
                               headers=_headers(), timeout=TIMEOUT_SECS)
         if resp.status_code == 409:
             log(f"  [enginecompare] report rejected for {job_id}: {resp.text}")
-            return False
+            return {"conflict": True}
         resp.raise_for_status()
-        return True
+        return resp.json()
     except Exception as e:
         log(f"  [enginecompare] report failed for {job_id}: {e}")
-        return False
+        return None
+
+
+class Cancelled(Exception):
+    """The solve stopped before it had anything to save. Not a failure."""
+
+
+class Cancellation:
+    """An owner-requested stop, shared between the heartbeat thread and the solve.
+
+    Three facts rather than one flag, because they lead to different endings:
+      requested  the owner pressed Stop. Ask the engine to stop cleanly.
+      applied    the engine was actually asked (the stop file exists), so the
+                 solve on disk is a stopped one and the job ends Cancelled. A
+                 Stop that arrives after the solver already finished leaves
+                 this false and the job ends Done, which is what happened.
+      disowned   the API says this job is not ours any more (409). Stop
+                 working, and do not report - the report would 409 too.
+    """
+
+    def __init__(self) -> None:
+        self.requested = threading.Event()
+        self.applied = False
+        self.disowned = False
+
+    def observe(self, resp: Optional[Dict[str, Any]]) -> None:
+        """Fold one report response into this state."""
+        if not resp:
+            return
+        if resp.get("conflict"):
+            self.disowned = True
+            self.requested.set()
+        elif resp.get("cancelRequested"):
+            self.requested.set()
 
 
 class Heartbeat:
-    def __init__(self, job_id: str, interval: float = 60.0):
+    """Keeps the claim alive, and carries the owner's Stop back to the solve.
+
+    The interval is also the cancel latency, which is why it is far below the
+    server's claim timeout rather than just under it: a Stop press should feel
+    like it did something.
+    """
+
+    def __init__(self, job_id: str, cancel: Cancellation, interval: float = HEARTBEAT_SECS):
         self.job_id = job_id
+        self.cancel = cancel
         self.interval = interval
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
+    def _beat(self) -> None:
+        while not self._stop.wait(self.interval):
+            self.cancel.observe(report(self.job_id, heartbeat=True))
+
     def __enter__(self) -> "Heartbeat":
-        self._thread = threading.Thread(
-            target=lambda: [report(self.job_id, heartbeat=True)
-                            for _ in iter(lambda: not self._stop.wait(self.interval), False)],
-            daemon=True)
+        self._thread = threading.Thread(target=self._beat, daemon=True)
         self._thread.start()
         return self
 
@@ -204,7 +276,10 @@ class ChildResult:
 
 
 def run_streamed(cmd: Sequence[str], *, timeout: float, prefix: str,
-                 cwd: Optional[str] = None, tail_lines: int = 60) -> ChildResult:
+                 cwd: Optional[str] = None, tail_lines: int = 60,
+                 cancel: Optional["Cancellation"] = None,
+                 on_cancel: Optional[Callable[[], None]] = None,
+                 cancel_grace: float = 0.0) -> ChildResult:
     """Run a child, printing its output AS IT ARRIVES, and keep a bounded tail.
 
     subprocess.run(capture_output=True) only drains the pipes once the child
@@ -223,6 +298,12 @@ def run_streamed(cmd: Sequence[str], *, timeout: float, prefix: str,
     simpler and is wrong: a child that produces no output blocks the readline
     loop until it exits on its own, so a hung solve would never be killed - the
     exact guarantee subprocess.run(timeout=...) was giving before.
+
+    `cancel` makes the child stoppable mid-run. When it fires, `on_cancel` is
+    called once (the engine's stop file gets created there) and the child is
+    given `cancel_grace` seconds to finish the way it wants to - writing its
+    checkpoint and artifact - before being killed. A child with no cooperative
+    stop passes no on_cancel and a grace of 0, and is simply killed.
     """
     proc = subprocess.Popen(
         list(cmd), cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -240,8 +321,36 @@ def run_streamed(cmd: Sequence[str], *, timeout: float, prefix: str,
 
     reader = threading.Thread(target=drain, name=f"{prefix}-stdout", daemon=True)
     reader.start()
+    deadline = time.monotonic() + timeout
+    kill_at: Optional[float] = None       # set once a cancel starts its grace
     try:
-        proc.wait(timeout=timeout)
+        while True:
+            try:
+                proc.wait(timeout=0.5)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            now = time.monotonic()
+            if cancel is not None and cancel.requested.is_set() and kill_at is None:
+                # Recorded here rather than in on_cancel, so it means the same
+                # thing for a child that stops cooperatively and one that is
+                # simply killed: this run was cut short by the owner.
+                cancel.applied = True
+                if on_cancel is not None:
+                    on_cancel()
+                kill_at = now + cancel_grace
+                if cancel_grace > 0:
+                    log(f"  cancel requested - asked {prefix} to stop cleanly "
+                        f"(up to {cancel_grace:.0f}s to write its results)")
+            if kill_at is not None and now >= kill_at:
+                if cancel_grace > 0:
+                    log(f"  {prefix} did not stop within the grace period; killing it")
+                proc.kill()
+                proc.wait()
+                reader.join(timeout=5)
+                return ChildResult(proc.returncode, tail)
+            if now >= deadline:
+                raise subprocess.TimeoutExpired(list(cmd), timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()
@@ -254,8 +363,15 @@ def run_streamed(cmd: Sequence[str], *, timeout: float, prefix: str,
     return ChildResult(proc.returncode, tail)
 
 
-def run_engine(config: Dict[str, Any], run_dir: str) -> str:
-    """Solve with htsolver; returns the artifact path."""
+def run_engine(config: Dict[str, Any], run_dir: str, cancel: Cancellation) -> str:
+    """Solve with htsolver; returns the artifact path.
+
+    Stoppable: the engine is given a `budget.stop_file` under this run's own
+    directory, and creating that file makes it stop at its next slice, write
+    its checkpoint and export the artifact for the iterations it completed.
+    Killing it instead would discard the whole run, since both the checkpoint
+    and the artifact are written at the end.
+    """
     artifact = os.path.join(run_dir, "solve.hta")
     config["output"] = dict(config.get("output") or {})
     config["output"]["path"] = artifact.replace("\\", "/")
@@ -272,25 +388,56 @@ def run_engine(config: Dict[str, Any], run_dir: str) -> str:
     # derivation duplicated here.
     if CHECKPOINT_DIR and not config["output"].get("checkpoint_path"):
         config["output"]["checkpoint_dir"] = CHECKPOINT_DIR.replace("\\", "/")
+    # Per-run path inside the job's temp directory: it cannot be left over
+    # from an earlier job, and it disappears with the directory.
+    stop_file = os.path.join(run_dir, "STOP")
+    budget["stop_file"] = stop_file.replace("\\", "/")
     config_path = os.path.join(run_dir, "config.json")
     with open(config_path, "w", encoding="utf8") as f:
         json.dump(config, f)
+
+    def request_stop() -> None:
+        with open(stop_file, "w", encoding="utf8") as f:
+            f.write("cancelled by the owner")
+
     out = run_streamed([ENGINE_EXE, "solve", config_path],
-                       timeout=SOLVE_TIMEOUT_SECS, prefix="ht")
+                       timeout=SOLVE_TIMEOUT_SECS, prefix="ht",
+                       cancel=cancel, on_cancel=request_stop,
+                       cancel_grace=CANCEL_GRACE_SECS)
     if out.returncode != 0 or not os.path.exists(artifact):
+        # A cancelled solve that produced nothing is not a failure - it just
+        # has nothing to upload. Say which one happened.
+        if cancel.applied:
+            raise Cancelled("stopped before the solve had written anything")
         raise RuntimeError(f"htsolver solve failed (exit {out.returncode}): "
                            f"{out.text[-1500:]}")
+    if cancel.disowned:
+        # The row is not ours any more (cancelled out from under the claim, or
+        # swept to another watcher). Uploading now would leave a blob nothing
+        # points at, and the report would be refused anyway.
+        raise Cancelled("the job was no longer claimed by this watcher")
     log(f"  htsolver: {out.last_line() or 'done'}")
     return artifact
 
 
-def handle_compare(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) -> None:
+def terminal_status(cancel: Cancellation) -> str:
+    """Done, or Cancelled when the solve was actually stopped.
+
+    Keyed on `applied` rather than `requested`: a Stop that lands after the
+    solver has already finished did not shorten anything, and calling that
+    result cancelled would misdescribe a complete solve.
+    """
+    return "Cancelled" if cancel.applied else "Done"
+
+
+def handle_compare(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
+                  cancel: Cancellation) -> None:
     job_id = job["id"]
     config = json.loads(job["config"])
     # Validation-friendly flags: quantization must not pollute the diff.
     config["output"] = {"strategy_quantize_u8": False, "ev_float32": True, "rollups_169": False}
     phase_start = time.perf_counter()
-    artifact = run_engine(config, run_dir)
+    artifact = run_engine(config, run_dir, cancel)
     timings["engine_solve_s"] = round(time.perf_counter() - phase_start, 3)
 
     # Pio is opt-in per job. "No Pio" subsumes the other two (neither the
@@ -315,7 +462,13 @@ def handle_compare(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) -
         f"{'' if disable_compare else ' + per-hand'}"
         f"{'' if disable_cross else ' + cross-check'}")
     phase_start = time.perf_counter()
-    out = run_streamed(cmd, cwd=WATCHER_DIR, timeout=1800, prefix="cmp")
+    # No stop file here: this child drives PioSOLVER, which has no cooperative
+    # stop, and its own output is written at the end either way. A cancel kills
+    # it - the htsolver artifact above is already safe on disk.
+    out = run_streamed(cmd, cwd=WATCHER_DIR, timeout=1800, prefix="cmp",
+                       cancel=cancel)
+    if cancel.applied and not os.path.exists(ht_out):
+        raise Cancelled("stopped before the per-hand payload was written")
     timings["compare_total_s"] = round(time.perf_counter() - phase_start, 3)
     if not os.path.exists(ht_out):
         raise RuntimeError(f"engine_compare failed (exit {out.returncode}): "
@@ -340,18 +493,19 @@ def handle_compare(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) -
     pio_blob = (upload_result(job_id, pio_out, "pio")
                 if os.path.exists(pio_out) else None)
     timings["upload_s"] = round(time.perf_counter() - phase_start, 3)
-    report(job_id, status="Done", ht_blob_path=ht_blob, pio_blob_path=pio_blob,
-           timings=timings)
+    report(job_id, status=terminal_status(cancel), ht_blob_path=ht_blob,
+           pio_blob_path=pio_blob, timings=timings)
     log(f"  done -> {ht_blob}" + (f" + {pio_blob}" if pio_blob else ""))
 
 
-def handle_publish(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) -> None:
+def handle_publish(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
+                  cancel: Cancellation) -> None:
     job_id = job["id"]
     config = json.loads(job["config"])
     # Viewer-quality flags: quantized strategy + 169 rollups.
     config["output"] = {"strategy_quantize_u8": True, "ev_float32": True, "rollups_169": True}
     phase_start = time.perf_counter()
-    artifact = run_engine(config, run_dir)
+    artifact = run_engine(config, run_dir, cancel)
     timings["engine_solve_s"] = round(time.perf_counter() - phase_start, 3)
 
     report(job_id, status="Uploading")
@@ -368,11 +522,12 @@ def handle_publish(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) -
     # Includes the server-side schema-4 export, not just the transfer.
     timings["upload_s"] = round(time.perf_counter() - phase_start, 3)
     coords = resp.json()
-    report(job_id, status="Done", timings=timings)
+    report(job_id, status=terminal_status(cancel), timings=timings)
     log(f"  published -> {coords.get('stacks')}/{coords.get('nodeName')}/{coords.get('board')}")
 
 
-def handle_pushfold(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) -> None:
+def handle_pushfold(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
+                   cancel: Cancellation) -> None:
     """Multiway preflop jam/fold (engine M8a).
 
     Deliberately does NOT shell engine_compare.py. That harness exists to drive
@@ -387,13 +542,16 @@ def handle_pushfold(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) 
     # rollup IS the push/fold chart the frontend renders.
     config["output"] = {"strategy_quantize_u8": True, "ev_float32": True, "rollups_169": True}
     phase_start = time.perf_counter()
-    artifact = run_engine(config, run_dir)
+    artifact = run_engine(config, run_dir, cancel)
     timings["engine_solve_s"] = round(time.perf_counter() - phase_start, 3)
 
     phase_start = time.perf_counter()
     dump_path = os.path.join(run_dir, "pushfold.json")
     # --fields rollup: /multiway renders only the 169-class rollup chart,
     # and the per-hand fields were ~98% of the payload it ignored.
+    # NOT cancellable: the solve is already on disk and this is the step that
+    # turns it into something the page can render. Stopping here would throw
+    # away a result that has already been paid for, seconds from the finish.
     out = run_streamed(
         [ENGINE_EXE, "dump-json", artifact, "--compact", "--fields", "rollup",
          "--out", dump_path],
@@ -408,7 +566,7 @@ def handle_pushfold(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any]) 
     phase_start = time.perf_counter()
     blob = upload_result(job_id, dump_path, "ht", ext="json")
     timings["upload_s"] = round(time.perf_counter() - phase_start, 3)
-    report(job_id, status="Done", ht_blob_path=blob, timings=timings)
+    report(job_id, status=terminal_status(cancel), ht_blob_path=blob, timings=timings)
     log(f"  pushfold -> {blob} ({timings['dump_bytes']} bytes before gzip)")
 
 
@@ -428,6 +586,8 @@ def main() -> int:
             f"checkpoint; budget.iterations is a total")
     else:
         log("  checkpoints off (set ENGINE_CHECKPOINT_DIR to make solves resumable)")
+    log(f"  heartbeat {HEARTBEAT_SECS:.0f}s (= cancel latency), cancel grace "
+        f"{CANCEL_GRACE_SECS:.0f}s")
 
     while True:
         job = claim()
@@ -438,16 +598,26 @@ def main() -> int:
         mode = job.get("mode", "compare")
         log(f"claimed {mode} job {job_id} (board={job.get('board')})")
         timings: Dict[str, Any] = {"schema": 1}
+        cancel = Cancellation()
         with tempfile.TemporaryDirectory(prefix="htsolver_job_") as run_dir:
             try:
-                with Heartbeat(job_id):
-                    report(job_id, status="Running")
+                with Heartbeat(job_id, cancel):
+                    # The first report doubles as a claim check: a job that was
+                    # cancelled in the instant between the queue pop and here
+                    # answers 409, and there is no point solving it.
+                    cancel.observe(report(job_id, status="Running"))
+                    if cancel.disowned:
+                        log(f"  job {job_id} is no longer ours; dropping it")
+                        continue
                     if mode == "publish":
-                        handle_publish(job, run_dir, timings)
+                        handle_publish(job, run_dir, timings, cancel)
                     elif mode == "pushfold":
-                        handle_pushfold(job, run_dir, timings)
+                        handle_pushfold(job, run_dir, timings, cancel)
                     else:
-                        handle_compare(job, run_dir, timings)
+                        handle_compare(job, run_dir, timings, cancel)
+            except Cancelled as e:
+                log(f"  job {job_id} cancelled: {e}")
+                report(job_id, status="Cancelled", error=str(e), timings=timings)
             except Exception as e:
                 log(f"  job {job_id} FAILED: {e}")
                 # Partial timings still ride along - they show which stage died.

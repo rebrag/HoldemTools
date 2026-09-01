@@ -118,6 +118,19 @@ struct SolveConfig {
   // yields nothing at all. Set it BELOW the external deadline, leaving room
   // for the EV pass and the artifact export.
   double max_seconds = 0.0;
+  // Cooperative stop. When set, the solve looks for this PATH between slices
+  // and, the moment it exists, stops exactly the way the time budget stops:
+  // checkpoint written, EV pass run, artifact exported, with
+  // metadata.stopped_reason = "cancelled". A file rather than a signal
+  // because the caller is a watcher on Windows driving a child process, where
+  // there is no portable way to deliver one - and because "the file is there"
+  // is a state a caller can set once and never have to re-deliver.
+  //
+  // Killing the process would be the alternative and is not equivalent: the
+  // artifact and the checkpoint are both written at the END, so a kill
+  // discards every iteration. Stopping this way is what makes a user-cancelled
+  // solve resumable rather than lost.
+  std::string stop_file;
   std::uint64_t checkpoint_every = 1000;
   double memory_limit_gb = 12.0;
 

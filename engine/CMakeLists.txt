@@ -110,6 +110,7 @@ add_executable(engine_tests
   tests/test_preflop_game.cpp
   tests/test_memory.cpp
   tests/test_checkpoint.cpp
+  tests/test_stop_signal.cpp
   tests/test_artifact_roundtrip.cpp
   tests/test_parallel.cpp
   tests/test_recalc.cpp

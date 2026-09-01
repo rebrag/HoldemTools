@@ -480,6 +480,7 @@ SolveConfig load_config(const std::string& path_text) {
         budget.value("target_exploitable_pct", config.target_exploitable_pct);
     config.checkpoint_every = budget.value("checkpoint_every", config.checkpoint_every);
     config.max_seconds = budget.value("max_seconds", config.max_seconds);
+    config.stop_file = budget.value("stop_file", config.stop_file);
     if (config.iterations == 0) fail("budget.iterations must be positive");
     if (config.max_seconds < 0) fail("budget.max_seconds cannot be negative");
     if (config.target_exploitable_pct < 0) fail("budget.target_exploitable_pct cannot be negative");

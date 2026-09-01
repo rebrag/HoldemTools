@@ -116,6 +116,11 @@ namespace PokerRangeAPI2.Controllers
                 job.Status = req.Status;
                 if (req.Status == EngineCompareJobStatus.Failed)
                     job.Error = Truncate(req.Error, 2000) ?? "unspecified watcher error";
+                // A cancel is not an error, but the watcher may still have
+                // something worth saying (how far it got, or that the solve
+                // produced nothing to upload). Only when it sends one.
+                if (req.Status == EngineCompareJobStatus.Cancelled && req.Error != null)
+                    job.Error = Truncate(req.Error, 2000);
                 if (EngineCompareJobStatus.Terminal.Contains(req.Status))
                     job.CompletedAtUtc = now;
             }
@@ -134,7 +139,17 @@ namespace PokerRangeAPI2.Controllers
             }
 
             await _db.SaveChangesAsync();
-            return Ok(new { ok = true, status = job.Status });
+            // Every report - heartbeats included - answers with whether the
+            // owner has asked this job to stop. That is what carries a cancel
+            // to the watcher: no extra endpoint to poll, and the signal
+            // repeats until the watcher acts on it, so one dropped response
+            // costs a heartbeat interval rather than the cancel itself.
+            return Ok(new
+            {
+                ok = true,
+                status = job.Status,
+                cancelRequested = job.CancelRequestedAtUtc != null,
+            });
         }
 
         // POST api/enginecompare/{id}/publish-artifact  (multipart file ".hta")
@@ -247,7 +262,15 @@ namespace PokerRangeAPI2.Controllers
             foreach (var job in stale)
             {
                 job.WatcherId = null;
-                if (job.AttemptCount >= _maxAttempts)
+                if (job.CancelRequestedAtUtc != null)
+                {
+                    // The owner asked it to stop and the watcher went away
+                    // without reporting. Re-queuing it would restart a solve
+                    // nobody wants; honour the cancel instead.
+                    job.Status = EngineCompareJobStatus.Cancelled;
+                    job.CompletedAtUtc = now;
+                }
+                else if (job.AttemptCount >= _maxAttempts)
                 {
                     job.Status = EngineCompareJobStatus.Failed;
                     job.Error = "watcher timed out";
@@ -306,7 +329,9 @@ OUTPUT inserted.*;", watcherId)
 
         private static bool IsValidTransition(string current, string next)
         {
-            if (next == EngineCompareJobStatus.Failed)
+            // Both terminal-from-anywhere: a claim can die at any stage, and
+            // a cancel can land at any stage.
+            if (next == EngineCompareJobStatus.Failed || next == EngineCompareJobStatus.Cancelled)
                 return EngineCompareJobStatus.Active.Contains(current);
             var chain = EngineCompareJobStatus.Chain.ToList();
             var from = chain.IndexOf(current);

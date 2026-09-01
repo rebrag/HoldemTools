@@ -60,6 +60,10 @@ namespace PokerRangeAPI2.Controllers
             public DateTimeOffset CreatedAtUtc { get; set; }
             public DateTimeOffset? ClaimedAtUtc { get; set; }
             public DateTimeOffset? CompletedAtUtc { get; set; }
+            /// <summary>Set once the owner has asked this job to stop. Still
+            /// active until the watcher acts on it, which is what the page
+            /// shows as "Stopping".</summary>
+            public DateTimeOffset? CancelRequestedAtUtc { get; set; }
 
             public bool DisablePio { get; set; }
             public bool DisableCompare { get; set; }
@@ -87,6 +91,7 @@ namespace PokerRangeAPI2.Controllers
                 CreatedAtUtc = job.CreatedAtUtc,
                 ClaimedAtUtc = job.ClaimedAtUtc,
                 CompletedAtUtc = job.CompletedAtUtc,
+                CancelRequestedAtUtc = job.CancelRequestedAtUtc,
                 Timings = ParseTimings(job.TimingsJson),
                 DisablePio = job.DisablePio,
                 DisableCompare = job.DisableCompare,
@@ -288,6 +293,44 @@ namespace PokerRangeAPI2.Controllers
             return File(bytes.Value.Content.ToArray(), "application/octet-stream");
         }
 
+        // POST api/enginecompare/{id}/cancel - stop one of the caller's own
+        // jobs, keeping whatever it has solved so far.
+        //
+        // Two different things, depending on how far the job got:
+        //  - Queued: nothing has run and nothing can be saved, so the job goes
+        //    straight to Cancelled and a watcher will never claim it.
+        //  - Active: the row keeps its status and only records the REQUEST.
+        //    The watcher sees it on its next heartbeat response, asks the
+        //    engine to stop cooperatively, and the engine writes its
+        //    checkpoint and exports the artifact for the iterations it had -
+        //    so the job still finishes through Uploading and lands on
+        //    Cancelled WITH a result. Flipping the status here instead would
+        //    throw all of that away, which is the opposite of what stopping a
+        //    long solve is for.
+        //
+        // Idempotent: asking twice keeps the first request's timestamp, so a
+        // double-click cannot look like a second, later cancel.
+        [HttpPost("{id:guid}/cancel")]
+        public async Task<ActionResult<JobDto>> Cancel(Guid id)
+        {
+            var uid = this.CurrentUid();
+            if (string.IsNullOrWhiteSpace(uid)) return Unauthorized();
+            var job = await _db.EngineCompareJobs
+                .FirstOrDefaultAsync(j => j.Id == id && j.UserId == uid);
+            if (job == null) return NotFound();
+            if (EngineCompareJobStatus.Terminal.Contains(job.Status))
+                return Conflict($"This job already finished ({job.Status}).");
+
+            job.CancelRequestedAtUtc ??= DateTimeOffset.UtcNow;
+            if (job.Status == EngineCompareJobStatus.Queued)
+            {
+                job.Status = EngineCompareJobStatus.Cancelled;
+                job.CompletedAtUtc = DateTimeOffset.UtcNow;
+            }
+            await _db.SaveChangesAsync();
+            return Ok(JobDto.From(job));
+        }
+
         // DELETE api/enginecompare/{id} - drop one of the caller's own jobs and
         // its result blobs. Ownership is checked the same way every other
         // endpoint here checks it: the row is looked up by (id, uid) from the
@@ -307,7 +350,8 @@ namespace PokerRangeAPI2.Controllers
                 .FirstOrDefaultAsync(j => j.Id == id && j.UserId == uid);
             if (job == null) return NotFound();
             if (!EngineCompareJobStatus.Terminal.Contains(job.Status))
-                return Conflict("This job is still running. Wait for it to finish, then delete it.");
+                return Conflict("This job is still running. Stop it (or wait for it to finish), "
+                                + "then delete it.");
 
             // Blobs first: a row removed while its blobs survive is a leak with
             // nothing left pointing at it, whereas a blob delete that fails

@@ -35,7 +35,14 @@ import {
   type MultiwayView,
 } from "./multiwayView";
 
-type JobStatus = "Queued" | "Claimed" | "Running" | "Uploading" | "Done" | "Failed";
+type JobStatus =
+  | "Queued"
+  | "Claimed"
+  | "Running"
+  | "Uploading"
+  | "Done"
+  | "Failed"
+  | "Cancelled";
 interface CompareJob {
   id: string;
   mode?: string;
@@ -45,6 +52,11 @@ interface CompareJob {
   hasHtResult?: boolean;
   createdAtUtc?: string;
   completedAtUtc?: string | null;
+  /* Set the moment Stop is pressed, while the job is still active. The solve
+   * does not end here - the watcher asks the engine to stop cleanly and the
+   * partial result is still uploaded - so this is what "Stopping" is read
+   * from, and the row keeps its real status until that lands. */
+  cancelRequestedAtUtc?: string | null;
 }
 
 const ago = (iso?: string | null): string => {
@@ -64,11 +76,16 @@ const STATUS_TONE: Record<JobStatus, string> = {
   Uploading: "text-sky-300",
   Done: "text-emerald-400",
   Failed: "text-red-400",
+  /* Amber, not red: a stopped solve normally still has a chart to open, and
+   * colouring it like a failure would say the opposite. */
+  Cancelled: "text-amber-300",
 };
 
-const TERMINAL: JobStatus[] = ["Done", "Failed"];
+const TERMINAL: JobStatus[] = ["Done", "Failed", "Cancelled"];
+/* A stopped solve keeps whatever it had solved, so these open like any other
+ * result. Failed is the only status with nothing behind it. */
+const HAS_RESULT: JobStatus[] = ["Done", "Cancelled"];
 const POLL_MS = 3000;
-const DEADLINE_MS = 20 * 60 * 1000;
 
 const MultiwaySolver = () => {
   const [view, setView] = useState<MultiwayView>(DEFAULT_VIEW);
@@ -79,6 +96,10 @@ const MultiwaySolver = () => {
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<CompareJob[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
+  /* Jobs whose Stop has been accepted but whose status has not caught up yet.
+   * Local, because the poll is on a 3 s cycle and a button that does nothing
+   * visible for three seconds reads as broken. */
+  const [cancelling, setCancelling] = useState<Set<string>>(new Set());
   const [elapsed, setElapsed] = useState(0);
   /* Open on arrival: with no result loaded the page has nothing to show, and
    * building a tree is what you came for. loadResult closes it once there is
@@ -109,6 +130,9 @@ const MultiwaySolver = () => {
     [view.players, view.button]
   );
   const issues = useMemo(() => validate(view), [view]);
+  /* The job this page is driving, mid-stop: Stop was accepted but the solve
+   * has not finished writing its results out yet. */
+  const activeStopping = !!job && (cancelling.has(job.id) || !!job.cancelRequestedAtUtc);
   const bbCount = effectiveBb(view);
   const anteEach = Number(view.ante) || 0;
   const pot = potChips(view);
@@ -217,6 +241,36 @@ const MultiwaySolver = () => {
     [refreshJobs]
   );
 
+  /* Stop, not abandon: the watcher asks the engine to stop at its next slice,
+   * and the engine writes its checkpoint and exports the artifact for the
+   * iterations it completed - so this ends with a chart to look at and a
+   * solve that can be continued later, which is the whole reason it is a
+   * request rather than a kill. The row stays active until that lands. */
+  const cancelJob = useCallback(
+    async (id: string) => {
+      setError(null);
+      setCancelling((s) => new Set(s).add(id));
+      try {
+        const resp = await authedFetch(`/api/enginecompare/${id}/cancel`, { method: "POST" });
+        if (!resp.ok) throw new Error((await resp.text()) || `Stop failed (${resp.status})`);
+        const updated = (await resp.json()) as CompareJob;
+        setJobs((list) => list.map((j) => (j.id === id ? { ...j, ...updated } : j)));
+        setJob((current) => (current && current.id === id ? { ...current, ...updated } : current));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        // Only clear on failure: a successful stop stays "Stopping" until the
+        // status itself goes terminal, which is the honest thing to show
+        // while the engine is still writing its results out.
+        setCancelling((s) => {
+          const next = new Set(s);
+          next.delete(id);
+          return next;
+        });
+      }
+    },
+    []
+  );
+
   const openJob = useCallback(
     async (id: string) => {
       setError(null);
@@ -254,9 +308,14 @@ const MultiwaySolver = () => {
       setJob(current);
       void refreshJobs();
 
+      /* No client-side deadline. There used to be a 20-minute one, which
+       * meant a legitimately long solve reported "Timed out waiting for the
+       * solve" on a page whose job was still running perfectly well - and
+       * took the Stop button down with it. A solve that really is stuck is
+       * the server's stale-claim sweep to catch; one the user no longer wants
+       * is what Stop is for. */
       while (!TERMINAL.includes(current.status)) {
         if (cancelled.current) return;
-        if (Date.now() - started > DEADLINE_MS) throw new Error("Timed out waiting for the solve.");
         await new Promise((r) => setTimeout(r, POLL_MS));
         const poll = await authedFetch(`/api/enginecompare/${current.id}`);
         if (!poll.ok) throw new Error(`Poll failed (${poll.status})`);
@@ -264,6 +323,11 @@ const MultiwaySolver = () => {
         setJob(current);
       }
       if (current.status === "Failed") throw new Error(current.error || "The solve failed.");
+      if (current.status === "Cancelled" && current.hasHtResult === false) {
+        throw new Error(
+          current.error || "Stopped before the solve had written anything to show."
+        );
+      }
       await loadResult(current.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -338,8 +402,10 @@ const MultiwaySolver = () => {
         <div className="no-scrollbar flex shrink-0 items-center gap-1.5 overflow-x-auto">
           <span className="shrink-0 text-[11px] font-medium text-slate-500">Recent</span>
           {jobs.map((j) => {
-            const openable = j.status === "Done" && j.hasHtResult !== false;
-            const finished = j.status === "Done" || j.status === "Failed";
+            const openable = HAS_RESULT.includes(j.status) && j.hasHtResult !== false;
+            const finished = TERMINAL.includes(j.status);
+            /* Accepted here, or already recorded by the server. */
+            const stopping = cancelling.has(j.id) || !!j.cancelRequestedAtUtc;
             return (
               /* Two buttons per entry rather than /compare's one, because
                  delete is a real feature here and a button cannot nest. */
@@ -366,42 +432,68 @@ const MultiwaySolver = () => {
                   <span className="tabular-nums text-slate-500">
                     {ago(j.completedAtUtc ?? j.createdAtUtc)}
                   </span>
-                  <span className={STATUS_TONE[j.status]}>{j.status}</span>
+                  <span className={STATUS_TONE[j.status]}>
+                    {!finished && stopping ? "Stopping" : j.status}
+                  </span>
                 </button>
-                {/* Two clicks, not a confirm dialog: the solve is cheap to
-                    re-run and a modal for every row would be worse than the
-                    mistake it prevents. A running job has no delete at all -
-                    the watcher would report into a row that no longer
-                    exists. */}
-                <button
-                  type="button"
-                  aria-disabled={!finished}
-                  onClick={() => {
-                    if (!finished) return;
-                    if (confirmingDelete === j.id) void deleteJob(j.id);
-                    else setConfirmingDelete(j.id);
-                  }}
-                  onBlur={() => setConfirmingDelete((c) => (c === j.id ? null : c))}
-                  title={
-                    finished
-                      ? confirmingDelete === j.id
+                {/* One slot, two jobs, because a row is only ever in one of
+                    the two states: a running solve can be stopped, a finished
+                    one can be deleted. Deleting a running job was never
+                    offered - the watcher would report into a row that no
+                    longer exists - and stopping is what that gap was really
+                    asking for. */}
+                {finished ? (
+                  /* Two clicks, not a confirm dialog: the solve is cheap to
+                     re-run and a modal for every row would be worse than the
+                     mistake it prevents. */
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirmingDelete === j.id) void deleteJob(j.id);
+                      else setConfirmingDelete(j.id);
+                    }}
+                    onBlur={() => setConfirmingDelete((c) => (c === j.id ? null : c))}
+                    title={
+                      confirmingDelete === j.id
                         ? "Click again to delete this solve and its stored result"
                         : "Delete this solve"
-                      : "Still running - it can be deleted once it finishes"
-                  }
-                  aria-label={`Delete the ${j.board || "preflop"} solve from ${ago(
-                    j.completedAtUtc ?? j.createdAtUtc
-                  )}`}
-                  className={`shrink-0 border-l border-slate-800 px-1.5 text-[11px] transition-colors ${
-                    !finished
-                      ? "cursor-not-allowed text-slate-700"
-                      : confirmingDelete === j.id
+                    }
+                    aria-label={`Delete the ${j.board || "preflop"} solve from ${ago(
+                      j.completedAtUtc ?? j.createdAtUtc
+                    )}`}
+                    className={`shrink-0 border-l border-slate-800 px-1.5 text-[11px] transition-colors ${
+                      confirmingDelete === j.id
                         ? "bg-red-500/20 font-semibold text-red-300"
                         : "text-slate-600 hover:bg-red-500/10 hover:text-red-300"
-                  }`}
-                >
-                  {confirmingDelete === j.id ? "Sure?" : "×"}
-                </button>
+                    }`}
+                  >
+                    {confirmingDelete === j.id ? "Sure?" : "×"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={stopping}
+                    onClick={() => void cancelJob(j.id)}
+                    title={
+                      stopping
+                        ? "Stopping - the engine is writing out what it solved so far"
+                        : "Stop this solve and keep what it has solved so far"
+                    }
+                    aria-label={`Stop the ${j.board || "preflop"} solve`}
+                    className={`flex shrink-0 items-center border-l border-slate-800 px-1.5 transition-colors ${
+                      stopping
+                        ? "cursor-default text-amber-400/60"
+                        : "text-slate-600 hover:bg-amber-500/10 hover:text-amber-300"
+                    }`}
+                  >
+                    {/* A square, drawn rather than typed: "■" is a font glyph
+                        whose width and baseline move between platforms, and
+                        this sits inside a 20 px row. */}
+                    <svg viewBox="0 0 10 10" className="h-2 w-2" aria-hidden="true">
+                      <rect width="10" height="10" rx="1.5" fill="currentColor" />
+                    </svg>
+                  </button>
+                )}
               </span>
             );
           })}
@@ -423,8 +515,24 @@ const MultiwaySolver = () => {
             aria-hidden="true"
             className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-500 border-t-emerald-400"
           />
-          Solving{job ? ` · ${job.status}` : ""} · {(elapsed / 1000).toFixed(0)}s - this keeps
-          running if you leave the page.
+          {activeStopping ? "Stopping" : "Solving"}
+          {job ? ` · ${job.status}` : ""} · {(elapsed / 1000).toFixed(0)}s - this keeps running if
+          you leave the page.
+          {job && !TERMINAL.includes(job.status) && (
+            <button
+              type="button"
+              disabled={activeStopping}
+              onClick={() => void cancelJob(job.id)}
+              className={`ml-auto shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                activeStopping
+                  ? "cursor-default border-amber-800/60 text-amber-400/60"
+                  : "border-slate-600 text-slate-300 hover:border-amber-700 hover:bg-amber-500/10 hover:text-amber-300"
+              }`}
+              title="Stop this solve and keep what it has solved so far"
+            >
+              {activeStopping ? "Stopping…" : "Stop"}
+            </button>
+          )}
         </p>
       )}
       {error && !builderOpen && (
@@ -495,8 +603,23 @@ const MultiwaySolver = () => {
               onDownloadConfig={downloadConfig}
               statusSlot={
                 solving && job ? (
-                  <span className="text-[11px] tabular-nums text-slate-400">
+                  <span className="flex items-center gap-2 text-[11px] tabular-nums text-slate-400">
                     {job.status} · {(elapsed / 1000).toFixed(0)}s
+                    {!TERMINAL.includes(job.status) && (
+                      <button
+                        type="button"
+                        disabled={activeStopping}
+                        onClick={() => void cancelJob(job.id)}
+                        className={`rounded-md border px-2 py-0.5 font-medium transition-colors ${
+                          activeStopping
+                            ? "cursor-default border-amber-800/60 text-amber-400/60"
+                            : "border-slate-600 text-slate-300 hover:border-amber-700 hover:bg-amber-500/10 hover:text-amber-300"
+                        }`}
+                        title="Stop this solve and keep what it has solved so far"
+                      >
+                        {activeStopping ? "Stopping…" : "Stop"}
+                      </button>
+                    )}
                   </span>
                 ) : null
               }

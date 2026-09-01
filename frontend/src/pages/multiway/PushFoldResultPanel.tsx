@@ -165,18 +165,30 @@ const PushFoldResultPanel = ({
             solve <span className="text-slate-200">{meta.solve_id}</span>
           </span>
         )}
-        {meta.stopped_reason === "time_budget" && (
+        {/* Both early stops say the same thing about the numbers - a real
+            solve, just less converged than asked for - and differ only in who
+            stopped it. Neither is a failure or a partial file. */}
+        {(meta.stopped_reason === "time_budget" || meta.stopped_reason === "cancelled") && (
           <span
-            className={`${chip} border-sky-800 text-sky-300`}
+            className={`${chip} ${
+              meta.stopped_reason === "cancelled"
+                ? "border-amber-800 text-amber-300"
+                : "border-sky-800 text-sky-300"
+            }`}
             title={
-              "The solve hit its wall-clock ceiling and wrote what it had rather than " +
-              "being discarded. Everything shown is a real solve, just less converged " +
+              (meta.stopped_reason === "cancelled"
+                ? "You stopped this solve. It wrote its checkpoint and exported the " +
+                  "artifact for the iterations it had completed, so it can be continued " +
+                  "later by re-solving under the same solve id. "
+                : "The solve hit its wall-clock ceiling and wrote what it had rather than " +
+                  "being discarded. ") +
+              "Everything shown is a real solve, just less converged " +
               (meta.requested_iterations
-                ? `than the ${meta.requested_iterations} iterations requested.`
+                ? `than the ${fmtCount(meta.requested_iterations)} iterations requested.`
                 : "than requested.")
             }
           >
-            stopped on time budget
+            {meta.stopped_reason === "cancelled" ? "stopped by you" : "stopped on time budget"}
           </span>
         )}
       </div>

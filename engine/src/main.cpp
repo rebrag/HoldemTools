@@ -25,6 +25,7 @@
 #include "solver/sampled_cfr.hpp"
 #include "solver/memory.hpp"
 #include "util/parallel.hpp"
+#include "util/stop_signal.hpp"
 
 namespace {
 
@@ -132,6 +133,11 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   // the baseline would be past the value the error message tells you to
   // restore.
   bool resumed = false;
+  // A cancel in phase 1 also ends phase 2 before it starts. Stopping the
+  // baseline and then training a full team phase against it would ignore the
+  // thing the user actually asked for, and the checkpoints below keep both
+  // phases exactly where they stopped.
+  bool cancelled = false;
   CheckpointExtras extras;
   if (!config.checkpoint_path.empty() && resume_allowed) {
     std::string err;
@@ -205,12 +211,22 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
     // always reaches the artifact, and an artifact whose team phase never ran
     // would be a no-team solve wearing a team's metadata.
     const double base_deadline = config.max_seconds > 0.0 ? config.max_seconds * 0.5 : 0.0;
+    // Slicing is what makes phase 1 interruptible at all: an unsliced run()
+    // is one call that returns when the whole baseline is done, and neither
+    // the clock nor a cancel can be looked at from inside it.
+    const bool base_sliced = base_deadline > 0.0 || !config.stop_file.empty();
     while (baseline->iteration() < base_target) {
       const std::uint64_t remaining = base_target - baseline->iteration();
-      const std::uint64_t slice = base_deadline > 0.0
+      const std::uint64_t slice = base_sliced
                                       ? deadline_slice(remaining, config.sampled.batch)
                                       : remaining;
       baseline->run(slice);
+      if (stop_requested(config.stop_file)) {
+        std::cout << "phase 1 cancelled after " << baseline->iteration() << " iterations\n";
+        stats.stopped_reason = "cancelled";
+        cancelled = true;
+        break;
+      }
       if (base_deadline > 0.0 && elapsed_s() >= base_deadline) {
         std::cout << "phase 1 stopped at its " << base_deadline << " s share of the "
                   << "time budget after " << baseline->iteration() << " iterations\n";
@@ -266,8 +282,10 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   const std::uint64_t started_at = done;
   const double pot = static_cast<double>(config.pot);
   const bool timed = config.max_seconds > 0.0;
+  // Same reason as phase 1: a slice is the only place a cancel can be seen.
+  const bool sliced = timed || !config.stop_file.empty();
   bool out_of_time = false;
-  while (done < config.iterations) {
+  while (!cancelled && done < config.iterations) {
     const std::uint64_t step =
         std::min<std::uint64_t>(config.checkpoint_every, config.iterations - done);
     // A team solve takes ONE checkpoint for the whole budget (there is no
@@ -276,15 +294,24 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
     std::uint64_t ran = 0;
     while (ran < step) {
       const std::uint64_t slice =
-          timed ? deadline_slice(step - ran, config.sampled.batch) : step - ran;
+          sliced ? deadline_slice(step - ran, config.sampled.batch) : step - ran;
       solver.run(slice);
       ran += slice;
+      if (stop_requested(config.stop_file)) {
+        cancelled = true;
+        break;
+      }
       if (timed && elapsed_s() >= config.max_seconds) {
         out_of_time = true;
         break;
       }
     }
     done += ran;
+    if (cancelled) {
+      std::cout << "iter " << done << "\ncancelled: writing the artifact for the " << done
+                << " iterations completed\n";
+      break;
+    }
     if (out_of_time) {
       std::cout << "iter " << done << "\nstopping at the " << config.max_seconds
                 << " s budget: writing the artifact for the " << done
@@ -317,10 +344,22 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   const double wall_s =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
+  if (cancelled && team && solver.iteration() == 0) {
+    // Worth saying out loud: the team phase never ran, so the team seats have
+    // no strategy sums and export as a uniform mix. The artifact is still
+    // written (and the baseline checkpoint is still good), but the charts in
+    // it are not a team solve yet.
+    std::cout << "warning: stopped before the team phase ran a single iteration, so the "
+                 "team seats export as an unsolved uniform mix. The baseline is saved - "
+                 "solve again with the same id to continue.\n";
+  }
   stats.iterations = solver.iteration();
   stats.nashconv = nashconv;
   stats.nashconv_valid = !team;
   if (out_of_time) stats.stopped_reason = "time_budget";
+  // A cancel outranks the time budget in the label: both stopped the solve
+  // early, but only one of them is something the user did.
+  if (cancelled) stats.stopped_reason = "cancelled";
   // Root EVs from the sampled pass for EVERY sampled solve: each deal's
   // payoffs sum to the pot, so these conserve exactly at any seat count -
   // and they are the only honest EVs for a team, whose correlated play no
@@ -424,6 +463,7 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   BrResult br;
   std::uint64_t done = 0;
   bool out_of_time = false;
+  bool cancelled = false;
   const double pot = static_cast<double>(config.pot);
 
   // A fixed-lambda QRE is not a Nash equilibrium, and its PLAIN exploitability
@@ -548,7 +588,16 @@ int run_solve(const SolveConfig& config, bool dry_run) {
     }
     // Checkpoint granularity is the natural deadline unit here: this loop
     // measures a best response every checkpoint anyway, so it is already
-    // stopping at a point where the solve is worth writing out.
+    // stopping at a point where the solve is worth writing out. A cancel
+    // rides the same granularity. This core has no checkpoint file, so
+    // stopping here yields a shorter solve that cannot be continued - still
+    // an artifact, where a kill would have left nothing.
+    if (stop_requested(config.stop_file)) {
+      cancelled = true;
+      std::cout << "cancelled: writing the artifact for the " << done
+                << " iterations completed\n";
+      break;
+    }
     if (config.max_seconds > 0.0 && elapsed_s() >= config.max_seconds) {
       out_of_time = true;
       std::cout << "stopping at the " << config.max_seconds
@@ -564,6 +613,7 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   stats.iterations = solver.iteration();
   stats.nashconv = nashconv;
   if (out_of_time) stats.stopped_reason = "time_budget";
+  if (cancelled) stats.stopped_reason = "cancelled";
   stats.ev_chips = br.ev;
   stats.wall_time_s = wall_s;
   stats.setup_time_s = setup_s;
