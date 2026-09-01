@@ -16,6 +16,7 @@ import { HAND_ORDER } from "@/lib/solver/handOrder";
 import { authedFetch } from "@/lib/api";
 import type { MoneyOpts } from "@/pages/solver/boardDisplay";
 import ResponsiveDrawer from "@/components/ResponsiveDrawer";
+import EngineCoreTabs from "@/components/EngineCoreTabs";
 import PostflopLine from "@/pages/solver/PostflopLine";
 import TreeBuilding, { Check, inputCls } from "@/components/TreeBuilding";
 import { useLocalStorageState } from "@/hooks/useLocalStorageState";
@@ -1637,7 +1638,11 @@ const SolverCompare = () => {
         ariaLabel="Tree building parameters"
       >
         <div className="flex h-[88vh] max-h-[88vh] flex-col">
-          <div className="border-b border-slate-800 px-4 py-3">
+          <div className="border-b border-slate-800 px-4 py-3 pr-12">
+            {/* Which engine core this tree is for, and the way across to the
+                other one. /multiway renders the same control above its own
+                builder, so the pair is symmetric. */}
+            <EngineCoreTabs value="postflop" className="mb-2" />
             <h2 className="text-sm font-semibold tracking-tight text-white">
               Tree building parameters
             </h2>

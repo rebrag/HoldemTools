@@ -9,6 +9,7 @@
 // invariant at risk for no gain, since a multiway spot cannot be expressed in
 // PioViewer's format anyway. The two builders share the engine's JSON config
 // and nothing else.
+import type { PushFoldDump } from "./pushfoldResult";
 
 /** Seat labels clockwise from the small blind, per table size. Heads-up is
  *  the usual exception: the button IS the small blind. */
@@ -187,6 +188,89 @@ export const effectiveBb = (view: MultiwayView): number => {
   return bb > 0 && Number.isFinite(smallest) ? smallest / bb : NaN;
 };
 
+/** Whether this tree runs on the SAMPLED-deal core rather than the vectorized
+ *  one. 4+ seats need it, and so does a hand-sharing team at any seat count -
+ *  only the sampled core can express one.
+ *
+ *  Exported because the builder's labels and tooltips change with it ("the
+ *  solve never reads this", "the accuracy target is ignored"), and having them
+ *  re-derive the threshold is what let a 3-way team solve claim the vectorized
+ *  behaviour it does not get. One predicate, used by the config and the copy
+ *  that describes it. */
+export const isSampledCore = (view: MultiwayView): boolean =>
+  view.players >= 4 || view.teamSeats.length === 2;
+
+/** Root pot: dead money, blinds and antes. Derived and never typed - the
+ *  engine builds it the same way, so anywhere that shows a pot reads this
+ *  rather than keeping its own copy. */
+export const potChips = (view: MultiwayView): number =>
+  (Number(view.dead) || 0) +
+  (Number(view.smallBlind) || 0) +
+  (Number(view.bigBlind) || 0) +
+  (Number(view.ante) || 0) * view.players;
+
+/** Rebuild the builder view from a solved artifact's metadata: the inverse of
+ *  buildMultiwayConfig, and what makes opening a past solve move the table,
+ *  the seat labels and the fields instead of leaving them showing whatever
+ *  was last typed.
+ *
+ *  `base` supplies the few fields the artifact does not record - accuracy,
+ *  baseline iterations, and game/limit/street, which a pushfold job pins to
+ *  holdem/nl/preflop anyway.
+ *
+ *  Returns null for a payload written before the `preflop` metadata block
+ *  existed, so the caller keeps the view it has rather than half-restoring
+ *  one. */
+export const viewFromDump = (
+  meta: PushFoldDump["metadata"],
+  base: MultiwayView
+): MultiwayView | null => {
+  const pf = meta.preflop;
+  if (!pf || !meta.seats?.length) return null;
+
+  const players = Math.min(MAX_PLAYERS, Math.max(MIN_PLAYERS, meta.seats.length));
+  const button = Math.min(Math.max(0, Math.round(pf.button)), players - 1);
+
+  const recorded = meta.stacks;
+  const stacks = Array.from({ length: players }, (_, i) => {
+    const s = recorded?.[i];
+    return s != null ? String(s) : base.stacks[i] ?? "20";
+  });
+
+  /* The artifact records the root pot but not its parts. buildMultiwayConfig
+   * builds that pot as dead + sb + bb + ante * players, and the builder has
+   * no dead-money input (the field exists in MultiwayView but nothing renders
+   * it, so it is always 0), which leaves the ante uniquely recoverable. */
+  const anteEach = (meta.pot - pf.small_blind - pf.big_blind) / players;
+  const ante = Number.isFinite(anteEach) && anteEach > 0 ? String(anteEach) : "0";
+
+  const teamSeats = (meta.team?.seats ?? []).filter((s) => s >= 0 && s < players);
+
+  return {
+    ...base,
+    players,
+    button,
+    smallBlind: String(pf.small_blind),
+    bigBlind: String(pf.big_blind),
+    ante,
+    dead: "0",
+    stacks,
+    teamSeats,
+    awareness: meta.team?.awareness === "aware" ? "aware" : "unaware",
+    ...(meta.board_sample
+      ? {
+          boardSampleIter: String(meta.board_sample.iter_count),
+          boardSamplePair: String(meta.board_sample.pair_count),
+          seed: String(meta.board_sample.seed),
+        }
+      : {}),
+    // Requested, not reached: a time-capped solve writes fewer iterations than
+    // it was asked for, and restoring the smaller number would silently shrink
+    // the budget of a re-solve from this spot.
+    maxIterations: String(meta.requested_iterations ?? meta.iterations ?? base.maxIterations),
+  };
+};
+
 /** The htsolver config, in the shape POST /api/enginecompare stores verbatim.
  *  Every field here is validated engine-side too - this only has to be
  *  well-formed, not trusted. */
@@ -226,8 +310,7 @@ export const buildMultiwayConfig = (view: MultiwayView): Record<string, unknown>
     // the sampled core can express. A sampled "iteration" is one dealt
     // hand, not one exact tree pass, hence the per-family checkpoint
     // cadence.
-    algorithm:
-      view.players >= 4 || view.teamSeats.length === 2
+    algorithm: isSampledCore(view)
         ? {
             family: "sampled",
             sampled: {
@@ -265,8 +348,7 @@ export const buildMultiwayConfig = (view: MultiwayView): Record<string, unknown>
       // best-response pass over the factorized evaluator (~38 s at 500
       // boards), and targets cannot stop a 4+ seat sampled solve anyway,
       // so mid-solve checkpoints would only multiply the measuring cost.
-      checkpoint_every:
-        view.players >= 4 || view.teamSeats.length === 2 ? num(view.maxIterations) : 25,
+      checkpoint_every: isSampledCore(view) ? num(view.maxIterations) : 25,
     },
     memory_limit_gb: 12,
     threads: 0,

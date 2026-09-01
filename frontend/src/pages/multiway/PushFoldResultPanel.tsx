@@ -24,7 +24,15 @@ import {
 const chip =
   "rounded-full border border-slate-700 bg-slate-800/70 px-2 py-0.5 text-[10px] text-slate-300";
 
-const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
+const PushFoldResultPanel = ({
+  dump,
+  className = "",
+}: {
+  dump: PushFoldDump;
+  /** The page hands this a definite height. Everything below is sized from
+   *  it - see the grid wrapper's comment. */
+  className?: string;
+}) => {
   const [path, setPath] = useState<number[]>([]);
   // Conditioned viewer: the partner hand class the team charts are
   // conditioned on; null = the partner-averaged marginal.
@@ -67,15 +75,19 @@ const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
   const actorName = node?.actor != null ? seats[node.actor] ?? `P${node.actor}` : null;
 
   return (
-    <section className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+    <section
+      className={`flex flex-col gap-2 rounded-xl border border-slate-800 bg-slate-900/40 p-3 ${className}`}
+    >
       {/* What spot this actually is, read off the artifact rather than the
-          builder above it. Loading a past solve leaves the builder showing
-          whatever was last typed, so a panel that did not name its own spot
-          would be quietly ambiguous. */}
-      {spot && <p className="text-[11px] text-slate-300">{spot}</p>}
+          builder. Opening a past solve now moves the builder onto it too
+          (MultiwaySolver's loadResult -> viewFromDump), so this line and the
+          table agree; it is still stated here because the artifact is the
+          authority on its own spot, and a chart that cannot name its blinds
+          and stacks is not much of a chart. */}
+      {spot && <p className="shrink-0 text-[11px] text-slate-300">{spot}</p>}
 
       {/* Per-seat root EV, which is what the whole solve is for. */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
         <span className="text-xs font-semibold text-slate-200">Root EV</span>
         {seats.map((name, i) => {
           const ev = meta.ev_chips?.[i] ?? 0;
@@ -141,7 +153,7 @@ const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
       </div>
 
       {/* Breadcrumb: the line that led to the node on screen. */}
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5">
         <button
           type="button"
           onClick={() => setPath([])}
@@ -161,9 +173,21 @@ const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
         ))}
       </div>
 
+      {/* The chart and its notes side by side from lg up - the same breakpoint
+          at which the page becomes a fixed-height workbench, and therefore
+          exactly where bounding the grid by HEIGHT (below) hands back most of
+          the pane's width. The caveats are what should have that width:
+          stacked underneath they were the reason the panel ran a full screen
+          past the fold.
+          Every min-h-0/flex-1 here is lg-and-up on purpose: they exist to
+          DIVIDE a fixed height, and below lg there is none to divide. Applied
+          unconditionally they let this column shrink under its own grid, which
+          then paints over the notes. */}
+      <div className="flex flex-col gap-3 lg:min-h-0 lg:flex-1 lg:flex-row">
+        <div className="flex flex-col gap-1.5 lg:min-h-0 lg:flex-1">
       {node && node.kind === "decision" ? (
         <>
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div className="flex shrink-0 flex-wrap items-baseline justify-between gap-2">
             <span className="text-xs font-semibold text-slate-200">
               {actorName} {steps.length === 0 ? "opens" : "decides"} · pot {node.pot}
             </span>
@@ -172,7 +196,7 @@ const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
             </span>
           </div>
           {teamRollup && (
-            <div className="mb-1 flex flex-wrap items-center gap-2">
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
               <span className="text-[10px] uppercase tracking-wide text-slate-500">
                 {seats[teamRollup.partner] ?? teamRollup.partner} holds
               </span>
@@ -208,8 +232,21 @@ const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
               </span>
             </div>
           )}
-          <DecisionMatrix gridData={grid} heightMode="full" />
-          <div className="flex flex-wrap gap-2">
+          {/* DecisionMatrix is w-full aspect-square and its className cannot
+              be overridden through the spread, so the only way to bound it by
+              height is a wrapper whose width comes FROM its height - the same
+              trick /compare uses. Without it the grid takes the pane's full
+              width and runs hundreds of pixels below the fold.
+              Only from lg, though: that is where the page becomes a
+              fixed-height workbench. Below it the page scrolls and there is no
+              height budget to divide, so a height-driven square would collapse
+              to a few unreadable pixels - the grid stays width-driven there. */}
+          <div className="flex justify-center lg:min-h-0 lg:flex-1">
+            <div className="w-full lg:aspect-square lg:h-full lg:w-auto lg:max-w-full">
+              <DecisionMatrix gridData={grid} heightMode="full" />
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
             {labels.map((label, i) => {
               const child = dump.nodes[String((node.first_child ?? 0) + i)];
               const leaf = child?.kind !== "decision";
@@ -236,17 +273,20 @@ const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
           </div>
         </>
       ) : (
-        <p className="px-2 py-6 text-center text-[11px] text-slate-500">
+        <p className="flex items-center justify-center px-2 py-6 text-center text-[11px] text-slate-500 lg:min-h-0 lg:flex-1">
           {node?.terminal === "showdown"
             ? "Everyone left is all-in - the hand runs out from here."
             : "Everyone else folded, so the hand is over."}{" "}
           Step back up the line to see another decision.
         </p>
       )}
+        </div>
 
-      {/* The caveats, on screen rather than only in the artifact. A chart that
-          does not say what it approximated is a chart nobody can check. */}
-      <ul className="border-t border-slate-800 pt-2 text-[10px] leading-relaxed text-slate-500">
+        {/* The caveats, on screen rather than only in the artifact. A chart
+            that does not say what it approximated is a chart nobody can
+            check - so this is a rail beside the grid, not a block under it,
+            and it scrolls itself rather than growing the panel. */}
+        <ul className="shrink-0 border-t border-slate-800 pt-2 text-[10px] leading-relaxed text-slate-500 lg:w-[16rem] lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:pl-3 lg:pt-0 xl:w-[20rem]">
         {meta.board_sample && (
           <li>
             Board runouts: {meta.board_sample.pair_count.toLocaleString()} sampled for the exact
@@ -292,7 +332,8 @@ const PushFoldResultPanel = ({ dump }: { dump: PushFoldDump }) => {
             aggregation, not bucketing.
           </li>
         )}
-      </ul>
+        </ul>
+      </div>
     </section>
   );
 };
