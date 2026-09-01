@@ -100,6 +100,12 @@ export interface MultiwayView {
   seed: string;
   accuracy: string; // target exploitability, chips
   maxIterations: string;
+  /** Sampled-core batch size. Empty = derived from maxIterations (see
+   *  buildMultiwayConfig). Pinned when a past solve is loaded, because the
+   *  batch is part of the solve's IDENTITY - a checkpoint refuses a config
+   *  whose batch moved - and the thing you change to continue a solve is
+   *  exactly the budget the derivation reads. */
+  batch: string;
 }
 
 /** The short-term target spot: 4-way, blinds 1/2, 20 chips (10bb) each. */
@@ -125,6 +131,7 @@ export const DEFAULT_VIEW: MultiwayView = {
   // High enough for the sampled family (one deal per iteration); the
   // vectorized 2-3 seat solves stop on the accuracy target long before it.
   maxIterations: "200000",
+  batch: "",
 };
 
 /** Grow or shrink the per-seat arrays when the player count changes, keeping
@@ -177,6 +184,9 @@ export const validate = (view: MultiwayView): string[] => {
   if (!(num(view.maxIterations) >= 1)) issues.push("Max iterations must be at least 1.");
   if (view.baselineIterations.trim() !== "" && !(num(view.baselineIterations) >= 1)) {
     issues.push("Baseline iterations must be at least 1 (or left empty for = max).");
+  }
+  if (view.batch.trim() !== "" && !(num(view.batch) >= 1)) {
+    issues.push("Batch must be at least 1.");
   }
   if (view.solveId.trim() !== "" && !/^[A-Za-z0-9._-]{1,64}$/.test(view.solveId.trim())) {
     issues.push("Solve ID may only use letters, digits, '-', '_' and '.', up to 64 characters.");
@@ -288,6 +298,12 @@ export const viewFromDump = (
     // it was asked for, and restoring the smaller number would silently shrink
     // the budget of a re-solve from this spot.
     maxIterations: String(meta.requested_iterations ?? meta.iterations ?? base.maxIterations),
+    // The batch travels with the solve, not with the budget. It is part of
+    // config_solve_key, so a re-solve that re-derived it from a smaller
+    // budget would cross the 10M threshold downwards, fail the checkpoint's
+    // spot check, and silently restart a long solve from zero - which is
+    // exactly what "load it, raise the budget, solve" would have done.
+    batch: meta.sampled?.batch != null ? String(meta.sampled.batch) : base.batch,
   };
 };
 
@@ -340,7 +356,13 @@ export const buildMultiwayConfig = (view: MultiwayView): Record<string, unknown>
               // budgets a small batch spends minutes on synchronization
               // alone. Larger batches only coarsen the linear-discount
               // granularity, which is negligible at that scale.
-              batch: num(view.maxIterations) >= 10_000_000 ? 8192 : 1024,
+              // A pinned batch wins: it came from the solve being continued,
+              // and re-deriving it would silently fork a new lineage.
+              batch: num(view.batch) >= 1
+                  ? num(view.batch)
+                  : num(view.maxIterations) >= 10_000_000
+                    ? 8192
+                    : 1024,
               lanes: 16,
             },
           }

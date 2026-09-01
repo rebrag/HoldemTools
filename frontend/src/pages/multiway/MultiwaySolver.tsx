@@ -287,6 +287,12 @@ const MultiwaySolver = () => {
   const solve = useCallback(async () => {
     setError(null);
     setDump(null);
+    // Drop the PREVIOUS job before the new one exists. Without this the
+    // status line reads the finished job for the second or two the create
+    // takes - "Cancelled · 0s" on a solve that is starting - and, because
+    // that status is terminal, it hides the Stop button on the run that has
+    // just begun.
+    setJob(null);
     setSolving(true);
     setElapsed(0);
     const started = Date.now();
