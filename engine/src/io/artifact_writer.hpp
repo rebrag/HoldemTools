@@ -22,6 +22,11 @@ struct SolveStats {
   std::vector<int> team_seats;             // the hand-sharing pair
   std::string awareness;                   // "aware" | "unaware" | ""
   std::vector<double> baseline_ev_chips;   // unaware: the frozen no-team reference EVs
+  // Iterations phase 1 ACTUALLY ran. Reported separately from `iterations`
+  // (which is the team phase) because the two are independent budgets and
+  // phase 1 can stop early on the time budget - the requested number in
+  // config.agents.baseline_iterations would then be a lie.
+  std::uint64_t baseline_iterations = 0;
   bool nashconv_valid = true;              // false when nashconv is not a meaningful measure
   // Why the loop ended, when it was not "ran the whole budget": currently
   // only "time_budget" (budget.max_seconds expired). Stamped into metadata

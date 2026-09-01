@@ -597,6 +597,7 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
     team["ev_chips"] = team_ev;
     if (!stats.baseline_ev_chips.empty()) {
       team["baseline_ev_chips"] = stats.baseline_ev_chips;
+      team["baseline_iterations"] = stats.baseline_iterations;
       double base_team = 0.0;
       for (int q : stats.team_seats) {
         base_team += stats.baseline_ev_chips[static_cast<std::size_t>(q)];

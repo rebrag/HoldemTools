@@ -138,6 +138,7 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
           break;
         }
       }
+      stats.baseline_iterations = baseline->iteration();
       stats.baseline_ev_chips = baseline->sampled_ev(kEvDeals, ev_seed);
       std::cout << "baseline ev";
       for (double ev : stats.baseline_ev_chips) std::cout << " " << ev;

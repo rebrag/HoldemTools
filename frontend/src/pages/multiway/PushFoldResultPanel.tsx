@@ -16,7 +16,9 @@ import {
   actionPct,
   CLASS_NAMES,
   conditionedGridFor,
+  fmtCount,
   gridFor,
+  settingsRows,
   walkLine,
   type PushFoldDump,
 } from "./pushfoldResult";
@@ -70,6 +72,7 @@ const PushFoldResultPanel = ({
     }
     return gridFor(node);
   }, [node, teamRollup, partnerClass]);
+  const rows = useMemo(() => settingsRows(meta), [meta]);
   const labels = node && node.kind === "decision" ? actionLabels(node) : [];
   const jamPct = node && node.kind === "decision" ? actionPct(node, "ALLIN") : 0;
   const actorName = node?.actor != null ? seats[node.actor] ?? `P${node.actor}` : null;
@@ -135,7 +138,25 @@ const PushFoldResultPanel = ({
             · {meta.team.awareness}
           </span>
         )}
-        <span className={chip}>{meta.iterations} iters</span>
+        {/* With a team this count is the TEAM phase only, and the baseline is
+            a separate budget - saying just "N iters" made the two
+            indistinguishable on a finished solve. */}
+        <span
+          className={chip}
+          title={
+            meta.team
+              ? "Iterations of the team phase (phase 2). The baseline phase is budgeted separately - see Settings below."
+              : "Iterations completed."
+          }
+        >
+          {fmtCount(meta.iterations)} {meta.team ? "team iters" : "iters"}
+          {meta.team?.baseline_iterations != null && (
+            <span className="text-slate-500">
+              {" "}
+              · {fmtCount(meta.team.baseline_iterations)} baseline
+            </span>
+          )}
+        </span>
         {meta.stopped_reason === "time_budget" && (
           <span
             className={`${chip} border-sky-800 text-sky-300`}
@@ -334,6 +355,41 @@ const PushFoldResultPanel = ({
         )}
         </ul>
       </div>
+
+      {/* Everything the solve actually ran with. Read from the artifact's own
+          config rather than the builder: opening a past solve must show what
+          THAT solve used, and the builder has since been edited. Collapsed by
+          default - it answers a question you only ask sometimes, but when you
+          ask it you want all of it, hence the raw config underneath the
+          readable rows. */}
+      <details className="border-t border-slate-800 pt-2">
+        <summary className="cursor-pointer text-[11px] text-slate-400 hover:text-slate-200">
+          Settings used
+        </summary>
+        <dl className="mt-2 grid grid-cols-[minmax(9rem,auto)_1fr] gap-x-3 gap-y-1 text-[10px]">
+          {rows.map((row) => (
+            <div key={row.label} className="contents">
+              <dt className="text-slate-500">{row.label}</dt>
+              {/* break-all, or the 64-char config hash makes the whole panel
+                  scroll sideways. */}
+              <dd className="min-w-0 break-all tabular-nums text-slate-300">
+                {row.value}
+                {row.note && <span className="ml-1.5 text-slate-500">({row.note})</span>}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        {meta.config && (
+          <details className="mt-2">
+            <summary className="cursor-pointer text-[10px] text-slate-500 hover:text-slate-300">
+              Raw engine config
+            </summary>
+            <pre className="mt-1 max-h-64 overflow-auto rounded border border-slate-800 bg-slate-950/60 p-2 text-[10px] leading-relaxed text-slate-400">
+              {JSON.stringify(meta.config, null, 2)}
+            </pre>
+          </details>
+        )}
+      </details>
     </section>
   );
 };
