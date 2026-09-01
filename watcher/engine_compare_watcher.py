@@ -421,6 +421,13 @@ def main() -> int:
               f"or set ENGINE_EXE")
         return 2
     log(f"engine compare watcher up (engine={ENGINE_EXE}, api={_base()})")
+    # Whether solves are resumable changes what re-queuing a job MEANS, so it
+    # belongs in the startup banner rather than being inferred from behaviour.
+    if CHECKPOINT_DIR:
+        log(f"  checkpoints ON ({CHECKPOINT_DIR}) - a re-queued job continues from its "
+            f"checkpoint; budget.iterations is a total")
+    else:
+        log("  checkpoints off (set ENGINE_CHECKPOINT_DIR to make solves resumable)")
 
     while True:
         job = claim()
