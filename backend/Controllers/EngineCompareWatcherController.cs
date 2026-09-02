@@ -175,6 +175,17 @@ namespace PokerRangeAPI2.Controllers
                     .ToListAsync();
                 if (superseded.Count > 0)
                 {
+                    // A saved group holds "this solve", not "this run of it":
+                    // every slot pointing at a superseded row moves to the
+                    // result that replaces it. Saved before the rows go, so
+                    // the job-side cascade never sees a slot to delete.
+                    var oldIds = superseded.Select(o => o.Id).ToList();
+                    var slots = await _db.SolveGroupMembers
+                        .Where(m => oldIds.Contains(m.JobId))
+                        .ToListAsync();
+                    foreach (var slot in slots) slot.JobId = job.Id;
+                    if (slots.Count > 0) await _db.SaveChangesAsync();
+
                     var container = EngineCompareJobBlobs.Container(_config);
                     foreach (var old in superseded)
                     {

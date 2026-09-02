@@ -88,11 +88,20 @@ namespace PokerRangeAPI2.Controllers
             public string? SolveKey { get; set; }
             public long? Iterations { get; set; }
 
+            /// <summary>The spot a push/fold job solved, read out of its
+            /// stored config: seats, stacks, blinds, button, team. What a list
+            /// of "4-way · Done" rows needs to tell them apart. Null for other
+            /// modes and for a config the summary cannot read.</summary>
+            public PushFoldSpotSummary? Spot { get; set; }
+
             public static JobDto From(EngineCompareJob job) => new()
             {
                 Id = job.Id,
                 Mode = job.Mode,
                 Board = job.Board,
+                Spot = job.Mode == EngineCompareJobMode.PushFold
+                    ? PushFoldSpotSummary.Parse(job.ConfigJson)
+                    : null,
                 Status = job.Status,
                 Error = job.Error,
                 ResultStacks = job.ResultStacks,
@@ -208,15 +217,20 @@ namespace PokerRangeAPI2.Controllers
             return Ok(JobDto.From(job));
         }
 
-        // GET api/enginecompare - the caller's recent jobs, newest first.
+        // GET api/enginecompare?mode=pushfold - the caller's recent jobs,
+        // newest first. The mode filter is applied BEFORE the limit, so a
+        // page that wants its own hundred rows gets a hundred of its own
+        // rather than a hundred shared with the other engine page.
         [HttpGet]
-        public async Task<ActionResult<JobDto[]>> List([FromQuery] int limit = 30)
+        public async Task<ActionResult<JobDto[]>> List([FromQuery] int limit = 30,
+                                                       [FromQuery] string? mode = null)
         {
             var uid = this.CurrentUid();
             if (string.IsNullOrWhiteSpace(uid)) return Unauthorized();
             limit = Math.Clamp(limit, 1, 100);
-            var jobs = await _db.EngineCompareJobs
-                .Where(j => j.UserId == uid)
+            var query = _db.EngineCompareJobs.Where(j => j.UserId == uid);
+            if (!string.IsNullOrWhiteSpace(mode)) query = query.Where(j => j.Mode == mode);
+            var jobs = await query
                 .OrderByDescending(j => j.CreatedAtUtc)
                 .Take(limit)
                 .ToListAsync();

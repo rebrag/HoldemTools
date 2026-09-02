@@ -21,9 +21,25 @@ import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import { authedFetch } from "@/lib/api";
 import MultiwayTreeBuilder from "./MultiwayTreeBuilder";
 import PushFoldResultPanel from "./PushFoldResultPanel";
-import SessionSimulator, { type SimulatorJob } from "./SessionSimulator";
+import SessionSimulator, {
+  type SessionSimulatorHandle,
+  type SimulatorJob,
+} from "./SessionSimulator";
+import SolvesDrawer, { PhaseBadge } from "./SolvesDrawer";
+import {
+  ago,
+  HAS_RESULT,
+  isFinished,
+  isOpenable,
+  jobTime,
+  STATUS_TONE,
+  TERMINAL,
+  type CompareJob,
+} from "./compareJob";
 import { fetchPushFoldDump } from "./fetchPushFoldDump";
 import type { PushFoldDump } from "./pushfoldResult";
+import { jobLabel, spotKey, spotShort, spotTitle } from "./solveIdentity";
+import { useSolveGroups } from "./useSolveGroups";
 import {
   baselineViewFromDump,
   DEFAULT_VIEW,
@@ -38,63 +54,11 @@ import {
   type MultiwayView,
 } from "./multiwayView";
 
-type JobStatus =
-  | "Queued"
-  | "Claimed"
-  | "Running"
-  | "Uploading"
-  | "Done"
-  | "Failed"
-  | "Cancelled";
-interface CompareJob {
-  id: string;
-  mode?: string;
-  board?: string | null;
-  status: JobStatus;
-  error?: string | null;
-  hasHtResult?: boolean;
-  createdAtUtc?: string;
-  completedAtUtc?: string | null;
-  /* Set the moment Stop is pressed, while the job is still active. The solve
-   * does not end here - the watcher asks the engine to stop cleanly and the
-   * partial result is still uploaded - so this is what "Stopping" is read
-   * from, and the row keeps its real status until that lands. */
-  cancelRequestedAtUtc?: string | null;
-  /* The result's lineage and how far it got, as the watcher reported it (or
-   * as the page backfilled it from the artifact). What lets a lineage be
-   * opened by id - a team's baseline, say - without queueing anything. */
-  solveId?: string | null;
-  solveKey?: string | null;
-  iterations?: number | null;
-}
-
-const ago = (iso?: string | null): string => {
-  if (!iso) return "";
-  const ms = Date.now() - new Date(iso).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return "";
-  if (ms < 60_000) return "just now";
-  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
-  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
-  return `${Math.floor(ms / 86_400_000)}d ago`;
-};
-
-const STATUS_TONE: Record<JobStatus, string> = {
-  Queued: "text-slate-400",
-  Claimed: "text-slate-300",
-  Running: "text-sky-300",
-  Uploading: "text-sky-300",
-  Done: "text-emerald-400",
-  Failed: "text-red-400",
-  /* Amber, not red: a stopped solve normally still has a chart to open, and
-   * colouring it like a failure would say the opposite. */
-  Cancelled: "text-amber-300",
-};
-
-const TERMINAL: JobStatus[] = ["Done", "Failed", "Cancelled"];
-/* A stopped solve keeps whatever it had solved, so these open like any other
- * result. Failed is the only status with nothing behind it. */
-const HAS_RESULT: JobStatus[] = ["Done", "Cancelled"];
 const POLL_MS = 3000;
+/* The strip shows this many of the newest solves; the rest are one click
+ * away in the Solves drawer, which has the room to tell them apart. A strip
+ * that scrolled through all of them hid most behind an invisible scrollbar. */
+const RECENT_STRIP = 8;
 
 const MultiwaySolver = () => {
   const [view, setView] = useState<MultiwayView>(DEFAULT_VIEW);
@@ -114,7 +78,12 @@ const MultiwaySolver = () => {
    * building a tree is what you came for. loadResult closes it once there is
    * a chart, so a solve ends on its answer rather than behind the form. */
   const [builderOpen, setBuilderOpen] = useState(true);
+  const [solvesOpen, setSolvesOpen] = useState(false);
   const cancelled = useRef(false);
+  const simulator = useRef<SessionSimulatorHandle>(null);
+  /* Saved rotations, shared by the Solves drawer (rename, delete, simulate)
+   * and the simulator (load, save) so each sees the other's changes. */
+  const solveGroups = useSolveGroups();
 
   /* Re-arm on mount, not just disarm on unmount. StrictMode mounts, unmounts
    * and remounts every effect in development, so a cleanup-only version sets
@@ -139,16 +108,16 @@ const MultiwaySolver = () => {
     [view.players, view.button]
   );
   const issues = useMemo(() => validate(view), [view]);
-  /* Rows the simulator can add: finished with a result, labelled the way
-   * Recent reads them (solve id where the row has one). */
+  /* Rows the simulator can add: finished with a result, described the way
+   * every list on this page describes a solve (phase, team, spot, depth). */
   const simulatorJobs = useMemo<SimulatorJob[]>(
     () =>
-      jobs
-        .filter((j) => HAS_RESULT.includes(j.status) && j.hasHtResult !== false)
-        .map((j) => ({
-          id: j.id,
-          label: `${j.solveId ?? j.id.slice(0, 8)} · ${j.board || "preflop"} · ${ago(j.completedAtUtc ?? j.createdAtUtc)}`,
-        })),
+      jobs.filter(isOpenable).map((j) => ({
+        id: j.id,
+        label: jobLabel(j),
+        spotKey: spotKey(j.spot),
+        spotTitle: j.spot ? spotTitle(j.spot) : "Other",
+      })),
     [jobs]
   );
   /* The job this page is driving, mid-stop: Stop was accepted but the solve
@@ -223,7 +192,7 @@ const MultiwaySolver = () => {
    * same endpoint carries /compare's postflop jobs. */
   const refreshJobs = useCallback(async () => {
     try {
-      const resp = await authedFetch("/api/enginecompare?limit=50");
+      const resp = await authedFetch("/api/enginecompare?limit=100&mode=pushfold");
       if (!resp.ok) return;
       const all = (await resp.json()) as CompareJob[];
       setJobs(all.filter((j) => j.mode === "pushfold"));
@@ -447,9 +416,13 @@ const MultiwaySolver = () => {
 
         <div className="ml-auto flex items-center gap-2">
           <SessionSimulator
+            ref={simulator}
             jobs={simulatorJobs}
             fetchDump={fetchPushFoldDump}
             current={dump && viewingId ? { id: viewingId, dump } : null}
+            groups={solveGroups.groups}
+            onCreateGroup={solveGroups.create}
+            onUpdateGroup={solveGroups.update}
           />
           <button
             type="button"
@@ -466,11 +439,28 @@ const MultiwaySolver = () => {
           charts - and a list inside a drawer would be unreachable from here.
           One line that scrolls, rather than a block that wraps. */}
       {jobs.length > 0 && (
-        <div className="no-scrollbar flex shrink-0 items-center gap-1.5 overflow-x-auto">
+        <div className="flex shrink-0 items-center gap-1.5">
+          {/* Pinned outside the scroller: the way to the rest of the library
+              has to be on screen whatever the strip is scrolled to. */}
+          <button
+            type="button"
+            onClick={() => setSolvesOpen(true)}
+            className="shrink-0 rounded-md border border-slate-700 px-2 py-0.5 text-[11px] font-medium text-slate-300 transition-colors hover:border-emerald-600 hover:text-emerald-300"
+            title="Every solve, sectioned by spot, with your saved groups"
+          >
+            All solves
+            <span className="ml-1 tabular-nums text-slate-500">{jobs.length}</span>
+            {solveGroups.groups.length > 0 && (
+              <span className="ml-1 text-slate-500">
+                · {solveGroups.groups.length} {solveGroups.groups.length === 1 ? "group" : "groups"}
+              </span>
+            )}
+          </button>
+          <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
           <span className="shrink-0 text-[11px] font-medium text-slate-500">Recent</span>
-          {jobs.map((j) => {
-            const openable = HAS_RESULT.includes(j.status) && j.hasHtResult !== false;
-            const finished = TERMINAL.includes(j.status);
+          {jobs.slice(0, RECENT_STRIP).map((j) => {
+            const openable = isOpenable(j);
+            const finished = isFinished(j);
             /* Accepted here, or already recorded by the server. */
             const stopping = cancelling.has(j.id) || !!j.cancelRequestedAtUtc;
             return (
@@ -488,25 +478,31 @@ const MultiwaySolver = () => {
                   type="button"
                   disabled={!openable}
                   onClick={() => void openJob(j.id)}
-                  title={j.error ?? (openable ? "Load this solve" : j.status)}
+                  title={[
+                    j.error ?? (openable ? "Load this solve" : j.status),
+                    j.spot ? spotTitle(j.spot) : null,
+                    /* The lineage, because one id keeps one result: the row
+                       IS that solve, not one run of it. */
+                    j.solveId ? `solve ${j.solveId}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join("\n")}
                   className={`flex items-center gap-2 whitespace-nowrap px-2 py-0.5 text-[11px] transition-colors ${
                     openable
                       ? "text-slate-200 hover:bg-emerald-500/10"
                       : "cursor-not-allowed text-slate-500"
                   }`}
                 >
-                  <span className="font-medium">{j.board || "preflop"}</span>
-                  <span className="tabular-nums text-slate-500">
-                    {ago(j.completedAtUtc ?? j.createdAtUtc)}
+                  {/* Phase and team first: with every row of one spot reading
+                      "4-way", these are what tell the chips apart. */}
+                  <PhaseBadge spot={j.spot} />
+                  <span className="font-medium">
+                    {j.spot ? spotShort(j.spot) : j.board || "preflop"}
                   </span>
+                  <span className="tabular-nums text-slate-500">{ago(jobTime(j))}</span>
                   <span className={STATUS_TONE[j.status]}>
                     {!finished && stopping ? "Stopping" : j.status}
                   </span>
-                  {/* The lineage, because one id now keeps one result: the
-                      row IS that solve, not one run of it. */}
-                  {j.solveId && (
-                    <span className="font-mono text-[10px] text-slate-500">{j.solveId}</span>
-                  )}
                 </button>
                 {/* One slot, two jobs, because a row is only ever in one of
                     the two states: a running solve can be stopped, a finished
@@ -576,8 +572,40 @@ const MultiwaySolver = () => {
           >
             Refresh
           </button>
+          </div>
         </div>
       )}
+
+      <SolvesDrawer
+        open={solvesOpen}
+        onClose={() => setSolvesOpen(false)}
+        jobs={jobs}
+        viewingId={viewingId}
+        cancelling={cancelling}
+        actions={{
+          onOpen: (id) => {
+            setSolvesOpen(false);
+            void openJob(id);
+          },
+          onStop: (id) => void cancelJob(id),
+          onDelete: (id) => void deleteJob(id),
+        }}
+        onRefresh={() => {
+          void refreshJobs();
+          void solveGroups.refresh();
+        }}
+        groups={solveGroups.groups}
+        groupsError={solveGroups.error}
+        onSimulateGroup={(id) => {
+          setSolvesOpen(false);
+          simulator.current?.loadGroup(id);
+        }}
+        onRenameGroup={async (id, name) => {
+          const g = solveGroups.groups.find((x) => x.id === id);
+          if (g) await solveGroups.update(id, name, g.jobIds);
+        }}
+        onDeleteGroup={solveGroups.remove}
+      />
 
       {/* A queued job outlives the drawer, so its status has to live on the
           page too - closing the builder must not look like it stopped. */}

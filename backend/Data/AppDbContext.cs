@@ -31,6 +31,10 @@ namespace PokerRangeAPI2.Data
 
         public DbSet<SavedTree> SavedTrees { get; set; } = default!;
 
+        public DbSet<SolveGroup> SolveGroups { get; set; } = default!;
+
+        public DbSet<SolveGroupMember> SolveGroupMembers { get; set; } = default!;
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -228,6 +232,39 @@ namespace PokerRangeAPI2.Data
                     .WithMany()
                     .HasForeignKey(e => e.FolderId)
                     .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // Saved rotations for the /multiway session simulator. A member is
+            // its own row so the job reference is a real foreign key - see the
+            // model for why groups point at jobs rather than at solve ids.
+            modelBuilder.Entity<SolveGroup>(entity =>
+            {
+                entity.Property(e => e.UserId).HasMaxLength(128);
+                entity.Property(e => e.Name).HasMaxLength(100);
+
+                // The only query shape is "all my groups".
+                entity.HasIndex(e => e.UserId);
+
+                entity.HasMany(e => e.Members)
+                    .WithOne()
+                    .HasForeignKey(m => m.GroupId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<SolveGroupMember>(entity =>
+            {
+                // A deleted job leaves every group it was in, by cascade: a
+                // slot pointing at nothing has no result to play. Superseding
+                // (the newer result of the same lineage) re-points the slot
+                // instead, in the watcher's report handler.
+                entity.HasOne<EngineCompareJob>()
+                    .WithMany()
+                    .HasForeignKey(m => m.JobId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                // Drives both "re-point every slot holding this job" and the
+                // job-side cascade.
+                entity.HasIndex(e => e.JobId);
             });
 
             modelBuilder.Entity<HiddenSolution>(entity =>
