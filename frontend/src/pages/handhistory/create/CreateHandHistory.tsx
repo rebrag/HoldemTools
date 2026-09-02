@@ -561,11 +561,11 @@ const CreateHandHistory: React.FC<Props> = ({
           ...s,
           occupied: row.occupied,
           name: row.name,
-          // Quick setup edits plain text: renaming a seat there breaks the
-          // player link (the text no longer denotes that identity), while an
-          // untouched name keeps it.
-          playerId:
-            row.occupied && row.name.trim() === s.name.trim() ? s.playerId : undefined,
+          // The drawer's name field is the same PlayerCombobox as the seat
+          // panel, so the row already carries the link's whole truth: picking
+          // a player sets it, typing over the name clears it. An emptied seat
+          // keeps nobody's identity.
+          playerId: row.occupied ? row.playerId : undefined,
           stack: row.stack,
           holeCards: row.occupied ? s.holeCards : s.holeCards.map(() => null),
         };
