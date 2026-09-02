@@ -1,101 +1,90 @@
 // src/pages/handhistory/handFilters.ts
 // Filter state + predicate for the hand-history list. All filtering is
 // client-side over the already-fetched rows: structured facts come from the
-// LRU-memoized summaryFromRawText (one engine fold per hand, ever), and
-// session attributes (location / stakes) come from the linked bankroll
-// session, matching the HandHistory model's design note.
-import type { BankrollSession } from "@/pages/bankroll/types";
-import type { CommonFilterState } from "@/components/filters/types";
-import { parseDateBound } from "@/components/filters/dateBounds";
+// LRU-memoized summaryFromRawText (one engine fold per hand, ever).
+//
+// Deliberately NOT an extension of CommonFilterState: the hand list filters on
+// what happened IN the hand (who was dealt in, what they did, whose cards are
+// known), not on the session it belongs to. Location / stakes / date range
+// live on the bankroll tool, which is where a session-attribute question
+// actually belongs; a hand found there drills through to its session anyway.
 import { summaryFromRawText } from "./create/replay";
 import type { ToolRow } from "./types";
 
-export interface HandFilterState extends CommonFilterState {
-  /** Players-row Guid; "" = any player. Matches hands whose payload links a
-   *  seat to this player. Legacy hands (no payload / no links) never match. */
-  playerId: string;
-  /** With playerId: only hands where that player saw the flop. */
+export interface HandFilterState {
+  /** Players-row Guids; empty = any player. A hand matches when ANY of them
+   *  was dealt in (OR), which is how "show me the hands with these regs in
+   *  them" reads. Legacy hands (no payload / no links) never match. */
+  playerIds: string[];
+  /** With playerIds: the matching player saw the flop. */
   playerSawFlop: boolean;
-  /** With playerId: only hands where that player's hole cards were recorded. */
+  /** With playerIds: the matching player's hole cards were recorded. */
   playerShowed: boolean;
+  /** Only hands where at least one seat's hole cards were recorded - the
+   *  hands worth reviewing, as opposed to a fold-out with nothing shown. */
+  anyKnownCards: boolean;
 }
 
 export const HAND_FILTERS_KEY = "ht_handfilters_v1";
 
 export const defaultHandFilters: HandFilterState = {
-  location: "",
-  game: "",
-  fromDate: "",
-  toDate: "",
-  playerId: "",
+  playerIds: [],
   playerSawFlop: false,
   playerShowed: false,
+  anyKnownCards: false,
 };
 
 // Tolerant parser for the persisted blob (same contract as bankroll's):
 // anything malformed or missing falls back field-by-field to the default.
+// A blob written before the multi-select landed carries a single `playerId`;
+// it is read as a one-element selection rather than dropped, so a saved filter
+// survives the upgrade.
 export function parseHandFiltersOrDefault(raw: string): HandFilterState {
   const v: unknown = JSON.parse(raw);
   if (typeof v !== "object" || v === null) return defaultHandFilters;
   const o = v as Record<string, unknown>;
-  const str = (k: keyof HandFilterState): string =>
-    typeof o[k] === "string" ? (o[k] as string) : "";
   const bool = (k: keyof HandFilterState): boolean => o[k] === true;
+  const ids = Array.isArray(o.playerIds)
+    ? o.playerIds.filter((id): id is string => typeof id === "string" && !!id)
+    : typeof o.playerId === "string" && o.playerId
+      ? [o.playerId]
+      : [];
   return {
-    location: str("location"),
-    game: str("game"),
-    fromDate: str("fromDate"),
-    toDate: str("toDate"),
-    playerId: str("playerId"),
+    playerIds: ids,
     playerSawFlop: bool("playerSawFlop"),
     playerShowed: bool("playerShowed"),
+    anyKnownCards: bool("anyKnownCards"),
   };
 }
 
 export function isFiltering(f: HandFilterState): boolean {
-  return (
-    !!f.location ||
-    !!f.game ||
-    !!f.fromDate ||
-    !!f.toDate ||
-    !!f.playerId
-    // playerSawFlop / playerShowed alone filter nothing (they qualify
-    // playerId, which is already counted above).
-  );
+  return f.playerIds.length > 0 || f.anyKnownCards;
+  // playerSawFlop / playerShowed alone filter nothing (they qualify
+  // playerIds, which is already counted above).
 }
 
-export function rowMatches(
-  row: ToolRow,
-  f: HandFilterState,
-  sessionsById: Map<string, BankrollSession>
-): boolean {
-  // Location / stakes live on the linked session; an unlinked hand can't
-  // satisfy either filter when it's set.
-  if (f.location || f.game) {
-    const session = row.sessionId ? sessionsById.get(row.sessionId) : undefined;
-    if (!session) return false;
-    if (f.location && session.location?.trim() !== f.location) return false;
-    if (f.game && session.blinds?.trim() !== f.game) return false;
-  }
+export function rowMatches(row: ToolRow, f: HandFilterState): boolean {
+  if (f.playerIds.length === 0 && !f.anyKnownCards) return true;
 
-  const fromMs = parseDateBound(f.fromDate, false);
-  const toMs = parseDateBound(f.toDate, true);
-  if (fromMs !== null || toMs !== null) {
-    const t = new Date(row.createdAt).getTime();
-    if (Number.isNaN(t)) return false;
-    if (fromMs !== null && t < fromMs) return false;
-    if (toMs !== null && t > toMs) return false;
-  }
+  // Every remaining filter needs the embedded payload; legacy hands without
+  // one fail them when active (approved scope: no backward compatibility).
+  const summary = summaryFromRawText(row.rawText);
+  if (!summary) return false;
 
-  // Structured filters need the embedded payload; legacy hands without one
-  // fail them when active (approved scope: no backward compatibility).
-  if (f.playerId) {
-    const summary = summaryFromRawText(row.rawText);
-    if (!summary) return false;
-    const fact = summary.seatFacts.find((s) => s.playerId === f.playerId);
-    if (!fact) return false;
-    if (f.playerSawFlop && !fact.sawFlop) return false;
-    if (f.playerShowed && !fact.showedCards) return false;
+  if (f.anyKnownCards && !summary.seatFacts.some((s) => s.showedCards)) return false;
+
+  if (f.playerIds.length > 0) {
+    // OR over the selection, with the qualifiers applied to the SAME seat: a
+    // hand matches when one selected player was dealt in and personally
+    // satisfies whichever qualifiers are on.
+    const hit = summary.seatFacts.some(
+      (s) =>
+        !!s.playerId &&
+        f.playerIds.includes(s.playerId) &&
+        (!f.playerSawFlop || s.sawFlop) &&
+        (!f.playerShowed || s.showedCards)
+    );
+    if (!hit) return false;
   }
 
   return true;

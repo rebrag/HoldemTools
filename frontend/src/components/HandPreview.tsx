@@ -12,7 +12,7 @@ import { CardBack } from "@/components/PokerTable";
 import { usePlayers } from "@/hooks/usePlayers";
 import { summaryFromRawText, stripReplay } from "@/pages/handhistory/create/replay";
 
-const CARD_W = 26;
+const CARD_W = 22;
 // Cards in the fan overlap tightly to keep long rows (boards, PLO hands)
 // narrow in the list; the centred rank+suit stays just clear of the tuck.
 const CARD_OVERLAP = Math.round(CARD_W * 0.3);
@@ -120,7 +120,7 @@ const HandPreview: React.FC<{
                 },
               }
             : {})}
-          className={`flex max-w-[80px] items-center gap-1 ${
+          className={`flex max-w-[72px] items-center gap-1 ${
             live
               ? `-mx-1 -my-1.5 cursor-pointer touch-manipulation rounded-full px-1 py-1.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 ${
                   dark ? "hover:bg-white/10" : "hover:bg-emerald-100/70"
@@ -135,7 +135,7 @@ const HandPreview: React.FC<{
               player={playersById.get(playerId)}
               name={label}
               size="xs"
-              className={`!h-3.5 !w-3.5 ${
+              className={`!h-3 !w-3 ${
                 live ? "transition hover:ring-2 hover:ring-emerald-400/60" : ""
               }`}
             />
@@ -144,7 +144,7 @@ const HandPreview: React.FC<{
             className={
               isHero
                 ? "text-[8px] font-semibold uppercase tracking-wide text-emerald-600"
-                : `min-w-0 truncate text-[9px] font-medium ${muted}`
+                : `min-w-0 truncate text-[8px] font-medium ${muted}`
             }
           >
             {label}
@@ -155,7 +155,7 @@ const HandPreview: React.FC<{
   };
 
   return (
-    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+    <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
       {hero && (
         <PlayerBlock cards={hero.cards} label="Hero" hero playerId={hero.playerId} />
       )}

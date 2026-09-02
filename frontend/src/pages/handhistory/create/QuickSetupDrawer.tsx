@@ -4,6 +4,11 @@
 // straddles) stay in SeatEditorModal - this drawer only covers the fields
 // every seat needs.
 //
+// The name field is the same PlayerCombobox the seat panel uses, so a row can
+// be linked to a Players-table identity (or create one) without leaving the
+// list. It runs with autoHighlight off: Enter belongs to this drawer's
+// focus-walk, so picking a player takes a click or an explicit ArrowDown.
+//
 // Rendered through ResponsiveDrawer (bottom sheet on phones), which the parent
 // keeps mounted and toggles via `open` so the exit animation plays. The shared
 // drawer uses backdrop-blur; unlike SeatEditorModal's full-screen scroll layer
@@ -11,12 +16,16 @@
 // this page by the solve prompt, so the concern doesn't apply here.
 import { useEffect, useRef, useState } from "react";
 import ResponsiveDrawer from "@/components/ResponsiveDrawer";
+import PlayerCombobox from "./PlayerCombobox";
 import { positionLabelsForSeats } from "./positions";
 import type { Seat } from "./types";
 
 export interface QuickSetupRow {
   occupied: boolean;
   name: string;
+  /** Players-table link, when the row was picked (not typed). Carried through
+   *  so applying the drawer preserves the identity the seat panel would set. */
+  playerId?: string;
   stack: string;
 }
 
@@ -29,7 +38,12 @@ interface QuickSetupDrawerProps {
 }
 
 const rowsFromSeats = (seats: Seat[]): QuickSetupRow[] =>
-  seats.map((s) => ({ occupied: s.occupied, name: s.name, stack: s.stack }));
+  seats.map((s) => ({
+    occupied: s.occupied,
+    name: s.name,
+    playerId: s.playerId,
+    stack: s.stack,
+  }));
 
 // Width-agnostic on purpose: each consumer sets its own width so the name and
 // stack inputs never carry two competing width utilities.
@@ -63,6 +77,12 @@ const QuickSetupDrawer: React.FC<QuickSetupDrawerProps> = ({
 
   const setRow = (i: number, partial: Partial<QuickSetupRow>) =>
     setRows((prev) => prev.map((r, k) => (k === i ? { ...r, ...partial } : r)));
+
+  /* Emptying a seat drops its player link too: nobody sits there any more, so
+   * the row no longer denotes that identity (applyQuickSetup enforces the same
+   * invariant on the seat it writes). */
+  const setOccupied = (i: number, occupied: boolean) =>
+    setRow(i, occupied ? { occupied } : { occupied, playerId: undefined });
 
   /* Typing into an empty seat's row seats a player there (same "filled means
    * occupied" spirit as the seat editor); the toggle empties it again. */
@@ -119,7 +139,7 @@ const QuickSetupDrawer: React.FC<QuickSetupDrawerProps> = ({
                 <input
                   type="checkbox"
                   checked={row.occupied}
-                  onChange={(e) => setRow(i, { occupied: e.target.checked })}
+                  onChange={(e) => setOccupied(i, e.target.checked)}
                   aria-label={`Seat ${i + 1} occupied`}
                   className="h-4 w-4 shrink-0 accent-emerald-500"
                 />
@@ -130,22 +150,23 @@ const QuickSetupDrawer: React.FC<QuickSetupDrawerProps> = ({
                 >
                   {labels[i] || `S${i + 1}`}
                 </span>
-                <input
-                  ref={(el) => {
-                    inputRefs.current[i * 2] = el;
-                  }}
-                  type="text"
-                  value={row.name}
-                  disabled={!row.occupied}
-                  placeholder={labels[i] || `Seat ${i + 1}`}
-                  enterKeyHint="next"
-                  onChange={(e) => editRow(i, { name: e.target.value })}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") focusNext(i * 2);
-                  }}
-                  className={`${inputCls} w-full flex-1 min-w-0`}
-                  aria-label={`Seat ${i + 1} name`}
-                />
+                <div className="min-w-0 flex-1">
+                  <PlayerCombobox
+                    name={row.name}
+                    playerId={row.occupied ? row.playerId : undefined}
+                    onChange={(name, playerId) => editRow(i, { name, playerId })}
+                    placeholder={labels[i] || `Seat ${i + 1}`}
+                    fieldClassName={`${inputCls} w-full`}
+                    ariaLabel={`Seat ${i + 1} name`}
+                    disabled={!row.occupied}
+                    enterKeyHint="next"
+                    autoHighlight={false}
+                    inputRef={(el) => {
+                      inputRefs.current[i * 2] = el;
+                    }}
+                    onEnter={() => focusNext(i * 2)}
+                  />
+                </div>
                 <input
                   ref={(el) => {
                     inputRefs.current[i * 2 + 1] = el;

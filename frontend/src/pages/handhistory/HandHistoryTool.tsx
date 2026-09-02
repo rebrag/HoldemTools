@@ -106,9 +106,9 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   const filtering = isFilteringHands(filters);
 
   // A persisted player filter can outlive the player (deleted on the Players
-  // page). Once the roster has loaded, drop the dangling id - otherwise the
-  // filter silently blanks the list with no chip to explain why (the select
-  // can't even display the selection any more).
+  // page). Once the roster has loaded, drop the dangling ids - otherwise the
+  // filter silently blanks the list with no row to explain why (the list can't
+  // even display the selection any more).
   const {
     byId: knownPlayers,
     loading: playersLoading,
@@ -118,16 +118,15 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     // `signedIn` gates this too, not just `loading`: usePlayers reports
     // loading=false while Firebase is still resolving auth, so without it a
     // reload sees an empty roster and wipes a perfectly good saved filter.
-    if (!playersSignedIn || playersLoading || !filters.playerId) return;
-    if (!knownPlayers.has(filters.playerId)) {
-      setFilters((prev) => ({
-        ...prev,
-        playerId: "",
-        playerSawFlop: false,
-        playerShowed: false,
-      }));
-    }
-  }, [playersSignedIn, playersLoading, knownPlayers, filters.playerId, setFilters]);
+    if (!playersSignedIn || playersLoading || filters.playerIds.length === 0) return;
+    if (filters.playerIds.every((id) => knownPlayers.has(id))) return;
+    setFilters((prev) => {
+      const playerIds = prev.playerIds.filter((id) => knownPlayers.has(id));
+      return playerIds.length
+        ? { ...prev, playerIds }
+        : { ...prev, playerIds, playerSawFlop: false, playerShowed: false };
+    });
+  }, [playersSignedIn, playersLoading, knownPlayers, filters.playerIds, setFilters]);
 
   // Which saved hands have a solved board, for the "view solution" button.
   const solutionByHandId = useHandSolutions(Boolean(user));
@@ -311,26 +310,10 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
   const filteredRows = useMemo(
     () =>
       filtering
-        ? rows.filter((r) => r.synthetic || rowMatches(r, filters, sessionsById))
+        ? rows.filter((r) => r.synthetic || rowMatches(r, filters))
         : rows,
-    [rows, filtering, filters, sessionsById]
+    [rows, filtering, filters]
   );
-
-  // Session attributes for the shared filter panel's dropdowns.
-  const { knownLocations, knownGames } = useMemo(() => {
-    const locations = new Set<string>();
-    const games = new Set<string>();
-    for (const s of sessionsById.values()) {
-      const loc = s.location?.trim();
-      if (loc) locations.add(loc);
-      const g = s.blinds?.trim();
-      if (g) games.add(g);
-    }
-    return {
-      knownLocations: [...locations].sort(),
-      knownGames: [...games].sort(),
-    };
-  }, [sessionsById]);
 
   // Start back at the first page when switching between accounts/stores or
   // when the filter set changes (page N of one result set is meaningless in
@@ -427,43 +410,32 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
 
   const resetFilters = () => setFilters(defaultHandFilters);
 
-  const setThisYear = () => {
-    const year = new Date().getFullYear();
-    setFilters((prev) => ({
-      ...prev,
-      fromDate: `${year}-01-01`,
-      toDate: `${year}-12-31`,
-    }));
-  };
-
-  // How many independent criteria are active — the badge on the Filters button.
+  // How many independent criteria are active - the badge on the Filters
+  // button. The whole player selection is ONE criterion: the ids are ORed, so
+  // adding a second name widens the result set rather than narrowing it.
+  const hasPlayers = filters.playerIds.length > 0;
   const activeFilterCount =
-    (filters.location ? 1 : 0) +
-    (filters.game ? 1 : 0) +
-    (filters.fromDate || filters.toDate ? 1 : 0) +
-    (filters.playerId ? 1 : 0) +
-    (filters.playerId && filters.playerSawFlop ? 1 : 0) +
-    (filters.playerId && filters.playerShowed ? 1 : 0);
+    (hasPlayers ? 1 : 0) +
+    (hasPlayers && filters.playerSawFlop ? 1 : 0) +
+    (hasPlayers && filters.playerShowed ? 1 : 0) +
+    (filters.anyKnownCards ? 1 : 0);
 
   return (
     <>
       <HandHistorySecondaryNav
         onCreate={() => navigate("/hand-history/create")}
-        /* Signed-out users have no players and no sessions to filter by, so
-           the affordance is hidden entirely. */
+        /* Signed-out users have no players to filter by, so the affordance is
+           hidden entirely. */
         filters={
           user ? (
             <HandFilterMenu
               filters={filters}
               setFilters={setFilters}
-              knownLocations={knownLocations}
-              knownGames={knownGames}
               filteredCount={filteredRows.length}
               totalCount={rows.length}
               isFiltering={filtering}
               activeFilterCount={activeFilterCount}
               onReset={resetFilters}
-              onThisYear={setThisYear}
             />
           ) : undefined
         }

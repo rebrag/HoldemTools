@@ -163,7 +163,7 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
   );
 
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
       {onPreviewClick ? (
         <button
           type="button"
@@ -179,9 +179,9 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
 
       {/* Stats + actions travel as one unit so narrow screens wrap them below
           the fans together instead of orphaning the stat stack. */}
-      <div className="ml-auto flex shrink-0 items-center gap-3">
+      <div className="ml-auto flex shrink-0 items-center gap-2">
         {summary && (
-          <div className="min-w-[76px] text-[10px]">
+          <div className="min-w-[66px] text-[9px]">
             {stat("Flop", summary.potAtFlop != null ? `$${fmtChips(summary.potAtFlop)}` : null)}
             {stat("Pot", `$${fmtChips(summary.finalPot)}`)}
             {stat("SPR", summary.flopSpr != null ? fmtSpr(summary.flopSpr) : null)}
@@ -202,9 +202,9 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
               {...linkProps(replayHref)}
               aria-label="Replay hand"
               title="Replay hand"
-              className={rowActionClasses("replay", tone, false, "sm")}
+              className={rowActionClasses("replay", tone, false, "xs")}
             >
-              <Play className="h-3.5 w-3.5" fill="currentColor" />
+              <Play className="h-3 w-3" fill="currentColor" />
             </a>
           )}
           {editHref && (
@@ -214,9 +214,9 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
               {...linkProps(editHref)}
               aria-label="Edit hand"
               title="Edit hand"
-              className={rowActionClasses("edit", tone, false, "sm")}
+              className={rowActionClasses("edit", tone, false, "xs")}
             >
-              <Pencil className="h-3.5 w-3.5" />
+              <Pencil className="h-3 w-3" />
             </a>
           )}
           {/* The one exception: the Solution Library is itself on /solutions,
@@ -228,9 +228,9 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
                 key="solution"
                 tone="solution"
                 variant={tone}
-                size="sm"
+                size="xs"
                 label="View solution"
-                icon={<Library className="h-3.5 w-3.5" />}
+                icon={<Library className="h-3 w-3" />}
                 onClick={() => {
                   onOpenSolution();
                   onNavigate?.();
@@ -243,9 +243,9 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
                 {...linkProps(solutionHref)}
                 aria-label="View solution"
                 title="View solution"
-                className={rowActionClasses("solution", tone, false, "sm")}
+                className={rowActionClasses("solution", tone, false, "xs")}
               >
-                <Library className="h-3.5 w-3.5" />
+                <Library className="h-3 w-3" />
               </a>
             ))}
           {SHARE_ENABLED && (shareId != null || !!shareToken) && (
@@ -253,15 +253,15 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
               key="share"
               tone="share"
               variant={tone}
-              size="sm"
+              size="xs"
               label="Share replay link"
               disabled={sharing}
               success={flash === "shared"}
               icon={
                 flash === "shared" ? (
-                  <Check className="h-3.5 w-3.5" />
+                  <Check className="h-3 w-3" />
                 ) : (
-                  <Share2 className="h-3.5 w-3.5" />
+                  <Share2 className="h-3 w-3" />
                 )
               }
               onClick={() => void handleShare()}
@@ -271,14 +271,14 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
             key="copy"
             tone="copy"
             variant={tone}
-            size="sm"
+            size="xs"
             label="Copy hand text"
             success={flash === "copied"}
             icon={
               flash === "copied" ? (
-                <Check className="h-3.5 w-3.5" />
+                <Check className="h-3 w-3" />
               ) : (
-                <Copy className="h-3.5 w-3.5" />
+                <Copy className="h-3 w-3" />
               )
             }
             onClick={() => void handleCopy()}
@@ -288,9 +288,9 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
               key="delete"
               tone="delete"
               variant={tone}
-              size="sm"
+              size="xs"
               label="Delete hand"
-              icon={<Trash2 className="h-3.5 w-3.5" />}
+              icon={<Trash2 className="h-3 w-3" />}
               onClick={onDelete}
             />
           )}
@@ -303,10 +303,10 @@ const HandSummaryRow: React.FC<HandSummaryRowProps> = ({
 /** Stacks the action buttons two rows tall instead of one long row, so the
  *  card fans keep the horizontal space: 5 actions -> 3+2, 4 -> 2+2, 3 -> 2+1;
  *  1-2 stay a single row. The wrap width is computed from the column count
- *  (h-7 buttons + gap-1) and justify-end keeps a short last row right-aligned.
+ *  (h-6 buttons + gap-1) and justify-end keeps a short last row right-aligned.
  *  Children are the conditional buttons; React.Children.toArray drops the
  *  falsy ones before counting. */
-const BUTTON_PX = 28; // h-7 / w-7
+const BUTTON_PX = 24; // h-6 / w-6 (RowActionButton size "xs")
 const GAP_PX = 4; // gap-1
 
 const ActionGrid: React.FC<{ children: React.ReactNode }> = ({ children }) => {

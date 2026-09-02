@@ -23,28 +23,22 @@ import type { HandFilterState } from "./handFilters";
 interface Props {
   filters: HandFilterState;
   setFilters: React.Dispatch<React.SetStateAction<HandFilterState>>;
-  knownLocations: string[];
-  knownGames: string[];
   filteredCount: number;
   totalCount: number;
   isFiltering: boolean;
   /** Independent criteria active, shown as a badge on the trigger. */
   activeFilterCount: number;
   onReset: () => void;
-  onThisYear: () => void;
 }
 
 const HandFilterMenu: React.FC<Props> = ({
   filters,
   setFilters,
-  knownLocations,
-  knownGames,
   filteredCount,
   totalCount,
   isFiltering,
   activeFilterCount,
   onReset,
-  onThisYear,
 }) => {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -104,20 +98,17 @@ const HandFilterMenu: React.FC<Props> = ({
             aria-label="Hand filters"
             /* Clamped to the viewport so the panel keeps a gutter on a 360px
                phone, where the trigger sits ~16px from the right edge. */
-            /* Capped and scrollable: the single-column phone layout is ~430px
-               tall, which overflows a short viewport in landscape. */
+            /* Capped and scrollable: the player list plus the toggles still
+               overflow a short viewport in landscape. */
             className="absolute right-4 top-full z-50 mt-2 max-h-[calc(100dvh-8rem)] w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto overscroll-contain rounded-xl border border-emerald-200 bg-white shadow-xl shadow-emerald-950/30 sm:w-[26rem]"
           >
             <HandFilterBar
               filters={filters}
               setFilters={setFilters}
-              knownLocations={knownLocations}
-              knownGames={knownGames}
               filteredCount={filteredCount}
               totalCount={totalCount}
               isFiltering={isFiltering}
               onReset={onReset}
-              onThisYear={onThisYear}
               onHide={close}
             />
           </motion.div>
