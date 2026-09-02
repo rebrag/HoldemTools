@@ -71,6 +71,7 @@ The artifact's own 169-class rollup is the push/fold chart, so `/multiway` rende
 
 **`/multiway` and `/compare` are the two engines**, and the segmented control at the top of `/multiway` is what makes that legible: multiway preflop (sampled board runouts, no hand bucketing) versus heads-up postflop (exact).
 Neither has a NavBar slot; both are URL-only.
+`/multiway` also carries the **session simulator** (`frontend/src/lib/sessionSim/`, drawer in `frontend/src/pages/multiway/SessionSimulator.tsx`): it plays a rotation of team solves hand by hand in workers and reports session shape, bb/100, downswing depths and bust odds - see `frontend/src/pages/multiway/CLAUDE.md`.
 
 Out of scope, recorded so it is not built speculatively: GPU code, hand abstraction/bucketing, TMECor (coordination without card visibility), any cloud SDK inside the engine.
 QRE, multiway solving, and collusion modes are scheduled follow-ups whose config schema already exists - see `engine/CLAUDE.md`.

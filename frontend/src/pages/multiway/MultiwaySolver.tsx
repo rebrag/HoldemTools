@@ -21,6 +21,8 @@ import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import { authedFetch } from "@/lib/api";
 import MultiwayTreeBuilder from "./MultiwayTreeBuilder";
 import PushFoldResultPanel from "./PushFoldResultPanel";
+import SessionSimulator, { type SimulatorJob } from "./SessionSimulator";
+import { fetchPushFoldDump } from "./fetchPushFoldDump";
 import type { PushFoldDump } from "./pushfoldResult";
 import {
   baselineViewFromDump,
@@ -137,6 +139,18 @@ const MultiwaySolver = () => {
     [view.players, view.button]
   );
   const issues = useMemo(() => validate(view), [view]);
+  /* Rows the simulator can add: finished with a result, labelled the way
+   * Recent reads them (solve id where the row has one). */
+  const simulatorJobs = useMemo<SimulatorJob[]>(
+    () =>
+      jobs
+        .filter((j) => HAS_RESULT.includes(j.status) && j.hasHtResult !== false)
+        .map((j) => ({
+          id: j.id,
+          label: `${j.solveId ?? j.id.slice(0, 8)} · ${j.board || "preflop"} · ${ago(j.completedAtUtc ?? j.createdAtUtc)}`,
+        })),
+    [jobs]
+  );
   /* The job this page is driving, mid-stop: Stop was accepted but the solve
    * has not finished writing its results out yet. */
   const activeStopping = !!job && (cancelling.has(job.id) || !!job.cancelRequestedAtUtc);
@@ -169,28 +183,7 @@ const MultiwaySolver = () => {
   );
 
   const loadResult = useCallback(async (id: string) => {
-    const resp = await authedFetch(`/api/enginecompare/${id}/result/ht`);
-    if (!resp.ok) throw new Error(`Result fetch failed (${resp.status})`);
-    // Served with Content-Encoding: gzip, which the browser unwraps for us.
-    const text = await resp.text();
-    // A compare-mode watcher uploads the binary per-node .htc payload to the
-    // same slot. Naming that explicitly is worth a branch: the alternative is
-    // a raw "Unexpected token 'H'" from JSON.parse, which says nothing about
-    // what to do, and the cause - a watcher running a build without
-    // handle_pushfold - is entirely actionable.
-    if (text.startsWith("HTCMP")) {
-      throw new Error(
-        "This job was solved by a watcher build that predates the pushfold mode, so it " +
-          "uploaded a compare-mode .htc payload instead of a push/fold chart. Restart the " +
-          "watcher and solve again."
-      );
-    }
-    let parsed: PushFoldDump;
-    try {
-      parsed = JSON.parse(text) as PushFoldDump;
-    } catch {
-      throw new Error("The stored result is not a push/fold payload.");
-    }
+    const parsed = await fetchPushFoldDump(id);
     setDump(parsed);
     setViewingId(id);
     /* Backfill the row's lineage from the artifact it serves, for jobs from
@@ -453,6 +446,11 @@ const MultiwaySolver = () => {
         </span>
 
         <div className="ml-auto flex items-center gap-2">
+          <SessionSimulator
+            jobs={simulatorJobs}
+            fetchDump={fetchPushFoldDump}
+            current={dump && viewingId ? { id: viewingId, dump } : null}
+          />
           <button
             type="button"
             onClick={() => setBuilderOpen(true)}
