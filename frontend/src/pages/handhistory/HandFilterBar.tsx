@@ -233,7 +233,7 @@ const HandFilterBar: React.FC<Props> = ({
       </div>
 
       <div className="flex flex-col gap-1">
-        <span className={t.label}>Quick range</span>
+        <span className={t.label}>Quick filter</span>
         <div className="flex flex-wrap gap-2">
           <QuickToggle
             label="My hands"
