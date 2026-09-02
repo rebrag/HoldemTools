@@ -5,7 +5,7 @@
 // and whose cards are known. So the panel is now its own, and only borrows
 // SessionFilterPanel's FILTER_THEMES so it still reads as the same control set
 // (bankroll keeps the shared panel untouched).
-import React from "react";
+import React, { useState } from "react";
 import PlayerAvatar from "@/components/PlayerAvatar";
 import { FILTER_THEMES } from "@/components/filters/SessionFilterPanel";
 import { usePlayers } from "@/hooks/usePlayers";
@@ -48,6 +48,33 @@ const FilterToggle: React.FC<{
   </label>
 );
 
+/** A quick filter: an on/off pill rather than a checkbox, because these are
+ *  one-tap shortcuts rather than qualifiers on something else. */
+const QuickToggle: React.FC<{
+  label: string;
+  title: string;
+  on: boolean;
+  onToggle: () => void;
+}> = ({ label, title, on, onToggle }) => (
+  <button
+    type="button"
+    aria-pressed={on}
+    onClick={onToggle}
+    title={title}
+    className={
+      on
+        ? "inline-flex items-center justify-center rounded-md border border-emerald-600 bg-emerald-600 px-2 py-1 text-[11px] font-medium text-white transition hover:bg-emerald-700"
+        : t.quickBtn
+    }
+  >
+    {label}
+  </button>
+);
+
+/** Above this many players, scrolling the list to find a name is slower than
+ *  typing it, so the search box earns its space. */
+const SEARCH_THRESHOLD = 6;
+
 const HandFilterBar: React.FC<Props> = ({
   filters,
   setFilters,
@@ -59,6 +86,12 @@ const HandFilterBar: React.FC<Props> = ({
 }) => {
   const { players } = usePlayers();
   const selectedCount = filters.playerIds.length;
+  /* Find-as-you-type over the roster. Deliberately NOT part of HandFilterState:
+   * it narrows the picker, not the hand list, so persisting it would restore a
+   * panel that looks like half the roster is missing. */
+  const [search, setSearch] = useState("");
+  const q = search.trim().toLowerCase();
+  const shown = q ? players.filter((p) => p.name.toLowerCase().includes(q)) : players;
 
   // Duplicate names are expected ("Jonathan" x3), so a collide-prone row gets
   // its notes as a suffix; every row carries its avatar, which is what
@@ -109,6 +142,28 @@ const HandFilterBar: React.FC<Props> = ({
           )}
         </div>
 
+        {players.length > SEARCH_THRESHOLD && (
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.stopPropagation(); // clear the box before closing the panel
+                setSearch("");
+              } else if (e.key === "Enter" && shown.length === 1) {
+                // Type a name, press Enter: the one match is the one meant.
+                e.preventDefault();
+                toggle(shown[0].id);
+                setSearch("");
+              }
+            }}
+            placeholder="Search players"
+            aria-label="Search players"
+            className={`${t.control} w-full`}
+          />
+        )}
+
         {players.length === 0 ? (
           <p className={t.summary}>
             No players yet - add them on the Players page to filter by who was in
@@ -120,7 +175,12 @@ const HandFilterBar: React.FC<Props> = ({
              neither a photo nor a comfortable thumb target. Selecting several
              ORs them. */
           <ul className="max-h-40 divide-y divide-emerald-100 overflow-y-auto overscroll-contain rounded-md border border-emerald-200 bg-white">
-            {players.map((p) => {
+            {shown.length === 0 && (
+              /* A selected player can be filtered out of view; the header's
+                 "(any of N)" and Clear players still account for them. */
+              <li className={`px-2 py-1.5 ${t.summary}`}>No players match that search.</li>
+            )}
+            {shown.map((p) => {
               const checked = filters.playerIds.includes(p.id);
               const hint = hintFor(p);
               return (
@@ -173,26 +233,22 @@ const HandFilterBar: React.FC<Props> = ({
       </div>
 
       <div className="flex flex-col gap-1">
-        <span className={t.label}>Quick range</span>
-        <div>
-          <button
-            type="button"
-            aria-pressed={filters.anyKnownCards}
-            onClick={() =>
-              setFilters((prev) => ({
-                ...prev,
-                anyKnownCards: !prev.anyKnownCards,
-              }))
-            }
+        <span className={t.label}>Quick filter</span>
+        <div className="flex flex-wrap gap-2">
+          <QuickToggle
+            label="My hands"
+            title="Only hands I was dealt into and played - not the ones I recorded from the rail"
+            on={filters.myHands}
+            onToggle={() => setFilters((prev) => ({ ...prev, myHands: !prev.myHands }))}
+          />
+          <QuickToggle
+            label="Any known cards"
             title="Only hands where at least one player's hole cards were recorded"
-            className={
-              filters.anyKnownCards
-                ? "inline-flex items-center justify-center rounded-md border border-emerald-600 bg-emerald-600 px-2 py-1 text-[11px] font-medium text-white transition hover:bg-emerald-700"
-                : t.quickBtn
+            on={filters.anyKnownCards}
+            onToggle={() =>
+              setFilters((prev) => ({ ...prev, anyKnownCards: !prev.anyKnownCards }))
             }
-          >
-            Any known cards
-          </button>
+          />
         </div>
       </div>
 
