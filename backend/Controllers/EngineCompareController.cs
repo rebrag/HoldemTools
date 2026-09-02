@@ -12,6 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using PokerRangeAPI2.Data;
 using PokerRangeAPI2.Models;
+using PokerRangeAPI2.Services;
 
 namespace PokerRangeAPI2.Controllers
 {
@@ -79,6 +80,14 @@ namespace PokerRangeAPI2.Controllers
             // null for jobs that predate the instrumentation.
             public JsonNode? Timings { get; set; }
 
+            /// <summary>The solve lineage of this job's result and the
+            /// iterations it reached - what lets the page open a lineage's
+            /// result directly (a team's baseline, say) instead of queueing a
+            /// solve to re-export it. Null until reported or filled in.</summary>
+            public string? SolveId { get; set; }
+            public string? SolveKey { get; set; }
+            public long? Iterations { get; set; }
+
             public static JobDto From(EngineCompareJob job) => new()
             {
                 Id = job.Id,
@@ -93,6 +102,9 @@ namespace PokerRangeAPI2.Controllers
                 CompletedAtUtc = job.CompletedAtUtc,
                 CancelRequestedAtUtc = job.CancelRequestedAtUtc,
                 Timings = ParseTimings(job.TimingsJson),
+                SolveId = job.SolveId,
+                SolveKey = job.SolveKey,
+                Iterations = job.Iterations,
                 DisablePio = job.DisablePio,
                 DisableCompare = job.DisableCompare,
                 DisableCrossCheck = job.DisableCrossCheck,
@@ -331,6 +343,45 @@ namespace PokerRangeAPI2.Controllers
             return Ok(JobDto.From(job));
         }
 
+        public class IdentityDto
+        {
+            public string? SolveId { get; set; }
+            public string? SolveKey { get; set; }
+            public long? Iterations { get; set; }
+        }
+
+        // POST api/enginecompare/{id}/identity - fill in the solve lineage of
+        // a job that predates the watcher reporting it. The page reads the
+        // artifact's own metadata when it opens a result, so it is the one
+        // party that knows; the server only records what it did not have.
+        // Fields already set are never changed here - the watcher's report
+        // is the authority, this is a backfill - and nothing is superseded
+        // or deleted on this path.
+        [HttpPost("{id:guid}/identity")]
+        public async Task<ActionResult<JobDto>> Identity(Guid id, [FromBody] IdentityDto req)
+        {
+            var uid = this.CurrentUid();
+            if (string.IsNullOrWhiteSpace(uid)) return Unauthorized();
+            var job = await _db.EngineCompareJobs
+                .FirstOrDefaultAsync(j => j.Id == id && j.UserId == uid);
+            if (job == null) return NotFound();
+
+            var solveId = req.SolveId?.Trim();
+            if (solveId != null && !System.Text.RegularExpressions.Regex.IsMatch(solveId, "^[A-Za-z0-9._-]{1,64}$"))
+                return BadRequest("solveId may only use letters, digits, '-', '_' and '.', up to 64 characters.");
+            var solveKey = req.SolveKey?.Trim();
+            if (solveKey != null && !System.Text.RegularExpressions.Regex.IsMatch(solveKey, "^[0-9a-f]{64}$"))
+                return BadRequest("solveKey must be a 64-hex SHA-256.");
+            if (req.Iterations is < 0) return BadRequest("iterations cannot be negative.");
+
+            var changed = false;
+            if (job.SolveId == null && solveId != null) { job.SolveId = solveId; changed = true; }
+            if (job.SolveKey == null && solveKey != null) { job.SolveKey = solveKey; changed = true; }
+            if (job.Iterations == null && req.Iterations != null) { job.Iterations = req.Iterations; changed = true; }
+            if (changed) await _db.SaveChangesAsync();
+            return Ok(JobDto.From(job));
+        }
+
         // DELETE api/enginecompare/{id} - drop one of the caller's own jobs and
         // its result blobs. Ownership is checked the same way every other
         // endpoint here checks it: the row is looked up by (id, uid) from the
@@ -356,19 +407,7 @@ namespace PokerRangeAPI2.Controllers
             // Blobs first: a row removed while its blobs survive is a leak with
             // nothing left pointing at it, whereas a blob delete that fails
             // leaves the row intact and the delete retryable.
-            var connectionString = _config["AzureStorage:ConnectionString"];
-            var containerName = _config["AzureStorage:ContainerName"] ?? "onlinerangedata";
-            if (!string.IsNullOrWhiteSpace(connectionString))
-            {
-                var container = new BlobServiceClient(connectionString)
-                    .GetBlobContainerClient(containerName);
-                foreach (var path in new[] { job.HtResultBlobPath, job.PioResultBlobPath, job.ResultBlobPath })
-                {
-                    if (string.IsNullOrEmpty(path)) continue;
-                    // Already-missing is success: the point is that it is gone.
-                    await container.GetBlobClient(path).DeleteIfExistsAsync();
-                }
-            }
+            await EngineCompareJobBlobs.DeleteAsync(EngineCompareJobBlobs.Container(_config), job);
 
             _db.EngineCompareJobs.Remove(job);
             await _db.SaveChangesAsync();

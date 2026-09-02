@@ -275,6 +275,13 @@ const MultiwayTreeBuilder = ({
                     teamSeats: value.teamSeats.includes(i)
                       ? value.teamSeats.filter((s) => s !== i)
                       : [...value.teamSeats, i],
+                    // A lineage is one spot and one team. Keeping a loaded
+                    // solve's id across a team change would ask the engine to
+                    // continue a checkpoint that belongs to a different team,
+                    // which it refuses - so the id goes, and the engine
+                    // derives a fresh one for the new pairing. The baseline
+                    // is the spot's and is shared regardless.
+                    solveId: "",
                   })
                 }
                 aria-label={`Seat ${i + 1} shares hands`}
@@ -301,7 +308,7 @@ const MultiwayTreeBuilder = ({
                     name="awareness"
                     checked={value.awareness === mode}
                     disabled={disabled}
-                    onChange={() => set("awareness", mode)}
+                    onChange={() => onChange({ ...value, awareness: mode, solveId: "" })}
                     className="h-3 w-3 accent-amber-500"
                   />
                   {mode === "unaware" ? "don't know" : "know"}
@@ -408,8 +415,8 @@ const MultiwayTreeBuilder = ({
           />
           <span className="text-[10px] text-slate-500">
             {value.solveId.trim() !== ""
-              ? "Solving continues this id from where it stopped; Max iterations is the total to reach."
-              : "Blank = derived from the spot. Re-solving the same spot still continues it."}
+              ? "Solving continues this id from where it stopped; Max iterations is the total to reach. Changing the team clears it - a lineage is one spot and one team."
+              : "Blank = derived from the spot and team. Re-solving the same spot still continues it, and every team on a spot shares one baseline."}
           </span>
         </div>
       </section>

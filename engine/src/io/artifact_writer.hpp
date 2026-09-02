@@ -31,6 +31,10 @@ struct SolveStats {
   // phase 1 can stop early on the time budget - the requested number in
   // config.agents.baseline_iterations would then be a lie.
   std::uint64_t baseline_iterations = 0;
+  // The spot's no-team solve id (config.baseline_solve_id) the opponents were
+  // frozen at - unaware teams only. Solving the spot with no team resumes
+  // that lineage, which is how a viewer gets to look at the baseline.
+  std::string baseline_solve_id;
   bool nashconv_valid = true;              // false when nashconv is not a meaningful measure
   // Why the loop ended, when it was not "ran the whole budget": currently
   // only "time_budget" (budget.max_seconds expired). Stamped into metadata

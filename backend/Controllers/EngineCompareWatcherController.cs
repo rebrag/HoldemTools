@@ -61,6 +61,12 @@ namespace PokerRangeAPI2.Controllers
             // Per-stage wall times (flat dict of seconds), sent with the
             // terminal report. Stored verbatim; the frontend renders it.
             public JsonObject? Timings { get; set; }
+            // The result's lineage, read by the watcher from the artifact's
+            // metadata (solve_id, solve_key, iterations) and sent with the
+            // terminal report. What supersede-on-report keys on.
+            public string? SolveId { get; set; }
+            public string? SolveKey { get; set; }
+            public long? Iterations { get; set; }
         }
 
         // POST api/enginecompare/claim   body: { watcherId }
@@ -137,8 +143,47 @@ namespace PokerRangeAPI2.Controllers
                 var timingsJson = req.Timings.ToJsonString();
                 if (timingsJson.Length <= 4000) job.TimingsJson = timingsJson;
             }
+            if (req.SolveId != null) job.SolveId = Truncate(req.SolveId, 64);
+            if (req.SolveKey != null) job.SolveKey = Truncate(req.SolveKey, 64);
+            if (req.Iterations != null) job.Iterations = req.Iterations;
 
             await _db.SaveChangesAsync();
+
+            // A lineage keeps ONE result. Once this job's result is on disk
+            // (Done, or Cancelled with an upload - a stopped solve still wrote
+            // what it had), every earlier result of the same lineage with no
+            // more iterations than this one is the same solve at a less
+            // converged point, and goes. The newest wins ties (a re-export of
+            // a finished solve replaces the older copy). A job with a
+            // different solve key is a different spot that reused the id and
+            // is left alone; a job with NO key predates the stamp and is
+            // treated as the same lineage - ids are unique per spot now, and
+            // those rows are exactly the stale copies this exists to clear.
+            if (job.SolveId != null && job.Iterations != null
+                && EngineCompareJobStatus.Terminal.Contains(job.Status)
+                && job.Status != EngineCompareJobStatus.Failed
+                && !string.IsNullOrEmpty(job.HtResultBlobPath))
+            {
+                var superseded = await _db.EngineCompareJobs
+                    .Where(j => j.Id != job.Id
+                                && j.UserId == job.UserId
+                                && j.SolveId == job.SolveId
+                                && (j.SolveKey == null || job.SolveKey == null || j.SolveKey == job.SolveKey)
+                                && j.Iterations != null && j.Iterations <= job.Iterations
+                                && (j.Status == EngineCompareJobStatus.Done
+                                    || j.Status == EngineCompareJobStatus.Cancelled))
+                    .ToListAsync();
+                if (superseded.Count > 0)
+                {
+                    var container = EngineCompareJobBlobs.Container(_config);
+                    foreach (var old in superseded)
+                    {
+                        await EngineCompareJobBlobs.DeleteAsync(container, old);
+                        _db.EngineCompareJobs.Remove(old);
+                    }
+                    await _db.SaveChangesAsync();
+                }
+            }
             // Every report - heartbeats included - answers with whether the
             // owner has asked this job to stop. That is what carries a cancel
             // to the watcher: no extra endpoint to poll, and the signal

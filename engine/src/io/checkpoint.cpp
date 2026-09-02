@@ -64,6 +64,22 @@ bool get_string(std::istream& is, std::string& s) {
 
 double write_checkpoint(const std::string& path, const SampledCfrSolver& solver,
                         const SolveConfig& config, const CheckpointExtras& extras) {
+  return write_checkpoint(path, solver, config_solve_key(config), extras);
+}
+
+bool read_checkpoint(const std::string& path, SampledCfrSolver& solver,
+                     const SolveConfig& config, CheckpointExtras& extras,
+                     std::string& err) {
+  return read_checkpoint(path, solver, config_solve_key(config), extras, err);
+}
+
+bool checkpoint_exists(const std::string& path) {
+  std::error_code ec;
+  return !path.empty() && std::filesystem::exists(path, ec);
+}
+
+double write_checkpoint(const std::string& path, const SampledCfrSolver& solver,
+                        const std::string& solve_key, const CheckpointExtras& extras) {
   const auto start = std::chrono::steady_clock::now();
   // Write to a temp file and rename. A checkpoint is overwritten every run,
   // so a crash mid-write would otherwise take out the only copy of a solve
@@ -75,7 +91,7 @@ double write_checkpoint(const std::string& path, const SampledCfrSolver& solver,
     std::ofstream os(tmp, std::ios::binary | std::ios::trunc);
     if (!os) throw std::runtime_error("checkpoint: cannot open " + tmp + " for writing");
     os.write(kMagic, sizeof(kMagic));
-    put_string(os, config_solve_key(config));
+    put_string(os, solve_key);
     put(os, static_cast<std::uint64_t>(solver.iteration()));
     put(os, static_cast<std::uint64_t>(solver.store_total()));
     put(os, static_cast<std::int64_t>(solver.joint_classes()));
@@ -121,7 +137,7 @@ double write_checkpoint(const std::string& path, const SampledCfrSolver& solver,
 }
 
 bool read_checkpoint(const std::string& path, SampledCfrSolver& solver,
-                     const SolveConfig& config, CheckpointExtras& extras,
+                     const std::string& solve_key, CheckpointExtras& extras,
                      std::string& err) {
   std::ifstream is(path, std::ios::binary);
   if (!is) {
@@ -139,7 +155,7 @@ bool read_checkpoint(const std::string& path, SampledCfrSolver& solver,
     err = "truncated checkpoint header";
     return false;
   }
-  if (key != config_solve_key(config)) {
+  if (key != solve_key) {
     // Refusing is the whole point: the arrays are indexed by a layout this
     // config may not share, and even where the shapes match, continuing a
     // different game's regrets would produce a confident wrong answer.

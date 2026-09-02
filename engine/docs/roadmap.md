@@ -829,6 +829,7 @@ Phase control: `agents.baseline_iterations` is phase 1 (the frozen baseline; def
 `/multiway` exposes both (Baseline iterations appears when a team is marked unaware).
 
 **A solve has an id and two independently extendable phases.** `solve.id` names the lineage (default: derived from the spot) and its checkpoints; phase 1 keeps its own file, so a baseline can be lengthened on its own terms while `agents.baseline_iterations` and `budget.iterations` are both totals.
+**The baseline belongs to the spot, not to the team.** Its file is named by `baseline_solve_key` (the solve key minus `agents`), which is the derived id of the spot's no-team solve - so all six pairings of a 4-way spot train against one baseline solved once, and "show me the baseline" is a no-team solve of the spot that resumes it, iterates nothing and exports (`/multiway`: Open baseline).
 The interlock worth remembering: a team's regrets are a best response to ONE baseline, so moving the baseline invalidates phase 2 - the engine refuses before spending anything unless `solve.rebase` says to restart phase 2 against the longer baseline.
 `solve.resume: "require"` refuses to start from zero, which is the guard against a mistyped id quietly beginning a ten-hour solve over again.
 

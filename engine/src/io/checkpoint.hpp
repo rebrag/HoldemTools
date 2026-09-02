@@ -41,16 +41,31 @@ struct CheckpointExtras {
 };
 
 // Write `solver`'s state to `path` (atomically: temp file then rename, so an
-// interrupted write cannot destroy a good checkpoint). Returns seconds spent.
+// interrupted write cannot destroy a good checkpoint), stamped with
+// `solve_key` - the identity a later read must present to be allowed to
+// continue it. Returns seconds spent.
+double write_checkpoint(const std::string& path, const SampledCfrSolver& solver,
+                        const std::string& solve_key, const CheckpointExtras& extras);
+// The common case: keyed by the config's own solve identity.
 double write_checkpoint(const std::string& path, const SampledCfrSolver& solver,
                         const SolveConfig& config, const CheckpointExtras& extras);
 
 // Load `path` into `solver`. Returns false with `err` set when the file is
-// missing, malformed, or belongs to a DIFFERENT config - never throws for
+// missing, malformed, or was stamped with a DIFFERENT key - never throws for
 // those, because "no checkpoint yet" is the normal first run. Throws only if
-// the file is valid but the solver rejects the restore.
+// the file is valid but the solver rejects the restore. Phase 1 of a team
+// solve presents baseline_solve_key(config) here, everything else
+// config_solve_key(config).
+bool read_checkpoint(const std::string& path, SampledCfrSolver& solver,
+                     const std::string& solve_key, CheckpointExtras& extras,
+                     std::string& err);
 bool read_checkpoint(const std::string& path, SampledCfrSolver& solver,
                      const SolveConfig& config, CheckpointExtras& extras,
                      std::string& err);
+
+// Whether a checkpoint file is present at all - the difference between "first
+// run" (fine) and "a file is there but cannot be continued" (refuse, rather
+// than overwrite hours of someone else's iterations).
+bool checkpoint_exists(const std::string& path);
 
 }  // namespace engine

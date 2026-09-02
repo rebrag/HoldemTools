@@ -532,20 +532,34 @@ SolveConfig load_config(const std::string& path_text) {
   // Derived by default, so the same spot continues itself and a user who does
   // not care about ids never sees one. Short enough to type and quote.
   if (config.solve_id.empty()) config.solve_id = config_solve_key(config).substr(0, 12);
-  if (config.checkpoint_path.empty() && !config.checkpoint_dir.empty()) {
+  // The baseline is the spot's, not the lineage's, so its id is always
+  // derived: naming a team solve must not fork the baseline it shares.
+  config.baseline_solve_id = baseline_solve_key(config).substr(0, 12);
+  if (!config.checkpoint_dir.empty()) {
     // Resolved here rather than in main so `dry-run` and any other consumer
-    // sees the same path the solve will use.
-    config.checkpoint_path = config.checkpoint_dir + "/" + config.solve_id + ".htck";
+    // sees the same paths the solve will use. A no-team solve with a derived
+    // id lands on the baseline path by construction (same key, same id).
+    if (config.checkpoint_path.empty()) {
+      config.checkpoint_path = config.checkpoint_dir + "/" + config.solve_id + ".htck";
+    }
+    config.baseline_checkpoint_path =
+        config.checkpoint_dir + "/" + config.baseline_solve_id + ".htck";
+  } else if (!config.checkpoint_path.empty()) {
+    // An explicitly named file has no directory to share a baseline in, so
+    // the baseline sits beside it.
+    config.baseline_checkpoint_path = config.checkpoint_path + ".baseline";
   }
   config.threads = j.value("threads", 0);
 
   return config;
 }
 
-std::string config_solve_key(const SolveConfig& config) {
-  // Fail-safe by construction: start from the whole canonical config and
-  // remove only the keys that are allowed to vary, so a solve-defining key
-  // added later is covered the day it appears.
+namespace {
+
+// Fail-safe by construction: start from the whole canonical config and
+// remove only the keys that are allowed to vary, so a solve-defining key
+// added later is covered the day it appears.
+nlohmann::json solve_identity(const SolveConfig& config) {
   nlohmann::json j = config.raw;
   j.erase("budget");
   j.erase("output");
@@ -555,6 +569,18 @@ std::string config_solve_key(const SolveConfig& config) {
   if (j.contains("agents") && j.at("agents").is_object()) {
     j.at("agents").erase("baseline_iterations");
   }
+  return j;
+}
+
+}  // namespace
+
+std::string config_solve_key(const SolveConfig& config) {
+  return sha256::hex_digest(solve_identity(config).dump());
+}
+
+std::string baseline_solve_key(const SolveConfig& config) {
+  nlohmann::json j = solve_identity(config);
+  j.erase("agents");
   return sha256::hex_digest(j.dump());
 }
 

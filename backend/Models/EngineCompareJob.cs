@@ -75,6 +75,32 @@ namespace PokerRangeAPI2.Models
         /// </summary>
         public DateTimeOffset? CancelRequestedAtUtc { get; set; }
 
+        /// <summary>
+        /// The solve LINEAGE this job's result belongs to, as the engine
+        /// stamped it (metadata.solve_id): stable across resumes, so several
+        /// jobs can carry the same id at different iteration counts. Reported
+        /// by the watcher with the terminal status; null for jobs that
+        /// predate it (a viewer that reads the metadata may fill it in).
+        /// One lineage keeps ONE result: when a later job of the same lineage
+        /// finishes with at least as many iterations, earlier ones are
+        /// deleted - a lineage only moves forward, and the older artifact is
+        /// the same solve at a less converged point.
+        /// </summary>
+        public string? SolveId { get; set; }
+
+        /// <summary>
+        /// The spot's identity (metadata.solve_key, the engine's
+        /// config_solve_key): what a checkpoint refuses to continue across.
+        /// Two jobs with the same SolveId but different keys are different
+        /// spots that happened to reuse an id, and never supersede each other.
+        /// Null on jobs from before the engine stamped it.
+        /// </summary>
+        public string? SolveKey { get; set; }
+
+        /// <summary>Iterations the result reached (the team phase for a team
+        /// solve): the measure of "more converged" within a lineage.</summary>
+        public long? Iterations { get; set; }
+
         public DateTimeOffset CreatedAtUtc { get; set; }
         public DateTimeOffset? ClaimedAtUtc { get; set; }
         public DateTimeOffset? CompletedAtUtc { get; set; }

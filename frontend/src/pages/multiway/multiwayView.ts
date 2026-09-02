@@ -88,6 +88,13 @@ export interface MultiwayView {
    *  fills this in from its artifact, which is what makes "raise the budget
    *  and solve again" a deliberate continuation rather than a coincidence. */
   solveId: string;
+  /** What the loaded solve had reached, so the builder can refuse a budget
+   *  below it: Max iterations is a TOTAL and a lineage only moves forward,
+   *  so asking for fewer would queue a run that iterates nothing. Both empty
+   *  until a past solve is loaded; the rule applies only while solveId is
+   *  still that solve's id. */
+  loadedSolveId: string;
+  loadedIterations: string;
   /** Unaware phase-1 (no-team baseline) iterations. Empty = same as
    *  maxIterations. Long team solves want this SMALLER than phase 2: the
    *  baseline converges quickly, while the team's conditioned charts are
@@ -123,6 +130,8 @@ export const DEFAULT_VIEW: MultiwayView = {
   teamSeats: [],
   awareness: "unaware",
   solveId: "",
+  loadedSolveId: "",
+  loadedIterations: "",
   baselineIterations: "",
   boardSampleIter: "500",
   boardSamplePair: "20000",
@@ -190,6 +199,17 @@ export const validate = (view: MultiwayView): string[] => {
   }
   if (view.solveId.trim() !== "" && !/^[A-Za-z0-9._-]{1,64}$/.test(view.solveId.trim())) {
     issues.push("Solve ID may only use letters, digits, '-', '_' and '.', up to 64 characters.");
+  }
+  if (
+    view.loadedSolveId !== "" &&
+    view.solveId.trim() === view.loadedSolveId &&
+    num(view.loadedIterations) > num(view.maxIterations)
+  ) {
+    issues.push(
+      `Solve ${view.loadedSolveId} has already reached ${num(view.loadedIterations).toLocaleString()} ` +
+        "iterations. Max iterations is the total to reach and a lineage only moves forward, so " +
+        "raise it to continue - or clear the Solve ID to start a new solve."
+    );
   }
   if (view.teamSeats.length !== 0 && view.teamSeats.length !== 2) {
     issues.push("A hand-sharing team is exactly two seats (or none).");
@@ -280,6 +300,8 @@ export const viewFromDump = (
     // budget, solve" into a CONTINUATION of that solve rather than a new one
     // that happens to look the same.
     solveId: meta.solve_id ?? base.solveId,
+    loadedSolveId: meta.solve_id ?? "",
+    loadedIterations: meta.iterations != null ? String(meta.iterations) : "",
     // Phase 1 is its own budget with its own checkpoint. Restoring what the
     // loaded solve actually ran keeps a re-solve extending phase 2 - changing
     // it moves the baseline, which the engine refuses unless asked to rebase.
@@ -304,6 +326,32 @@ export const viewFromDump = (
     // spot check, and silently restart a long solve from zero - which is
     // exactly what "load it, raise the budget, solve" would have done.
     batch: meta.sampled?.batch != null ? String(meta.sampled.batch) : base.batch,
+  };
+};
+
+/** The spot's NO-TEAM view: what "Open baseline" solves. The engine keys an
+ *  unaware team's baseline by the spot alone, so a no-team solve of the same
+ *  spot (same batch, same seed) with Max iterations equal to the baseline's
+ *  own count resumes that checkpoint, iterates nothing, and exports it - the
+ *  baseline becomes a result in Recent like any other. Null when the result
+ *  does not record a baseline. */
+export const baselineViewFromDump = (
+  meta: PushFoldDump["metadata"],
+  base: MultiwayView
+): MultiwayView | null => {
+  const iters = meta.team?.baseline_iterations;
+  const spot = viewFromDump(meta, base);
+  if (!spot || iters == null) return null;
+  return {
+    ...spot,
+    teamSeats: [],
+    baselineIterations: "",
+    // Derived, never the team's id: a lineage is one spot and one team, and
+    // the baseline's own id is the spot's.
+    solveId: "",
+    loadedSolveId: "",
+    loadedIterations: "",
+    maxIterations: String(iters),
   };
 };
 

@@ -508,5 +508,106 @@ public class EngineCompareJobsTests
         Assert.IsType<NoContentResult>(await UserController(db, "uid-1").Delete(id));
         Assert.Empty(await db.EngineCompareJobs.ToListAsync());
     }
-}
 
+    /// <summary>Create, claim and walk one job to Done with the lineage the
+    /// watcher would report from the artifact's metadata.</summary>
+    private static async Task<Guid> SolvedJobAsync(AppDbContext db, string uid, string solveId,
+                                                   string? solveKey, long iterations, string blob)
+    {
+        var create = await UserController(db, uid).Create(
+            new EngineCompareController.CreateDto { Config = SpotConfig() });
+        var job = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>(create.Result).Value);
+        var watcher = WatcherController(db);
+        Assert.IsType<OkObjectResult>(await watcher.Claim(
+            new EngineCompareWatcherController.ClaimRequestDto { WatcherId = "w1" }));
+        foreach (var status in new[] { "Running", "Uploading" })
+        {
+            Assert.IsType<OkObjectResult>(await watcher.Report(job.Id,
+                new EngineCompareWatcherController.ReportRequestDto { WatcherId = "w1", Status = status }));
+        }
+        Assert.IsType<OkObjectResult>(await watcher.Report(job.Id,
+            new EngineCompareWatcherController.ReportRequestDto
+            {
+                WatcherId = "w1",
+                Status = "Done",
+                HtResultBlobPath = blob,
+                SolveId = solveId,
+                SolveKey = solveKey,
+                Iterations = iterations,
+            }));
+        return job.Id;
+    }
+
+    [Fact]
+    public async Task A_lineage_keeps_one_result_and_the_newer_more_converged_one_wins()
+    {
+        using var db = NewDb();
+        var key = new string('1', 64);
+        var older = await SolvedJobAsync(db, "uid-1", "abc", key, 1000, "enginecompare/a.json.gz");
+        var legacy = await SolvedJobAsync(db, "uid-1", "abc", null, 500, "enginecompare/b.json.gz");
+        var otherSpot = await SolvedJobAsync(db, "uid-1", "abc", new string('2', 64), 5000, "enginecompare/c.json.gz");
+        var otherUser = await SolvedJobAsync(db, "uid-2", "abc", key, 5000, "enginecompare/d.json.gz");
+        var otherLineage = await SolvedJobAsync(db, "uid-1", "xyz", key, 5000, "enginecompare/e.json.gz");
+
+        var newer = await SolvedJobAsync(db, "uid-1", "abc", key, 2000, "enginecompare/f.json.gz");
+
+        var ids = await db.EngineCompareJobs.Select(j => j.Id).ToListAsync();
+        // The same solve at a less converged point is gone, and so is the
+        // pre-stamp copy with no key - the stale rows this exists to clear.
+        Assert.DoesNotContain(older, ids);
+        Assert.DoesNotContain(legacy, ids);
+        // A different spot that reused the id, another user's job, and another
+        // lineage on the same spot are all somebody else's result.
+        Assert.Contains(otherSpot, ids);
+        Assert.Contains(otherUser, ids);
+        Assert.Contains(otherLineage, ids);
+        Assert.Contains(newer, ids);
+
+        // A re-export at the SAME iteration count replaces the older copy too:
+        // ties go to the newest, so a lineage never shows twice.
+        var reexport = await SolvedJobAsync(db, "uid-1", "abc", key, 2000, "enginecompare/g.json.gz");
+        ids = await db.EngineCompareJobs.Select(j => j.Id).ToListAsync();
+        Assert.DoesNotContain(newer, ids);
+        Assert.Contains(reexport, ids);
+
+        // And the lineage rides the DTO, which is what lets the page open a
+        // result by solve id instead of queueing one.
+        var dto = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>(
+                (await UserController(db, "uid-1").Get(reexport)).Result).Value);
+        Assert.Equal("abc", dto.SolveId);
+        Assert.Equal(key, dto.SolveKey);
+        Assert.Equal(2000, dto.Iterations);
+    }
+
+    [Fact]
+    public async Task Identity_backfill_fills_only_what_is_missing_and_is_owner_scoped()
+    {
+        using var db = NewDb();
+        var id = await SolvedJobAsync(db, "uid-1", "abc", null, 1000, "enginecompare/a.json.gz");
+        var owner = UserController(db, "uid-1");
+        var key = new string('a', 64);
+
+        var dto = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>((await owner.Identity(id,
+                new EngineCompareController.IdentityDto
+                {
+                    SolveId = "zzz",
+                    SolveKey = key,
+                    Iterations = 9,
+                })).Result).Value);
+        // The watcher's report is the authority: what it set stays, and only
+        // the gap (the key) is filled from the artifact.
+        Assert.Equal("abc", dto.SolveId);
+        Assert.Equal(key, dto.SolveKey);
+        Assert.Equal(1000, dto.Iterations);
+
+        Assert.IsType<NotFoundResult>((await UserController(db, "uid-2").Identity(id,
+            new EngineCompareController.IdentityDto { SolveId = "x" })).Result);
+        Assert.IsType<BadRequestObjectResult>((await owner.Identity(id,
+            new EngineCompareController.IdentityDto { SolveKey = "not-a-sha" })).Result);
+        Assert.IsType<BadRequestObjectResult>((await owner.Identity(id,
+            new EngineCompareController.IdentityDto { SolveId = "bad id!" })).Result);
+    }
+}
