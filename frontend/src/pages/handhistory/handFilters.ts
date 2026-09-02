@@ -23,6 +23,10 @@ export interface HandFilterState {
   /** Only hands where at least one seat's hole cards were recorded - the
    *  hands worth reviewing, as opposed to a fold-out with nothing shown. */
   anyKnownCards: boolean;
+  /** Only hands I played, as opposed to the ones I sat and watched. The tell
+   *  is the hero seat's own cards: every hand recorded here has a hero seat,
+   *  but a hand watched from the rail records no cards for it. */
+  myHands: boolean;
 }
 
 export const HAND_FILTERS_KEY = "ht_handfilters_v1";
@@ -32,6 +36,7 @@ export const defaultHandFilters: HandFilterState = {
   playerSawFlop: false,
   playerShowed: false,
   anyKnownCards: false,
+  myHands: false,
 };
 
 // Tolerant parser for the persisted blob (same contract as bankroll's):
@@ -54,24 +59,27 @@ export function parseHandFiltersOrDefault(raw: string): HandFilterState {
     playerSawFlop: bool("playerSawFlop"),
     playerShowed: bool("playerShowed"),
     anyKnownCards: bool("anyKnownCards"),
+    myHands: bool("myHands"),
   };
 }
 
 export function isFiltering(f: HandFilterState): boolean {
-  return f.playerIds.length > 0 || f.anyKnownCards;
+  return f.playerIds.length > 0 || f.anyKnownCards || f.myHands;
   // playerSawFlop / playerShowed alone filter nothing (they qualify
   // playerIds, which is already counted above).
 }
 
 export function rowMatches(row: ToolRow, f: HandFilterState): boolean {
-  if (f.playerIds.length === 0 && !f.anyKnownCards) return true;
+  if (!isFiltering(f)) return true;
 
-  // Every remaining filter needs the embedded payload; legacy hands without
-  // one fail them when active (approved scope: no backward compatibility).
+  // Every filter needs the embedded payload; legacy hands without one fail
+  // them when active (approved scope: no backward compatibility).
   const summary = summaryFromRawText(row.rawText);
   if (!summary) return false;
 
   if (f.anyKnownCards && !summary.seatFacts.some((s) => s.showedCards)) return false;
+
+  if (f.myHands && !summary.seatFacts.some((s) => s.isHero && s.showedCards)) return false;
 
   if (f.playerIds.length > 0) {
     // OR over the selection, with the qualifiers applied to the SAME seat: a

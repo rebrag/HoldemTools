@@ -418,7 +418,8 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
     (hasPlayers ? 1 : 0) +
     (hasPlayers && filters.playerSawFlop ? 1 : 0) +
     (hasPlayers && filters.playerShowed ? 1 : 0) +
-    (filters.anyKnownCards ? 1 : 0);
+    (filters.anyKnownCards ? 1 : 0) +
+    (filters.myHands ? 1 : 0);
 
   return (
     <>
