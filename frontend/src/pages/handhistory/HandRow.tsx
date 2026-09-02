@@ -50,7 +50,7 @@ const HandRow: React.FC<HandRowProps> = ({
   <motion.li
     variants={itemVariants}
     exit="exit"
-    className="px-2 py-1.5 transition-colors hover:bg-emerald-50/60 sm:px-3"
+    className="px-2 py-1 transition-colors hover:bg-emerald-50/60 sm:px-3"
   >
     <HandSummaryRow
       rawText={row.rawText}

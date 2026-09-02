@@ -38,14 +38,19 @@ export function rowActionClasses(
   tone: RowActionTone,
   variant: "light" | "dark" = "light",
   success = false,
-  size: "md" | "sm" = "md"
+  size: "md" | "sm" | "xs" = "md"
 ): string {
   const toneClasses = success
     ? variant === "dark"
       ? DARK_SUCCESS_TONE
       : SUCCESS_TONE
     : (variant === "dark" ? DARK_TONES : TONES)[tone];
-  const sizeClasses = size === "sm" ? "h-7 w-7 rounded-md" : "h-8 w-8 rounded-lg";
+  const sizeClasses =
+    size === "xs"
+      ? "h-6 w-6 rounded-md"
+      : size === "sm"
+        ? "h-7 w-7 rounded-md"
+        : "h-8 w-8 rounded-lg";
   return `inline-flex ${sizeClasses} items-center justify-center border shadow-sm transition-colors disabled:opacity-40 ${toneClasses}`;
 }
 
@@ -57,7 +62,7 @@ const RowActionButton: React.FC<{
   disabled?: boolean;
   success?: boolean; // show the emerald "done" state (e.g. after copy)
   variant?: "light" | "dark";
-  size?: "md" | "sm";
+  size?: "md" | "sm" | "xs";
 }> = ({ icon, label, tone, onClick, disabled, success, variant = "light", size = "md" }) => {
   const reduce = useReducedMotion();
   return (
