@@ -160,6 +160,15 @@ struct SolveConfig {
   // automatically and different spots can never collide. A caller that
   // queues many jobs (the watcher) sets this and nothing else.
   std::string checkpoint_dir;
+  // The SPOT's no-team identity (baseline_solve_key, first 12 chars) and the
+  // checkpoint phase 1 of an unaware team solve reads and writes. Named by
+  // the spot rather than by the team lineage, because the baseline IS the
+  // spot's no-team solve: every partition of the same spot shares it, and a
+  // no-team solve of the spot resumes the very same file - which is how a
+  // baseline gets looked at (solve the spot without a team: nothing to
+  // iterate, artifact exported). Both are derived, never user-named.
+  std::string baseline_solve_id;
+  std::string baseline_checkpoint_path;
   std::string output_path = "out/solve.hta";
   bool strategy_quantize_u8 = true;
   bool ev_float32 = true;
@@ -184,5 +193,13 @@ std::string config_hash(const SolveConfig& config);
 // spot and the same deal stream, so a checkpoint from one may be resumed by
 // the other - which is exactly what raising budget.iterations does.
 std::string config_solve_key(const SolveConfig& config);
+
+// The identity of the SPOT with no team at all: config_solve_key with the
+// whole `agents` block removed. Phase 1 of an unaware team solve is a plain
+// no-team solve of the spot, so this is what its checkpoint is keyed by. For
+// a config without `agents` the two keys are the same value, which is the
+// point: a no-team solve of a spot and the baseline every team solve of that
+// spot freezes its opponents at are one and the same solve.
+std::string baseline_solve_key(const SolveConfig& config);
 
 }  // namespace engine

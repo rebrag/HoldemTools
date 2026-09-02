@@ -205,6 +205,48 @@ TEST_CASE("a checkpoint from a different spot is refused, not reinterpreted") {
   std::remove(path.c_str());
 }
 
+TEST_CASE("the baseline is the spot's no-team solve, shared by every team on it") {
+  // Phase 1 of an unaware team solve never sees the partition, so the
+  // partition must not be part of what identifies its checkpoint: two teams
+  // on one spot share a baseline, and a no-team solve of that spot IS the
+  // baseline - same key, so the same file continues either way.
+  const SolveConfig plain = ck_config(4);
+  SolveConfig team_ab = plain;
+  team_ab.raw["agents"] = nlohmann::json::parse(
+      R"({"partition":[[0,1],[2],[3]],"awareness":"unaware","baseline_iterations":1000})");
+  SolveConfig team_cd = plain;
+  team_cd.raw["agents"] =
+      nlohmann::json::parse(R"({"partition":[[2,3],[0],[1]],"awareness":"unaware"})");
+
+  CHECK(config_solve_key(team_ab) != config_solve_key(team_cd));
+  CHECK(config_solve_key(team_ab) != config_solve_key(plain));
+  CHECK(baseline_solve_key(team_ab) == baseline_solve_key(team_cd));
+  CHECK(baseline_solve_key(team_ab) == config_solve_key(plain));
+  CHECK(baseline_solve_key(plain) == config_solve_key(plain));
+
+  // The file crosses that boundary: written as a plain solve, readable as a
+  // team's baseline - and NOT as the team's own phase 2.
+  NlhePreflopGame game(plain);
+  const std::string path = "test_checkpoint_baseline.htck";
+  {
+    SampledCfrSolver first(game, game, ck_solver_config(), plain.threads);
+    first.run(512);
+    CheckpointExtras extras;
+    write_checkpoint(path, first, plain, extras);
+  }
+  SampledCfrSolver as_baseline(game, game, ck_solver_config(), plain.threads);
+  CheckpointExtras extras;
+  std::string err;
+  CHECK(read_checkpoint(path, as_baseline, baseline_solve_key(team_ab), extras, err));
+  CHECK(as_baseline.iteration() == 512);
+  SampledCfrSolver as_team(game, game, ck_solver_config(), plain.threads);
+  CHECK_FALSE(read_checkpoint(path, as_team, config_solve_key(team_ab), extras, err));
+  CHECK(err.find("different spot") != std::string::npos);
+  CHECK(checkpoint_exists(path));
+  std::remove(path.c_str());
+  CHECK_FALSE(checkpoint_exists(path));
+}
+
 TEST_CASE("solve identity ignores the budget but not the spot") {
   // Everything above rests on this: raising the budget (or renaming the
   // output, or naming the lineage) must NOT change what counts as the same

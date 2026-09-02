@@ -10,6 +10,7 @@
 // before them do" is the only question, and a breadcrumb answers it in the
 // language a player already uses.
 import { useMemo, useState } from "react";
+import type { MoneyOpts } from "@/pages/solver/boardDisplay";
 import DecisionMatrix from "@/pages/solver/DecisionMatrix";
 import {
   actionLabels,
@@ -29,11 +30,16 @@ const chip =
 const PushFoldResultPanel = ({
   dump,
   className = "",
+  onOpenBaseline,
 }: {
   dump: PushFoldDump;
   /** The page hands this a definite height. Everything below is sized from
    *  it - see the grid wrapper's comment. */
   className?: string;
+  /** Unaware team results only: queue the no-team solve of this spot that
+   *  resumes the baseline the opponents were frozen at. Undefined while a
+   *  solve is running, which disables the control. */
+  onOpenBaseline?: () => void;
 }) => {
   const [path, setPath] = useState<number[]>([]);
   // Conditioned viewer: the partner hand class the team charts are
@@ -43,6 +49,12 @@ const PushFoldResultPanel = ({
   // Memoized because the `?? []` fallback is a fresh array every render, which
   // would make every useMemo keyed on it recompute.
   const seats = useMemo(() => meta.seats ?? [], [meta.seats]);
+  // The rollup's EVs are chips; the tooltip quotes big blinds, so it has to
+  // be told the blind. Without this a 6.9-chip EV read "6.9 bb".
+  const money = useMemo<MoneyOpts>(
+    () => ({ mode: "bb", bbSize: meta.chip_scale > 0 ? meta.chip_scale : 1 }),
+    [meta.chip_scale]
+  );
 
   const { steps, node } = useMemo(() => walkLine(dump, path), [dump, path]);
 
@@ -165,6 +177,30 @@ const PushFoldResultPanel = ({
             solve <span className="text-slate-200">{meta.solve_id}</span>
           </span>
         )}
+        {/* The baseline the opponents were frozen at is a solve of its own -
+            the spot with no team - and this is the way to look at it. */}
+        {meta.team?.awareness === "unaware" && meta.team.baseline_iterations != null && (
+          <button
+            type="button"
+            onClick={onOpenBaseline}
+            disabled={!onOpenBaseline}
+            className={`${chip} transition-colors enabled:hover:border-emerald-600 enabled:hover:text-emerald-300 disabled:cursor-default disabled:opacity-60`}
+            title={
+              "Open the no-team baseline the opponents play here as a result of its own. " +
+              "It queues a no-team solve of this spot at the baseline's iteration count, " +
+              "which continues the saved baseline, iterates nothing, and exports it - " +
+              "a short job, and afterwards a row in Recent."
+            }
+          >
+            open baseline
+            {meta.team.baseline_solve_id && (
+              <>
+                {" "}
+                <span className="text-slate-200">{meta.team.baseline_solve_id}</span>
+              </>
+            )}
+          </button>
+        )}
         {/* Both early stops say the same thing about the numbers - a real
             solve, just less converged than asked for - and differ only in who
             stopped it. Neither is a failure or a partial file. */}
@@ -268,7 +304,7 @@ const PushFoldResultPanel = ({
                     : (teamRollup.partner_reach?.[partnerClass] ?? 1) < 0.05
                       ? "The partner rarely arrives here with that hand, so this conditioned chart trains on thin data - read it loosely."
                       : teamRollup.ev
-                        ? "Conditioned on the partner's hand - the shared-cards strategy itself. Tooltip EVs are TEAM chips (own + partner), the quantity the pair maximizes."
+                        ? "Conditioned on the partner's hand - the shared-cards strategy itself. Tooltip EVs are the TEAM's (own + partner, in big blinds), the quantity the pair maximizes."
                         : "Conditioned on the partner's hand - the shared-cards strategy itself. Frequencies only; this payload predates conditioned EVs."}
               </span>
             </div>
@@ -284,7 +320,7 @@ const PushFoldResultPanel = ({
               to a few unreadable pixels - the grid stays width-driven there. */}
           <div className="flex justify-center lg:min-h-0 lg:flex-1">
             <div className="w-full lg:aspect-square lg:h-full lg:w-auto lg:max-w-full">
-              <DecisionMatrix gridData={grid} heightMode="full" />
+              <DecisionMatrix gridData={grid} heightMode="full" money={money} />
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap gap-2">

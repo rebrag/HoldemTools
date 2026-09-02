@@ -91,6 +91,27 @@ json node_data_to_json(const ArtifactReader& reader, const ArtifactNodeData& dat
   }
   j["seats"] = std::move(seats);
   if (data.has_rollup && (!trimmed || fields == DumpFields::kRollup)) {
+    // Per-ACTION class EVs, folded from the actor's per-hand rows with the
+    // same reach weighting the artifact's own rollup used (artifact_writer),
+    // so a chart's tooltip can say what jamming is worth against folding
+    // instead of quoting one class EV for both. Derived here rather than
+    // stored: the format carries one EV per class, and everything needed is
+    // already in the node.
+    const int actions = data.num_actions;
+    std::vector<double> aev_weight(169, 0.0);
+    std::vector<std::vector<double>> aev_sum(169, std::vector<double>(static_cast<std::size_t>(actions), 0.0));
+    if (nlhe && data.actor < data.num_seats) {
+      const ArtifactSeatData& actor_seat = data.seats[data.actor];
+      for (std::size_t i = 0; i < actor_seat.idx.size(); ++i) {
+        const int cls = combo_class_index(dicts[data.actor][actor_seat.idx[i]]);
+        const double w = actor_seat.reach[i];
+        aev_weight[static_cast<std::size_t>(cls)] += w;
+        for (int k = 0; k < actions; ++k) {
+          aev_sum[static_cast<std::size_t>(cls)][static_cast<std::size_t>(k)] +=
+              w * data.action_ev[i * static_cast<std::size_t>(actions) + static_cast<std::size_t>(k)];
+        }
+      }
+    }
     json rollup = json::array();
     for (int cls = 0; cls < 169; ++cls) {
       if (data.rollup_weight[cls] <= 0.0f) continue;
@@ -99,6 +120,15 @@ json node_data_to_json(const ArtifactReader& reader, const ArtifactNodeData& dat
       r["weight"] = data.rollup_weight[cls];
       r["ev"] = data.rollup_ev[cls];
       r["freq"] = data.rollup_freq[cls];
+      if (nlhe) {
+        json a = json::array();
+        const double w = aev_weight[static_cast<std::size_t>(cls)];
+        for (int k = 0; k < actions; ++k) {
+          const double v = aev_sum[static_cast<std::size_t>(cls)][static_cast<std::size_t>(k)];
+          a.push_back(w > 0.0 ? round7(static_cast<float>(v / w)) : 0.0);
+        }
+        r["action_ev"] = std::move(a);
+      }
       rollup.push_back(std::move(r));
     }
     j["rollup_169"] = std::move(rollup);

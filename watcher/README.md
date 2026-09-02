@@ -155,6 +155,7 @@ The queue-driven sibling of the harness: claims `EngineCompareJob`s from `POST /
 Three per-job options ride the claim payload and decide how much runs: `disablePio` (no Pio process at all - the default), `disableCompare` (Pio solves, but its per-hand rows are not extracted), and `disableCrossCheck` (no gate).
 The API normalizes them, so "no Pio" always implies the other two.
 The frontend fetches the htsolver half first and merges Pio's when it lands, and `/api/enginecompare/{id}/result/{ht|pio}` serves either without waiting for the job to reach `Done` - so a Pio failure cannot cost you the engine result.
+`pushfold` jobs also report the result's lineage with the terminal status - `solveId`, `solveKey` and `iterations`, read from the dumped artifact's metadata - and the API keeps ONE result per lineage: an earlier job of the same solve id and spot with no more iterations is deleted (row and blob) when the new one lands, so Recent on `/multiway` shows a solve once, at its most converged.
 Run it with `python engine_compare_watcher.py` (same `.env`; set `ENGINE_EXE` if the engine binary is not at `../engine/build/engine.exe`).
 Only one instance - it spawns Pio processes.
 

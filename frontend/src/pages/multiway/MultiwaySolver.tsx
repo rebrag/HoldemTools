@@ -23,6 +23,7 @@ import MultiwayTreeBuilder from "./MultiwayTreeBuilder";
 import PushFoldResultPanel from "./PushFoldResultPanel";
 import type { PushFoldDump } from "./pushfoldResult";
 import {
+  baselineViewFromDump,
   DEFAULT_VIEW,
   actionOrder,
   blindSeats,
@@ -57,6 +58,12 @@ interface CompareJob {
    * partial result is still uploaded - so this is what "Stopping" is read
    * from, and the row keeps its real status until that lands. */
   cancelRequestedAtUtc?: string | null;
+  /* The result's lineage and how far it got, as the watcher reported it (or
+   * as the page backfilled it from the artifact). What lets a lineage be
+   * opened by id - a team's baseline, say - without queueing anything. */
+  solveId?: string | null;
+  solveKey?: string | null;
+  iterations?: number | null;
 }
 
 const ago = (iso?: string | null): string => {
@@ -186,6 +193,27 @@ const MultiwaySolver = () => {
     }
     setDump(parsed);
     setViewingId(id);
+    /* Backfill the row's lineage from the artifact it serves, for jobs from
+     * before the watcher reported it. The page is the one party that has
+     * just read the metadata; the server records only what it lacks, and
+     * the local list is patched the same way so "open baseline" can find
+     * this result without a refetch. Fire and forget - nothing on screen
+     * depends on it. */
+    const m = parsed.metadata;
+    if (m.solve_id) {
+      const identity = {
+        solveId: m.solve_id,
+        solveKey: m.solve_key ?? null,
+        iterations: m.iterations ?? null,
+      };
+      setJobs((cur) =>
+        cur.map((j) => (j.id === id && !j.solveId ? { ...j, ...identity } : j))
+      );
+      void authedFetch(`/api/enginecompare/${id}/identity`, {
+        method: "POST",
+        body: JSON.stringify(identity),
+      }).catch(() => undefined);
+    }
     /* Move the builder onto the spot that was actually solved. The table, the
      * seat labels and the action order all read `view`, so without this a
      * 6-way chart renders beside a 4-way table left over from whatever was
@@ -284,7 +312,7 @@ const MultiwaySolver = () => {
     [loadResult]
   );
 
-  const solve = useCallback(async () => {
+  const solve = useCallback(async (target: MultiwayView = view) => {
     setError(null);
     setDump(null);
     // Drop the PREVIOUS job before the new one exists. Without this the
@@ -301,7 +329,7 @@ const MultiwaySolver = () => {
       const create = await authedFetch("/api/enginecompare", {
         method: "POST",
         body: JSON.stringify({
-          config: buildMultiwayConfig(view),
+          config: buildMultiwayConfig(target),
           mode: "pushfold",
           pioAccuracyPct: 0.02,
           disablePio: true,
@@ -343,6 +371,41 @@ const MultiwaySolver = () => {
       void refreshJobs();
     }
   }, [view, loadResult, refreshJobs]);
+
+  /* A baseline is a checkpoint, not a result, until something exports it.
+   * The engine keys it by the spot alone, so a no-team solve of this spot
+   * at the baseline's own iteration count resumes it, iterates nothing and
+   * writes the artifact - a short job, and afterwards a row in Recent. The
+   * builder moves onto that view too, so what got queued is visible. */
+  const openBaseline = useCallback(() => {
+    if (!dump) return;
+    /* Already reachable? Then it is just another result to open: no queue,
+     * no watcher. The most converged copy wins, newest on a tie. */
+    const baselineId = dump.metadata.team?.baseline_solve_id;
+    if (baselineId) {
+      const existing = jobs
+        .filter(
+          (j) =>
+            j.solveId === baselineId && HAS_RESULT.includes(j.status) && j.hasHtResult !== false
+        )
+        .sort(
+          (a, b) =>
+            (b.iterations ?? 0) - (a.iterations ?? 0) ||
+            (b.completedAtUtc ?? "").localeCompare(a.completedAtUtc ?? "")
+        )[0];
+      if (existing) {
+        void openJob(existing.id);
+        return;
+      }
+    }
+    const target = baselineViewFromDump(dump.metadata, view);
+    if (!target) {
+      setError("This result does not record the baseline it was solved against.");
+      return;
+    }
+    setView(target);
+    void solve(target);
+  }, [dump, view, jobs, solve, openJob]);
 
   const downloadConfig = useCallback(() => {
     const blob = new Blob([JSON.stringify(buildMultiwayConfig(view), null, 2)], {
@@ -441,6 +504,11 @@ const MultiwaySolver = () => {
                   <span className={STATUS_TONE[j.status]}>
                     {!finished && stopping ? "Stopping" : j.status}
                   </span>
+                  {/* The lineage, because one id now keeps one result: the
+                      row IS that solve, not one run of it. */}
+                  {j.solveId && (
+                    <span className="font-mono text-[10px] text-slate-500">{j.solveId}</span>
+                  )}
                 </button>
                 {/* One slot, two jobs, because a row is only ever in one of
                     the two states: a running solve can be stopped, a finished
@@ -570,7 +638,11 @@ const MultiwaySolver = () => {
                whatever is left after its own chrome. Below lg it stays
                auto-height and this column scrolls, which is the only thing
                that fits a 13x13 grid on a phone. */
-            <PushFoldResultPanel dump={dump} className="lg:min-h-0 lg:flex-1" />
+            <PushFoldResultPanel
+              dump={dump}
+              className="lg:min-h-0 lg:flex-1"
+              onOpenBaseline={solving ? undefined : openBaseline}
+            />
           ) : (
             <div className="flex min-h-[10rem] flex-1 items-center justify-center rounded-xl border border-dashed border-slate-800 px-4 py-10 text-center text-[11px] text-slate-500">
               {solving

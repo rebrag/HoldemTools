@@ -14,8 +14,13 @@ import { HAND_ORDER } from "@/lib/solver/handOrder";
 export interface DumpRollupEntry {
   class: string;
   weight: number;
+  /** Class EV under the solved strategy, chips. */
   ev: number;
   freq: number[];
+  /** Per-action class EV, chips, same order as the node's actions: what
+   *  jamming is worth against folding for this hand. Derived by dump-json
+   *  from the per-hand rows; absent on payloads from before it. */
+  action_ev?: number[];
 }
 
 export interface DumpNode {
@@ -56,6 +61,10 @@ export interface PushFoldDump {
     /** The solve lineage: stable across resumes, so two artifacts sharing it
      *  are the same solve at different iteration counts. */
     solve_id?: string;
+    /** The spot's identity (the engine's config_solve_key): with solve_id it
+     *  separates "the same lineage, further along" from "a different spot
+     *  that reused the id". */
+    solve_key?: string;
     team?: {
       seats: number[];
       awareness: string;
@@ -66,6 +75,11 @@ export interface PushFoldDump {
        *  requested config.agents.baseline_iterations when the time budget
        *  cut it short. `metadata.iterations` is the TEAM phase. */
       baseline_iterations?: number;
+      /** The spot's no-team solve the opponents were frozen at. Keyed by the
+       *  spot alone engine-side, so every team on this spot shares it - and
+       *  solving the spot with no team resumes it, which is how it gets
+       *  looked at. */
+      baseline_solve_id?: string;
       uplift_chips?: number;
       strategy_export: string;
     } | null;
@@ -178,6 +192,11 @@ export const settingsRows = (meta: PushFoldDump["metadata"]): SettingRow[] => {
     }
     push("Hand-sharing team", team.seats.map((s) => meta.seats?.[s] ?? s).join(" + "));
     push("Opponents", team.awareness === "unaware" ? "don't know (unaware)" : "know (aware)");
+    push(
+      "Baseline solve ID",
+      team.baseline_solve_id,
+      "the spot's no-team solve; every team on this spot shares it"
+    );
   }
   if (meta.stopped_reason) {
     push(
@@ -292,7 +311,10 @@ export const gridFor = (node: DumpNode): HandCellData[] => {
     const evs: Record<string, number> = {};
     labels.forEach((label, i) => {
       actions[label] = entry?.freq[i] ?? 0;
-      if (entry) evs[label] = entry.ev;
+      // Per-action where the payload has it; the class EV is one number for
+      // every action and only ever said what the mix was worth, not what
+      // each choice was.
+      if (entry) evs[label] = entry.action_ev?.[i] ?? entry.ev;
     });
     return { hand, actions, evs };
   });

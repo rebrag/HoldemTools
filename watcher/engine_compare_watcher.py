@@ -133,7 +133,8 @@ def claim() -> Optional[Dict[str, Any]]:
 def report(job_id: str, status: Optional[str] = None, error: Optional[str] = None,
            heartbeat: bool = False, result_blob_path: Optional[str] = None,
            ht_blob_path: Optional[str] = None, pio_blob_path: Optional[str] = None,
-           timings: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+           timings: Optional[Dict[str, Any]] = None,
+           identity: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """PATCH one job. Returns the API's response body, or None if the call
     itself failed.
 
@@ -157,6 +158,12 @@ def report(job_id: str, status: Optional[str] = None, error: Optional[str] = Non
         body["pioResultBlobPath"] = pio_blob_path
     if timings:
         body["timings"] = timings
+    if identity:
+        # The result's lineage (solveId, solveKey, iterations), straight from
+        # the artifact's metadata. The API uses it to keep ONE result per
+        # lineage: an earlier job of the same solve with no more iterations
+        # is deleted when this one lands.
+        body.update(identity)
     try:
         resp = requests.patch(f"{_base()}/api/enginecompare/{job_id}", json=body,
                               headers=_headers(), timeout=TIMEOUT_SECS)
@@ -526,6 +533,27 @@ def handle_publish(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
     log(f"  published -> {coords.get('stacks')}/{coords.get('nodeName')}/{coords.get('board')}")
 
 
+def result_identity(dump_path: str) -> Dict[str, Any]:
+    """The lineage a dumped result belongs to, for the terminal report:
+    solveId / solveKey / iterations from the artifact's own metadata. Best
+    effort - a dump the reader cannot parse reports nothing rather than
+    failing a job whose result is already on disk."""
+    try:
+        with open(dump_path, "r", encoding="utf8") as f:
+            meta = json.load(f).get("metadata") or {}
+    except Exception as e:  # noqa: BLE001 - never fail the job over this
+        log(f"  identity: could not read {os.path.basename(dump_path)} ({e}); reporting none")
+        return {}
+    out: Dict[str, Any] = {}
+    if isinstance(meta.get("solve_id"), str):
+        out["solveId"] = meta["solve_id"]
+    if isinstance(meta.get("solve_key"), str):
+        out["solveKey"] = meta["solve_key"]
+    if isinstance(meta.get("iterations"), int):
+        out["iterations"] = meta["iterations"]
+    return out
+
+
 def handle_pushfold(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
                    cancel: Cancellation) -> None:
     """Multiway preflop jam/fold (engine M8a).
@@ -561,12 +589,14 @@ def handle_pushfold(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
                            f"{out.text[-1500:]}")
     timings["dump_s"] = round(time.perf_counter() - phase_start, 3)
     timings["dump_bytes"] = os.path.getsize(dump_path)
+    identity = result_identity(dump_path)
 
     report(job_id, status="Uploading")
     phase_start = time.perf_counter()
     blob = upload_result(job_id, dump_path, "ht", ext="json")
     timings["upload_s"] = round(time.perf_counter() - phase_start, 3)
-    report(job_id, status=terminal_status(cancel), ht_blob_path=blob, timings=timings)
+    report(job_id, status=terminal_status(cancel), ht_blob_path=blob, timings=timings,
+           identity=identity)
     log(f"  pushfold -> {blob} ({timings['dump_bytes']} bytes before gzip)")
 
 

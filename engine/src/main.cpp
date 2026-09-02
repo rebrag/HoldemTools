@@ -117,14 +117,19 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   }
   SampledCfrSolver solver(game, *deals, config.sampled, config.threads, agents);
   stats.solve_id = config.solve_id;
+  const bool unaware_team = team && config.awareness == "unaware";
+  if (unaware_team) stats.baseline_solve_id = config.baseline_solve_id;
   std::cout << "solve id " << config.solve_id;
+  if (unaware_team) std::cout << ", baseline " << config.baseline_solve_id;
   if (!config.checkpoint_path.empty()) std::cout << " (checkpoints on)";
   std::cout << "\n";
   const bool resume_allowed = config.resume_mode != "never";
-  // Phase 1 keeps its OWN checkpoint beside phase 2's, so a baseline can be
-  // extended on its own terms. Both are named after the solve id.
-  const std::string base_ck =
-      config.checkpoint_path.empty() ? std::string() : config.checkpoint_path + ".baseline";
+  // Phase 1 keeps its OWN checkpoint, named by the SPOT rather than by this
+  // lineage: the baseline is the spot's no-team solve, so every team
+  // partition of the spot shares it, and a no-team solve of the spot resumes
+  // the very same file (same key, same derived id) - which is how a baseline
+  // gets exported and looked at.
+  const std::string base_ck = config.baseline_checkpoint_path;
 
   // PHASE 2's checkpoint is read FIRST, before phase 1 does any work. It
   // records which baseline the team trained against, and that is what decides
@@ -153,6 +158,15 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
       std::cerr << "FATAL: solve.resume is \"require\" but there is nothing to resume: " << err
                 << "\n";
       return 1;
+    } else if (checkpoint_exists(config.checkpoint_path)) {
+      // A file is there and it is not ours to continue. Starting fresh would
+      // overwrite it at the end of this run - silently destroying another
+      // spot's iterations, hours of them possibly, because an id was reused.
+      std::cerr << "FATAL: " << config.checkpoint_path
+                << " holds a solve this config cannot continue (" << err << ").\n"
+                << "       Solve under a different solve.id, or set solve.resume to "
+                   "\"never\" to start over and overwrite it.\n";
+      return 1;
     } else {
       std::cout << "checkpoint: starting fresh (" << err << ")\n";
     }
@@ -163,18 +177,27 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   // and iterating only the shortfall - which is what makes a baseline
   // extendable rather than frozen forever at whatever the first run reached.
   std::unique_ptr<SampledCfrSolver> baseline;
-  if (team && config.awareness == "unaware") {
+  if (unaware_team) {
     baseline = std::make_unique<SampledCfrSolver>(game, *deals, config.sampled,
                                                   config.threads);
     CheckpointExtras base_extras;
+    // Keyed by the spot alone (baseline_solve_key): the partition is not part
+    // of a no-team solve, so it must not be part of what identifies one.
+    const std::string base_key = baseline_solve_key(config);
     if (!base_ck.empty() && resume_allowed) {
       std::string err;
-      if (read_checkpoint(base_ck, *baseline, config, base_extras, err)) {
-        std::cout << "phase 1: resumed the baseline at iteration " << baseline->iteration()
-                  << "\n";
+      if (read_checkpoint(base_ck, *baseline, base_key, base_extras, err)) {
+        std::cout << "phase 1: resumed baseline " << config.baseline_solve_id
+                  << " at iteration " << baseline->iteration() << "\n";
       } else if (config.resume_mode == "require") {
         std::cerr << "FATAL: solve.resume is \"require\" but the baseline checkpoint could "
                      "not be used: " << err << "\n";
+        return 1;
+      } else if (checkpoint_exists(base_ck)) {
+        std::cerr << "FATAL: " << base_ck << " holds a solve this spot's baseline cannot "
+                     "continue (" << err << ").\n"
+                  << "       Move it aside, or set solve.resume to \"never\" to start the "
+                     "baseline over and overwrite it.\n";
         return 1;
       }
     }
@@ -194,6 +217,22 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
       // the old baseline with one to the new. Refuse BEFORE phase 1 runs, so
       // nothing is spent and the suggested fix actually works.
       if (!config.rebase) {
+        if (baseline->iteration() != extras.baseline_iterations) {
+          // The baseline is shared by every solve of the spot, so another
+          // lineage (or a no-team solve) may already have lengthened it. The
+          // "restore the old count" fix does not exist then: a baseline never
+          // rewinds. Only a rebase, or a fresh id, can continue.
+          std::cerr << "FATAL: baseline " << config.baseline_solve_id
+                    << " has been extended to " << baseline->iteration()
+                    << " iterations by another solve of this spot, but phase 2 was trained "
+                       "against it at "
+                    << extras.baseline_iterations
+                    << ". Phase 2's regrets are a best response to the OLD baseline, so "
+                       "continuing would mix two different games.\n"
+                       "       Set solve.rebase true to restart phase 2 against the longer "
+                       "baseline, or solve under a new solve.id.\n";
+          return 1;
+        }
         std::cerr << "FATAL: this would move the baseline out from under phase 2, which was "
                      "trained against "
                   << extras.baseline_iterations << " baseline iterations (this run would end "
@@ -220,6 +259,7 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
     // is one call that returns when the whole baseline is done, and neither
     // the clock nor a cancel can be looked at from inside it.
     const bool base_sliced = base_deadline > 0.0 || !config.stop_file.empty();
+    const std::uint64_t base_before = baseline->iteration();
     while (baseline->iteration() < base_target) {
       const std::uint64_t remaining = base_target - baseline->iteration();
       const std::uint64_t slice = base_sliced
@@ -244,9 +284,13 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
     std::cout << "baseline ev";
     for (double ev : stats.baseline_ev_chips) std::cout << " " << ev;
     std::cout << "\n";
-    if (!base_ck.empty()) {
+    // Only a baseline that moved is written back: the file is shared by every
+    // solve of the spot, and a run that merely read it has nothing to add.
+    if (!base_ck.empty() && baseline->iteration() != base_before) {
       CheckpointExtras out_extras;
-      write_checkpoint(base_ck, *baseline, config, out_extras);
+      write_checkpoint(base_ck, *baseline, base_key, out_extras);
+      std::cout << "baseline checkpoint " << base_ck << " at iteration "
+                << baseline->iteration() << "\n";
     }
   } else if (resumed) {
     // No phase 1 to re-derive them from (aware team, or no team at all).
@@ -346,6 +390,16 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
       break;
     }
   }
+  if (done == started_at && !cancelled && !team) {
+    // A run with nothing left to iterate - re-exporting a finished solve, which
+    // is how a baseline gets looked at - never enters the loop, so it never
+    // measures anything, and a stamped nashconv of 0.0 would read as "exact".
+    // Measure once so the artifact says what the strategy is actually worth.
+    const BrResult br = compute_best_response(game, solver);
+    nashconv = br.nashconv();
+    std::cout << "iter " << done << "  nashconv " << nashconv << "  exploitable "
+              << nashconv / game.num_seats() << " (measured on re-export; nothing iterated)\n";
+  }
   const double wall_s =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
@@ -416,8 +470,11 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
     // where the discount and the lane fold happen; stopping inside one splits
     // a fold and the continuation differs in the last bits. Time-budget stops
     // always land on a boundary (deadline_slice rounds to whole batches), so
-    // this only fires on a hand-picked budget.iterations.
-    if (config.sampled.batch > 0 && solver.iteration() % config.sampled.batch != 0) {
+    // this only fires on a hand-picked budget.iterations - and only when this
+    // run actually stopped somewhere: a run that merely re-exported a finished
+    // solve (0 iterations) did not stop inside anything.
+    if (config.sampled.batch > 0 && solver.iteration() != started_at &&
+        solver.iteration() % config.sampled.batch != 0) {
       std::cout << "note: stopped mid-batch (iteration is not a multiple of "
                 << config.sampled.batch
                 << "), so continuing from here will differ from an uninterrupted run in "
@@ -461,6 +518,13 @@ int run_solve(const SolveConfig& config, bool dry_run) {
               << game->tree().num_decision_nodes << " decision, "
               << game->tree().num_terminal_nodes << " terminal)\n";
     std::cout << "threads: " << threads << " (setup took " << setup_s << " s)\n";
+    // The identities a solve would checkpoint under, so a caller can find
+    // (or migrate) files without running anything.
+    std::cout << "solve id: " << config.solve_id << "\n";
+    if (config.sampled.enabled) {
+      std::cout << "baseline id (the spot's no-team solve): " << config.baseline_solve_id
+                << "\n";
+    }
     return check_memory(*game, config, false);
   }
   if (int rc = check_memory(*game, config, true); rc != 0) return rc;

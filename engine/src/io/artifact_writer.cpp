@@ -518,6 +518,10 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
   meta["solver_version"] = "0.1.0";
   meta["format_version"] = fmt::kFormatVersion;
   meta["config_hash"] = config_hash(config);
+  // The spot's identity - what a checkpoint refuses to continue across. With
+  // solve_id below it lets a consumer tell "the same lineage, further along"
+  // from "a different spot that reused the id".
+  meta["solve_key"] = config_solve_key(config);
   meta["config"] = config.raw;
   meta["game"] = config.game;
   // "nash" | "qre". Downstream refusals key off this: the Pio harness will not
@@ -608,6 +612,7 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
       team["baseline_team_ev_chips"] = base_team;
       team["uplift_chips"] = team_ev - base_team;
     }
+    if (!stats.baseline_solve_id.empty()) team["baseline_solve_id"] = stats.baseline_solve_id;
     // The per-hand strategy blobs and rollups are MARGINALS over the
     // partner; the conditioned chart is team_rollup.
     team["strategy_export"] = "marginal_over_partner";
