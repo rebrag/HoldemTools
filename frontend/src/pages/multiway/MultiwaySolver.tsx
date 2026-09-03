@@ -13,12 +13,23 @@
 // surfaces. The engine-core tabs live at the top of the builder drawer - both
 // engine pages render EngineCoreTabs there - which is what says which core a
 // tree is being built for and what makes the two reachable from each other.
+//
+// What the page shows is one SELECTION: a solve (its table, its line, its
+// chart) or a saved group (every seat's fold-to chart for every solve in it).
+// The table on the left follows it - who is on the spot, who has jammed, who
+// has folded - and falls back to the builder's spot when nothing is open.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import EngineCoreTabs from "@/components/EngineCoreTabs";
 import PokerTable from "@/components/PokerTable";
 import type { PokerTableSeatData } from "@/components/PokerTableSeat";
 import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import { authedFetch } from "@/lib/api";
+import {
+  canPassAction,
+  resolveSeatNav,
+  useSeatNavigation,
+} from "@/pages/solver/seatNavigation";
+import GroupRangesView from "./GroupRangesView";
 import MultiwayTreeBuilder from "./MultiwayTreeBuilder";
 import PushFoldResultPanel from "./PushFoldResultPanel";
 import SessionSimulator, {
@@ -36,9 +47,10 @@ import {
   TERMINAL,
   type CompareJob,
 } from "./compareJob";
-import { fetchPushFoldDump } from "./fetchPushFoldDump";
+import { buildLineModel, lineHandlers, tableSeatsFor } from "./lineModel";
 import type { PushFoldDump } from "./pushfoldResult";
 import { jobLabel, spotKey, spotShort, spotTitle } from "./solveIdentity";
+import { useDumpCache, useLoadedDumps } from "./useDumps";
 import { useSolveGroups } from "./useSolveGroups";
 import {
   baselineViewFromDump,
@@ -60,13 +72,27 @@ const POLL_MS = 3000;
  * that scrolled through all of them hid most behind an invisible scrollbar. */
 const RECENT_STRIP = 8;
 
+/** What the page is showing: one solve with its line, or one saved group. */
+type Selection =
+  | { kind: "job"; id: string; dump: PushFoldDump }
+  | { kind: "group"; id: string }
+  | null;
+
+/* One empty path for every render, so memos keyed on it hold. */
+const ROOT_PATH: number[] = [];
+const NO_IDS: string[] = [];
+
 const MultiwaySolver = () => {
   const [view, setView] = useState<MultiwayView>(DEFAULT_VIEW);
   const [job, setJob] = useState<CompareJob | null>(null);
   const [solving, setSolving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dump, setDump] = useState<PushFoldDump | null>(null);
-  const [viewingId, setViewingId] = useState<string | null>(null);
+  const [selection, setSelection] = useState<Selection>(null);
+  /* The line through the open solve's tree (child indices from the root),
+   * and the partner hand its team charts are conditioned on. Page state
+   * rather than the panel's because the table reads the line too. */
+  const [path, setPath] = useState<number[]>(ROOT_PATH);
+  const [partnerClass, setPartnerClass] = useState<number | null>(null);
   const [jobs, setJobs] = useState<CompareJob[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   /* Jobs whose Stop has been accepted but whose status has not caught up yet.
@@ -81,9 +107,16 @@ const MultiwaySolver = () => {
   const [solvesOpen, setSolvesOpen] = useState(false);
   const cancelled = useRef(false);
   const simulator = useRef<SessionSimulatorHandle>(null);
-  /* Saved rotations, shared by the Solves drawer (rename, delete, simulate)
-   * and the simulator (load, save) so each sees the other's changes. */
+  /* Saved rotations, shared by the Solves drawer (open, rename, delete,
+   * simulate) and the simulator (load, save) so each sees the other's
+   * changes. */
   const solveGroups = useSolveGroups();
+  /* Every payload this page fetches goes through one cache: the open
+   * result, a group's plates and the simulator's rotation share downloads. */
+  const { getDump, evict } = useDumpCache();
+  /* Opening a result is async; a slower earlier open must not land on top
+   * of a later one. */
+  const loadRequest = useRef(0);
 
   /* Re-arm on mount, not just disarm on unmount. StrictMode mounts, unmounts
    * and remounts every effect in development, so a cleanup-only version sets
@@ -98,6 +131,10 @@ const MultiwaySolver = () => {
     };
   }, []);
 
+  const dump = selection?.kind === "job" ? selection.dump : null;
+  const viewingId = selection?.kind === "job" ? selection.id : null;
+  const viewingGroupId = selection?.kind === "group" ? selection.id : null;
+
   const labels = useMemo(() => seatLabels(view.players, view.button), [view.players, view.button]);
   const { sb, bb } = useMemo(
     () => blindSeats(view.players, view.button),
@@ -108,6 +145,7 @@ const MultiwaySolver = () => {
     [view.players, view.button]
   );
   const issues = useMemo(() => validate(view), [view]);
+  const jobsById = useMemo(() => new Map(jobs.map((j) => [j.id, j])), [jobs]);
   /* Rows the simulator can add: finished with a result, described the way
    * every list on this page describes a solve (phase, team, spot, depth). */
   const simulatorJobs = useMemo<SimulatorJob[]>(
@@ -127,10 +165,65 @@ const MultiwaySolver = () => {
   const anteEach = Number(view.ante) || 0;
   const pot = potChips(view);
 
-  /* Seats are display-only in PokerTable (the whole cluster is one button), so
-   * stacks are edited in the builder's list and the table shows the posted
-   * blind as that seat's bet - which is exactly what a blind is. */
-  const seats: PokerTableSeatData[] = useMemo(
+  /* ---------- the open group ---------- */
+  const group = useMemo(
+    () => (viewingGroupId ? solveGroups.groups.find((g) => g.id === viewingGroupId) ?? null : null),
+    [viewingGroupId, solveGroups.groups]
+  );
+  const groupIds = group?.jobIds ?? NO_IDS;
+  const groupDumps = useLoadedDumps(groupIds, getDump);
+  /* The first member that has arrived stands for the group's spot: every
+   * member shares it, so any one of them can drive the table and header. */
+  const firstGroupDump = useMemo(() => {
+    for (const id of groupIds) {
+      const l = groupDumps[id];
+      if (l && "dump" in l) return l.dump;
+    }
+    return null;
+  }, [groupIds, groupDumps]);
+  /* Move the builder onto the group's spot as its payloads land, the way
+   * opening a single result does. Re-applied whenever the standing member
+   * changes (a cached later member can arrive before the first), so the
+   * header and the table read the same dump; every member shares the spot,
+   * so only the team differs between them, and a group has no one team. */
+  useEffect(() => {
+    if (!viewingGroupId || !firstGroupDump) return;
+    const meta = firstGroupDump.metadata;
+    setView((cur) => viewFromDump(meta, cur) ?? cur);
+  }, [viewingGroupId, firstGroupDump]);
+
+  /* ---------- the line through the open solve ---------- */
+  const lineModel = useMemo(() => (dump ? buildLineModel(dump, path) : null), [dump, path]);
+  const handlers = useMemo(
+    () => (dump && lineModel ? lineHandlers(dump, path, setPath, lineModel.seatOf) : null),
+    [dump, lineModel, path]
+  );
+  /* Clicking a seat on the table does what clicking its Line card does:
+   * skips ahead to it or rewinds to its decision - see seatNavigation.ts. */
+  const seatNav = useCallback(
+    (pos: string) => {
+      if (!lineModel || !handlers) return null;
+      const activeFile = lineModel.plateMapping[lineModel.activePlayer];
+      return resolveSeatNav({
+        pos,
+        positions: lineModel.positions,
+        activePlayer: lineModel.activePlayer,
+        alive: lineModel.alivePlayers[pos] ?? true,
+        activeCanPass: canPassAction(activeFile ? lineModel.plateData[activeFile] : undefined),
+        actionsBeforeSeat: lineModel.actionsBeforeSeat,
+        onSkipToSeat: handlers.onSkipToSeat,
+        onRewindTo: handlers.onRewindTo,
+      });
+    },
+    [lineModel, handlers]
+  );
+
+  /* ---------- the table ---------- */
+  /* With nothing open the table previews the builder's spot: stacks are
+   * edited in the builder's list and the posted blind is that seat's bet -
+   * which is exactly what a blind is. Keyed by label like the solve's seats,
+   * so the one table takes either. */
+  const builderSeats: PokerTableSeatData[] = useMemo(
     () =>
       Array.from({ length: view.players }, (_, i) => {
         const posted =
@@ -139,7 +232,7 @@ const MultiwaySolver = () => {
           anteEach;
         const stack = Number(view.stacks[i]) || 0;
         return {
-          key: i,
+          key: labels[i],
           label: labels[i],
           stackText: `${Math.max(0, stack - posted)}`,
           committedAmount: posted > 0 ? posted : undefined,
@@ -150,41 +243,59 @@ const MultiwaySolver = () => {
       }),
     [view, labels, sb, bb, order, anteEach]
   );
+  /* With a solve open the table IS the solve at the current node; with a
+   * group open it is the group's spot at the root. */
+  const tableDump = dump ?? firstGroupDump;
+  const tablePath = dump ? path : ROOT_PATH;
+  const table = useMemo(
+    () => (tableDump ? tableSeatsFor(tableDump, tablePath) : null),
+    [tableDump, tablePath]
+  );
+  const { seats: tableSeats, onSeatClick } = useSeatNavigation(
+    table?.seats ?? builderSeats,
+    dump ? seatNav : undefined
+  );
 
-  const loadResult = useCallback(async (id: string) => {
-    const parsed = await fetchPushFoldDump(id);
-    setDump(parsed);
-    setViewingId(id);
-    /* Backfill the row's lineage from the artifact it serves, for jobs from
-     * before the watcher reported it. The page is the one party that has
-     * just read the metadata; the server records only what it lacks, and
-     * the local list is patched the same way so "open baseline" can find
-     * this result without a refetch. Fire and forget - nothing on screen
-     * depends on it. */
-    const m = parsed.metadata;
-    if (m.solve_id) {
-      const identity = {
-        solveId: m.solve_id,
-        solveKey: m.solve_key ?? null,
-        iterations: m.iterations ?? null,
-      };
-      setJobs((cur) =>
-        cur.map((j) => (j.id === id && !j.solveId ? { ...j, ...identity } : j))
-      );
-      void authedFetch(`/api/enginecompare/${id}/identity`, {
-        method: "POST",
-        body: JSON.stringify(identity),
-      }).catch(() => undefined);
-    }
-    /* Move the builder onto the spot that was actually solved. The table, the
-     * seat labels and the action order all read `view`, so without this a
-     * 6-way chart renders beside a 4-way table left over from whatever was
-     * last typed. Functional form so this callback keeps an empty dependency
-     * list and is not rebuilt on every keystroke; a payload too old to carry
-     * the preflop metadata returns null and the current view stands. */
-    setView((cur) => viewFromDump(parsed.metadata, cur) ?? cur);
-    setBuilderOpen(false);
-  }, []);
+  const loadResult = useCallback(
+    async (id: string, initialPath: number[] = ROOT_PATH) => {
+      const request = ++loadRequest.current;
+      const parsed = await getDump(id);
+      if (request !== loadRequest.current) return;
+      setSelection({ kind: "job", id, dump: parsed });
+      setPath(initialPath);
+      setPartnerClass(null);
+      /* Backfill the row's lineage from the artifact it serves, for jobs from
+       * before the watcher reported it. The page is the one party that has
+       * just read the metadata; the server records only what it lacks, and
+       * the local list is patched the same way so "open baseline" can find
+       * this result without a refetch. Fire and forget - nothing on screen
+       * depends on it. */
+      const m = parsed.metadata;
+      if (m.solve_id) {
+        const identity = {
+          solveId: m.solve_id,
+          solveKey: m.solve_key ?? null,
+          iterations: m.iterations ?? null,
+        };
+        setJobs((cur) =>
+          cur.map((j) => (j.id === id && !j.solveId ? { ...j, ...identity } : j))
+        );
+        void authedFetch(`/api/enginecompare/${id}/identity`, {
+          method: "POST",
+          body: JSON.stringify(identity),
+        }).catch(() => undefined);
+      }
+      /* Move the builder onto the spot that was actually solved. The header,
+       * the seat labels and the action order all read `view`, so without
+       * this a 6-way chart renders under a 4-way header left over from
+       * whatever was last typed. Functional form so this callback keeps a
+       * stable identity; a payload too old to carry the preflop metadata
+       * returns null and the current view stands. */
+      setView((cur) => viewFromDump(parsed.metadata, cur) ?? cur);
+      setBuilderOpen(false);
+    },
+    [getDump]
+  );
 
   /* The queue is the durable record: the job row and its ADLS blob both
    * outlive the page, so a finished solve stays reachable after a reload
@@ -216,19 +327,16 @@ const MultiwaySolver = () => {
         }
         // Drop it locally rather than waiting for the refetch, so the row
         // disappears on click; the refresh below then reconciles.
+        evict(id);
         setJobs((list) => list.filter((j) => j.id !== id));
-        setViewingId((current) => {
-          if (current !== id) return current;
-          setDump(null);
-          return null;
-        });
+        setSelection((cur) => (cur?.kind === "job" && cur.id === id ? null : cur));
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
         void refreshJobs();
       }
     },
-    [refreshJobs]
+    [refreshJobs, evict]
   );
 
   /* Stop, not abandon: the watcher asks the engine to stop at its next slice,
@@ -261,12 +369,14 @@ const MultiwaySolver = () => {
     []
   );
 
+  /* Open a result, optionally at a line - the group view opens a plate's
+   * action that way. The previous result stays on screen until the new one
+   * lands; the strip's highlight moves when the selection does. */
   const openJob = useCallback(
-    async (id: string) => {
+    async (id: string, initialPath?: number[]) => {
       setError(null);
-      setDump(null);
       try {
-        await loadResult(id);
+        await loadResult(id, initialPath);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
@@ -274,9 +384,19 @@ const MultiwaySolver = () => {
     [loadResult]
   );
 
+  const openGroup = useCallback((id: string) => {
+    setError(null);
+    setSelection({ kind: "group", id });
+    setPath(ROOT_PATH);
+    setPartnerClass(null);
+    setSolvesOpen(false);
+    setBuilderOpen(false);
+  }, []);
+
   const solve = useCallback(async (target: MultiwayView = view) => {
     setError(null);
-    setDump(null);
+    setSelection(null);
+    setPath(ROOT_PATH);
     // Drop the PREVIOUS job before the new one exists. Without this the
     // status line reads the finished job for the second or two the create
     // takes - "Cancelled · 0s" on a solve that is starting - and, because
@@ -397,7 +517,7 @@ const MultiwaySolver = () => {
         </span>
 
         {/* The spot, so the tree is legible with the builder closed. Reads
-            `view`, which loadResult now moves onto whatever solve is open. */}
+            `view`, which opening a solve or a group moves onto it. */}
         <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] tabular-nums text-slate-400">
           <span className="font-medium text-slate-300">{view.players}-way</span>
           <span>
@@ -407,7 +527,8 @@ const MultiwaySolver = () => {
           <span>pot {pot}</span>
           {Number.isFinite(bbCount) && <span>{bbCount.toFixed(1)} bb</span>}
           <span>button {labels[view.button]}</span>
-          {view.teamSeats.length === 2 && (
+          {/* A group has a team per row, so no single chip can name it. */}
+          {view.teamSeats.length === 2 && !viewingGroupId && (
             <span className="rounded-full border border-amber-800 px-2 py-0.5 text-amber-300">
               team {labels[view.teamSeats[0]]}+{labels[view.teamSeats[1]]}
             </span>
@@ -418,7 +539,7 @@ const MultiwaySolver = () => {
           <SessionSimulator
             ref={simulator}
             jobs={simulatorJobs}
-            fetchDump={fetchPushFoldDump}
+            fetchDump={getDump}
             current={dump && viewingId ? { id: viewingId, dump } : null}
             groups={solveGroups.groups}
             onCreateGroup={solveGroups.create}
@@ -445,7 +566,11 @@ const MultiwaySolver = () => {
           <button
             type="button"
             onClick={() => setSolvesOpen(true)}
-            className="shrink-0 rounded-md border border-slate-700 px-2 py-0.5 text-[11px] font-medium text-slate-300 transition-colors hover:border-emerald-600 hover:text-emerald-300"
+            className={`shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors hover:border-emerald-600 hover:text-emerald-300 ${
+              viewingGroupId
+                ? "border-emerald-600/70 bg-emerald-500/10 text-emerald-200"
+                : "border-slate-700 text-slate-300"
+            }`}
             title="Every solve, sectioned by spot, with your saved groups"
           >
             All solves
@@ -596,6 +721,8 @@ const MultiwaySolver = () => {
         }}
         groups={solveGroups.groups}
         groupsError={solveGroups.error}
+        viewingGroupId={viewingGroupId}
+        onOpenGroup={openGroup}
         onSimulateGroup={(id) => {
           setSolvesOpen(false);
           simulator.current?.loadGroup(id);
@@ -604,7 +731,10 @@ const MultiwaySolver = () => {
           const g = solveGroups.groups.find((x) => x.id === id);
           if (g) await solveGroups.update(id, name, g.jobIds);
         }}
-        onDeleteGroup={solveGroups.remove}
+        onDeleteGroup={async (id) => {
+          await solveGroups.remove(id);
+          setSelection((cur) => (cur?.kind === "group" && cur.id === id ? null : cur));
+        }}
       />
 
       {/* A queued job outlives the drawer, so its status has to live on the
@@ -648,27 +778,49 @@ const MultiwaySolver = () => {
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto lg:flex-row lg:overflow-hidden">
         {/* justify-center, because the rail is as tall as the charts beside
             it and the felt is not: without it the table sits pinned to the
-            top of a mostly empty card. */}
+            top of a mostly empty card. The table is the open solve where
+            there is one: the seat on the spot glows, jammed stacks sit on the
+            bet ring, folded seats dim, and a seat click walks the line. */}
         <div className="flex shrink-0 flex-col justify-center rounded-xl border border-slate-800 bg-slate-900/40 p-3 lg:w-[20rem] xl:w-[24rem]">
           <PokerTable
-            size={view.players}
-            seats={seats}
-            potAmount={pot}
-            potLabel={`Pot ${pot}`}
+            size={table?.size ?? view.players}
+            seats={tableSeats}
+            onSeatClick={onSeatClick}
+            potAmount={table?.potAmount ?? pot}
+            potLabel={table?.potLabel ?? `Pot ${pot}`}
             maxWidthClassName="max-w-xl"
           />
         </div>
         <div className="flex min-h-0 flex-1 flex-col">
-          {dump ? (
+          {dump && lineModel ? (
             /* From lg the panel gets a definite height and sizes its grid from
                whatever is left after its own chrome. Below lg it stays
                auto-height and this column scrolls, which is the only thing
                that fits a 13x13 grid on a phone. */
             <PushFoldResultPanel
               dump={dump}
+              model={lineModel}
+              path={path}
+              onPathChange={setPath}
+              partnerClass={partnerClass}
+              onPartnerClassChange={setPartnerClass}
               className="lg:min-h-0 lg:flex-1"
               onOpenBaseline={solving ? undefined : openBaseline}
             />
+          ) : viewingGroupId ? (
+            group ? (
+              <GroupRangesView
+                group={group}
+                jobsById={jobsById}
+                loaded={groupDumps}
+                onOpenJob={(id, initialPath) => void openJob(id, initialPath)}
+                className="lg:min-h-0 lg:flex-1"
+              />
+            ) : (
+              <div className="flex min-h-[10rem] flex-1 items-center justify-center rounded-xl border border-dashed border-slate-800 px-4 py-10 text-center text-[11px] text-slate-500">
+                This group no longer exists.
+              </div>
+            )
           ) : (
             <div className="flex min-h-[10rem] flex-1 items-center justify-center rounded-xl border border-dashed border-slate-800 px-4 py-10 text-center text-[11px] text-slate-500">
               {solving

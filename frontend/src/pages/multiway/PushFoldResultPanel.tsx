@@ -5,22 +5,23 @@
 // use. Nothing new is invented here: ALLIN and Fold are already first-class
 // action names with colours in lib/solver/constants.
 //
-// Navigation is a line walk rather than a node list. A jam/fold tree is a
-// binary tree of depth `players`, so "who acts next, and what did the seat
-// before them do" is the only question, and a breadcrumb answers it in the
-// language a player already uses.
-import { useMemo, useState } from "react";
+// Navigation is the solver's Line strip: one card per seat in acting order,
+// each listing that seat's options, so a jam/fold tree is walked the way the
+// /solutions sims are - click an option to take it, click a seat's card to
+// put that seat back on the spot. The line itself lives on the page (it also
+// drives the table), so this panel is handed the model and a setter.
+import { useMemo } from "react";
 import type { MoneyOpts } from "@/pages/solver/boardDisplay";
 import DecisionMatrix from "@/pages/solver/DecisionMatrix";
+import Line from "@/pages/solver/Line";
+import { lineHandlers, type LineModel } from "./lineModel";
+import PartnerHandSelect from "./PartnerHandSelect";
 import {
-  actionLabels,
   actionPct,
-  CLASS_NAMES,
   conditionedGridFor,
   fmtCount,
   gridFor,
   settingsRows,
-  walkLine,
   type PushFoldDump,
 } from "./pushfoldResult";
 
@@ -29,10 +30,23 @@ const chip =
 
 const PushFoldResultPanel = ({
   dump,
+  model,
+  path,
+  onPathChange,
+  partnerClass,
+  onPartnerClassChange,
   className = "",
   onOpenBaseline,
 }: {
   dump: PushFoldDump;
+  /** The line as the page walks it: seats, options, who is on the spot. */
+  model: LineModel;
+  path: number[];
+  onPathChange: (path: number[]) => void;
+  /** Conditioned viewer: the partner hand class the team charts are
+   *  conditioned on; null = the partner-averaged marginal. */
+  partnerClass: number | null;
+  onPartnerClassChange: (partnerClass: number | null) => void;
   /** The page hands this a definite height. Everything below is sized from
    *  it - see the grid wrapper's comment. */
   className?: string;
@@ -41,10 +55,6 @@ const PushFoldResultPanel = ({
    *  solve is running, which disables the control. */
   onOpenBaseline?: () => void;
 }) => {
-  const [path, setPath] = useState<number[]>([]);
-  // Conditioned viewer: the partner hand class the team charts are
-  // conditioned on; null = the partner-averaged marginal.
-  const [partnerClass, setPartnerClass] = useState<number | null>(null);
   const meta = dump.metadata;
   // Memoized because the `?? []` fallback is a fresh array every render, which
   // would make every useMemo keyed on it recompute.
@@ -56,7 +66,11 @@ const PushFoldResultPanel = ({
     [meta.chip_scale]
   );
 
-  const { steps, node } = useMemo(() => walkLine(dump, path), [dump, path]);
+  const { steps, node } = model;
+  const handlers = useMemo(
+    () => lineHandlers(dump, path, onPathChange, model.seatOf),
+    [dump, path, onPathChange, model.seatOf]
+  );
 
   const spot = useMemo(() => {
     const pf = meta.preflop;
@@ -85,7 +99,6 @@ const PushFoldResultPanel = ({
     return gridFor(node);
   }, [node, teamRollup, partnerClass]);
   const rows = useMemo(() => settingsRows(meta), [meta]);
-  const labels = node && node.kind === "decision" ? actionLabels(node) : [];
   const jamPct = node && node.kind === "decision" ? actionPct(node, "ALLIN") : 0;
   const actorName = node?.actor != null ? seats[node.actor] ?? `P${node.actor}` : null;
 
@@ -229,27 +242,6 @@ const PushFoldResultPanel = ({
         )}
       </div>
 
-      {/* Breadcrumb: the line that led to the node on screen. */}
-      <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-        <button
-          type="button"
-          onClick={() => setPath([])}
-          className={`${chip} ${path.length === 0 ? "border-emerald-600 text-emerald-300" : "hover:border-slate-500"}`}
-        >
-          Start
-        </button>
-        {steps.map((step, i) => (
-          <button
-            key={`${step.node.node_id}-${i}`}
-            type="button"
-            onClick={() => setPath(path.slice(0, i + 1))}
-            className={`${chip} hover:border-slate-500`}
-          >
-            {seats[step.seat] ?? `P${step.seat}`} {step.label === "ALLIN" ? "jams" : "folds"}
-          </button>
-        ))}
-      </div>
-
       {/* The chart and its notes side by side from lg up - the same breakpoint
           at which the page becomes a fixed-height workbench, and therefore
           exactly where bounding the grid by HEIGHT (below) hands back most of
@@ -262,101 +254,65 @@ const PushFoldResultPanel = ({
           then paints over the notes. */}
       <div className="flex flex-col gap-3 lg:min-h-0 lg:flex-1 lg:flex-row">
         <div className="flex flex-col gap-1.5 lg:min-h-0 lg:flex-1">
-      {node && node.kind === "decision" ? (
-        <>
-          <div className="flex shrink-0 flex-wrap items-baseline justify-between gap-2">
-            <span className="text-xs font-semibold text-slate-200">
-              {actorName} {steps.length === 0 ? "opens" : "decides"} · pot {node.pot}
-            </span>
-            <span className="text-[11px] tabular-nums text-emerald-400">
-              {jamPct.toFixed(1)}% of combos jam
-            </span>
+          {/* The line: one card per seat in acting order. Clicking an option
+              takes it wherever that seat's decision is - ahead of the spot
+              (everyone between folds first) or behind it (the line rewinds
+              there) - and clicking a card puts that seat on the spot. */}
+          <div className="w-full min-w-0 shrink-0">
+            <Line
+              line={model.line}
+              positions={model.positions}
+              activePlayer={model.activePlayer}
+              plateData={model.plateData}
+              plateMapping={model.plateMapping}
+              playerBets={model.playerBets}
+              alivePlayers={model.alivePlayers}
+              onActionClick={handlers.onActionClick}
+              onSkipToSeat={handlers.onSkipToSeat}
+              onRewindTo={handlers.onRewindTo}
+            />
           </div>
-          {teamRollup && (
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <span className="text-[10px] uppercase tracking-wide text-slate-500">
-                {seats[teamRollup.partner] ?? teamRollup.partner} holds
-              </span>
-              <select
-                value={partnerClass == null ? "" : String(partnerClass)}
-                onChange={(e) =>
-                  setPartnerClass(e.target.value === "" ? null : Number(e.target.value))
-                }
-                className="rounded border border-slate-700 bg-slate-800/70 px-1.5 py-0.5 text-[11px] text-slate-200"
-              >
-                <option value="">any hand (marginal)</option>
-                {CLASS_NAMES.map((name, i) => {
-                  const reach = teamRollup.partner_reach?.[i];
-                  const suffix =
-                    reach == null ? "" : reach < 0.005 ? " - never here" : reach < 0.05 ? " - rare here" : "";
-                  return (
-                    <option key={name} value={String(i)}>
-                      {name + suffix}
-                    </option>
-                  );
-                })}
-              </select>
-              <span className="text-[10px] text-slate-500">
-                {partnerClass == null
-                  ? "Partner-averaged chart; pick a hand to see the conditioned strategy."
-                  : (teamRollup.partner_reach?.[partnerClass] ?? 1) < 0.005
-                    ? "The partner never reaches this spot holding that hand - this conditioning never happens, so the chart is untrained noise."
-                    : (teamRollup.partner_reach?.[partnerClass] ?? 1) < 0.05
-                      ? "The partner rarely arrives here with that hand, so this conditioned chart trains on thin data - read it loosely."
-                      : teamRollup.ev
-                        ? "Conditioned on the partner's hand - the shared-cards strategy itself. Tooltip EVs are the TEAM's (own + partner, in big blinds), the quantity the pair maximizes."
-                        : "Conditioned on the partner's hand - the shared-cards strategy itself. Frequencies only; this payload predates conditioned EVs."}
-              </span>
-            </div>
+          {node && node.kind === "decision" ? (
+            <>
+              <div className="flex shrink-0 flex-wrap items-baseline justify-between gap-2">
+                <span className="text-xs font-semibold text-slate-200">
+                  {actorName} {steps.length === 0 ? "opens" : "decides"} · pot {node.pot}
+                </span>
+                <span className="text-[11px] tabular-nums text-emerald-400">
+                  {jamPct.toFixed(1)}% of combos jam
+                </span>
+              </div>
+              {teamRollup && (
+                <PartnerHandSelect
+                  rollup={teamRollup}
+                  partnerLabel={seats[teamRollup.partner] ?? `P${teamRollup.partner}`}
+                  value={partnerClass}
+                  onChange={onPartnerClassChange}
+                />
+              )}
+              {/* DecisionMatrix is w-full aspect-square and its className cannot
+                  be overridden through the spread, so the only way to bound it by
+                  height is a wrapper whose width comes FROM its height - the same
+                  trick /compare uses. Without it the grid takes the pane's full
+                  width and runs hundreds of pixels below the fold.
+                  Only from lg, though: that is where the page becomes a
+                  fixed-height workbench. Below it the page scrolls and there is no
+                  height budget to divide, so a height-driven square would collapse
+                  to a few unreadable pixels - the grid stays width-driven there. */}
+              <div className="flex justify-center lg:min-h-0 lg:flex-1">
+                <div className="w-full lg:aspect-square lg:h-full lg:w-auto lg:max-w-full">
+                  <DecisionMatrix gridData={grid} heightMode="full" money={money} />
+                </div>
+              </div>
+            </>
+          ) : (
+            <p className="flex items-center justify-center px-2 py-6 text-center text-[11px] text-slate-500 lg:min-h-0 lg:flex-1">
+              {node?.terminal === "showdown"
+                ? "Everyone left is all-in - the hand runs out from here."
+                : "Everyone else folded, so the hand is over."}{" "}
+              Click a seat above to go back to its decision.
+            </p>
           )}
-          {/* DecisionMatrix is w-full aspect-square and its className cannot
-              be overridden through the spread, so the only way to bound it by
-              height is a wrapper whose width comes FROM its height - the same
-              trick /compare uses. Without it the grid takes the pane's full
-              width and runs hundreds of pixels below the fold.
-              Only from lg, though: that is where the page becomes a
-              fixed-height workbench. Below it the page scrolls and there is no
-              height budget to divide, so a height-driven square would collapse
-              to a few unreadable pixels - the grid stays width-driven there. */}
-          <div className="flex justify-center lg:min-h-0 lg:flex-1">
-            <div className="w-full lg:aspect-square lg:h-full lg:w-auto lg:max-w-full">
-              <DecisionMatrix gridData={grid} heightMode="full" money={money} />
-            </div>
-          </div>
-          <div className="flex shrink-0 flex-wrap gap-2">
-            {labels.map((label, i) => {
-              const child = dump.nodes[String((node.first_child ?? 0) + i)];
-              const leaf = child?.kind !== "decision";
-              return (
-                <button
-                  key={label}
-                  type="button"
-                  disabled={leaf}
-                  onClick={() => setPath([...path, i])}
-                  title={
-                    leaf
-                      ? child?.terminal === "showdown"
-                        ? "The hand is all-in - no more decisions."
-                        : "Everyone else folded - the hand is over."
-                      : undefined
-                  }
-                  className={`${chip} px-3 py-1 ${leaf ? "opacity-40" : "hover:border-emerald-600 hover:text-emerald-300"}`}
-                >
-                  {label === "ALLIN" ? "All-in" : "Fold"}
-                  {leaf ? " (ends the hand)" : ""}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      ) : (
-        <p className="flex items-center justify-center px-2 py-6 text-center text-[11px] text-slate-500 lg:min-h-0 lg:flex-1">
-          {node?.terminal === "showdown"
-            ? "Everyone left is all-in - the hand runs out from here."
-            : "Everyone else folded, so the hand is over."}{" "}
-          Step back up the line to see another decision.
-        </p>
-      )}
         </div>
 
         {/* The caveats, on screen rather than only in the artifact. A chart
@@ -364,14 +320,6 @@ const PushFoldResultPanel = ({
             check - so this is a rail beside the grid, not a block under it,
             and it scrolls itself rather than growing the panel. */}
         <ul className="shrink-0 border-t border-slate-800 pt-2 text-[10px] leading-relaxed text-slate-500 lg:w-[16rem] lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:pl-3 lg:pt-0 xl:w-[20rem]">
-        {meta.board_sample && (
-          <li>
-            Board runouts: {meta.board_sample.pair_count.toLocaleString()} sampled for the exact
-            heads-up equity matrix, {meta.board_sample.iter_count.toLocaleString()} averaged per
-            iteration where three or more seats reach showdown. Seed {meta.board_sample.seed}, so
-            this result is reproducible.
-          </li>
-        )}
         {seats.length > 2 && meta.solver_family === "sampled" && (
           <li>
             Solved by dealing: every iteration deals one hand per seat plus a real board, so

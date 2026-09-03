@@ -5,13 +5,17 @@ Solve semantics (lineages, baselines, one result per solve id) are documented in
 
 | File | Role |
 |---|---|
-| `MultiwaySolver.tsx` | The page: header, Recent strip, table, result panel, tree-builder drawer, polling |
+| `MultiwaySolver.tsx` | The page: header, Recent strip, table, the selection (a solve or a group), tree-builder drawer, polling |
+| `lineModel.ts` | A payload as the solver components read it: Line props, Plate JsonData and table seats in big blinds, plus the path moves (skip ahead, rewind, fold to a seat); checked by `npm run check:linemodel` |
+| `useDumps.ts` | The page-level payload cache shared by the open result, the group view and the simulator |
 | `compareJob.ts` | A job row as the API returns it (with its `spot` summary) and the shared "openable / finished" readings |
 | `solveIdentity.ts` | How a solve is described to a person: phase (P1 baseline / P2 team SB+BB), stacks, spot key and title |
 | `SolvesDrawer.tsx` | Every solve, sectioned by spot with phase badges and filters, plus the saved groups; exports `PhaseBadge` |
 | `solveGroupsApi.ts`, `useSolveGroups.ts` | Client and page-level store for `/api/solvegroups` |
 | `MultiwayTreeBuilder.tsx`, `multiwayView.ts` | The spot being built and the config it becomes |
-| `PushFoldResultPanel.tsx`, `pushfoldResult.ts` | A result payload (`PushFoldDump`) and its charts |
+| `PushFoldResultPanel.tsx`, `pushfoldResult.ts` | A result payload (`PushFoldDump`) and its chart, walked with the solver's `Line` |
+| `PartnerHandSelect.tsx` | The partner-hand conditioning control for a team seat's chart (panel and plate forms) |
+| `GroupRangesView.tsx` | A group opened rather than simulated: one row of fold-to plates per solve |
 | `fetchPushFoldDump.ts` | One job's payload from the API; shared by the panel and the simulator |
 | `SessionSimulator.tsx` | The simulator drawer: rotation list, group load/save, parameters, results |
 | `useSessionSimulation.ts` | Worker pool behind it |
@@ -32,6 +36,8 @@ A group is a saved rotation: a name and an ordered list of job ids (`SolveGroups
 Members are job ids rather than solve ids because a job is what has a result to play and older rows carry no solve id; when a newer job supersedes an older one of the same lineage, the watcher's report handler re-points the slots, so a group follows its solves as they converge.
 The simulator loads a group into its rotation, saves a rotation as a group (or updates the one it came from), and remembers the last group in `localStorage` so the next visit starts on it.
 The drawer renames, deletes and hands a group to the simulator through `SessionSimulatorHandle.loadGroup`.
+It also opens a group on the page (`GroupRangesView`): one row per solve, one `Plate` per seat showing that seat's chart as if it folded to them, with the big blind - who gets no decision on that line - shown as face-down cards.
+A plate's colour key opens that solve at that node with the action taken, so the overview leads into the single-solve walk.
 
 ## Session simulator
 

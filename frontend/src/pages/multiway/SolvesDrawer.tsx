@@ -178,12 +178,17 @@ export const SolveRow = ({
 const GroupRow = ({
   group,
   jobsById,
+  viewing,
+  onOpen,
   onSimulate,
   onRename,
   onDelete,
 }: {
   group: SolveGroup;
   jobsById: Map<string, CompareJob>;
+  /** This group's ranges are what the page is showing. */
+  viewing: boolean;
+  onOpen: (id: string) => void;
   onSimulate: (id: string) => void;
   onRename: (id: string, name: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
@@ -216,7 +221,11 @@ const GroupRow = ({
   };
 
   return (
-    <li className="rounded-lg border border-slate-800 bg-slate-950/40 px-2 py-1.5 text-[11px]">
+    <li
+      className={`rounded-lg border px-2 py-1.5 text-[11px] transition-colors ${
+        viewing ? "border-emerald-600/70 bg-emerald-500/10" : "border-slate-800 bg-slate-950/40"
+      }`}
+    >
       <div className="flex flex-wrap items-center gap-2">
         {renaming != null ? (
           <form
@@ -255,6 +264,16 @@ const GroupRow = ({
           )}
         </span>
         <span className="ml-auto flex items-center gap-1">
+          {/* Two ways to use a group: look at it, or play it. */}
+          <button
+            type="button"
+            disabled={playable === 0}
+            onClick={() => onOpen(group.id)}
+            className="rounded border border-sky-700/70 px-2 py-0.5 text-[10px] font-medium text-sky-300 transition-colors hover:bg-sky-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+            title="Show every seat's range for each solve in this group, as if it folded to them"
+          >
+            Open
+          </button>
           <button
             type="button"
             disabled={playable === 0}
@@ -327,6 +346,8 @@ const SolvesDrawer = ({
   onRefresh,
   groups,
   groupsError,
+  viewingGroupId,
+  onOpenGroup,
   onSimulateGroup,
   onRenameGroup,
   onDeleteGroup,
@@ -340,6 +361,10 @@ const SolvesDrawer = ({
   onRefresh: () => void;
   groups: SolveGroup[];
   groupsError: string | null;
+  /** The group whose ranges the page is showing, if any. */
+  viewingGroupId: string | null;
+  /** Show the group's ranges on the page (the page closes the drawer). */
+  onOpenGroup: (id: string) => void;
   onSimulateGroup: (id: string) => void;
   onRenameGroup: (id: string, name: string) => Promise<void>;
   onDeleteGroup: (id: string) => Promise<void>;
@@ -418,7 +443,8 @@ const SolvesDrawer = ({
             {groups.length === 0 ? (
               <p className="rounded-lg border border-dashed border-slate-800 px-3 py-2 text-[11px] text-slate-500">
                 No groups yet. Build a rotation in the session simulator and save it as a group;
-                it will be here, and in the simulator's Group picker, next time.
+                it will be here to open or simulate, and in the simulator's Group picker, next
+                time.
               </p>
             ) : (
               <ul className="space-y-1">
@@ -427,6 +453,8 @@ const SolvesDrawer = ({
                     key={g.id}
                     group={g}
                     jobsById={jobsById}
+                    viewing={viewingGroupId === g.id}
+                    onOpen={onOpenGroup}
                     onSimulate={onSimulateGroup}
                     onRename={onRenameGroup}
                     onDelete={onDeleteGroup}

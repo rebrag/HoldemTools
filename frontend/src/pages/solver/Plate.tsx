@@ -1,5 +1,10 @@
- 
-//Plate.tsx
+// src/pages/solver/Plate.tsx
+//
+// One seat's range: a seat-style header (position, button, bet, odds, stack),
+// an optional caller slot under it, the 13x13 decision matrix, and the colour
+// key whose bars walk the tree. Two layouts share the parts: the wide card the
+// desktop multi-range view stacks in rows, and the compact card the mobile
+// view fits two abreast, with the matrix beside a narrow sidebar.
 import React, {
   CSSProperties,
   useEffect,
@@ -11,9 +16,8 @@ import { combineDataByHand, HandCellData, JsonData } from "@/lib/solver/utils";
 import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
 import ColorKey from "./ColorKey";
 import DecisionMatrix from "./DecisionMatrix";
-import DealerButton from "./DealerButton";
+import PlateHeader from "./PlateHeader";
 import { motion } from "framer-motion";
-import AutoFitText from "@/components/AutoFitText";
 import { HAND_ORDER } from "@/lib/solver/handOrder";
 import { fmtMoney, type MoneyOpts } from "./boardDisplay";
 
@@ -27,7 +31,7 @@ const EMPTY_GRID: HandCellData[] = HAND_ORDER.map((hand) => ({
 const fmt = (n: number, decimals = 1) =>
   Math.abs(n % 1) > 1e-9 ? n.toFixed(decimals) : n.toFixed(0);
 
-/* ── NEW: zoom only the DecisionMatrix inside each Plate ── */
+/* ── zoom only the DecisionMatrix inside each Plate ── */
 const ZoomableGrid: React.FC<{ children: ReactNode; isActive: boolean }> = ({
   children,
   isActive,
@@ -76,6 +80,12 @@ interface PlateProps {
   dmWidthPx?: number;
   sidebarWidthPx?: number;
   isActive?: boolean;
+  /** Amber header, the table's hero colour: a hand-sharing team's seat on
+   *  /multiway. Never set by the sim views. */
+  isHero?: boolean;
+  /** Dealer badge on the header. Defaults to "this seat is the BTN", which
+   *  is what the sim views mean; /multiway passes the artifact's button. */
+  isButton?: boolean;
   pot?: number;
   maxBet?: number;
   onPlateZoom?: (payload: PlateZoomPayload) => void;
@@ -84,6 +94,13 @@ interface PlateProps {
   reachByHand?: Map<string, number> | null;
   /** Chips/bb display; absent for sims, which always read as big blinds. */
   money?: MoneyOpts | null;
+  /** Caller content between the seat header and the matrix - /multiway's
+   *  partner-hand select for a team seat. Keep it referentially stable: the
+   *  plate is memoized and a fresh node every render defeats that. */
+  header?: ReactNode;
+  /** Stands in for the matrix when the seat has no decision here (it folded
+   *  to the big blind): no colour key, no zoom. Keep it stable too. */
+  placeholder?: ReactNode;
 }
 
 /* ──────────────────── component ──────────────────── */
@@ -101,6 +118,8 @@ const Plate: React.FC<PlateProps> = ({
   dmWidthPx,
   sidebarWidthPx,
   isActive = false,
+  isHero = false,
+  isButton,
   pot,
   maxBet,
   onPlateZoom,
@@ -108,6 +127,8 @@ const Plate: React.FC<PlateProps> = ({
   heightMode,
   reachByHand = null,
   money,
+  header,
+  placeholder,
 }) => {
   /* Bet labels carry the solve's money; the colour ramp is calibrated in
    * big blinds, so tell it how much money makes one. */
@@ -137,7 +158,7 @@ const Plate: React.FC<PlateProps> = ({
       : 0;
 
   const outerCls =
-    `relative ${compact ? "mb-0" : "mb-7"} justify-self-center ` +
+    `relative ${compact ? "mb-0" : "mb-2"} justify-self-center ` +
     `${compact ? "max-w-none" : "max-w-[400px]"} w-full text-base`;
 
   const sizeStyle: CSSProperties | undefined =
@@ -154,50 +175,70 @@ const Plate: React.FC<PlateProps> = ({
   const stackBB = (displayData?.bb ?? 0) - potCommitted - playerBet;
   const betBB = playerBet;
 
-  const TopBadges = (
-    <div className="mt-1 w-full space-y-1">
-      <div
-        className="grid gap-1 w-full"
-        style={{ gridTemplateColumns: "30% 1fr" }}
-      >
-        <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
-          <AutoFitText title="Position">
-            <strong>{displayData?.Position ?? ""}</strong>
-          </AutoFitText>
-        </div>
-        <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
-          <AutoFitText title="Stack">
-            <strong>Stack:</strong>&nbsp;{fmtMoney(stackBB, money)}
-          </AutoFitText>
-        </div>
-      </div>
+  const position = displayData?.Position ?? "";
+  const showButton = isButton ?? position === "BTN";
+  const seatHeader = (
+    <PlateHeader
+      compact={compact}
+      position={position}
+      stackText={displayData ? fmtMoney(stackBB, money) : ""}
+      betText={betBB !== 0 ? fmtMoney(betBB, money) : undefined}
+      potOddsText={isActive && hasCallAction ? `${fmt(Math.max(0, potOdds), 1)}% odds` : undefined}
+      isActive={isActive}
+      isHero={isHero}
+      isButton={showButton}
+    />
+  );
 
-      {(betBB !== 0 || (isActive && hasCallAction)) && (
-        <div
-          className={`grid gap-1 w-full ${
-            betBB !== 0 && isActive && hasCallAction
-              ? "grid-cols-2"
-              : "grid-cols-1"
-          }`}
-        >
-          {isActive && hasCallAction && (
-            <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
-              <AutoFitText title="Pot Odds">
-                <strong>Pot Odds:</strong>&nbsp;
-                {fmt(Math.max(0, potOdds), 1)}%
-              </AutoFitText>
-            </div>
-          )}
-          {betBB !== 0 && (
-            <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-md px-0 py-0 shadow text-center overflow-hidden">
-              <AutoFitText title="Bet">
-                <strong>Bet:</strong> {fmtMoney(betBB, money)}
-              </AutoFitText>
-            </div>
-          )}
-        </div>
-      )}
+  const zoom = () => {
+    if (!displayData) return;
+    onPlateZoom?.({
+      id: plateId ?? file,
+      position: displayData.Position,
+      grid: gridData,
+      isICMSim,
+      stackBB,
+      playerBet,
+      pot,
+      maxBet,
+      potOddsPct: Math.max(0, potOdds),
+      isActive,
+      alive,
+      file,
+      reachByHand,
+    });
+  };
+
+  /* The square: the matrix, or the caller's stand-in for a seat with no
+     decision. Only the matrix zooms. */
+  const square = placeholder ? (
+    <div className="flex aspect-square w-full items-center justify-center rounded-md bg-black/25">
+      {placeholder}
     </div>
+  ) : (
+    <div className="cursor-pointer" onClick={zoom}>
+      <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
+        <ZoomableGrid isActive={isActive}>
+          <DecisionMatrix
+            money={money}
+            gridData={gridData}
+            randomFillEnabled={randomFillEnabled && !!displayData}
+            isICMSim={isICMSim}
+            heightMode={heightMode}
+            reachByHand={reachByHand}
+          />
+        </ZoomableGrid>
+      </div>
+    </div>
+  );
+
+  const colorKey = !placeholder && (
+    <ColorKey
+      sizeRef={sizeRef}
+      data={gridData}
+      loading={keyLoading}
+      onActionClick={(action) => onActionClick(action, file)}
+    />
   );
 
   return (
@@ -209,45 +250,48 @@ const Plate: React.FC<PlateProps> = ({
           width: 100%;
           height: 100%;
         }
+        /* The header keeps its content height; the colour key takes what is
+           left and hugs the bottom. A 50/50 split let a four-bar key overflow
+           its half upward, over the header's lower lines. */
         .ck-vertical .ck-top {
-          flex: 1 1 50%;
-          min-height: 0;
+          flex: 0 0 auto;
           display: flex;
           flex-direction: column;
           gap: 4px;
         }
         .ck-vertical .ck-bottom {
-          flex: 1 1 50%;
+          flex: 1 1 auto;
           min-height: 0;
           display: flex;
           flex-direction: column;
-          justify-content: flex-end; 
+          justify-content: flex-end;
           overflow: visible;
         }
-        .ck-vertical .ck-bottom .flex { 
-          flex-direction: column !important; 
-          flex-wrap: nowrap !important; 
+        /* The key's bars stack, fill the column from the bottom, and SHRINK
+           evenly when the sidebar is shorter than four full bars - they used
+           to keep their height and climb over the header instead. */
+        .ck-vertical .ck-bottom .flex {
+          flex-direction: column !important;
+          flex-wrap: nowrap !important;
+          justify-content: flex-end;
+          height: 100%;
         }
-        .ck-vertical .ck-bottom button { 
-          width: 100% !important; 
+        .ck-vertical .ck-bottom .flex > div {
+          flex: 0 1 auto !important;
+          min-height: 0;
+          display: flex;
+          flex-direction: column;
+        }
+        .ck-vertical .ck-bottom .flex > div > div {
+          flex: 1 1 auto;
+          height: auto !important;
+          max-height: 23px;
+          min-height: 0;
+        }
+        .ck-vertical .ck-bottom button {
+          width: 100% !important;
         }
       `}</style>
-
-      {/* Dealer chip sits outside the fade wrapper so the button marker stays
-          fully visible even after the BTN player folds (plate at 10%). */}
-      {displayData?.Position === "BTN" && (
-        <div
-          className="absolute z-0 pointer-events-none"
-          style={{
-            top: "-16%",
-            right: "-8%",
-            width: "33%",
-            aspectRatio: "1",
-          }}
-        >
-          <DealerButton />
-        </div>
-      )}
 
       <motion.div
         className="relative overflow-visible will-change-transform"
@@ -256,143 +300,63 @@ const Plate: React.FC<PlateProps> = ({
         transition={{ duration: 0.25 }}
       >
         <div
-          className={`relative z-10 border rounded-[7px] shadow-md p-0 bg-white/20 ${
-            isActive ? "border-emerald-400" : "border-gray-200"
+          className={`relative z-10 rounded-xl border shadow-lg ${
+            isActive
+              ? "border-emerald-400/80 bg-slate-950/70"
+              : "border-slate-700/70 bg-slate-950/60"
           }`}
         >
-          <div className="relative">
-            {compact ? (
-              /* COMPACT LAYOUT */
-              <div className="flex gap-1 items-stretch">
-                <div className="relative" style={{ width: dmWidth }}>
-                  <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
-                    <div
-                      className="absolute inset-0 cursor-pointer"
-                      onClick={() => {
-                        if (!displayData) return;
-                        onPlateZoom?.({
-                          id: plateId ?? file,
-                          position: displayData.Position,
-                          grid: gridData,
-                          isICMSim,
-                          stackBB,
-                          playerBet,
-                          pot,
-                          maxBet,
-                          potOddsPct: Math.max(0, potOdds),
-                          isActive,
-                          alive,
-                          file,
-                          reachByHand,
-                        });
-                      }}
-                    >
-                      <ZoomableGrid isActive={isActive}>
-                        <DecisionMatrix
-                          money={money}
-                          gridData={gridData}
-                          randomFillEnabled={randomFillEnabled && !!displayData}
-                          isICMSim={isICMSim}
-                          heightMode={heightMode}
-                          reachByHand={reachByHand}
-                        />
-                      </ZoomableGrid>
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  className="shrink-0 pt-1.5"
-                  style={{
-                    width: sidebarWidth,
-                    height: dmWidth,
-                    minHeight: 0,
-                  }}
-                >
-                  <div className="ck-vertical">
-                    <div className="ck-top">
-                      <div className="min-w-0 bg-white/80 backdrop-blur-sm rounded-sm px-0.5 pt-0 pb-0 shadow text-center overflow-hidden">
-                        <AutoFitText title="Position and Stack">
-                          <strong>{displayData?.Position ?? ""}</strong>&nbsp;
-                          {fmtMoney(stackBB, money)}
-                        </AutoFitText>
-                        {betBB !== 0 && (
-                          <AutoFitText title="Bet">
-                            <strong>Bet:</strong>&nbsp;
-                            {fmtMoney(betBB, money)}
-                          </AutoFitText>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="ck-bottom">
-                      <ColorKey
-                        sizeRef={sizeRef}
-                        data={gridData}
-                        loading={keyLoading}
-                        onActionClick={(action) => onActionClick(action, file)}
-                      />
-                    </div>
-                  </div>
+          {compact ? (
+            /* COMPACT LAYOUT: matrix left, seat header + colour key right.
+               No padding: the mobile view budgets dmWidthPx + gap +
+               sidebarWidthPx to the plate's full width. */
+            <div className="flex items-stretch gap-1">
+              <div className="relative" style={{ width: dmWidth }}>
+                <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
+                  <div className="absolute inset-0">{square}</div>
                 </div>
               </div>
-            ) : (
-              /* WIDE LAYOUT */
-              <>
-                <div
-                  className="cursor-pointer"
-                  onClick={() => {
-                    if (!displayData) return;
-                    onPlateZoom?.({
-                      id: plateId ?? file,
-                      position: displayData.Position,
-                      grid: gridData,
-                      isICMSim,
-                      stackBB,
-                      playerBet,
-                      pot,
-                      maxBet,
-                      potOddsPct: Math.max(0, potOdds),
-                      isActive,
-                      alive,
-                      file,
-                      reachByHand,
-                    });
-                  }}
-                >
-                  <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
-                    <ZoomableGrid isActive={isActive}>
-                      <DecisionMatrix
-                        money={money}
-                        gridData={gridData}
-                        randomFillEnabled={randomFillEnabled && !!displayData}
-                        isICMSim={isICMSim}
-                        heightMode={heightMode}
-                        reachByHand={reachByHand}
-                      />
-                    </ZoomableGrid>
+
+              <div
+                className="shrink-0 pt-1"
+                style={{
+                  width: sidebarWidth,
+                  height: dmWidth,
+                  minHeight: 0,
+                }}
+              >
+                <div className="ck-vertical">
+                  <div className="ck-top">
+                    {seatHeader}
+                    {header}
                   </div>
+                  <div className="ck-bottom">{colorKey}</div>
                 </div>
-
-                <div className="select-none flex w-full items-center justify-end mt-0.5">
-                  <ColorKey
-                    sizeRef={sizeRef}
-                    data={gridData}
-                    loading={keyLoading}
-                    onActionClick={(action) => onActionClick(action, file)}
-                  />
-                </div>
-
-                {displayData && TopBadges}
-              </>
-            )}
-          </div>
+              </div>
+            </div>
+          ) : (
+            /* WIDE LAYOUT: header, slot, matrix, colour key. */
+            <>
+              {seatHeader}
+              {header && <div className="px-1.5 pt-1">{header}</div>}
+              <div className="p-1">
+                {square}
+                {colorKey && (
+                  <div className="mt-1 flex w-full select-none items-center justify-end">
+                    {colorKey}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         {isActive && (
           <>
-            <div className="pointer-events-none absolute -inset-1 rounded-[9px] ring-2 ring-emerald-400/80 shadow-[0_0_0_6px_rgba(16,185,129,0.18)] animate-pulse z-20" />
-            <div className="absolute -top-3 -right-1 z-20">
+            <div className="pointer-events-none absolute -inset-1 rounded-[14px] ring-2 ring-emerald-400/80 shadow-[0_0_0_6px_rgba(16,185,129,0.18)] animate-pulse z-20" />
+            {/* Centred over the header's empty middle: the corners now hold
+                the position and the stack. */}
+            <div className="absolute -top-3 left-1/2 z-20 -translate-x-1/2">
               <span className="text-[10px] bg-emerald-600 text-white rounded px-1.5 py-0.5 shadow">
                 ACTION
               </span>
