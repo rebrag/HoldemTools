@@ -433,6 +433,7 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   std::cout << "\n";
   if (team) {
     stats.team_rollup = solver.team_rollup_json();
+    stats.team_joint = solver.team_joint_json();
     double team_ev = 0.0;
     for (int q : stats.team_seats) team_ev += stats.ev_chips[static_cast<std::size_t>(q)];
     std::cout << "team ev " << team_ev;

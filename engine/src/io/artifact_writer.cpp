@@ -618,6 +618,10 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
     team["strategy_export"] = "marginal_over_partner";
     meta["team"] = std::move(team);
     meta["team_rollup"] = stats.team_rollup;
+    // The exact joint rows the rollup was marginalized from, keyed by real
+    // cards. Additive metadata, so no format bump; absent on artifacts from
+    // before it existed.
+    if (!stats.team_joint.empty()) meta["team_joint"] = stats.team_joint;
   } else {
     meta["team"] = nullptr;
   }

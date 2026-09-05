@@ -843,6 +843,8 @@ This exists because the artifact is only written at the end: the compare watcher
 The watcher now passes `ceiling - ENGINE_SOLVE_WRITE_MARGIN_SECS` (default 300 s) as the engine's budget and keeps its kill only as a hang backstop, and `/multiway` shows a "stopped on time budget" chip.
 Unaware phase 1 is capped at half the budget so a team artifact can never be a baseline solve wearing team metadata.
 
+**Exact joint export (2026-09-03).** `metadata.team_joint` carries the per-orbit rows themselves - quantized `u16` frequencies and reach weights and `i16` team EVs in base64, plus one representative card pair per orbit - so `/multiway` can condition a team seat's chart on the partner's EXACT cards and show suit blocking, and the session simulator plays the exact joint strategy instead of the 169x169 marginal (which stays in `team_rollup` for older consumers). Rebuilding the rollup from the orbit rows is asserted in `test_team_preflop.cpp`; the layout is in `docs/artifact-format.md`.
+
 Still open under M9: teams of three or more seats and multiple teams (the joint quotient generalizes but the orbit space grows), general payoff-weight matrices (only summed-EV teams exist), and a team-aware best-response evaluator so team solves get a convergence number again.
 
 - **M10 - Bayesian unknown-collusion**: chance root over team type with probability p - now precisely the p-interpolation between M9's two awareness modes (p=0 is unaware, p=1 is aware); opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.

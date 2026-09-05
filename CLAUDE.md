@@ -68,6 +68,7 @@ Publish mode is the transition path to dropping PioSolver: once htsolver is trus
 A third mode, (c) `pushfold`, carries the **multiway preflop** solver (engine M8a): `/multiway` -> `POST /api/enginecompare` with `mode: "pushfold"` -> the watcher solves an N-seat jam-or-fold tree with htsolver and uploads `engine.exe dump-json` output, which `/result/ht` serves back to the page.
 It takes no `config.board` and never involves Pio - not because Pio is disabled but because Pio is heads-up postflop and cannot build a 4-way preflop tree at all - and it does not go through `EngineSolutionExporter`, whose schema-4 bundle contract is `oop`/`ip`-keyed and correctly refuses a 4-seat artifact.
 The artifact's own 169-class rollup is the push/fold chart, so `/multiway` renders it with the same `DecisionMatrix` as `/solutions`.
+Team solves also carry `metadata.team_joint`, the exact joint strategy over the 93,769 suit orbits of the (own, partner) hand pair; `/multiway` conditions a team seat's chart on the partner's exact cards with it and the session simulator plays it (engine `team_joint_json`, frontend `src/lib/sessionSim/orbits.ts`).
 
 **`/multiway` and `/compare` are the two engines**, and the segmented control at the top of `/multiway` is what makes that legible: multiway preflop (sampled board runouts, no hand bucketing) versus heads-up postflop (exact).
 Neither has a NavBar slot; both are URL-only.

@@ -5,10 +5,12 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "cards/combos.hpp"
+#include "io/base64.hpp"
 
 #include "config/schema.hpp"
 #include "game/nlhe_preflop.hpp"
@@ -392,4 +394,141 @@ TEST_CASE("conditioned team charts converge: two seeds agree where reached") {
   // small-edge threshold band that sharpens only as 1/sqrt(iterations).
   CHECK(mad < 0.25);
   CHECK(root_mad < 0.15);
+}
+
+TEST_CASE("exact joint export: orbit rows key by real cards and marginalize back to the rollup") {
+  // team_joint ships the solver's actual infoset rows - one per suit orbit
+  // of the ordered (own, partner) pair - so a consumer can condition on the
+  // partner's EXACT cards. Three things make it usable: every orbit has a
+  // representative pair of real cards that the game's own quotient maps
+  // back to that orbit, the rows summed over each orbit's member pairs
+  // reproduce the 169x169 rollup (which is by definition that marginal),
+  // and the decoding is the documented little-endian layout.
+  const SolveConfig config = team_config(3);
+  NlhePreflopGame game(config);
+  SampledCfrSolver solver(game, game, team_solver_config(), config.threads, team_map(3, 0, 2));
+  solver.run(20000);
+  const nlohmann::json joint = solver.team_joint_json();
+  const nlohmann::json rollup = solver.team_rollup_json();
+  REQUIRE(!joint.empty());
+  const std::size_t J = joint.at("orbit_count").get<std::size_t>();
+  CHECK(J == static_cast<std::size_t>(solver.joint_classes()));
+  CHECK(J == 93769);
+
+  const std::vector<std::uint8_t> reps = base64_decode(joint.at("orbits").get<std::string>());
+  REQUIRE(reps.size() == J * 4);
+  std::set<std::uint32_t> distinct;
+  for (std::size_t jc = 0; jc < J; ++jc) {
+    const std::uint8_t* r = reps.data() + jc * 4;
+    for (int k = 0; k < 4; ++k) CHECK(r[k] < 52);
+    CHECK(r[0] != r[1]);
+    CHECK(r[2] != r[3]);
+    CHECK(r[0] != r[2]);
+    CHECK(r[0] != r[3]);
+    CHECK(r[1] != r[2]);
+    CHECK(r[1] != r[3]);
+    distinct.insert((static_cast<std::uint32_t>(r[0]) << 24) |
+                    (static_cast<std::uint32_t>(r[1]) << 16) |
+                    (static_cast<std::uint32_t>(r[2]) << 8) | r[3]);
+  }
+  CHECK(distinct.size() == J);
+
+  // The quotient the solver stored rows by, recomputed through the game's
+  // public API, and the class of every compact hand.
+  std::vector<std::uint32_t> pair_class;
+  int classes = 0;
+  REQUIRE(game.joint_hand_classes(pair_class, classes));
+  REQUIRE(static_cast<std::size_t>(classes) == J);
+  std::vector<std::uint16_t> cls;
+  int ncls = 0;
+  game.hand_classes(cls, ncls);
+  REQUIRE(ncls == 169);
+  const std::size_t H = static_cast<std::size_t>(game.num_hands(0));
+  const std::vector<std::uint16_t> dict = game.hand_dictionary(0);
+  std::vector<int> compact_of(kNumCombos, -1);
+  for (std::size_t h = 0; h < dict.size(); ++h) compact_of[dict[h]] = static_cast<int>(h);
+  // Every representative pair maps back to its own orbit id.
+  std::size_t checked_reps = 0;
+  for (std::size_t jc = 0; jc < J; jc += 97) {
+    const std::uint8_t* r = reps.data() + jc * 4;
+    const int own = compact_of[combo_index(static_cast<Card>(r[0]), static_cast<Card>(r[1]))];
+    const int mate = compact_of[combo_index(static_cast<Card>(r[2]), static_cast<Card>(r[3]))];
+    REQUIRE(own >= 0);
+    REQUIRE(mate >= 0);
+    CHECK(pair_class[static_cast<std::size_t>(own) * H + static_cast<std::size_t>(mate)] == jc);
+    ++checked_reps;
+  }
+  CHECK(checked_reps > 900);
+
+  // Root node: rebuild the 169x169 chart from the orbit rows. The rollup
+  // weights each orbit once per member pair by its reach mass; the export
+  // carries that mass relative to the node's largest, and ratios are all
+  // the average needs.
+  const nlohmann::json& node0 = joint.at("nodes").at("0");
+  const int actions = node0.at("num_actions").get<int>();
+  REQUIRE(actions == 2);
+  const std::vector<std::uint8_t> fb = base64_decode(node0.at("freq").get<std::string>());
+  const std::vector<std::uint8_t> wb = base64_decode(node0.at("weight").get<std::string>());
+  const std::vector<std::uint8_t> eb = base64_decode(node0.at("ev").get<std::string>());
+  REQUIRE(fb.size() == J * 2);
+  REQUIRE(wb.size() == J * 2);
+  REQUIRE(eb.size() == J * 4);
+  auto u16 = [](const std::vector<std::uint8_t>& b, std::size_t i) {
+    return static_cast<double>(b[2 * i] | (static_cast<unsigned>(b[2 * i + 1]) << 8));
+  };
+  std::vector<double> fsum(169 * 169, 0.0), wsum(169 * 169, 0.0);
+  for (std::size_t h = 0; h < H; ++h) {
+    for (std::size_t m = 0; m < H; ++m) {
+      const std::uint32_t jc = pair_class[h * H + m];
+      if (jc == 0xFFFFFFFFu) continue;
+      const double w = u16(wb, jc) / 65535.0;
+      const std::size_t cell = static_cast<std::size_t>(cls[m]) * 169 + cls[h];
+      fsum[cell] += w * (u16(fb, jc) / 65535.0);
+      wsum[cell] += w;
+    }
+  }
+  const nlohmann::json& rfreq = rollup.at("0").at("freq");
+  double wmax_cell = 0.0;
+  for (double w : wsum) wmax_cell = std::max(wmax_cell, w);
+  std::size_t compared = 0;
+  double worst = 0.0, mad_num = 0.0, mad_den = 0.0;
+  for (int pc = 0; pc < 169; ++pc) {
+    for (int oc = 0; oc < 169; ++oc) {
+      const std::size_t cell = static_cast<std::size_t>(pc) * 169 + static_cast<std::size_t>(oc);
+      if (wsum[cell] <= 0.0) continue;
+      const double mine = fsum[cell] / wsum[cell];
+      const double theirs = rfreq[pc][oc][0].get<double>();
+      const double d = std::abs(mine - theirs);
+      mad_num += wsum[cell] * d;
+      mad_den += wsum[cell];
+      // Cells whose whole mass is a few quantization steps can round either
+      // way; judge the worst case on cells with real reach.
+      if (wsum[cell] >= 0.01 * wmax_cell) worst = std::max(worst, d);
+      ++compared;
+    }
+  }
+  MESSAGE("cells compared " << compared << ", worst |diff| on reached cells " << worst
+                            << ", reach-weighted mad " << (mad_den > 0 ? mad_num / mad_den : 0));
+  CHECK(compared > 20000);
+  CHECK(worst < 0.01);
+  CHECK(mad_num / mad_den < 0.002);
+
+  // Conditioned EVs decode to team chips of the right order, with the
+  // unreached sentinel where the weight is zero.
+  const double ev_scale = node0.at("ev_scale").get<double>();
+  CHECK(ev_scale > 0.0);
+  std::size_t finite = 0, sentinel = 0;
+  for (std::size_t jc = 0; jc < J; ++jc) {
+    const std::int16_t q =
+        static_cast<std::int16_t>(eb[4 * jc + 2] | (static_cast<unsigned>(eb[4 * jc + 3]) << 8));
+    if (q == std::numeric_limits<std::int16_t>::min()) {
+      ++sentinel;
+      continue;
+    }
+    const double v = q * ev_scale;
+    CHECK(std::abs(v) < 45.0);
+    ++finite;
+  }
+  MESSAGE("orbits with a jam EV " << finite << ", without " << sentinel);
+  CHECK(finite > sentinel);
 }

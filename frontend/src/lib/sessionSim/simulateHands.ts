@@ -6,6 +6,7 @@
 // script calls it directly.
 import { evaluateCardCodes } from "phe";
 import { CLASS_OF, ID_TO_PHE, makeRng } from "./cards";
+import { orbitKey } from "./orbits";
 import type { CompiledPolicy, SimulatedPool } from "./types";
 
 const CLASSES = 169;
@@ -34,8 +35,11 @@ export function simulateHands(
     policyOffset,
     partner,
     table,
+    jointKeys,
+    jointIds,
     scoredSeats,
   } = policy;
+  const jointCount = jointKeys ? jointKeys.length : 0;
   const rand = makeRng(seed);
   const deck = new Uint8Array(52);
   for (let i = 0; i < 52; i++) deck[i] = i;
@@ -72,8 +76,33 @@ export function simulateHands(
         continue;
       }
       const off = policyOffset[nid];
-      const pFold =
-        pk === 1 ? table[off + cls[partner[nid]] * CLASSES + cls[a]] : table[off + cls[a]];
+      let pFold: number;
+      if (pk === 3 && jointKeys && jointIds) {
+        // Exact joint row for the two dealt hands: canonicalize the four
+        // cards to their orbit key and binary-search the sorted key table.
+        // A pair the table does not know (never, on a full range) plays
+        // the marginal row stored behind the orbits.
+        const p = partner[nid];
+        const key = orbitKey(deck[2 * a], deck[2 * a + 1], deck[2 * p], deck[2 * p + 1]);
+        let lo = 0;
+        let hi = jointCount - 1;
+        let jc = -1;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          const k = jointKeys[mid];
+          if (k === key) {
+            jc = jointIds[mid];
+            break;
+          }
+          if (k < key) lo = mid + 1;
+          else hi = mid - 1;
+        }
+        pFold = jc >= 0 ? table[off + jc] : table[off + jointCount + cls[a]];
+      } else if (pk === 1) {
+        pFold = table[off + cls[partner[nid]] * CLASSES + cls[a]];
+      } else {
+        pFold = table[off + cls[a]];
+      }
       if (rand() < pFold) {
         nid = firstChild[nid];
       } else {

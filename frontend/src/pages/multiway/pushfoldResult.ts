@@ -101,6 +101,12 @@ export interface PushFoldDump {
         partner_reach?: number[];
       }
     >;
+    /** The exact joint strategy the team_rollup is marginalized from: one
+     *  row per suit orbit of the ordered (own hand, partner hand) pair,
+     *  quantized and base64-encoded, plus a representative card pair per
+     *  orbit. Decoded by lib/sessionSim/orbits.ts; absent on payloads from
+     *  engines before 2026-09-03. */
+    team_joint?: import("@/lib/sessionSim/orbits").TeamJointRaw;
     board_sample?: { iter_count: number; pair_count: number; seed: number };
     preflop?: {
       button: number;

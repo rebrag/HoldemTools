@@ -30,6 +30,8 @@ export interface RunParams {
   handsPerSession: number;
   sessions: number;
   bankrolls: number[];
+  /** Bust chances (fractions) to report the required bankroll for. */
+  bustTargets: number[];
   seed: number;
 }
 
@@ -145,6 +147,7 @@ export function useSessionSimulation() {
             handsPerSession: Math.max(1, Math.floor(params.handsPerSession)),
             sessions,
             bankrolls: params.bankrolls,
+            bustTargets: params.bustTargets,
             ddThresholds: DEFAULT_DD_THRESHOLDS,
             checkpoints: DEFAULT_CHECKPOINTS,
           },

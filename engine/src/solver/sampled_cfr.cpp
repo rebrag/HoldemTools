@@ -1,5 +1,8 @@
 #include "solver/sampled_cfr.hpp"
 
+#include "cards/combos.hpp"
+#include "io/base64.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <array>
@@ -946,6 +949,155 @@ nlohmann::json SampledCfrSolver::team_rollup_json() const {
     node_j["partner_reach"] = std::move(pw);
     out[std::to_string(id)] = std::move(node_j);
   }
+  return out;
+}
+
+namespace {
+
+void push_u16(std::vector<std::uint8_t>& out, std::uint32_t v) {
+  out.push_back(static_cast<std::uint8_t>(v & 0xFF));
+  out.push_back(static_cast<std::uint8_t>((v >> 8) & 0xFF));
+}
+
+void push_i16(std::vector<std::uint8_t>& out, std::int32_t v) {
+  push_u16(out, static_cast<std::uint32_t>(
+                    static_cast<std::uint16_t>(static_cast<std::int16_t>(v))));
+}
+
+std::uint32_t quantize_u16(double unit) {
+  const double clamped = unit < 0.0 ? 0.0 : (unit > 1.0 ? 1.0 : unit);
+  return static_cast<std::uint32_t>(std::lround(clamped * 65535.0));
+}
+
+}  // namespace
+
+nlohmann::json SampledCfrSolver::team_joint_json() const {
+  nlohmann::json out = nlohmann::json::object();
+  if (!agents_.has_team() || joint_classes_ <= 0 || universe_hands_ <= 0) return out;
+  const std::size_t H = static_cast<std::size_t>(universe_hands_);
+  const std::size_t J = static_cast<std::size_t>(joint_classes_);
+  // The compact universe is shared by every seat of a sampled solve, so seat
+  // 0's dictionary names the cards behind every joint row's hands.
+  const std::vector<std::uint16_t> dict = game_.hand_dictionary(0);
+  if (dict.size() != H) return out;
+  const std::vector<Combo>& combos = canonical_combos();
+
+  // One representative (own, partner) pair per orbit: the first member met
+  // scanning own-major, partner-minor - the order joint_hand_classes assigned
+  // ids in, so the reps come out in id order. Four card codes per orbit:
+  // own hi, own lo, partner hi, partner lo.
+  std::vector<std::uint8_t> reps(J * 4, 0);
+  std::vector<bool> seen(J, false);
+  std::size_t found = 0;
+  for (std::size_t h = 0; h < H && found < J; ++h) {
+    for (std::size_t m = 0; m < H; ++m) {
+      const std::uint32_t jc = joint_class_[h * H + m];
+      if (jc == kNoJointRow || seen[jc]) continue;
+      seen[jc] = true;
+      ++found;
+      const Combo& own = combos[dict[h]];
+      const Combo& mate = combos[dict[m]];
+      reps[jc * 4 + 0] = static_cast<std::uint8_t>(own.hi);
+      reps[jc * 4 + 1] = static_cast<std::uint8_t>(own.lo);
+      reps[jc * 4 + 2] = static_cast<std::uint8_t>(mate.hi);
+      reps[jc * 4 + 3] = static_cast<std::uint8_t>(mate.lo);
+    }
+  }
+  out["orbit_count"] = J;
+  out["orbits"] = base64_encode(reps);
+  out["card_code"] = "rank*4+suit; rank 0..12 = 2..A; suit 0..3 = c,d,h,s";
+  out["encoding"] = {
+      {"orbits", "u8[4] per orbit: own hi, own lo, partner hi, partner lo"},
+      {"freq",
+       "u16 little-endian per orbit per action for the first num_actions-1 actions; /65535"},
+      {"weight",
+       "u16 little-endian per orbit, reach mass relative to weight_max; 0 = never reached"},
+      {"ev", "i16 little-endian per orbit per action, TEAM chips = value * ev_scale; "
+             "-32768 = no data"},
+  };
+
+  nlohmann::json nodes = nlohmann::json::object();
+  const PublicTree& tree = game_.tree();
+  for (NodeId id = 0; id < tree.size(); ++id) {
+    const Node& node = tree[id];
+    if (node.kind != NodeKind::Decision) continue;
+    const int mate = agents_.teammate_of[node.actor];
+    if (mate < 0) continue;
+    const std::size_t offset = store_offset_[node.decision_index];
+    const std::size_t rows = store_hands_[node.decision_index];
+    if (rows != J) continue;
+    const std::uint16_t actions = layout_.node_actions[node.decision_index];
+    const std::size_t free_actions =
+        actions > 1 ? static_cast<std::size_t>(actions) - 1 : 1;
+
+    std::vector<double> mass(J, 0.0);
+    double mass_max = 0.0;
+    for (std::size_t jc = 0; jc < J; ++jc) {
+      double w = 0.0;
+      for (std::uint16_t a = 0; a < actions; ++a) {
+        w += strat_sum_[offset + static_cast<std::size_t>(a) * rows + jc];
+      }
+      mass[jc] = w;
+      if (w > mass_max) mass_max = w;
+    }
+
+    std::vector<std::uint8_t> freq_bytes;
+    freq_bytes.reserve(J * free_actions * 2);
+    std::vector<std::uint8_t> weight_bytes;
+    weight_bytes.reserve(J * 2);
+    for (std::size_t jc = 0; jc < J; ++jc) {
+      const double w = mass[jc];
+      for (std::size_t a = 0; a < free_actions; ++a) {
+        const double v = w > 0.0 ? strat_sum_[offset + a * rows + jc] / w : 1.0 / actions;
+        push_u16(freq_bytes, quantize_u16(v));
+      }
+      push_u16(weight_bytes, quantize_u16(mass_max > 0.0 ? w / mass_max : 0.0));
+    }
+
+    // Conditioned TEAM EVs (own + partner chips): scaled so the widest value
+    // in this node fits an i16, with the sentinel for rows that never
+    // accumulated reach.
+    double ev_abs_max = 0.0;
+    for (std::size_t jc = 0; jc < J; ++jc) {
+      const double den = ev_w_[offset + jc];
+      if (den <= 0.0) continue;
+      for (std::uint16_t a = 0; a < actions; ++a) {
+        const double v = ev_sum_[offset + static_cast<std::size_t>(a) * rows + jc] / den;
+        if (std::isfinite(v)) ev_abs_max = std::max(ev_abs_max, std::abs(v));
+      }
+    }
+    const double ev_scale = ev_abs_max > 0.0 ? ev_abs_max / 32000.0 : 1.0;
+    std::vector<std::uint8_t> ev_bytes;
+    ev_bytes.reserve(J * static_cast<std::size_t>(actions) * 2);
+    for (std::size_t jc = 0; jc < J; ++jc) {
+      const double den = ev_w_[offset + jc];
+      for (std::uint16_t a = 0; a < actions; ++a) {
+        if (den <= 0.0) {
+          push_i16(ev_bytes, -32768);
+          continue;
+        }
+        const double v = ev_sum_[offset + static_cast<std::size_t>(a) * rows + jc] / den;
+        if (!std::isfinite(v)) {
+          push_i16(ev_bytes, -32768);
+          continue;
+        }
+        const long q = std::lround(v / ev_scale);
+        push_i16(ev_bytes, static_cast<std::int32_t>(std::max(-32000L, std::min(32000L, q))));
+      }
+    }
+
+    nlohmann::json node_j;
+    node_j["actor"] = node.actor;
+    node_j["partner"] = mate;
+    node_j["num_actions"] = actions;
+    node_j["freq"] = base64_encode(freq_bytes);
+    node_j["weight"] = base64_encode(weight_bytes);
+    node_j["weight_max"] = mass_max;
+    node_j["ev"] = base64_encode(ev_bytes);
+    node_j["ev_scale"] = ev_scale;
+    nodes[std::to_string(id)] = std::move(node_j);
+  }
+  out["nodes"] = std::move(nodes);
   return out;
 }
 
