@@ -84,6 +84,16 @@ class SampledCfrSolver final : public StrategySource {
   // cell, aggregated from the joint rows. Empty json when there is no team.
   nlohmann::json team_rollup_json() const;
 
+  // The EXACT joint strategy for a hand-sharing team, per team decision node:
+  // one row per suit orbit of the ORDERED (own hand, partner hand) pair - the
+  // solver's actual infoset, 93,769 rows on a full range - as quantized
+  // little-endian arrays in base64, plus one representative card pair per
+  // orbit so a consumer can key the rows by real cards without replicating
+  // the quotient. The 169x169 rollup is this table marginalized over suits;
+  // this is what shows how the partner blocking your suits moves the
+  // strategy. Empty json when there is no team. Layout: docs/artifact-format.md.
+  nlohmann::json team_joint_json() const;
+
   // StrategySource: the artifact writer and best-response pass plug in here.
   std::uint64_t iteration() const override { return t_; }
   void average_strategy(NodeId node, std::vector<float>& out) const override;

@@ -10,11 +10,20 @@
 // /solutions sims are - click an option to take it, click a seat's card to
 // put that seat back on the spot. The line itself lives on the page (it also
 // drives the table), so this panel is handed the model and a setter.
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { MoneyOpts } from "@/pages/solver/boardDisplay";
 import DecisionMatrix from "@/pages/solver/DecisionMatrix";
+import HandBreakdown from "@/pages/solver/HandBreakdown";
 import Line from "@/pages/solver/Line";
+import { jointNodeFor } from "@/lib/sessionSim/orbits";
+import {
+  comboDetailForCards,
+  conditionedGridForCards,
+  idsOfCodes,
+  jointForDump,
+} from "./jointCharts";
 import { lineHandlers, type LineModel } from "./lineModel";
+import PartnerHandPicker from "./PartnerHandPicker";
 import PartnerHandSelect from "./PartnerHandSelect";
 import {
   actionPct,
@@ -35,6 +44,8 @@ const PushFoldResultPanel = ({
   onPathChange,
   partnerClass,
   onPartnerClassChange,
+  partnerCards,
+  onPartnerCardsChange,
   className = "",
   onOpenBaseline,
 }: {
@@ -43,10 +54,15 @@ const PushFoldResultPanel = ({
   model: LineModel;
   path: number[];
   onPathChange: (path: number[]) => void;
-  /** Conditioned viewer: the partner hand class the team charts are
-   *  conditioned on; null = the partner-averaged marginal. */
+  /** Conditioned viewer, class form (payloads without the exact joint
+   *  table): the partner hand class the team charts are conditioned on;
+   *  null = the partner-averaged marginal. */
   partnerClass: number | null;
   onPartnerClassChange: (partnerClass: number | null) => void;
+  /** Conditioned viewer, exact form: the partner's known cards (0 to 2
+   *  codes). Used when the payload carries `team_joint`. */
+  partnerCards: string[];
+  onPartnerCardsChange: (cards: string[]) => void;
   /** The page hands this a definite height. Everything below is sized from
    *  it - see the grid wrapper's comment. */
   className?: string;
@@ -91,13 +107,52 @@ const PushFoldResultPanel = ({
     node && node.kind === "decision" && meta.team && meta.team_rollup
       ? meta.team_rollup[String(node.node_id)]
       : undefined;
+  /* The exact joint rows, when the artifact carries them: conditioning is
+   * then on the partner's CARDS, and the class select gives way to a card
+   * picker plus a per-combo breakdown. */
+  const joint = useMemo(() => jointForDump(dump), [dump]);
+  const jointNode = node && node.kind === "decision" ? jointNodeFor(joint, node) : null;
+  const partnerIds = useMemo(() => idsOfCodes(partnerCards), [partnerCards]);
+  const exact = useMemo(
+    () =>
+      node && node.kind === "decision" && joint && jointNode && partnerIds.length > 0
+        ? conditionedGridForCards(node, joint, jointNode, partnerIds)
+        : null,
+    [node, joint, jointNode, partnerIds]
+  );
   const grid = useMemo(() => {
     if (!node || node.kind !== "decision") return [];
-    if (teamRollup && partnerClass != null) {
+    if (exact) return exact.cells;
+    if (!jointNode && teamRollup && partnerClass != null) {
       return conditionedGridFor(node, teamRollup, partnerClass);
     }
     return gridFor(node);
-  }, [node, teamRollup, partnerClass]);
+  }, [node, exact, jointNode, teamRollup, partnerClass]);
+  /* Per-combo view under the chart once the partner's hand is pinned: the
+   * cell under the pointer (or the pinned one) expands into its combos,
+   * each with its own row, the partner's cards blocking some of them. */
+  const [pinnedHand, setPinnedHand] = useState<string | null>(null);
+  const [hoveredHand, setHoveredHand] = useState<string | null>(null);
+  const comboDetail = useMemo(
+    () =>
+      node && node.kind === "decision" && joint && jointNode && partnerIds.length === 2
+        ? comboDetailForCards(node, joint, jointNode, [partnerIds[0], partnerIds[1]])
+        : null,
+    [node, joint, jointNode, partnerIds]
+  );
+  const partnerNote = !jointNode
+    ? null
+    : partnerIds.length === 0
+      ? "Partner-averaged chart. Pick the partner's cards to see the conditioned strategy, suits included."
+      : exact?.unreached
+        ? "The partner never reaches this spot holding those cards, so this is the partner-averaged chart."
+        : exact?.rare
+          ? `The partner rarely arrives here holding those cards: only ${Math.round(
+              exact.coverage * 100
+            )}% of your hands have data for it at this node, the rest show the average. Read it loosely.`
+          : partnerIds.length === 1
+          ? "Every partner hand holding that card, reach-weighted."
+          : "Exact: each cell averages its combos the partner's cards leave free. Hover or click a cell to see them one by one below.";
   const rows = useMemo(() => settingsRows(meta), [meta]);
   const jamPct = node && node.kind === "decision" ? actionPct(node, "ALLIN") : 0;
   const actorName = node?.actor != null ? seats[node.actor] ?? `P${node.actor}` : null;
@@ -282,13 +337,22 @@ const PushFoldResultPanel = ({
                   {jamPct.toFixed(1)}% of combos jam
                 </span>
               </div>
-              {teamRollup && (
-                <PartnerHandSelect
-                  rollup={teamRollup}
-                  partnerLabel={seats[teamRollup.partner] ?? `P${teamRollup.partner}`}
-                  value={partnerClass}
-                  onChange={onPartnerClassChange}
+              {jointNode ? (
+                <PartnerHandPicker
+                  cards={partnerCards}
+                  onChange={onPartnerCardsChange}
+                  partnerLabel={seats[jointNode.partner] ?? `P${jointNode.partner}`}
+                  note={partnerNote}
                 />
+              ) : (
+                teamRollup && (
+                  <PartnerHandSelect
+                    rollup={teamRollup}
+                    partnerLabel={seats[teamRollup.partner] ?? `P${teamRollup.partner}`}
+                    value={partnerClass}
+                    onChange={onPartnerClassChange}
+                  />
+                )
               )}
               {/* DecisionMatrix is w-full aspect-square and its className cannot
                   be overridden through the spread, so the only way to bound it by
@@ -301,9 +365,34 @@ const PushFoldResultPanel = ({
                   to a few unreadable pixels - the grid stays width-driven there. */}
               <div className="flex justify-center lg:min-h-0 lg:flex-1">
                 <div className="w-full lg:aspect-square lg:h-full lg:w-auto lg:max-w-full">
-                  <DecisionMatrix gridData={grid} heightMode="full" money={money} />
+                  <DecisionMatrix
+                    gridData={grid}
+                    heightMode="full"
+                    money={money}
+                    selectedHand={comboDetail ? pinnedHand : null}
+                    onHandSelect={
+                      comboDetail
+                        ? (hand) => setPinnedHand((cur) => (cur === hand ? null : hand))
+                        : undefined
+                    }
+                    onHandHover={comboDetail ? setHoveredHand : undefined}
+                  />
                 </div>
               </div>
+              {comboDetail && (
+                /* The partner's two cards ride in as the "board", so the
+                   combos they block render as dead tiles - which is exactly
+                   the blocking the exact table exists to show. */
+                <HandBreakdown
+                  data={grid}
+                  hand={pinnedHand ?? hoveredHand}
+                  board={partnerCards}
+                  comboDetail={comboDetail}
+                  chipScale={meta.chip_scale > 0 ? meta.chip_scale : 1}
+                  sizeRef={1}
+                  className="h-28 shrink-0"
+                />
+              )}
             </>
           ) : (
             <p className="flex items-center justify-center px-2 py-6 text-center text-[11px] text-slate-500 lg:min-h-0 lg:flex-1">

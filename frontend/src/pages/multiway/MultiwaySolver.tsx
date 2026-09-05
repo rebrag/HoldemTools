@@ -93,6 +93,8 @@ const MultiwaySolver = () => {
    * rather than the panel's because the table reads the line too. */
   const [path, setPath] = useState<number[]>(ROOT_PATH);
   const [partnerClass, setPartnerClass] = useState<number | null>(null);
+  /* The partner's known cards for payloads with the exact joint table. */
+  const [partnerCards, setPartnerCards] = useState<string[]>([]);
   const [jobs, setJobs] = useState<CompareJob[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   /* Jobs whose Stop has been accepted but whose status has not caught up yet.
@@ -243,14 +245,10 @@ const MultiwaySolver = () => {
       }),
     [view, labels, sb, bb, order, anteEach]
   );
-  /* With a solve open the table IS the solve at the current node; with a
-   * group open it is the group's spot at the root. */
-  const tableDump = dump ?? firstGroupDump;
-  const tablePath = dump ? path : ROOT_PATH;
-  const table = useMemo(
-    () => (tableDump ? tableSeatsFor(tableDump, tablePath) : null),
-    [tableDump, tablePath]
-  );
+  /* With a solve open the table IS the solve at the current node. A group
+   * shows no table at all: its cards need the whole width to fit on one
+   * screen, and each card carries its own line. */
+  const table = useMemo(() => (dump ? tableSeatsFor(dump, path) : null), [dump, path]);
   const { seats: tableSeats, onSeatClick } = useSeatNavigation(
     table?.seats ?? builderSeats,
     dump ? seatNav : undefined
@@ -264,6 +262,7 @@ const MultiwaySolver = () => {
       setSelection({ kind: "job", id, dump: parsed });
       setPath(initialPath);
       setPartnerClass(null);
+      setPartnerCards([]);
       /* Backfill the row's lineage from the artifact it serves, for jobs from
        * before the watcher reported it. The page is the one party that has
        * just read the metadata; the server records only what it lacks, and
@@ -781,16 +780,18 @@ const MultiwaySolver = () => {
             top of a mostly empty card. The table is the open solve where
             there is one: the seat on the spot glows, jammed stacks sit on the
             bet ring, folded seats dim, and a seat click walks the line. */}
-        <div className="flex shrink-0 flex-col justify-center rounded-xl border border-slate-800 bg-slate-900/40 p-3 lg:w-[20rem] xl:w-[24rem]">
-          <PokerTable
-            size={table?.size ?? view.players}
-            seats={tableSeats}
-            onSeatClick={onSeatClick}
-            potAmount={table?.potAmount ?? pot}
-            potLabel={table?.potLabel ?? `Pot ${pot}`}
-            maxWidthClassName="max-w-xl"
-          />
-        </div>
+        {!viewingGroupId && (
+          <div className="flex shrink-0 flex-col justify-center rounded-xl border border-slate-800 bg-slate-900/40 p-3 lg:w-[20rem] xl:w-[24rem]">
+            <PokerTable
+              size={table?.size ?? view.players}
+              seats={tableSeats}
+              onSeatClick={onSeatClick}
+              potAmount={table?.potAmount ?? pot}
+              potLabel={table?.potLabel ?? `Pot ${pot}`}
+              maxWidthClassName="max-w-xl"
+            />
+          </div>
+        )}
         <div className="flex min-h-0 flex-1 flex-col">
           {dump && lineModel ? (
             /* From lg the panel gets a definite height and sizes its grid from
@@ -804,6 +805,8 @@ const MultiwaySolver = () => {
               onPathChange={setPath}
               partnerClass={partnerClass}
               onPartnerClassChange={setPartnerClass}
+              partnerCards={partnerCards}
+              onPartnerCardsChange={setPartnerCards}
               className="lg:min-h-0 lg:flex-1"
               onOpenBaseline={solving ? undefined : openBaseline}
             />

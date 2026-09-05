@@ -19,6 +19,7 @@ import {
   tableSeatsFor,
 } from "@/pages/multiway/lineModel";
 import type { HandData } from "@/lib/solver/utils";
+import { formatCardsText, parseCardsText } from "@/pages/multiway/cardText";
 
 /** SB = seat 0, BB = seat 1, BTN = seat 2; button on 2; blinds 1/2; stacks
  *  20 chips at 2 chips per blind. BTN acts first, then SB, then BB. Every
@@ -206,6 +207,22 @@ export async function main(): Promise<number> {
 
     assert.deepEqual(Object.keys(jsonDataFor(dump, null, 1)).sort(), ["Position", "bb"]);
     ok("a seat without a node is position and stack only");
+
+    // Typed cards: forgiving about case, spaces and "10", strict about what
+    // can never be a card, a repeat, or a third card; a trailing rank is
+    // merely incomplete.
+    assert.deepEqual(parseCardsText("AsQd"), { cards: ["As", "Qd"], error: false, incomplete: false });
+    assert.deepEqual(parseCardsText("as qD").cards, ["As", "Qd"]);
+    assert.deepEqual(parseCardsText("10h,9h").cards, ["Th", "9h"]);
+    assert.deepEqual(parseCardsText("AsQ"), { cards: ["As"], error: false, incomplete: true });
+    assert.deepEqual(parseCardsText("As"), { cards: ["As"], error: false, incomplete: false });
+    assert.deepEqual(parseCardsText(""), { cards: [], error: false, incomplete: false });
+    assert.equal(parseCardsText("AsAs").error, true);
+    assert.equal(parseCardsText("AxQd").error, true);
+    assert.equal(parseCardsText("AsQdKh").error, true);
+    assert.equal(parseCardsText("1s").error, true);
+    assert.equal(formatCardsText(["As", "Qd"]), "AsQd");
+    ok("typed cards parse the way a person types them");
 
     console.log(`\n${checks} checks passed in ${Date.now() - started} ms.`);
     return 0;

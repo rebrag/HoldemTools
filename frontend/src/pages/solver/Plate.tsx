@@ -101,6 +101,11 @@ interface PlateProps {
   /** Stands in for the matrix when the seat has no decision here (it folded
    *  to the big blind): no colour key, no zoom. Keep it stable too. */
   placeholder?: ReactNode;
+  /** Many plates on one screen: the matrix draws on a canvas and the
+   *  framer-motion wrappers (zoom scale, fold fade) become plain elements,
+   *  so sixteen plates cost a few hundred DOM nodes instead of tens of
+   *  thousands. See DecisionMatrix's flag of the same name. */
+  performant?: boolean;
 }
 
 /* ──────────────────── component ──────────────────── */
@@ -129,6 +134,7 @@ const Plate: React.FC<PlateProps> = ({
   money,
   header,
   placeholder,
+  performant = false,
 }) => {
   /* Bet labels carry the solve's money; the colour ramp is calibrated in
    * big blinds, so tell it how much money makes one. */
@@ -211,23 +217,25 @@ const Plate: React.FC<PlateProps> = ({
 
   /* The square: the matrix, or the caller's stand-in for a seat with no
      decision. Only the matrix zooms. */
+  const matrix = (
+    <DecisionMatrix
+      money={money}
+      gridData={gridData}
+      randomFillEnabled={randomFillEnabled && !!displayData}
+      isICMSim={isICMSim}
+      heightMode={heightMode}
+      reachByHand={reachByHand}
+      performant={performant}
+    />
+  );
   const square = placeholder ? (
     <div className="flex aspect-square w-full items-center justify-center rounded-md bg-black/25">
       {placeholder}
     </div>
   ) : (
-    <div className="cursor-pointer" onClick={zoom}>
+    <div className={onPlateZoom ? "cursor-pointer" : ""} onClick={onPlateZoom ? zoom : undefined}>
       <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
-        <ZoomableGrid isActive={isActive}>
-          <DecisionMatrix
-            money={money}
-            gridData={gridData}
-            randomFillEnabled={randomFillEnabled && !!displayData}
-            isICMSim={isICMSim}
-            heightMode={heightMode}
-            reachByHand={reachByHand}
-          />
-        </ZoomableGrid>
+        {performant ? matrix : <ZoomableGrid isActive={isActive}>{matrix}</ZoomableGrid>}
       </div>
     </div>
   );
@@ -239,6 +247,73 @@ const Plate: React.FC<PlateProps> = ({
       loading={keyLoading}
       onActionClick={(action) => onActionClick(action, file)}
     />
+  );
+
+  /* The card body, shared by both wrappers below. */
+  const card = (
+    <div
+      className={`relative z-10 rounded-xl border shadow-lg ${
+        isActive
+          ? "border-emerald-400/80 bg-slate-950/70"
+          : "border-slate-700/70 bg-slate-950/60"
+      }`}
+    >
+      {compact ? (
+        /* COMPACT LAYOUT: matrix left, seat header + colour key right.
+           No padding: the mobile view budgets dmWidthPx + gap +
+           sidebarWidthPx to the plate's full width. */
+        <div className="flex items-stretch gap-1">
+          <div className="relative" style={{ width: dmWidth }}>
+            <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
+              <div className="absolute inset-0">{square}</div>
+            </div>
+          </div>
+
+          <div
+            className="shrink-0 pt-1"
+            style={{
+              width: sidebarWidth,
+              height: dmWidth,
+              minHeight: 0,
+            }}
+          >
+            <div className="ck-vertical">
+              <div className="ck-top">
+                {seatHeader}
+                {header}
+              </div>
+              <div className="ck-bottom">{colorKey}</div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* WIDE LAYOUT: header, slot, matrix, colour key. */
+        <>
+          {seatHeader}
+          {header && <div className="px-1.5 pt-1">{header}</div>}
+          <div className="p-1">
+            {square}
+            {colorKey && (
+              <div className="mt-1 flex w-full select-none items-center justify-end">
+                {colorKey}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+  const activeMarks = isActive && (
+    <>
+      <div className="pointer-events-none absolute -inset-1 rounded-[14px] ring-2 ring-emerald-400/80 shadow-[0_0_0_6px_rgba(16,185,129,0.18)] animate-pulse z-20" />
+      {/* Centred over the header's empty middle: the corners now hold
+          the position and the stack. */}
+      <div className="absolute -top-3 left-1/2 z-20 -translate-x-1/2">
+        <span className="text-[10px] bg-emerald-600 text-white rounded px-1.5 py-0.5 shadow">
+          ACTION
+        </span>
+      </div>
+    </>
   );
 
   return (
@@ -293,77 +368,24 @@ const Plate: React.FC<PlateProps> = ({
         }
       `}</style>
 
-      <motion.div
-        className="relative overflow-visible will-change-transform"
-        initial={false}
-        animate={{ opacity: alive ? 1 : 0.1 }}
-        transition={{ duration: 0.25 }}
-      >
-        <div
-          className={`relative z-10 rounded-xl border shadow-lg ${
-            isActive
-              ? "border-emerald-400/80 bg-slate-950/70"
-              : "border-slate-700/70 bg-slate-950/60"
-          }`}
-        >
-          {compact ? (
-            /* COMPACT LAYOUT: matrix left, seat header + colour key right.
-               No padding: the mobile view budgets dmWidthPx + gap +
-               sidebarWidthPx to the plate's full width. */
-            <div className="flex items-stretch gap-1">
-              <div className="relative" style={{ width: dmWidth }}>
-                <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
-                  <div className="absolute inset-0">{square}</div>
-                </div>
-              </div>
-
-              <div
-                className="shrink-0 pt-1"
-                style={{
-                  width: sidebarWidth,
-                  height: dmWidth,
-                  minHeight: 0,
-                }}
-              >
-                <div className="ck-vertical">
-                  <div className="ck-top">
-                    {seatHeader}
-                    {header}
-                  </div>
-                  <div className="ck-bottom">{colorKey}</div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            /* WIDE LAYOUT: header, slot, matrix, colour key. */
-            <>
-              {seatHeader}
-              {header && <div className="px-1.5 pt-1">{header}</div>}
-              <div className="p-1">
-                {square}
-                {colorKey && (
-                  <div className="mt-1 flex w-full select-none items-center justify-end">
-                    {colorKey}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
+      {performant ? (
+        /* No motion and no will-change: a plain fade by style, which costs
+           nothing while idle and never promotes a compositor layer. */
+        <div className="relative overflow-visible" style={{ opacity: alive ? 1 : 0.1 }}>
+          {card}
+          {activeMarks}
         </div>
-
-        {isActive && (
-          <>
-            <div className="pointer-events-none absolute -inset-1 rounded-[14px] ring-2 ring-emerald-400/80 shadow-[0_0_0_6px_rgba(16,185,129,0.18)] animate-pulse z-20" />
-            {/* Centred over the header's empty middle: the corners now hold
-                the position and the stack. */}
-            <div className="absolute -top-3 left-1/2 z-20 -translate-x-1/2">
-              <span className="text-[10px] bg-emerald-600 text-white rounded px-1.5 py-0.5 shadow">
-                ACTION
-              </span>
-            </div>
-          </>
-        )}
-      </motion.div>
+      ) : (
+        <motion.div
+          className="relative overflow-visible will-change-transform"
+          initial={false}
+          animate={{ opacity: alive ? 1 : 0.1 }}
+          transition={{ duration: 0.25 }}
+        >
+          {card}
+          {activeMarks}
+        </motion.div>
+      )}
     </div>
   );
 };

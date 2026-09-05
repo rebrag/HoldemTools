@@ -4,10 +4,13 @@
 // A payload carries everything a hand needs: the tree with each seat's
 // commitment at every node, the frozen seats' 169-class strategies
 // (rollup_169 - exact preflop, since no infoset can tell suits apart) and
-// the team's conditioned 169x169 charts (team_rollup). Nothing here reads
-// per-combo rows, which the rollup dump does not carry anyway.
+// the team's conditioned charts: the exact joint rows per suit orbit of the
+// (own, partner) pair (team_joint) where the payload has them, else the
+// 169x169 class table (team_rollup). Nothing here reads per-combo rows,
+// which the rollup dump does not carry anyway.
 import type { DumpNode, PushFoldDump } from "@/pages/multiway/pushfoldResult";
-import { classIndexOfName } from "./cards";
+import { CLASS_OF, classIndexOfName } from "./cards";
+import { decodeTeamJoint, jointFreq } from "./orbits";
 import type { CompiledPolicy } from "./types";
 
 const CLASSES = 169;
@@ -67,7 +70,7 @@ export function compilePolicy(dump: PushFoldDump, options: CompileOptions = {}):
       "Not a hand-sharing team solve. A rotation is built from team solves of one spot."
     );
   }
-  if (team && !meta.team_rollup) {
+  if (team && !meta.team_rollup && !meta.team_joint) {
     throw new Error(
       "This payload predates the conditioned team charts. Re-solve it at the same " +
         "iterations to get a payload the simulator can play."
@@ -90,6 +93,10 @@ export function compilePolicy(dump: PushFoldDump, options: CompileOptions = {}):
   const blocks: Float32Array[] = [];
   let tableSize = 0;
   let fallbackCells = 0;
+  /* The exact joint rows, when the payload carries them: the dealer then
+   * conditions on the partner's actual cards (suit blocking included)
+   * instead of the partner's class. */
+  const joint = team ? decodeTeamJoint(meta.team_joint) : null;
 
   const marginalRow = (node: DumpNode, id: number): Float32Array => {
     const row = new Float32Array(CLASSES).fill(0.5);
@@ -123,8 +130,31 @@ export function compilePolicy(dump: PushFoldDump, options: CompileOptions = {}):
         throw new Error(`Decision node ${id} has ${n.num_children} actions; only jam/fold trees play.`);
       }
       const marginal = marginalRow(n, id);
+      const jointNode = joint?.nodes[String(id)];
       const conditioned = team ? meta.team_rollup?.[String(id)] : undefined;
-      if (conditioned && team && team.seats.includes(n.actor ?? -1)) {
+      if (jointNode && joint && team && team.seats.includes(n.actor ?? -1)) {
+        // Exact: one P(fold) per orbit, in orbit-id order, with a row the
+        // solve never reached falling back to the marginal of its own class
+        // (read off the orbit's representative pair). The marginal row rides
+        // behind the orbits for a pair the key table does not know.
+        policyKind[id] = 3;
+        partner[id] = jointNode.partner;
+        const J = joint.orbitCount;
+        const block = new Float32Array(J + CLASSES);
+        for (let jc = 0; jc < J; jc++) {
+          if (jointNode.weight[jc] > 0) {
+            block[jc] = Math.min(1, Math.max(0, jointFreq(jointNode, jc, 0)));
+          } else {
+            const own = CLASS_OF[joint.reps[4 * jc] * 52 + joint.reps[4 * jc + 1]];
+            block[jc] = marginal[own];
+            fallbackCells++;
+          }
+        }
+        block.set(marginal, J);
+        policyOffset[id] = tableSize;
+        blocks.push(block);
+        tableSize += block.length;
+      } else if (conditioned && team && team.seats.includes(n.actor ?? -1)) {
         // Conditioned on the partner's class. The chart stores the first
         // num_actions-1 actions (Fold); a cell with no data - a conditioning
         // the partner never arrives with - falls back to the marginal row,
@@ -194,6 +224,8 @@ export function compilePolicy(dump: PushFoldDump, options: CompileOptions = {}):
     policyOffset,
     partner,
     table,
+    jointKeys: joint?.keys ?? null,
+    jointIds: joint?.ids ?? null,
     scoredSeats: [...scoredSeats],
     teamSeats: team ? [team.seats[0], team.seats[1]] : null,
     meta: {

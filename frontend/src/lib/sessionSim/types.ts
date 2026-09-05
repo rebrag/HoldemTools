@@ -25,15 +25,23 @@ export interface CompiledPolicy {
   commit: Float64Array;
   /* ---- decision policy ---- */
   /** 0 frozen 169-class row, 1 team 169x169 conditioned table, 2 forced
-   *  single child. */
+   *  single child, 3 team exact joint table: one P(fold) per suit orbit of
+   *  the (own, partner) pair (looked up through jointKeys/jointIds), then
+   *  the 169-class marginal row as the fallback for a pair the table does
+   *  not know. */
   policyKind: Uint8Array;
   /** Offset into `table` of this node's P(fold) block. */
   policyOffset: Int32Array;
   /** Team nodes: the partner seat the row is conditioned on. */
   partner: Int16Array;
   /** All P(fold) blocks back to back: 169 floats for a frozen node, 169*169
-   *  for a team node laid out [partnerClass * 169 + ownClass]. */
+   *  for a team node laid out [partnerClass * 169 + ownClass], and
+   *  jointKeys.length + 169 for an exact-joint team node. */
   table: Float32Array;
+  /** Exact-joint solves: orbit keys ascending and the orbit id at each
+   *  position (see lib/sessionSim/orbits.ts); null for class-only payloads. */
+  jointKeys: Int32Array | null;
+  jointIds: Int32Array | null;
   /** Seats whose net chips are summed into each hand's result. For a team
    *  solve these are the team's seats. */
   scoredSeats: number[];
@@ -78,6 +86,9 @@ export interface AnalyzeParams {
   bankrolls: number[];
   /** Drawdown depths (bb) for the probability table. */
   ddThresholds: number[];
+  /** Bust chances to invert: for each, the bankroll a session needs so that
+   *  only that share of sessions bust. Fractions, 0..1. */
+  bustTargets: number[];
   /** Hands at which the session paths are sampled for the fan and the
    *  running drawdown/minimum matrices. */
   checkpoints: number;
@@ -144,6 +155,17 @@ export interface SessionAnalysis {
     bustHalf: number;
     /** Long-run risk of ruin, Brownian approximation exp(-2 mu X / sigma^2). */
     ruinLongRun: number;
+  }[];
+  /** The bankroll table inverted: what a target bust chance costs. */
+  requiredBankroll: {
+    /** Share of sessions allowed to bust. */
+    target: number;
+    /** Bankroll (bb) whose within-session bust chance is `target`: the
+     *  (1 - target) quantile of the sessions' deepest point below zero. */
+    withinSession: number;
+    /** Brownian long-run bankroll for the same ruin chance; null when the
+     *  win rate is not positive, where no bankroll is ever safe. */
+    longRun: number | null;
   }[];
   finalResult: {
     percentiles: Percentile[];

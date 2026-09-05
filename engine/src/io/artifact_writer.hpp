@@ -42,6 +42,7 @@ struct SolveStats {
   // alone looks like the user simply asked for fewer.
   std::string stopped_reason;
   nlohmann::json team_rollup;              // conditioned 169x169 chart per team node
+  nlohmann::json team_joint;               // exact per-orbit joint strategy per team node
   // Wall clock for the whole solve loop (CFR + every checkpoint's
   // best-response), and the worker count it ran on. Both are reported so a
   // timing comparison against another solver is interpretable.

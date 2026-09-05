@@ -29,6 +29,18 @@ export function riskOfRuin(mu: number, sigma: number, x: number): number {
   return Math.exp((-2 * mu * x) / (sigma * sigma));
 }
 
+/** Bankroll for a Brownian long-run risk of ruin of `p`: riskOfRuin solved
+ *  for x. Null when the drift is not positive - ruin is then certain at any
+ *  bankroll - and 0 when there is nothing to lose (no variance, positive
+ *  drift) or nothing to protect (p of 1). */
+export function bankrollForRuin(mu: number, sigma: number, p: number): number | null {
+  if (p >= 1) return 0;
+  if (!(p > 0)) return null;
+  if (!(sigma > 0)) return mu > 0 ? 0 : null;
+  if (mu <= 0) return null;
+  return (-(sigma * sigma) * Math.log(p)) / (2 * mu);
+}
+
 /** Linear-interpolated percentile of a SORTED array. */
 function percentileSorted(sorted: Float32Array | Float64Array, p: number): number {
   const n = sorted.length;
@@ -202,6 +214,18 @@ export function analyzeSessions(
     };
   });
 
+  // The bankroll table inverted: how deep below zero a session goes is one
+  // number per session, so the bankroll that only a share p of sessions
+  // would have touched is that depth's (1 - p) quantile. Rounded up: a
+  // bankroll is whole big blinds, and rounding down would bust more often
+  // than asked.
+  const depthSorted = Float32Array.from(sessionMin, (v) => -v).sort();
+  const requiredBankroll = params.bustTargets.map((target) => ({
+    target,
+    withinSession: Math.max(0, Math.ceil(percentileSorted(depthSorted, 100 * (1 - target)))),
+    longRun: bankrollForRuin(mu, sigma, target),
+  }));
+
   const finalSorted = Float64Array.from(finalCum).sort();
   let finalMean = 0;
   for (let s = 0; s < S; s++) finalMean += finalCum[s];
@@ -237,6 +261,7 @@ export function analyzeSessions(
     fan,
     drawdown,
     bankrolls,
+    requiredBankroll,
     finalResult: {
       percentiles: finalPercentiles,
       mean: finalMean,

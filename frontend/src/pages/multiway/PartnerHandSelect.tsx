@@ -67,9 +67,13 @@ const PartnerHandSelect = ({
   );
 
   if (dense) {
+    /* Stacked, because the narrowest home for this is a 76px plate sidebar:
+       side by side the select would be a sliver. */
     return (
-      <label className="flex w-full items-center gap-1 text-[10px]">
-        <span className="shrink-0 uppercase tracking-wide text-slate-400">{partnerLabel} holds</span>
+      <label className="flex w-full min-w-0 flex-col gap-0.5 text-[10px]">
+        <span className="truncate text-[9px] uppercase tracking-wide text-slate-400">
+          {partnerLabel} holds
+        </span>
         {select}
       </label>
     );

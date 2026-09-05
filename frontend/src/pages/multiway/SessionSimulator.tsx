@@ -104,6 +104,19 @@ const parseBankrolls = (s: string): number[] =>
     )
   ).sort((a, b) => a - b);
 
+/** Bust chances typed in percent ("1, 5, 25"), as fractions. A chance of 0
+ *  has no finite bankroll and 100 needs none, so both are dropped. */
+const parseBustTargets = (s: string): number[] =>
+  Array.from(
+    new Set(
+      s
+        .split(/[,\s]+/)
+        .map((t) => Number(t))
+        .filter((v) => Number.isFinite(v) && v > 0 && v < 100)
+        .map((v) => v / 100)
+    )
+  ).sort((a, b) => a - b);
+
 const sameRotation = (entries: RotationEntry[], group: SolveGroup): boolean =>
   entries.length === group.jobIds.length && entries.every((e, i) => e.jobId === group.jobIds[i]);
 
@@ -127,6 +140,7 @@ const SessionSimulator = forwardRef<
   const [sessions, setSessions] = useState("2000");
   const [handsPerSolve, setHandsPerSolve] = useState("200000");
   const [bankrollsText, setBankrollsText] = useState("100, 200, 300, 500");
+  const [bustTargetsText, setBustTargetsText] = useState("1, 2, 5, 10, 25");
   const [seed, setSeed] = useState("20260901");
   /* The group the rotation came from (or was last saved as). Cleared when
    * the rotation is emptied, kept while it is edited so "Update group" has
@@ -313,6 +327,7 @@ const SessionSimulator = forwardRef<
   }, [jobs]);
 
   const bankrolls = useMemo(() => parseBankrolls(bankrollsText), [bankrollsText]);
+  const bustTargets = useMemo(() => parseBustTargets(bustTargetsText), [bustTargetsText]);
   const issues = useMemo(() => {
     const out = validateRotation(candidates);
     if (!(num(handsPerSession) >= 1)) out.push("Hands per session must be at least 1.");
@@ -325,9 +340,12 @@ const SessionSimulator = forwardRef<
       );
     }
     if (bankrolls.length === 0) out.push("Give at least one bankroll in bb, e.g. 100, 200, 300.");
+    if (bustTargets.length === 0) {
+      out.push("Give at least one bust chance in percent, between 0 and 100, e.g. 1, 5, 25.");
+    }
     if (!Number.isFinite(num(seed))) out.push("Seed must be a number.");
     return out;
-  }, [candidates, handsPerSession, sessions, handsPerSolve, bankrolls, seed]);
+  }, [candidates, handsPerSession, sessions, handsPerSolve, bankrolls, bustTargets, seed]);
 
   const running = sim.phase === "simulating" || sim.phase === "analyzing";
   const run = () => {
@@ -339,6 +357,7 @@ const SessionSimulator = forwardRef<
         handsPerSession: num(handsPerSession),
         sessions: num(sessions),
         bankrolls,
+        bustTargets,
         seed: num(seed) >>> 0,
       }
     );
@@ -564,13 +583,14 @@ const SessionSimulator = forwardRef<
             {/* ---------- parameters ---------- */}
             <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
               <h3 className="mb-2 text-xs font-semibold text-slate-200">Session</h3>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
                 {(
                   [
                     ["Hands per session", handsPerSession, setHandsPerSession, "One session's length. Downswings and busts are measured inside it."],
                     ["Sessions", sessions, setSessions, "How many sessions to bootstrap; more means smoother percentiles."],
                     ["Hands per solve", handsPerSolve, setHandsPerSolve, "Hands dealt with each solve. Sessions draw from this pool, so it bounds how well the tails are known."],
                     ["Bankrolls (bb)", bankrollsText, setBankrollsText, "Comma-separated. A session busts a bankroll when its result touches minus that much at any hand."],
+                    ["Bust chance (%)", bustTargetsText, setBustTargetsText, "Comma-separated targets. The Bankroll section shows the bankroll each one needs, within a session and in the long run."],
                     ["Seed", seed, setSeed, "Same seed, same numbers - on any machine."],
                   ] as const
                 ).map(([label, value, set, why]) => (
@@ -726,6 +746,41 @@ const Results = ({ result, bankrolls }: { result: SessionAnalysis; bankrolls: nu
                   {pct(b.bustP)} <span className="text-slate-500">± {pct(b.bustHalf)}</span>
                 </td>
                 <td className="py-1 pr-2 text-right text-slate-400">{pct(b.ruinLongRun, 2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        {/* The same question the other way round: not "how often does this
+            bankroll bust" but "what bankroll busts this often". The
+            within-session number is read off the simulated sessions (the
+            depth only that share of them reached); the long-run one inverts
+            the Brownian formula, and has no answer for a losing rotation. */}
+        <h4 className="mb-1 mt-3 text-[11px] font-semibold text-slate-300">
+          Bankroll needed for a bust chance of
+        </h4>
+        <table className="w-full text-[11px] tabular-nums">
+          <thead className="text-left text-[10px] uppercase tracking-wide text-slate-500">
+            <tr>
+              <th className="py-1 pr-2 font-medium">Bust chance</th>
+              <th className="py-1 pr-2 text-right font-medium">Within {fmtCount(H)} hands</th>
+              <th className="py-1 pr-2 text-right font-medium">Long run</th>
+            </tr>
+          </thead>
+          <tbody className="text-slate-300">
+            {result.requiredBankroll.map((r) => (
+              <tr key={r.target} className="border-t border-slate-800/70">
+                <td className="py-1 pr-2">{pct(r.target, r.target < 0.01 ? 1 : 0)}</td>
+                <td className="py-1 pr-2 text-right">{r.withinSession} bb</td>
+                <td className="py-1 pr-2 text-right text-slate-400">
+                  {r.longRun == null ? (
+                    <span title="The rotation does not win, so no bankroll is ever safe in the long run.">
+                      none (not a winning rotation)
+                    </span>
+                  ) : (
+                    `${Math.ceil(r.longRun)} bb`
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
