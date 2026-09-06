@@ -74,7 +74,6 @@ const LinkHandsDrawer: React.FC<Props> = ({
     setProgress(null);
     setErrorByName(new Map());
     // Reset only on (re)open, per the drawer convention.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const sessionLabel = (sessionId: string | null): string => {
