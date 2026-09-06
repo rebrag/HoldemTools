@@ -616,10 +616,12 @@ const HandHistoryTool: React.FC<HandHistoryToolProps> = ({ user }) => {
       {/* Mounted permanently (open toggles) so the sheet's exit animation
           plays. handCount is deliberately omitted: computing it means folding
           the replay of every hand, and a count over just the loaded page would
-          be misleading. */}
+          be misleading. `hands` is the list already in memory, so the editor's
+          showdown section costs no request and tracks deletes live. */}
       <PlayerEditorDrawer
         open={playerDrawerOpen}
         player={editingPlayerId ? knownPlayers.get(editingPlayerId) ?? null : null}
+        hands={items}
         onClose={() => setPlayerDrawerOpen(false)}
         onOpenRoster={() => navigate("/hand-history/players")}
       />

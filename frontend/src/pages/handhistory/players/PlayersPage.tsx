@@ -253,6 +253,7 @@ const PlayersPage: React.FC<{ user: User | null }> = ({ user }) => {
         open={drawerOpen}
         player={editing}
         handCount={editing ? handCounts.get(editing.id) ?? 0 : undefined}
+        hands={hands}
         onClose={() => setDrawerOpen(false)}
       />
 
