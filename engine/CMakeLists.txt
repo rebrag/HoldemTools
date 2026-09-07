@@ -77,6 +77,7 @@ add_library(engine_core STATIC
   src/game/public_tree.cpp
   src/eval/hand_eval.cpp
   src/eval/terminal.cpp
+  src/eval/terminal3.cpp
   src/solver/cfr.cpp
   src/solver/best_response.cpp
   src/solver/depth_limit.cpp
@@ -104,6 +105,12 @@ target_link_libraries(engine PRIVATE engine_core)
 add_executable(dl_probe tools/depth_limit_probe.cpp)
 target_link_libraries(dl_probe PRIVATE engine_core)
 
+# terminal3_bench answers "does the showdown sweep generalize to three seats
+# at O(H)", which is what decides whether exact multiway postflop is reachable
+# on the vectorized core. Correctness is gated in tests/test_terminal3.cpp.
+add_executable(terminal3_bench tools/terminal3_bench.cpp)
+target_link_libraries(terminal3_bench PRIVATE engine_core)
+
 # --- Tests ----------------------------------------------------------------
 enable_testing()
 add_executable(engine_tests
@@ -113,6 +120,7 @@ add_executable(engine_tests
   tests/test_tree.cpp
   tests/test_preflop_tree.cpp
   tests/test_terminal.cpp
+  tests/test_terminal3.cpp
   tests/test_multiway_terminal.cpp
   tests/test_preflop_game.cpp
   tests/test_memory.cpp

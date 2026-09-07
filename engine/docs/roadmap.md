@@ -542,6 +542,7 @@ Next (config schema already carries the keys; do not re-plumb):
   It is also the only multiway milestone with a real external correctness gate: published heads-up Nash push/fold charts.
 
 - **M8b - multiway POSTFLOP (3+ players)**: N-seat public tree over streets, fast side-pot terminal path, NashConv already generalizes. `multiway_no_nash_guarantee` stays surfaced - CFR converges to coarse correlated equilibria with 3+ players.
+  **The terminal half is answered: the sweep generalizes at O(H)** (`src/eval/terminal3.hpp`, measured 2026-09-07 - see "the 3-way terminal sweep" below). So the remaining M8b work is the N-seat tree builder, not a research problem, and M8b can be built EXACT rather than depth-limited-from-the-start for correctness.
   **This is the milestone that forces the depth-limiting decision, and it should be designed with that in mind rather than built exact-only and retrofitted.** A 3-way tree is at least 8x the size of the heads-up equivalent and costs GTO Wizard 1.5x per iteration on flop/turn and 2x on the river even after their reductions; their own *classical* engine needs "multiple minutes on 64 cores" for a 3-way turn. Exact full-tree multiway at interactive speed is not a thing anyone has shipped. The shape that works, and that they use, is **exact on the river** (no future left to approximate, and they explicitly run no network there) with **depth-limited turn and flop**. Building M8 as exact-everywhere first would produce something correct that cannot be served on demand, which is half the product.
 ### M8a - multiway preflop push/fold. Landed 2026-08-30.
 
@@ -890,6 +891,52 @@ That is DeepStack's counterfactual value network.
 See `docs/perf-plan.md`, "The fork".
 
 **Not built, deliberately:** the portfolio leaf (a k-action opponent decision node, which the solver already handles), reuse of a leaf table across configs (it is keyed to the leaf's public state, so a different flop sizing invalidates it), and any artifact/CLI path - `algorithm.depth_limit` is parsed and gated but `engine solve` has no leaf-table source, so a depth-limited solve throws rather than inventing values.
+
+### M8b groundwork - the 3-way terminal sweep. Measured 2026-09-07.
+
+The question M8b turns on, settled by measurement rather than argument: **the showdown sweep generalizes to three seats at O(H).**
+
+The 2-player showdown is O(H) for every hero hand against the whole opponent range, which is the reason exact heads-up postflop is affordable at all.
+At three seats the hero needs `sum over mutually disjoint (o1, o2) of r1(o1) r2(o2) * share`, and `showdown_share` gives that at O(H^2) per hero hand, O(H^3) overall - the wall `terminal.hpp` had flagged as an unresolved optimization seam since M3.
+
+**Why it was not obviously possible, and why it is.**
+"Hero beats both" would factor into two independent prefix sums, `F1(h) * F2(h)`, if the two opponents could hold the same card.
+They cannot, and that `o1 and o2 disjoint` constraint couples them.
+It comes out by inclusion-exclusion over the shared card, which is the same trick this file already uses for the hero's own blockers:
+
+```
+S(A,B) = tot'(A) * tot'(B) - sum over cards c of card'(A,c) * card'(B,c) + diag(A and B)
+```
+
+The series terminates at two terms rather than running to 52, because two 2-card combos that share two cards ARE the same combo, so the card-by-card subtraction over-counts exactly the diagonal.
+Every quantity is a running total over the strength-sorted order, so the ascending sweep carries them at O(1) per hand plus a 52-wide dot product.
+Ties need four such terms (both worse, either tying, both tying) weighted 1, 1/2, 1/3; the mixed terms carry no diagonal because a hand cannot be both strictly worse and tied.
+
+**Measured** (`tools/terminal3_bench.cpp`, board `Qs Jh 2h 8d 6c`):
+
+| H | 3-way per call | ns/hand | 2-way ns/hand | ratio |
+|---|---|---|---|---|
+| 84 | 8.7 us | 103.6 | 4.84 | 21.4x |
+| 172 | 14.0 us | 81.2 | 4.97 | 16.4x |
+| 341 | 31.1 us | 91.3 | 4.50 | 20.3x |
+| 540 | 50.2 us | 93.0 | 3.95 | 23.5x |
+| 1081 | 121.4 us | 112.3 | 3.57 | 31.5x |
+
+**Time per hero hand is flat**: H grows 13x and ns/hand grows 1.08x.
+O(H^2) per hand would have grown it 13x, so the scaling question is settled rather than suggested.
+Against the reference at H = 66 the sweep is **4048x faster**, and that gap widens as H^2.
+
+The cost is a **~25x constant** over the heads-up sweep at equal H, which is an unoptimized first cut: the 52-wide loop does two pair lookups and several branches per card, hoists nothing, and is not SIMD. Treat 25x as an upper bound on the constant.
+
+**Scope, and what is deliberately not built.**
+Single pot, all three seats eligible, ties exact, full mutual card removal, gated against `showdown_share` on rainbow / paired / four-flush / board-plays boards and on sparse ranges (`tests/test_terminal3.cpp`).
+**Side pots are a layering wrapper over this kernel, not a change to it** - the eligible set per layer is fixed by the commitments, which are public, so a layer with two eligible seats is the same `S(A,B)` with the ineligible seat's set taken as everything, and a layer with one is the compat weight. Not implemented; it does not change the complexity class.
+Four or more seats is `S` over three sets and was not attempted.
+
+**What this changes.**
+Exact 3-way postflop terminals are reachable on the vectorized core, so M8b's remaining work is the N-seat tree builder rather than a research problem, and M8b does not have to be depth-limited from the start to be CORRECT.
+It still has to be depth-limited to be FAST: a 3-way tree is at least 8x its heads-up equivalent and now carries a ~25x terminal constant on top.
+And the exact terminal is needed under a depth-limited engine anyway - the shape that works is exact on the river, where there is no future to approximate and GTO Wizard explicitly runs no network.
 
 ### M9 - hand-sharing teams (cooperation/collusion). Landed 2026-08-31, on the sampled core.
 
