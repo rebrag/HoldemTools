@@ -170,7 +170,13 @@ The portfolio is the cheaper experiment, it answers "does depth-limiting actuall
 > | exact per-hand-pair matrix | 0.4284% | 0.5299% |
 >
 > **~99% of the error is the frozen RANGE SHAPE, not the frozen continuation.**
-> A portfolio is worth about 0.4% of pot here, and a portfolio built on frozen scalar tables would inherit the dominant error - so that combination should not be built at all.
+> A portfolio built on frozen scalar tables would inherit the dominant error, so that combination should not be built at all.
+>
+> **On a realistic large flop tree** (`_bench/flop00.json`, SPR 7 tight15, 594838 nodes) the same split holds - 96.70% scalar against 2.28% exact - and the honest speed number is **72x at equal accuracy**: the depth-limited solve asymptotes at 2.28% of pot in 0.069 s where the full solve needs 4.95 s to reach the same 2.28%, against a one-off offline cost of 59.2 s.
+> Break-even is ~12 queries per blueprint, and only for callers who accept 2.3%.
+> Note the accuracy cap is config-dependent and worse on realistic trees (2.28% here against 0.43% on the toy config, because a richer flop betting round has more leaves for one frozen continuation to be wrong at), so **the portfolio is worth ~2% of pot rather than ~0.4%** - more than the toy config implied, still far from the 43% it was scheduled against.
+>
+> One property to design around: a depth-limited solve's REAL-game exploitability is not monotone in iterations. It converges to the truncated game's equilibrium, so it descends, bottoms out (1.88% at 2048 iterations here) and then degrades to its asymptote. More iterations eventually make it worse, and an accuracy stop measured inside the truncated game would be actively misleading.
 >
 > The mechanism is worth stating as a rule, because it is easy to re-derive badly: **a leaf model must be zero-sum by construction.**
 > Two independently frozen per-seat tables are not, off the blueprint's operating point, and the truncated game then pays 83.42 chips into a 100-chip pot (or 119.67 on the turn tree).

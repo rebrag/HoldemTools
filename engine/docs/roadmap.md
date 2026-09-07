@@ -839,12 +839,45 @@ The exact matrix is, because seat 1 is derived rather than stored, and its resid
 **Cost, honestly.**
 The exact matrix costs `leaves x H^2` per iteration, so it only pays when the replaced subtree is much more expensive than that: the flop tree (191844 nodes, 3 leaves) keeps 113x, the turn tree (3237 nodes, 7 leaves) keeps 2.8x.
 That is a ratio rule, not a street rule.
-Building the matrices is one subtree traversal per opponent hand per leaf - `num_hands` traversals, embarrassingly parallel - which is 121.8 s on the flop tree, over 4x the blueprint solve itself.
+Building the matrices is one subtree traversal per opponent hand per leaf - `num_hands` traversals, embarrassingly parallel.
+That is 121.8 s on the 100%-range toy flop tree, over 4x the blueprint solve, and the 100%-range case is the pessimistic one: the build is linear in the hand universe, so the realistic tight15 spot below (156 hands against 1176) pays **8.4 s, about 0.16x its blueprint**.
+The compact hand universe therefore helps this the same way it helps everything else, and quoting the full-range number as the cost of the technique would be wrong.
 
-**Do not quote 113x as a speedup.**
-The depth-limited solve floors at 0.43% and cannot go below it, and the full flop solve reaches 0.43% in far fewer than its 300 iterations.
-The honest comparison is time-to-equal-accuracy and it is NOT measured.
-It should widen on a large flop tree where the full solve takes tens of seconds to reach that target; measure before quoting.
+**Per-iteration ratios are not speedups. Time to equal accuracy is, and it was measured on a large flop tree** (`configs/_bench/flop00.json`, the SPR 7 tight15 family: 594838 nodes, 213356 decision, 156-hand universe, 1866 MB).
+
+| | |
+|---|---|
+| truncated tree | 27 nodes, 9 depth-limit leaves, 2.41 MB + 0.84 MB of matrices |
+| depth-limited asymptote | **2.28% of pot**, reached in **0.069 s** |
+| full solve to the same 2.28% | **4.95 s** |
+| **speedup at equal accuracy** | **72x** |
+| offline cost | blueprint 50.9 s + leaf table 8.4 s = **59.2 s**, once per spot |
+
+Break-even is about 12 queries against one blueprint, and only for callers who accept 2.3%; anything tighter needs the full solve regardless, because the depth-limited solve cannot get there at any iteration count.
+
+**Two findings from that curve matter more than the 72x.**
+
+**The accuracy cap is config-dependent and much worse on a realistic tree.**
+The toy config floored at 0.43%; this one asymptotes at 2.28%.
+The difference is the flop betting round: one 50% bet and no raises gives 3 leaves, two bet sizes plus raises gives 9, and every additional leaf is another place a single frozen continuation is wrong.
+So the frozen-continuation error - which is exactly what a portfolio buys back - is worth roughly **2% of pot on a realistic tree, not 0.4%**.
+That is 5x more than the toy config suggested and it partially rehabilitates the portfolio, though still nowhere near the 43% it was originally scheduled against.
+The scalar/exact split is unchanged here: 96.70% against 2.28%, so the frozen range shape is still 97.8% of the error.
+
+**Real-game exploitability is NOT monotone in iterations, and this is a trap.**
+The depth-limited solve converges to the equilibrium of the TRUNCATED game, which is not the equilibrium of the real one, so it descends, bottoms out, and then degrades as it converges more exactly to the wrong game:
+
+```
+   512 iters  2.62%      8192 iters  2.25%
+  1024 iters  2.03%     32768 iters  2.34%
+  2048 iters  1.88%  <- best        65536 iters  2.28%  <- asymptote
+  4096 iters  1.93%
+```
+
+**More iterations eventually make a depth-limited solve worse.**
+"Solve to convergence" is the wrong stopping rule for one, and `target_exploitable_pct` measured inside the truncated game would be actively misleading - it reports the truncated game's own accuracy, which keeps improving while the real answer decays.
+The transient minimum is not a usable operating point either: stopping there on purpose requires already knowing the answer.
+The probe therefore times against the asymptote and reports the minimum only as an observation.
 
 **The exact matrix does not reach multiway, which is what this was for.**
 Storage is `H^(N-1)` and the build is `H^(N-1)` traversals.

@@ -1,11 +1,10 @@
-// Does depth-limited solving buy what the perf plan claims, and what does it
-// cost in exploitability?
+// What does truncating the tree cost, and what does it actually buy?
 //
 // The experiment, on one postflop config:
 //
 //   1. Solve the FULL tree                            -> the blueprint.
 //   2. Read continuation values off it at the depth   -> the leaf table.
-//      limit, as conditional per-hand values.
+//      limit.
 //   3. Solve the TRUNCATED tree with that table       -> the depth-limited
 //                                                        strategy.
 //   4. Complete that strategy with the blueprint below the limit and measure
@@ -15,15 +14,18 @@
 // the limit, so it is not a complete strategy and cannot be evaluated on its
 // own. The number it reports is what truncation actually costs.
 //
-// This is the SINGLE-CONTINUATION version, which is the unsound one: the leaf
-// value freezes the opponent's range shape at the limit, so the solver is
-// implicitly assuming the opponent plays the blueprint continuation. Its
-// exploitability is therefore the BASELINE a continuation portfolio has to
-// beat, not a shippable result. See docs/perf-plan.md, "The fork".
+// TIME TO EQUAL ACCURACY is what this reports, not a per-iteration ratio.
+// A depth-limited solve FLOORS at some exploitability it can never go below,
+// so "1000x faster per iteration" is not a speedup - the honest question is
+// how long the full solve needs to reach that same floor. Both solves are
+// therefore run on a doubling schedule with exploitability measured at each
+// stop, and solve time EXCLUDES the measurement passes (a best-response pass
+// costs about 2.7 iterations on a flop tree - see docs/roadmap.md - so
+// charging them to the solve would inflate everything here).
 //
 // Usage:
 //   dl_probe <config.json> [--blueprint-iters N] [--dl-iters N]
-//            [--limit flop|turn] [--threads N]
+//            [--limit flop|turn] [--leaf exact|scalar] [--threads N]
 
 #include <chrono>
 #include <cmath>
@@ -31,7 +33,6 @@
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
-#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -98,12 +99,67 @@ std::vector<double> action_mix(const Game& game, const StrategySource& src, Node
   return mix;
 }
 
+struct CurvePoint {
+  std::uint64_t iters = 0;
+  double solve_s = 0.0;      // inside run() only
+  double exploitable = 0.0;  // chips
+};
+
+// Doubling schedule up to `total`, so a 1/T curve is sampled evenly in log
+// time rather than piling every measurement into the converged tail.
+std::vector<std::uint64_t> schedule(std::uint64_t total) {
+  std::vector<std::uint64_t> out;
+  for (std::uint64_t n = 1; n < total; n *= 2) out.push_back(n);
+  out.push_back(total);
+  return out;
+}
+
+template <typename Measure>
+std::vector<CurvePoint> run_curve(CfrSolver& solver, std::uint64_t total, const Measure& measure) {
+  std::vector<CurvePoint> curve;
+  double solve_s = 0.0;
+  std::uint64_t done = 0;
+  for (std::uint64_t stop : schedule(total)) {
+    const auto t0 = std::chrono::steady_clock::now();
+    solver.run(stop - done);
+    solve_s += seconds_since(t0);
+    done = stop;
+    curve.push_back({done, solve_s, measure()});
+  }
+  return curve;
+}
+
+void print_curve(const char* label, const std::vector<CurvePoint>& curve, double pot) {
+  std::cout << label << "\n";
+  for (const CurvePoint& p : curve) {
+    std::cout << "  " << std::setw(8) << p.iters << " iters  " << std::setw(9) << std::fixed
+              << std::setprecision(3) << p.solve_s << " s  " << pct_of_pot(p.exploitable, pot)
+              << "\n";
+  }
+}
+
+// First time the curve is at or below `target`, interpolated in log-time
+// against log-exploitability between the two bracketing points. Negative if
+// the curve never gets there.
+double time_to_reach(const std::vector<CurvePoint>& curve, double target) {
+  for (std::size_t i = 0; i < curve.size(); ++i) {
+    if (curve[i].exploitable > target) continue;
+    if (i == 0) return curve[0].solve_s;
+    const CurvePoint& a = curve[i - 1];
+    const CurvePoint& b = curve[i];
+    if (a.exploitable <= b.exploitable || a.solve_s <= 0.0 || b.solve_s <= 0.0) return b.solve_s;
+    const double f = std::log(a.exploitable / target) / std::log(a.exploitable / b.exploitable);
+    return a.solve_s * std::pow(b.solve_s / a.solve_s, f);
+  }
+  return -1.0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::cerr << "usage: dl_probe <config.json> [--blueprint-iters N] [--dl-iters N] "
-                 "[--limit flop|turn] [--threads N]\n";
+                 "[--limit flop|turn] [--leaf exact|scalar] [--threads N]\n";
     return 2;
   }
   try {
@@ -113,7 +169,7 @@ int main(int argc, char** argv) {
     Street limit = Street::Flop;
     int threads_override = 0;
     bool threads_set = false;
-    bool exact_leaf = false;
+    bool exact_leaf = true;
 
     for (int i = 2; i < argc; ++i) {
       const std::string arg = argv[i];
@@ -129,8 +185,7 @@ int main(int argc, char** argv) {
         if (v == "exact") exact_leaf = true;
         else if (v == "scalar") exact_leaf = false;
         else throw std::runtime_error("--leaf must be exact or scalar");
-      }
-      else if (arg == "--limit") {
+      } else if (arg == "--limit") {
         const std::string v = next();
         if (v == "flop") limit = Street::Flop;
         else if (v == "turn") limit = Street::Turn;
@@ -160,19 +215,17 @@ int main(int argc, char** argv) {
 
     std::cout << "full tree      " << full_tree.size() << " nodes ("
               << count_kind(full_tree, NodeKind::Decision) << " decision, "
-              << count_kind(full_tree, NodeKind::Chance) << " chance), setup "
-              << std::fixed << std::setprecision(2) << full_setup_s << " s\n";
+              << count_kind(full_tree, NodeKind::Chance) << " chance), " << full_game.num_hands(0)
+              << " hands, setup " << std::fixed << std::setprecision(2) << full_setup_s << " s\n";
 
     CfrSolver blueprint(full_game, full_config.update, full_config.threads, full_config.recalc,
                         full_config.sampling, full_config.qre);
-    t0 = std::chrono::steady_clock::now();
-    blueprint.run(blueprint_iters);
-    const double blueprint_solve_s = seconds_since(t0);
     const CfrStrategySource blueprint_src(blueprint);
+    const std::vector<CurvePoint> blueprint_curve =
+        run_curve(blueprint, blueprint_iters, [&]() {
+          return compute_best_response(full_game, blueprint_src).nashconv();
+        });
     const BrResult blueprint_br = compute_best_response(full_game, blueprint_src);
-
-    std::cout << "blueprint      " << blueprint_iters << " iters in " << blueprint_solve_s
-              << " s, exploitable " << pct_of_pot(blueprint_br.nashconv(), pot) << " of pot\n";
 
     // ---- 2. the truncated tree and its leaf table -------------------------
     t0 = std::chrono::steady_clock::now();
@@ -191,36 +244,31 @@ int main(int argc, char** argv) {
                                                     dl_tree.num_terminal_nodes, dl_tree));
     }
     const double table_s = seconds_since(t0);
-    std::cout << "leaf model     " << (exact_leaf ? "exact per-hand-pair matrix"
-                                                  : "frozen per-hand scalar")
-              << "\n";
 
     std::cout << "truncated tree " << dl_tree.size() << " nodes ("
               << count_kind(dl_tree, NodeKind::Decision) << " decision, "
-              << map.boundary_full.size() << " depth-limit leaves), setup " << dl_setup_s
-              << " s\n"
-              << "leaf table     " << table_s << " s to extract\n";
+              << map.boundary_full.size() << " depth-limit leaves), setup " << dl_setup_s << " s\n"
+              << "leaf model     " << (exact_leaf ? "exact per-hand-pair matrix"
+                                                  : "frozen per-hand scalar")
+              << ", built in " << table_s << " s\n";
 
     // ---- 2b. gate: does the truncated game reproduce the blueprint? -------
-    // Play the blueprint's own flop strategy on the truncated tree. The leaf
-    // table was built against exactly these reach vectors, so the root EVs
-    // must match the full solve's. Everything reported below is meaningless
-    // if they do not.
+    // Play the blueprint's own strategy on the truncated tree. The leaf table
+    // was built against exactly these reach vectors, so the root EVs must
+    // match the full solve's. Everything below is meaningless if they do not.
     {
       const BlueprintOnTruncatedSource replay(blueprint_src, map);
       const BrResult replay_br = compute_best_response(dl_game, replay);
       double worst = 0.0;
       for (std::size_t s = 0; s < replay_br.ev.size(); ++s) {
-        const double d = std::abs(replay_br.ev[s] - blueprint_br.ev[s]);
-        if (d > worst) worst = d;
+        worst = std::max(worst, std::abs(replay_br.ev[s] - blueprint_br.ev[s]));
       }
       std::cout << "replay gate    root EV agrees to " << std::scientific << std::setprecision(2)
-                << worst << " chips (" << pct_of_pot(worst, pot) << " of pot)\n"
+                << worst << " chips\n"
                 << std::defaultfloat << std::fixed << std::setprecision(2);
       if (worst > 1e-3 * pot) {
         std::cerr << "\ndl_probe: the truncated game does not reproduce the blueprint's root "
-                     "EVs. The leaf table or the node mapping is wrong; the exploitability "
-                     "numbers below would be measuring a bug.\n";
+                     "EVs. The leaf table or the node mapping is wrong.\n";
         return 1;
       }
     }
@@ -228,66 +276,59 @@ int main(int argc, char** argv) {
     // ---- 3. the depth-limited solve ---------------------------------------
     CfrSolver limited(dl_game, dl_config.update, dl_config.threads, dl_config.recalc,
                       dl_config.sampling, dl_config.qre);
-    t0 = std::chrono::steady_clock::now();
-    limited.run(dl_iters);
-    const double dl_solve_s = seconds_since(t0);
     const CfrStrategySource limited_src(limited);
-
-    // ---- 4. what it is worth in the full game -----------------------------
     const HybridStrategySource hybrid(blueprint_src, limited_src, map, dl_tree);
-    const BrResult hybrid_br = compute_best_response(full_game, hybrid);
+    const std::vector<CurvePoint> dl_curve = run_curve(limited, dl_iters, [&]() {
+      return compute_best_response(full_game, hybrid).nashconv();
+    });
 
-    std::cout << "depth-limited  " << dl_iters << " iters in " << dl_solve_s
-              << " s, exploitable " << pct_of_pot(hybrid_br.nashconv(), pot)
-              << " of pot (measured in the FULL game)\n";
+    std::cout << "\n";
+    print_curve("full solve (exploitability in its own game)", blueprint_curve, pot);
+    std::cout << "\n";
+    print_curve("depth-limited solve (exploitability in the FULL game)", dl_curve, pot);
 
-    // What the truncated solver thinks it earns, against what that same
-    // strategy actually earns once the opponent is allowed to respond below
-    // the limit. The gap is the frozen continuation's self-deception, and it
-    // is the quantity a continuation portfolio exists to close.
-    const BrResult believed = compute_best_response(dl_game, limited_src);
-    double believed_sum = 0.0, actual_sum = 0.0;
-    std::cout << "self-deception ";
-    for (std::size_t s = 0; s < believed.ev.size(); ++s) {
-      believed_sum += believed.ev[s];
-      actual_sum += hybrid_br.ev[s];
-      std::cout << (s == 0 ? "OOP " : "  IP ") << "believes " << believed.ev[s] << " chips, gets "
-                << hybrid_br.ev[s];
+    // ---- 4. time to equal accuracy ----------------------------------------
+    // A depth-limited solve converges to the equilibrium of the TRUNCATED
+    // game, which is not the equilibrium of the real one, so its real-game
+    // exploitability is NOT monotone in iterations: it descends, bottoms out,
+    // then degrades as it converges more exactly to the wrong game. More
+    // iterations eventually make it worse.
+    //
+    // The asymptote is therefore the accuracy both solves are timed against,
+    // because it is what "solve to convergence" actually delivers. The
+    // transient minimum is reported beside it and deliberately NOT used: you
+    // cannot stop there on purpose without already knowing the answer, so
+    // treating it as the operating point would be measuring a number the
+    // product cannot reach.
+    const double asymptote = dl_curve.back().exploitable;
+    const CurvePoint* best = &dl_curve.front();
+    for (const CurvePoint& p : dl_curve) {
+      if (p.exploitable < best->exploitable) best = &p;
     }
-    // The utility convention makes root EVs sum to the root pot. The real
-    // game therefore always conserves; the truncated one only conserves at
-    // the blueprint's operating point, because each seat's leaf table is
-    // scaled by the OTHER seat's live reach while its own shape stays frozen.
-    // Off that point the two tables stop describing one game and CFR is no
-    // longer minimizing regret in any zero-sum game at all. This residual is
-    // the cleanest single measure of that, and a leaf model that is zero-sum
-    // by construction would hold it at zero.
-    std::cout << "\nconservation   truncated game pays out " << believed_sum << " chips into a "
-              << pot << " chip pot (residual " << (believed_sum - pot) << "); the full game pays "
-              << actual_sum << "\n\n";
+    const double dl_target_s = time_to_reach(dl_curve, asymptote);
+    const double full_target_s = time_to_reach(blueprint_curve, asymptote);
 
-    // What the truncated solver actually did differently. On a small tree this
-    // is the whole diagnosis; on a wide one, read the first few nodes.
-    {
-      const BlueprintOnTruncatedSource replay(blueprint_src, map);
-      std::cout << "flop strategy, blueprint -> depth-limited (range-weighted %)\n";
-      std::size_t shown = 0;
-      for (NodeId t = 0; t < dl_tree.size() && shown < 12; ++t) {
-        const Node& node = dl_tree[t];
-        if (node.kind != NodeKind::Decision) continue;
-        ++shown;
-        const int actor = static_cast<int>(node.actor);
-        const std::vector<double> bp = action_mix(dl_game, replay, t, actor);
-        const std::vector<double> dl = action_mix(dl_game, limited_src, t, actor);
-        std::cout << "  node " << t << " seat " << (actor == 0 ? "OOP" : "IP ") << "  ";
-        for (std::size_t k = 0; k < bp.size(); ++k) {
-          std::cout << action_name(dl_tree[node.first_child + static_cast<NodeId>(k)]) << " "
-                    << std::setprecision(1) << bp[k] << "->" << dl[k] << "   ";
-        }
-        std::cout << "\n";
-      }
-      std::cout << std::setprecision(2) << "\n";
+    std::cout << "\n== time to equal accuracy ==\n"
+              << "depth-limited asymptote      " << pct_of_pot(asymptote, pot) << " of pot at "
+              << dl_curve.back().iters << " iters\n"
+              << "  transient best             " << pct_of_pot(best->exploitable, pot) << " at "
+              << best->iters << " iters, then degrades (not a usable stopping point)\n"
+              << "depth-limited reaches it in  " << std::setprecision(3)
+              << (dl_target_s < 0 ? dl_curve.back().solve_s : dl_target_s) << " s\n";
+    if (full_target_s < 0) {
+      std::cout << "full solve reaches it in     never, inside " << blueprint_iters
+                << " iterations (" << blueprint_curve.back().solve_s << " s, "
+                << pct_of_pot(blueprint_curve.back().exploitable, pot) << ")\n";
+    } else {
+      const double dl_s = dl_target_s < 0 ? dl_curve.back().solve_s : dl_target_s;
+      std::cout << "full solve reaches it in     " << full_target_s << " s\n"
+                << "speedup at equal accuracy    " << std::setprecision(1)
+                << (full_target_s / dl_s) << "x\n";
     }
+
+    std::cout << std::setprecision(2) << "\noffline cost   blueprint "
+              << blueprint_curve.back().solve_s << " s + leaf table " << table_s << " s = "
+              << (blueprint_curve.back().solve_s + table_s) << " s, paid once per spot\n";
 
     const MemoryEstimate full_mem =
         estimate_memory(full_game, full_config.threads, full_config.recalc.enabled,
@@ -295,19 +336,41 @@ int main(int argc, char** argv) {
     const MemoryEstimate dl_mem =
         estimate_memory(dl_game, dl_config.threads, dl_config.recalc.enabled,
                         dl_config.update.precision, &dl_config.sampled);
+    const double leaf_mb = exact_leaf
+        ? static_cast<double>(map.boundary_full.size()) *
+              static_cast<double>(full_game.num_hands(0)) *
+              static_cast<double>(full_game.num_hands(0)) * 4.0 / (1024.0 * 1024.0)
+        : 0.0;
+    std::cout << "solver mem     " << (static_cast<double>(full_mem.total()) / (1024.0 * 1024.0))
+              << " MB -> " << (static_cast<double>(dl_mem.total()) / (1024.0 * 1024.0))
+              << " MB, plus " << leaf_mb << " MB of leaf matrices\n"
+              << "nodes          " << full_tree.size() << " -> " << dl_tree.size() << " ("
+              << std::setprecision(1)
+              << (static_cast<double>(full_tree.size()) / static_cast<double>(dl_tree.size()))
+              << "x fewer)\n";
 
-    const double node_ratio =
-        static_cast<double>(full_tree.size()) / static_cast<double>(dl_tree.size());
-    const double iter_ratio = (blueprint_solve_s / static_cast<double>(blueprint_iters)) /
-                              (dl_solve_s / static_cast<double>(dl_iters));
-
-    std::cout << std::setprecision(1) << "nodes      " << node_ratio << "x fewer\n"
-              << "per-iter   " << iter_ratio << "x faster\n"
-              << "solver mem " << std::setprecision(2)
-              << (static_cast<double>(full_mem.total()) / (1024.0 * 1024.0)) << " MB -> "
-              << (static_cast<double>(dl_mem.total()) / (1024.0 * 1024.0)) << " MB\n"
-              << "cost       " << pct_of_pot(hybrid_br.nashconv(), pot) << " exploitable vs "
-              << pct_of_pot(blueprint_br.nashconv(), pot) << " for the blueprint it was cut from\n";
+    // What the truncated solver did differently, if anything.
+    {
+      const BlueprintOnTruncatedSource replay(blueprint_src, map);
+      std::cout << std::setprecision(1) << "\nstrategy above the limit, blueprint -> "
+                << "depth-limited (range-weighted %)\n";
+      std::size_t shown = 0;
+      for (NodeId t = 0; t < dl_tree.size() && shown < 8; ++t) {
+        const Node& node = dl_tree[t];
+        if (node.kind != NodeKind::Decision) continue;
+        ++shown;
+        const int actor = static_cast<int>(node.actor);
+        const std::vector<double> bp = action_mix(dl_game, replay, t, actor);
+        const std::vector<double> dl = action_mix(dl_game, limited_src, t, actor);
+        std::cout << "  node " << std::setw(3) << t << " seat " << (actor == 0 ? "OOP" : "IP ")
+                  << "  ";
+        for (std::size_t k = 0; k < bp.size(); ++k) {
+          std::cout << action_name(dl_tree[node.first_child + static_cast<NodeId>(k)]) << " "
+                    << bp[k] << "->" << dl[k] << "   ";
+        }
+        std::cout << "\n";
+      }
+    }
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "dl_probe: " << e.what() << "\n";
