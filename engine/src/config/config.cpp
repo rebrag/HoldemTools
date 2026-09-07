@@ -352,6 +352,27 @@ SolveConfig load_config(const std::string& path_text) {
       fail("algorithm.sampled.lanes must be in [1, 256]");
     }
   }
+  // Parsed after algorithm.family so the sampled-core refusal below can see
+  // which core was actually selected.
+  if (j.contains("algorithm") && j.at("algorithm").contains("depth_limit")) {
+    const std::string limit = j.at("algorithm").at("depth_limit").get<std::string>();
+    if (limit == "none") config.depth_limit = Street::None;
+    else if (limit == "flop") config.depth_limit = Street::Flop;
+    else if (limit == "turn") config.depth_limit = Street::Turn;
+    else fail("algorithm.depth_limit must be none | flop | turn, got '" + limit + "'");
+    if (config.depth_limit != Street::None) {
+      // The leaf table is per (board, ranges, sizings) and the sampled core
+      // has no leaf-table path at all, so both of these would otherwise fail
+      // much later with a far worse message.
+      if (config.game != "nlhe") {
+        fail("algorithm.depth_limit applies to postflop \"nlhe\" trees only");
+      }
+      if (config.sampled.enabled) {
+        fail("algorithm.depth_limit is not supported on the sampled core");
+      }
+    }
+  }
+
   // Parsed here rather than with the other top-level keys below because the
   // sampled block has to see it.
   config.isomorphism = j.value("isomorphism", config.isomorphism);

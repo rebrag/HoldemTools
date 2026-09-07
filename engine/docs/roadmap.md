@@ -9,7 +9,8 @@ htsolver replaces PioSolver in the HoldemTools pipeline.
 
 - The watcher picks up a gametree job, solves it with **htsolver**, uploads schema-4 bundles, and frontend users browse the result in `/solutions` - exactly today's flow with Pio swapped out. The plumbing already exists: publish-mode `EngineCompareJob`s do this for river spots now.
 - **BOTH delivery models, and this is a product requirement rather than a nice-to-have.** A precomputed library covers the common spots, AND users solve their own trees **on demand**. Do not plan as though precomputing removes the latency constraint - it does not, and a plan that assumes it will reach the wrong conclusion about what to optimize. On-demand means a user is waiting, which puts solve time in the product rather than in the compute budget.
-- **The intended direction for that speed is GTO Wizard AI / Ruse-style depth-limited solving, explicitly, and the motivation is MULTIWAY.** Solving one street at a time with an estimated continuation value is the only published approach that makes 3+ player trees tractable at interactive speed; GTO Wizard's own figure for street-by-street solving is a **30000x complexity reduction**, and it is what lets them do 3-way spots at all. See `docs/perf-plan.md` for what they actually do and the two routes to it (a learned value network, or a Brown-Sandholm continuation-strategy portfolio that keeps the computation exact).
+- **The intended direction for that speed is GTO Wizard AI / Ruse-style depth-limited solving, explicitly, and the motivation is MULTIWAY.** Solving one street at a time with an estimated continuation value is the only published approach that makes 3+ player trees tractable at interactive speed; GTO Wizard's own figure for street-by-street solving is a **30000x complexity reduction**, and it is what lets them do 3-way spots at all. See `docs/perf-plan.md` for what they actually do and the routes to it.
+  **Measured 2026-09-07 (M8d): the node-count win is real and larger than estimated (191844 -> 9 nodes on a flop tree, 4590 MB -> 13 MB), and the route has narrowed.** A depth-limit leaf must model the opponent's range rather than freeze it - a frozen per-hand value costs 43% of pot exploitable against an exact per-hand-pair matrix's 0.43% - and it must be zero-sum by construction. The exact matrix settles heads-up and does not scale past ~3 seats (`H^(N-1)`), so **multiway points at a counterfactual value network**, not at the Brown-Sandholm portfolio that was scheduled first.
 - **jesolver-style optimization was the FIRST target only because it looked easier to implement, and it is now largely spent.** Five independent attacks were measured in one session and all came back neutral or negative - see M7.2. That is not a reason to abandon speed work; it is the reason the speed work moves to depth-limiting.
 - Pio is retired once htsolver is trusted **as much or more than Pio**. Trust is earned through the `/compare` loop: every spot solvable by both, compared per hand, gated on cross-exploitability.
 - htsolver's differentiators over Pio/Monker (the reason it exists): **QRE** (per-player rationality - *shipped, M7*; lambda fitting still to come), **3+ players** (NashConv, side pots), **configurable cooperation/collusion** (seat->agent partitions, payoff weights, Bayesian unknown-collusion). Everything else is table stakes.
@@ -778,6 +779,84 @@ The EV pass on postflop deals seats' hands IN PROPORTION to their ranges with th
 The same trick is NOT legitimate for the training deal: the runout avoids the hero's own dealt cards, so a range-proportional hero hand biases the runout the vectorized hero sees. The exact fix is one deal per seat per iteration - a change to the iteration structure and its determinism gates - recorded here rather than built.
 Capacity facts that shape a compare config: every lane holds a full copy of solver storage (`lanes: 4`, not 16, on a turn tree) and the per-batch discount and fold sweep the whole store (`batch: 4096`); a touched-node fold is a bitwise-safe follow-up.
 First measurement: on a full-range river tree the sampled core needs ~400k iterations (7 s on 16 threads) to reach 3.5% of pot where the vectorized core reaches 0.02% in 600 iterations (0.06 s) - stochastic 1/sqrt(T) against an exact gradient, exactly the trade the two cores make.
+
+### M8d - depth-limited solving, first measurement. Probe landed 2026-09-07.
+
+The experiment `docs/perf-plan.md` called for, run rather than argued.
+It answers "what does truncating the tree actually cost", and the answer overturned the plan that motivated it.
+
+**The mechanism.**
+`PostflopTreeParams::depth_limit` (config key `algorithm.depth_limit`, `"flop" | "turn"`) makes every betting line that ends that street a `TerminalKind::DepthLimit` leaf instead of a chance node, so the streets below are never built.
+One branch in `street_end()` does it, and because every street crossing funnels through there - the all-in chain included - that one branch truncates all of them.
+The solver needed no change at all: a leaf is a terminal, and the portfolio version's leaf is an ordinary decision node.
+
+`src/solver/depth_limit.*` holds the rest: the lockstep truncated-to-full node map, the two leaf-value extractors, and the strategy sources that make the result measurable.
+`tools/depth_limit_probe.cpp` (`dl_probe`, a CMake target) runs the whole loop.
+
+**Measuring it correctly is the part that took the thought.**
+A depth-limited solve produces a strategy only ABOVE the limit, so it is not a complete strategy and its own reported exploitability is meaningless.
+The probe completes it with the blueprint below the limit (`HybridStrategySource`) and runs `compute_best_response` over the FULL tree.
+That number is what truncation costs.
+
+`BlueprintOnTruncatedSource` is the gate that makes any of it trustworthy: play the blueprint's own strategy on the truncated tree and the root EVs must reproduce the full solve's, because the leaf table was built against exactly those reach vectors.
+It agrees to 6.2e-08 chips.
+Without it a catastrophic exploitability number is indistinguishable from a plumbing bug, and the first result WAS catastrophic.
+
+**The two leaf models, and the result.**
+
+The obvious model is one frozen value per hand: store the blueprint's conditional continuation value and multiply back the opponent's live compatible reach mass.
+The exact model stores the full per-hand-pair matrix `u0(h, o)` per leaf and does a real matvec against the live reach, deriving seat 1 by subtraction from `u0(h,o) + u1(o,h) = root pot`.
+
+| | flop tree, limit flop | turn tree, limit turn |
+|---|---|---|
+| blueprint (reference) | 0.0405% | 0.0389% |
+| frozen scalar leaf | **43.19%** | **127.53%** |
+| exact matrix leaf | **0.4284%** | **0.5299%** |
+| conservation residual, scalar | -16.58 chips | +19.67 chips |
+| conservation residual, exact | 0.00 | 0.00 |
+| nodes | 191844 -> 9 | 3237 -> 21 |
+| solver memory | 4590 MB -> 13 MB | 263 MB -> 17 MB |
+| per-iteration, scalar | 1990x | 34.6x |
+| per-iteration, exact | 113x | 2.8x |
+| matrix build | 121.8 s | 1.74 s |
+
+**Frozen range shape was ~99% of the error; the frozen continuation was ~1%.**
+Of the flop tree's 43.15 points of error above the blueprint, 0.39 survives the exact matrix (99.1% was the shape); on the turn tree 0.49 of 127.49 survives (99.6%).
+
+**This inverts the perf plan's recommendation and that correction is the milestone's real output.**
+The continuation-strategy portfolio was scheduled first on the theory that non-adaptivity was the problem.
+It is worth about 0.4% of pot, not 43%.
+A portfolio built on frozen SCALAR tables would inherit the dominant error and should not be built at all.
+
+**Why the frozen scalar fails, precisely, because it is a trap worth naming.**
+Two independently frozen per-seat tables stop describing one game the moment the strategy above the limit moves off the blueprint: each seat's value is rescaled by the OTHER seat's live reach while its own shape stays fixed.
+The truncated game then pays out 83.42 chips into a 100-chip pot on the flop tree and 119.67 on the turn tree.
+CFR is no longer minimizing regret in any zero-sum game, and what it converges to is an artifact.
+The symptom is legible in the strategies: decisions that compare a leaf against a FOLD terminal barely move (31.0% -> 31.1%), while decisions comparing leaf against leaf are destroyed (OOP flop bet 19.1% -> 84.3%; on the turn tree OOP jams a stack it never jams under the blueprint, 0.0% -> 65.5%).
+The invariant that falls out, and it belongs on any future leaf model: **a leaf model must be zero-sum by construction.**
+The exact matrix is, because seat 1 is derived rather than stored, and its residual is 0.00 in both directions.
+
+**Cost, honestly.**
+The exact matrix costs `leaves x H^2` per iteration, so it only pays when the replaced subtree is much more expensive than that: the flop tree (191844 nodes, 3 leaves) keeps 113x, the turn tree (3237 nodes, 7 leaves) keeps 2.8x.
+That is a ratio rule, not a street rule.
+Building the matrices is one subtree traversal per opponent hand per leaf - `num_hands` traversals, embarrassingly parallel - which is 121.8 s on the flop tree, over 4x the blueprint solve itself.
+
+**Do not quote 113x as a speedup.**
+The depth-limited solve floors at 0.43% and cannot go below it, and the full flop solve reaches 0.43% in far fewer than its 300 iterations.
+The honest comparison is time-to-equal-accuracy and it is NOT measured.
+It should widen on a large flop tree where the full solve takes tens of seconds to reach that target; measure before quoting.
+
+**The exact matrix does not reach multiway, which is what this was for.**
+Storage is `H^(N-1)` and the build is `H^(N-1)` traversals.
+Two seats is 1.4M entries and 5.5 MB per leaf, comfortable.
+Three seats at full ranges is 6.5 GB per leaf, dead; at realistic tight ranges (H ~ 300-500) it is 100-500 MB per leaf and hundreds of thousands of traversals, marginal.
+Four seats is gone.
+
+So the measurement points at the value network for the multiway case rather than at the portfolio, and it arrived there from a number rather than from the literature: a multiway leaf model has to take both ranges as INPUT, return per-hand values, and be zero-sum by construction, without tabulating anything of size `H^(N-1)`.
+That is DeepStack's counterfactual value network.
+See `docs/perf-plan.md`, "The fork".
+
+**Not built, deliberately:** the portfolio leaf (a k-action opponent decision node, which the solver already handles), reuse of a leaf table across configs (it is keyed to the leaf's public state, so a different flop sizing invalidates it), and any artifact/CLI path - `algorithm.depth_limit` is parsed and gated but `engine solve` has no leaf-table source, so a depth-limited solve throws rather than inventing values.
 
 ### M9 - hand-sharing teams (cooperation/collusion). Landed 2026-08-31, on the sampled core.
 

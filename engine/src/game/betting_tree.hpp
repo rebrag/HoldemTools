@@ -42,6 +42,16 @@ struct PostflopTreeParams {
   // solves). Gates whether OOP's first-in sizes come from donks or bets.
   // Default None: OOP uses `bets` everywhere unless a config opts in.
   Aggressor preflop_aggressor = Aggressor::None;
+  // Last street to SOLVE. None = solve to showdown, the original behaviour.
+  // Set to Flop on a flop tree and every betting line that ends the flop
+  // without a fold becomes a DepthLimit terminal instead of a chance node,
+  // so the turn and river are never built. That is where the node count
+  // lives: a flop tree's river layer is ~2000x its flop layer.
+  //
+  // Every street crossing funnels through street_end(), including the all-in
+  // chain (a flop all-in call is a street end whose chance children happen to
+  // have no decisions), so this one branch truncates all of them.
+  Street depth_limit = Street::None;
   StreetSizing flop;
   StreetSizing turn;
   StreetSizing river;

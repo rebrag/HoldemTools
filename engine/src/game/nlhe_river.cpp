@@ -104,10 +104,15 @@ NlhePostflopGame::NlhePostflopGame(const SolveConfig& config) {
                         : board_.size() == 4 ? Street::Turn
                                              : Street::River;
   params.preflop_aggressor = config.preflop_aggressor;
+  params.depth_limit = config.depth_limit;
   params.flop = config.flop_sizing;
   params.turn = config.turn_sizing;
   params.river = config.river_sizing;
   tree_ = build_postflop_tree(params);
+  root_pot_ = tree_[tree_.root()].pot;
+  for (const Node& n : tree_.nodes) {
+    if (n.terminal_kind == TerminalKind::DepthLimit) ++depth_limit_terminals_;
+  }
   iso_rep_.resize(tree_.size());
   for (NodeId id = 0; id < tree_.size(); ++id) iso_rep_[id] = id;
   iso_perm_.assign(tree_.size(), 0);
@@ -407,7 +412,55 @@ void NlhePostflopGame::terminal_values(NodeId id, int seat,
   const float* opp = reach[1 - seat].data();
   const double my_delta = static_cast<double>(node.commit[seat]);
   const double pot = static_cast<double>(node.pot);
-  if (node.terminal_kind == TerminalKind::Fold) {
+  if (node.terminal_kind == TerminalKind::DepthLimit) {
+    const int hands = universe_.size();
+    if (!leaf_matrix_.empty() &&
+        !leaf_matrix_[static_cast<std::size_t>(node.terminal_index)].empty()) {
+      const std::vector<float>& m = leaf_matrix_[static_cast<std::size_t>(node.terminal_index)];
+      const std::size_t h_count = static_cast<std::size_t>(hands);
+      out.assign(h_count, 0.0f);
+      if (seat == 0) {
+        // out[h] = sum_o r1[o] * u0(h, o). One axpy per opponent hand, and
+        // real ranges leave most of them at zero.
+        const float* r1 = reach[1].data();
+        for (std::size_t o = 0; o < h_count; ++o) {
+          const float w = r1[o];
+          if (w == 0.0f) continue;
+          const float* col = m.data() + o * h_count;
+          for (std::size_t h = 0; h < h_count; ++h) out[h] += w * col[h];
+        }
+      } else {
+        // out[o] = sum_h r0[h] * u1(o, h) = root_pot * compat[o] - sum_h r0[h] * u0(h, o).
+        // The subtraction is what makes the two seats one game: seat 1's
+        // values are derived from seat 0's, never stored independently.
+        compat_weights(1, reach, out);
+        const float* r0 = reach[0].data();
+        const float pot_root = static_cast<float>(root_pot_);
+        for (std::size_t o = 0; o < h_count; ++o) {
+          const float* col = m.data() + o * h_count;
+          double acc = 0.0;
+          for (std::size_t h = 0; h < h_count; ++h) {
+            acc += static_cast<double>(r0[h]) * static_cast<double>(col[h]);
+          }
+          out[o] = out[o] * pot_root - static_cast<float>(acc);
+        }
+      }
+      return;
+    }
+
+    const std::vector<float>& table = leaf_ev_[static_cast<std::size_t>(seat)];
+    if (table.empty()) {
+      throw std::runtime_error("depth-limited tree evaluated with no leaf table - call "
+                               "set_leaf_values() or set_leaf_matrices() before solving");
+    }
+    // Counterfactual value = conditional continuation value x the opponent
+    // reach mass compatible with this hand. compat_weights already handles
+    // runout blocking (blocked combos carry zero reach).
+    compat_weights(seat, reach, out);
+    const float* e = table.data() + static_cast<std::size_t>(node.terminal_index) *
+                                        static_cast<std::size_t>(hands);
+    for (int i = 0; i < hands; ++i) out[i] *= e[i];
+  } else if (node.terminal_kind == TerminalKind::Fold) {
     // Fold utility depends only on compatibility: hands blocked by dealt
     // runout cards already carry zero reach on both sides.
     compat_weights(seat, reach, out);
@@ -442,6 +495,46 @@ void NlhePostflopGame::compat_weights(int seat, const std::vector<std::vector<fl
   for (int i = 0; i < hands; ++i) {
     out[i] = static_cast<float>(total - per_card[combos[i].hi] - per_card[combos[i].lo] + opp[i]);
   }
+}
+
+void NlhePostflopGame::set_leaf_values(std::array<std::vector<float>, 2> per_seat) {
+  if (depth_limit_terminals_ == 0) {
+    throw std::runtime_error("set_leaf_values on a tree with no depth-limit terminals");
+  }
+  // Sized by ALL terminals rather than only the truncated ones: terminal_index
+  // is dense over every terminal in the tree, and paying a few unused rows
+  // buys a direct index on the hot path instead of a second indirection.
+  const std::size_t want = static_cast<std::size_t>(tree_.num_terminal_nodes) *
+                           static_cast<std::size_t>(universe_.size());
+  for (int s = 0; s < 2; ++s) {
+    if (per_seat[static_cast<std::size_t>(s)].size() != want) {
+      throw std::runtime_error("depth-limit leaf table is the wrong size for this tree");
+    }
+  }
+  leaf_ev_ = std::move(per_seat);
+}
+
+void NlhePostflopGame::set_leaf_matrices(std::vector<std::vector<float>> per_terminal) {
+  if (depth_limit_terminals_ == 0) {
+    throw std::runtime_error("set_leaf_matrices on a tree with no depth-limit terminals");
+  }
+  if (per_terminal.size() != tree_.num_terminal_nodes) {
+    throw std::runtime_error("depth-limit leaf matrices: wrong number of terminals");
+  }
+  const std::size_t want = static_cast<std::size_t>(universe_.size()) *
+                           static_cast<std::size_t>(universe_.size());
+  for (const Node& n : tree_.nodes) {
+    if (n.kind != NodeKind::Terminal) continue;
+    const std::vector<float>& m = per_terminal[static_cast<std::size_t>(n.terminal_index)];
+    if (n.terminal_kind == TerminalKind::DepthLimit) {
+      if (m.size() != want) {
+        throw std::runtime_error("depth-limit leaf matrix is the wrong size for this tree");
+      }
+    } else if (!m.empty()) {
+      throw std::runtime_error("leaf matrix supplied for a terminal that is not depth-limited");
+    }
+  }
+  leaf_matrix_ = std::move(per_terminal);
 }
 
 std::vector<std::uint16_t> NlhePostflopGame::hand_dictionary(int) const {

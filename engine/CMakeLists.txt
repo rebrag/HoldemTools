@@ -79,6 +79,7 @@ add_library(engine_core STATIC
   src/eval/terminal.cpp
   src/solver/cfr.cpp
   src/solver/best_response.cpp
+  src/solver/depth_limit.cpp
   src/solver/sampled_cfr.cpp
   src/solver/agents.cpp
   src/solver/memory.cpp
@@ -96,6 +97,12 @@ target_link_libraries(engine_core PUBLIC nlohmann_json::nlohmann_json engine_fla
 # --- CLI ------------------------------------------------------------------
 add_executable(engine src/main.cpp)
 target_link_libraries(engine PRIVATE engine_core)
+
+# --- Probes ---------------------------------------------------------------
+# Measurement harnesses, not shipped. dl_probe answers "what does truncating
+# the tree cost in exploitability, and what does it buy in time".
+add_executable(dl_probe tools/depth_limit_probe.cpp)
+target_link_libraries(dl_probe PRIVATE engine_core)
 
 # --- Tests ----------------------------------------------------------------
 enable_testing()

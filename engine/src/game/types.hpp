@@ -22,6 +22,11 @@ enum class NodeKind : std::uint8_t { Decision, Chance, Terminal };
 // The action on the edge from parent to this node.
 enum class ActionKind : std::uint8_t { Root, Fold, CheckCall, Bet, Deal };
 
-enum class TerminalKind : std::uint8_t { None, Fold, Showdown };
+// DepthLimit is a node where the betting round ended and the tree was
+// TRUNCATED rather than dealt out: the subtree below it is replaced by a
+// per-hand continuation value the game holds (see NlhePostflopGame's leaf
+// table). It is terminal to the solver and to nothing else - the same public
+// state in an untruncated tree is a Chance node.
+enum class TerminalKind : std::uint8_t { None, Fold, Showdown, DepthLimit };
 
 }  // namespace engine

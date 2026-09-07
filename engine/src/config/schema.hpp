@@ -87,6 +87,15 @@ struct SolveConfig {
   // automatically when the ranges are not suit-symmetric.
   bool isomorphism = true;
 
+  // algorithm.depth_limit - last street to SOLVE ("flop" | "turn"; None =
+  // solve to showdown). A depth-limited tree stops at the end of that
+  // street's betting and reads a continuation value from a leaf table
+  // instead of dealing the next card, which is where the ~1000x node-count
+  // reduction comes from. The table has to be supplied separately
+  // (solver/depth_limit.hpp); a game built with a limit and no table
+  // refuses to evaluate rather than inventing a number.
+  Street depth_limit = Street::None;
+
   // "nash" | "qre". The mode string is kept separate from the parsed config
   // because it is what the artifact metadata records and what every
   // downstream refusal (the Pio harness, the solutions exporter) keys off.

@@ -44,6 +44,13 @@ struct Builder {
       tree[id].kind = NodeKind::Terminal;
       tree[id].terminal_kind = TerminalKind::Showdown;
       tree[id].actor = kNoSeat;
+    } else if (street == params.depth_limit) {
+      // Truncation point: the subtree below is replaced by a continuation
+      // value. Note this catches the all-in chain too - both seats all-in on
+      // the flop reaches here as an ordinary street end.
+      tree[id].kind = NodeKind::Terminal;
+      tree[id].terminal_kind = TerminalKind::DepthLimit;
+      tree[id].actor = kNoSeat;
     } else {
       tree[id].kind = NodeKind::Chance;
       tree[id].actor = kNoSeat;
@@ -233,6 +240,18 @@ PublicTree build_postflop_tree(const PostflopTreeParams& params) {
   const int board_cards = std::popcount(params.board_mask);
   if (board_cards < 3 || board_cards > 5) {
     throw std::runtime_error("postflop tree needs a 3, 4, or 5 card board");
+  }
+  if (params.depth_limit != Street::None) {
+    // Refuse the no-ops rather than silently building a full tree: a limit
+    // at or past the river never fires (the river street end is a showdown),
+    // and one before the root street can never be reached.
+    if (params.depth_limit >= Street::River) {
+      throw std::runtime_error("depth_limit must be before the river - there is nothing below a "
+                               "river street end to truncate");
+    }
+    if (params.depth_limit < params.start_street) {
+      throw std::runtime_error("depth_limit is before the tree's own start street");
+    }
   }
 
   Builder builder{params, {}};

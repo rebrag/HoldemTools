@@ -82,6 +82,45 @@ class NlhePostflopGame final : public Game, public DealGame {
 
   const std::vector<Card>& board() const { return board_; }
 
+  // ---- Depth limit ----
+  // How many DepthLimit terminals the tree carries; 0 for a full tree.
+  std::size_t depth_limit_terminals() const { return depth_limit_terminals_; }
+
+  // Continuation values for those terminals. `per_seat[s]` is indexed
+  // [terminal_index * num_hands + hand] and holds the CONDITIONAL value in
+  // chips of the truncated subtree given seat s holds that hand, averaged
+  // over the opponent's range as it stood when the table was built.
+  //
+  // terminal_values() reconstitutes a counterfactual value by multiplying
+  // this back by the opponent's LIVE compatible reach mass. That is exact
+  // while the opponent's range SHAPE at the leaf matches the one the table
+  // was built against, and it tracks the dominant reach effect (how much
+  // opponent mass arrives at all) when it does not. Freezing the shape is
+  // the approximation depth-limited solving cannot avoid without taking
+  // ranges as an input - see docs/roadmap.md.
+  void set_leaf_values(std::array<std::vector<float>, 2> per_seat);
+
+  // The EXACT leaf model: per truncated terminal, the full per-hand-pair
+  // continuation matrix u0[o * num_hands + h], the value to SEAT 0 of holding
+  // h against seat 1 holding o from that leaf onward under the continuation
+  // it was built from. Entries for colliding pairs are zero.
+  //
+  // Two things follow from storing the matrix instead of a per-hand average.
+  // The value becomes a real matvec against the LIVE opponent reach, so the
+  // opponent's range shape is no longer frozen and the solve responds
+  // correctly when the other seat widens. And seat 1's side is derived rather
+  // than stored, from the pointwise form of this engine's utility convention:
+  // u0(h,o) + u1(o,h) = the root pot at every terminal below the leaf, hence
+  // in expectation. So the two seats cannot drift into describing different
+  // games, and root EVs conserve by construction.
+  //
+  // Cost is O(H^2) per leaf per seat per iteration against the scalar model's
+  // O(H). Column-major because that makes the build write, seat 0's axpy and
+  // seat 1's dot product all contiguous.
+  //
+  // Takes precedence over set_leaf_values when both are present.
+  void set_leaf_matrices(std::vector<std::vector<float>> per_terminal);
+
   // ---- DealGame ----
   // `board` carries ONLY the runout (turn, then river), never the root board:
   // the sampled traversal follows deal.board[chance_depth] from the first
@@ -164,6 +203,14 @@ class NlhePostflopGame final : public Game, public DealGame {
   // lookups afterwards are pure reads. Solving touches all of them on the
   // first iteration anyway, so this only moves the work, and parallelizes it.
   std::map<std::uint64_t, std::unique_ptr<RiverEvaluator>> evaluators_;
+  // Depth-limit leaf table, empty until set_leaf_values. A tree with
+  // DepthLimit terminals and no table throws on evaluation rather than
+  // returning a plausible zero.
+  std::array<std::vector<float>, 2> leaf_ev_;
+  // By terminal_index; empty for terminals that are not DepthLimit.
+  std::vector<std::vector<float>> leaf_matrix_;
+  std::size_t depth_limit_terminals_ = 0;
+  Chips root_pot_ = 0;
   // The same evaluators, resolved once per showdown terminal and indexed by
   // the node's dense terminal_index. terminal_values() runs on the hot path
   // and used to reach them through a std::map::find on the board mask - a
