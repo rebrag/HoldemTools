@@ -1,0 +1,31 @@
+{
+  // The 3-way SPR 7 river spot the /multiway-postflop tab builds by default:
+  // 100% ranges, pot 100, stacks 700, b50 or shove with one raise allowed.
+  // This is the config that page POSTs, written out so the same solve can be
+  // run from the CLI and diffed against MonkerSolver without the pipeline.
+  //
+  // The shove is 700% of pot, not a threshold: bets are a percentage of POT
+  // while an all-in is a fraction of the STACK, so at SPR 7 a jam IS 700% and
+  // allin_threshold only snaps it to exactly the stack.
+  //
+  // Measured 2026-09-07: 3.3 s for 1000 iterations on 16 threads, 0.0047% of
+  // pot exploitable, EVs 31.6996 + 33.0163 + 35.2840 = 100.0000, 14.8 MB.
+  "schema": 1,
+  "game": "nlhe",
+  "board": "Js 8c Td 3h 7h",
+  "pot": 100,
+  "chip_scale": 100,
+  "players": [
+    { "seat": "OOP", "stack": 700, "range": "@file:ranges/full.txt" },
+    { "seat": "MID", "stack": 700, "range": "@file:ranges/full.txt" },
+    { "seat": "BTN", "stack": 700, "range": "@file:ranges/full.txt" }
+  ],
+  "bet_sizing": {
+    "river": { "bets": [50, 700], "raises": [700], "max_raises": 1, "allin_threshold": 0.9 }
+  },
+  "algorithm": { "update": "dcfr" },
+  "qre": { "mode": "nash" },
+  "budget": { "iterations": 1000, "checkpoint_every": 100 },
+  "memory_limit_gb": 24,
+  "output": { "path": "out/multiway3_river_spr7.hta", "strategy_quantize_u8": true, "ev_float32": true, "rollups_169": true }
+}

@@ -6,6 +6,10 @@ Written 2026-08-28 after a research pass; `docs/roadmap.md` stays the milestone 
 > **Direction, settled 2026-08-29.** The target is **GTO Wizard AI / Ruse-style depth-limited solving**, chosen for **multiway** speed, and the product needs **on-demand solving as well as a precomputed library**.
 > The **jesolver track was picked first only because it looked easier to implement, and it is now largely spent** - five independent attacks measured neutral or negative (M7.2 in `roadmap.md`), because M6.8's action-major layout and compact hand universe had already bought what jesolver's changelog was buying.
 > Read the tier list below as *finished work plus a few cheap leftovers*, not as the plan. The plan is "The fork" section.
+>
+> **Updated 2026-09-07: the fork's own recommendation has been measured and corrected.**
+> Depth-limiting is still the direction, but the continuation-strategy portfolio is no longer the first step and the value network is no longer the fallback.
+> See the measured note in "The fork", and M8d in `roadmap.md`.
 
 ## The one thing to get right first
 
@@ -153,6 +157,38 @@ Lower ceiling than a value net, far cheaper to build, and it preserves every inv
 
 **Recommended sequencing: portfolio first, network later if it is not enough.**
 The portfolio is the cheaper experiment, it answers "does depth-limiting actually buy what we need on a 3-way tree" without a training pipeline, and if it falls short the value-network work starts from a depth-limited engine that already exists rather than from scratch.
+
+> **MEASURED 2026-09-07, and the sequencing above is WRONG. Read this before acting on it.**
+> The recommendation assumed the portfolio's job - letting the opponent adapt below the limit - was the thing standing between depth-limiting and a usable answer.
+> It is not, and the gap is two orders of magnitude.
+> M8d in `roadmap.md` has the tables; the short version:
+>
+> | leaf model | flop tree | turn tree |
+> |---|---|---|
+> | blueprint (reference) | 0.0405% | 0.0389% |
+> | one frozen value per hand | 43.19% | 127.53% |
+> | exact per-hand-pair matrix | 0.4284% | 0.5299% |
+>
+> **~99% of the error is the frozen RANGE SHAPE, not the frozen continuation.**
+> A portfolio built on frozen scalar tables would inherit the dominant error, so that combination should not be built at all.
+>
+> **On a realistic large flop tree** (`_bench/flop00.json`, SPR 7 tight15, 594838 nodes) the same split holds - 96.70% scalar against 2.28% exact - and the honest speed number is **72x at equal accuracy**: the depth-limited solve asymptotes at 2.28% of pot in 0.069 s where the full solve needs 4.95 s to reach the same 2.28%, against a one-off offline cost of 59.2 s.
+> Break-even is ~12 queries per blueprint, and only for callers who accept 2.3%.
+> Note the accuracy cap is config-dependent and worse on realistic trees (2.28% here against 0.43% on the toy config, because a richer flop betting round has more leaves for one frozen continuation to be wrong at), so **the portfolio is worth ~2% of pot rather than ~0.4%** - more than the toy config implied, still far from the 43% it was scheduled against.
+>
+> One property to design around: a depth-limited solve's REAL-game exploitability is not monotone in iterations. It converges to the truncated game's equilibrium, so it descends, bottoms out (1.88% at 2048 iterations here) and then degrades to its asymptote. More iterations eventually make it worse, and an accuracy stop measured inside the truncated game would be actively misleading.
+>
+> The mechanism is worth stating as a rule, because it is easy to re-derive badly: **a leaf model must be zero-sum by construction.**
+> Two independently frozen per-seat tables are not, off the blueprint's operating point, and the truncated game then pays 83.42 chips into a 100-chip pot (or 119.67 on the turn tree).
+> CFR minimizing regret in a game that does not conserve converges to an artifact.
+> The exact matrix conserves exactly (residual 0.00) because seat 1's values are derived from seat 0's, never stored.
+>
+> **Revised sequencing.** For HEADS-UP, the exact matrix is the answer and the portfolio is an optional ~0.4% refinement on top of it.
+> For MULTIWAY - which is the whole motivation - the exact matrix does not scale: storage and build are both `H^(N-1)`, comfortable at 2 seats, marginal at 3 with tight ranges, gone at 4.
+> So the network is not the fallback any more, it is the multiway route, and the measurement says what it has to be: a model that takes both ranges as INPUT, returns per-hand values, and is zero-sum by construction, without tabulating `H^(N-1)`.
+> That is DeepStack's counterfactual value network.
+>
+> What survives from the argument below unchanged: depth-limiting is the right direction, the 30000x is structural, and building M8b exact-only and retrofitting would be a mistake.
 
 ## Preflop and PLO
 

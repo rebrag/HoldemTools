@@ -127,6 +127,19 @@ namespace PokerRangeAPI2.Models
         // so the watcher solves with htsolver and uploads the dumped artifact
         // straight to HtResultBlobPath, which /result/ht already serves.
         public const string PushFold = "pushfold";
+        // Multiway POSTFLOP on a real board (engine M8b). Like pushfold there
+        // is no PioSOLVER column - Pio is heads-up and cannot build an N-seat
+        // postflop tree at all - so the watcher solves with htsolver and
+        // uploads the dumped artifact to HtResultBlobPath, which /result/ht
+        // already serves. Unlike pushfold it HAS a board, and unlike compare
+        // it never has a second solver to race.
+        //
+        // Which htsolver core runs is decided by the seat count, not by the
+        // job: 2-3 seats have an exact vectorized showdown, 4+ do not and
+        // must set algorithm.family "sampled". The controller checks that up
+        // front so a bad config fails at queue time instead of on the
+        // watcher's box twenty minutes later.
+        public const string Multiway = "multiway";
     }
 
     public static class EngineCompareJobStatus

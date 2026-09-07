@@ -9,7 +9,8 @@ htsolver replaces PioSolver in the HoldemTools pipeline.
 
 - The watcher picks up a gametree job, solves it with **htsolver**, uploads schema-4 bundles, and frontend users browse the result in `/solutions` - exactly today's flow with Pio swapped out. The plumbing already exists: publish-mode `EngineCompareJob`s do this for river spots now.
 - **BOTH delivery models, and this is a product requirement rather than a nice-to-have.** A precomputed library covers the common spots, AND users solve their own trees **on demand**. Do not plan as though precomputing removes the latency constraint - it does not, and a plan that assumes it will reach the wrong conclusion about what to optimize. On-demand means a user is waiting, which puts solve time in the product rather than in the compute budget.
-- **The intended direction for that speed is GTO Wizard AI / Ruse-style depth-limited solving, explicitly, and the motivation is MULTIWAY.** Solving one street at a time with an estimated continuation value is the only published approach that makes 3+ player trees tractable at interactive speed; GTO Wizard's own figure for street-by-street solving is a **30000x complexity reduction**, and it is what lets them do 3-way spots at all. See `docs/perf-plan.md` for what they actually do and the two routes to it (a learned value network, or a Brown-Sandholm continuation-strategy portfolio that keeps the computation exact).
+- **The intended direction for that speed is GTO Wizard AI / Ruse-style depth-limited solving, explicitly, and the motivation is MULTIWAY.** Solving one street at a time with an estimated continuation value is the only published approach that makes 3+ player trees tractable at interactive speed; GTO Wizard's own figure for street-by-street solving is a **30000x complexity reduction**, and it is what lets them do 3-way spots at all. See `docs/perf-plan.md` for what they actually do and the routes to it.
+  **Measured 2026-09-07 (M8d): the node-count win is real and larger than estimated (191844 -> 9 nodes on a flop tree, 4590 MB -> 13 MB), and the route has narrowed.** A depth-limit leaf must model the opponent's range rather than freeze it - a frozen per-hand value costs 43% of pot exploitable against an exact per-hand-pair matrix's 0.43% - and it must be zero-sum by construction. The exact matrix settles heads-up and does not scale past ~3 seats (`H^(N-1)`), so **multiway points at a counterfactual value network**, not at the Brown-Sandholm portfolio that was scheduled first.
 - **jesolver-style optimization was the FIRST target only because it looked easier to implement, and it is now largely spent.** Five independent attacks were measured in one session and all came back neutral or negative - see M7.2. That is not a reason to abandon speed work; it is the reason the speed work moves to depth-limiting.
 - Pio is retired once htsolver is trusted **as much or more than Pio**. Trust is earned through the `/compare` loop: every spot solvable by both, compared per hand, gated on cross-exploitability.
 - htsolver's differentiators over Pio/Monker (the reason it exists): **QRE** (per-player rationality - *shipped, M7*; lambda fitting still to come), **3+ players** (NashConv, side pots), **configurable cooperation/collusion** (seat->agent partitions, payoff weights, Bayesian unknown-collusion). Everything else is table stakes.
@@ -541,6 +542,7 @@ Next (config schema already carries the keys; do not re-plumb):
   It is also the only multiway milestone with a real external correctness gate: published heads-up Nash push/fold charts.
 
 - **M8b - multiway POSTFLOP (3+ players)**: N-seat public tree over streets, fast side-pot terminal path, NashConv already generalizes. `multiway_no_nash_guarantee` stays surfaced - CFR converges to coarse correlated equilibria with 3+ players.
+  **Both halves of the groundwork landed 2026-09-07** (see the two sections below): the terminal sweep **generalizes at O(H)** (`src/eval/terminal3.hpp`), and `build_postflop_tree` is now **N-seat** with the heads-up tree bit-identical. So M8b can be built EXACT rather than depth-limited-from-the-start for correctness, and what remains is wiring `NlhePostflopGame` to N seats plus the config surface - engineering, not research.
   **This is the milestone that forces the depth-limiting decision, and it should be designed with that in mind rather than built exact-only and retrofitted.** A 3-way tree is at least 8x the size of the heads-up equivalent and costs GTO Wizard 1.5x per iteration on flop/turn and 2x on the river even after their reductions; their own *classical* engine needs "multiple minutes on 64 cores" for a 3-way turn. Exact full-tree multiway at interactive speed is not a thing anyone has shipped. The shape that works, and that they use, is **exact on the river** (no future left to approximate, and they explicitly run no network there) with **depth-limited turn and flop**. Building M8 as exact-everywhere first would produce something correct that cannot be served on demand, which is half the product.
 ### M8a - multiway preflop push/fold. Landed 2026-08-30.
 
@@ -778,6 +780,240 @@ The EV pass on postflop deals seats' hands IN PROPORTION to their ranges with th
 The same trick is NOT legitimate for the training deal: the runout avoids the hero's own dealt cards, so a range-proportional hero hand biases the runout the vectorized hero sees. The exact fix is one deal per seat per iteration - a change to the iteration structure and its determinism gates - recorded here rather than built.
 Capacity facts that shape a compare config: every lane holds a full copy of solver storage (`lanes: 4`, not 16, on a turn tree) and the per-batch discount and fold sweep the whole store (`batch: 4096`); a touched-node fold is a bitwise-safe follow-up.
 First measurement: on a full-range river tree the sampled core needs ~400k iterations (7 s on 16 threads) to reach 3.5% of pot where the vectorized core reaches 0.02% in 600 iterations (0.06 s) - stochastic 1/sqrt(T) against an exact gradient, exactly the trade the two cores make.
+
+### M8d - depth-limited solving, first measurement. Probe landed 2026-09-07.
+
+The experiment `docs/perf-plan.md` called for, run rather than argued.
+It answers "what does truncating the tree actually cost", and the answer overturned the plan that motivated it.
+
+**The mechanism.**
+`PostflopTreeParams::depth_limit` (config key `algorithm.depth_limit`, `"flop" | "turn"`) makes every betting line that ends that street a `TerminalKind::DepthLimit` leaf instead of a chance node, so the streets below are never built.
+One branch in `street_end()` does it, and because every street crossing funnels through there - the all-in chain included - that one branch truncates all of them.
+The solver needed no change at all: a leaf is a terminal, and the portfolio version's leaf is an ordinary decision node.
+
+`src/solver/depth_limit.*` holds the rest: the lockstep truncated-to-full node map, the two leaf-value extractors, and the strategy sources that make the result measurable.
+`tools/depth_limit_probe.cpp` (`dl_probe`, a CMake target) runs the whole loop.
+
+**Measuring it correctly is the part that took the thought.**
+A depth-limited solve produces a strategy only ABOVE the limit, so it is not a complete strategy and its own reported exploitability is meaningless.
+The probe completes it with the blueprint below the limit (`HybridStrategySource`) and runs `compute_best_response` over the FULL tree.
+That number is what truncation costs.
+
+`BlueprintOnTruncatedSource` is the gate that makes any of it trustworthy: play the blueprint's own strategy on the truncated tree and the root EVs must reproduce the full solve's, because the leaf table was built against exactly those reach vectors.
+It agrees to 6.2e-08 chips.
+Without it a catastrophic exploitability number is indistinguishable from a plumbing bug, and the first result WAS catastrophic.
+
+**The two leaf models, and the result.**
+
+The obvious model is one frozen value per hand: store the blueprint's conditional continuation value and multiply back the opponent's live compatible reach mass.
+The exact model stores the full per-hand-pair matrix `u0(h, o)` per leaf and does a real matvec against the live reach, deriving seat 1 by subtraction from `u0(h,o) + u1(o,h) = root pot`.
+
+| | flop tree, limit flop | turn tree, limit turn |
+|---|---|---|
+| blueprint (reference) | 0.0405% | 0.0389% |
+| frozen scalar leaf | **43.19%** | **127.53%** |
+| exact matrix leaf | **0.4284%** | **0.5299%** |
+| conservation residual, scalar | -16.58 chips | +19.67 chips |
+| conservation residual, exact | 0.00 | 0.00 |
+| nodes | 191844 -> 9 | 3237 -> 21 |
+| solver memory | 4590 MB -> 13 MB | 263 MB -> 17 MB |
+| per-iteration, scalar | 1990x | 34.6x |
+| per-iteration, exact | 113x | 2.8x |
+| matrix build | 121.8 s | 1.74 s |
+
+**Frozen range shape was ~99% of the error; the frozen continuation was ~1%.**
+Of the flop tree's 43.15 points of error above the blueprint, 0.39 survives the exact matrix (99.1% was the shape); on the turn tree 0.49 of 127.49 survives (99.6%).
+
+**This inverts the perf plan's recommendation and that correction is the milestone's real output.**
+The continuation-strategy portfolio was scheduled first on the theory that non-adaptivity was the problem.
+It is worth about 0.4% of pot, not 43%.
+A portfolio built on frozen SCALAR tables would inherit the dominant error and should not be built at all.
+
+**Why the frozen scalar fails, precisely, because it is a trap worth naming.**
+Two independently frozen per-seat tables stop describing one game the moment the strategy above the limit moves off the blueprint: each seat's value is rescaled by the OTHER seat's live reach while its own shape stays fixed.
+The truncated game then pays out 83.42 chips into a 100-chip pot on the flop tree and 119.67 on the turn tree.
+CFR is no longer minimizing regret in any zero-sum game, and what it converges to is an artifact.
+The symptom is legible in the strategies: decisions that compare a leaf against a FOLD terminal barely move (31.0% -> 31.1%), while decisions comparing leaf against leaf are destroyed (OOP flop bet 19.1% -> 84.3%; on the turn tree OOP jams a stack it never jams under the blueprint, 0.0% -> 65.5%).
+The invariant that falls out, and it belongs on any future leaf model: **a leaf model must be zero-sum by construction.**
+The exact matrix is, because seat 1 is derived rather than stored, and its residual is 0.00 in both directions.
+
+**Cost, honestly.**
+The exact matrix costs `leaves x H^2` per iteration, so it only pays when the replaced subtree is much more expensive than that: the flop tree (191844 nodes, 3 leaves) keeps 113x, the turn tree (3237 nodes, 7 leaves) keeps 2.8x.
+That is a ratio rule, not a street rule.
+Building the matrices is one subtree traversal per opponent hand per leaf - `num_hands` traversals, embarrassingly parallel.
+That is 121.8 s on the 100%-range toy flop tree, over 4x the blueprint solve, and the 100%-range case is the pessimistic one: the build is linear in the hand universe, so the realistic tight15 spot below (156 hands against 1176) pays **8.4 s, about 0.16x its blueprint**.
+The compact hand universe therefore helps this the same way it helps everything else, and quoting the full-range number as the cost of the technique would be wrong.
+
+**Per-iteration ratios are not speedups. Time to equal accuracy is, and it was measured on a large flop tree** (`configs/_bench/flop00.json`, the SPR 7 tight15 family: 594838 nodes, 213356 decision, 156-hand universe, 1866 MB).
+
+| | |
+|---|---|
+| truncated tree | 27 nodes, 9 depth-limit leaves, 2.41 MB + 0.84 MB of matrices |
+| depth-limited asymptote | **2.28% of pot**, reached in **0.069 s** |
+| full solve to the same 2.28% | **4.95 s** |
+| **speedup at equal accuracy** | **72x** |
+| offline cost | blueprint 50.9 s + leaf table 8.4 s = **59.2 s**, once per spot |
+
+Break-even is about 12 queries against one blueprint, and only for callers who accept 2.3%; anything tighter needs the full solve regardless, because the depth-limited solve cannot get there at any iteration count.
+
+**Two findings from that curve matter more than the 72x.**
+
+**The accuracy cap is config-dependent and much worse on a realistic tree.**
+The toy config floored at 0.43%; this one asymptotes at 2.28%.
+The difference is the flop betting round: one 50% bet and no raises gives 3 leaves, two bet sizes plus raises gives 9, and every additional leaf is another place a single frozen continuation is wrong.
+So the frozen-continuation error - which is exactly what a portfolio buys back - is worth roughly **2% of pot on a realistic tree, not 0.4%**.
+That is 5x more than the toy config suggested and it partially rehabilitates the portfolio, though still nowhere near the 43% it was originally scheduled against.
+The scalar/exact split is unchanged here: 96.70% against 2.28%, so the frozen range shape is still 97.8% of the error.
+
+**Real-game exploitability is NOT monotone in iterations, and this is a trap.**
+The depth-limited solve converges to the equilibrium of the TRUNCATED game, which is not the equilibrium of the real one, so it descends, bottoms out, and then degrades as it converges more exactly to the wrong game:
+
+```
+   512 iters  2.62%      8192 iters  2.25%
+  1024 iters  2.03%     32768 iters  2.34%
+  2048 iters  1.88%  <- best        65536 iters  2.28%  <- asymptote
+  4096 iters  1.93%
+```
+
+**More iterations eventually make a depth-limited solve worse.**
+"Solve to convergence" is the wrong stopping rule for one, and `target_exploitable_pct` measured inside the truncated game would be actively misleading - it reports the truncated game's own accuracy, which keeps improving while the real answer decays.
+The transient minimum is not a usable operating point either: stopping there on purpose requires already knowing the answer.
+The probe therefore times against the asymptote and reports the minimum only as an observation.
+
+**The exact matrix does not reach multiway, which is what this was for.**
+Storage is `H^(N-1)` and the build is `H^(N-1)` traversals.
+Two seats is 1.4M entries and 5.5 MB per leaf, comfortable.
+Three seats at full ranges is 6.5 GB per leaf, dead; at realistic tight ranges (H ~ 300-500) it is 100-500 MB per leaf and hundreds of thousands of traversals, marginal.
+Four seats is gone.
+
+So the measurement points at the value network for the multiway case rather than at the portfolio, and it arrived there from a number rather than from the literature: a multiway leaf model has to take both ranges as INPUT, return per-hand values, and be zero-sum by construction, without tabulating anything of size `H^(N-1)`.
+That is DeepStack's counterfactual value network.
+See `docs/perf-plan.md`, "The fork".
+
+**Not built, deliberately:** the portfolio leaf (a k-action opponent decision node, which the solver already handles), reuse of a leaf table across configs (it is keyed to the leaf's public state, so a different flop sizing invalidates it), and any artifact/CLI path - `algorithm.depth_limit` is parsed and gated but `engine solve` has no leaf-table source, so a depth-limited solve throws rather than inventing values.
+
+### M8b groundwork - the 3-way terminal sweep. Measured 2026-09-07.
+
+The question M8b turns on, settled by measurement rather than argument: **the showdown sweep generalizes to three seats at O(H).**
+
+The 2-player showdown is O(H) for every hero hand against the whole opponent range, which is the reason exact heads-up postflop is affordable at all.
+At three seats the hero needs `sum over mutually disjoint (o1, o2) of r1(o1) r2(o2) * share`, and `showdown_share` gives that at O(H^2) per hero hand, O(H^3) overall - the wall `terminal.hpp` had flagged as an unresolved optimization seam since M3.
+
+**Why it was not obviously possible, and why it is.**
+"Hero beats both" would factor into two independent prefix sums, `F1(h) * F2(h)`, if the two opponents could hold the same card.
+They cannot, and that `o1 and o2 disjoint` constraint couples them.
+It comes out by inclusion-exclusion over the shared card, which is the same trick this file already uses for the hero's own blockers:
+
+```
+S(A,B) = tot'(A) * tot'(B) - sum over cards c of card'(A,c) * card'(B,c) + diag(A and B)
+```
+
+The series terminates at two terms rather than running to 52, because two 2-card combos that share two cards ARE the same combo, so the card-by-card subtraction over-counts exactly the diagonal.
+Every quantity is a running total over the strength-sorted order, so the ascending sweep carries them at O(1) per hand plus a 52-wide dot product.
+Ties need four such terms (both worse, either tying, both tying) weighted 1, 1/2, 1/3; the mixed terms carry no diagonal because a hand cannot be both strictly worse and tied.
+
+**Measured** (`tools/terminal3_bench.cpp`, board `Qs Jh 2h 8d 6c`):
+
+| H | 3-way per call | ns/hand | 2-way ns/hand | ratio |
+|---|---|---|---|---|
+| 84 | 8.7 us | 103.6 | 4.84 | 21.4x |
+| 172 | 14.0 us | 81.2 | 4.97 | 16.4x |
+| 341 | 31.1 us | 91.3 | 4.50 | 20.3x |
+| 540 | 50.2 us | 93.0 | 3.95 | 23.5x |
+| 1081 | 121.4 us | 112.3 | 3.57 | 31.5x |
+
+**Time per hero hand is flat**: H grows 13x and ns/hand grows 1.08x.
+O(H^2) per hand would have grown it 13x, so the scaling question is settled rather than suggested.
+Against the reference at H = 66 the sweep is **4048x faster**, and that gap widens as H^2.
+
+The cost is a **~25x constant** over the heads-up sweep at equal H, which is an unoptimized first cut: the 52-wide loop does two pair lookups and several branches per card, hoists nothing, and is not SIMD. Treat 25x as an upper bound on the constant.
+
+**Scope, and what is deliberately not built.**
+Single pot, all three seats eligible, ties exact, full mutual card removal, gated against `showdown_share` on rainbow / paired / four-flush / board-plays boards and on sparse ranges (`tests/test_terminal3.cpp`).
+**Side pots are a layering wrapper over this kernel, not a change to it** - the eligible set per layer is fixed by the commitments, which are public, so a layer with two eligible seats is the same `S(A,B)` with the ineligible seat's set taken as everything, and a layer with one is the compat weight. Not implemented; it does not change the complexity class.
+Four or more seats is `S` over three sets and was not attempted.
+
+**What this changes.**
+Exact 3-way postflop terminals are reachable on the vectorized core, so M8b's remaining work is the N-seat tree builder rather than a research problem, and M8b does not have to be depth-limited from the start to be CORRECT.
+It still has to be depth-limited to be FAST: a 3-way tree is at least 8x its heads-up equivalent and now carries a ~25x terminal constant on top.
+And the exact terminal is needed under a depth-limited engine anyway - the shape that works is exact on the river, where there is no future to approximate and GTO Wizard explicitly runs no network.
+
+### M8b groundwork - the N-seat tree builder. Landed 2026-09-07.
+
+`build_postflop_tree` was 2-player in every line of its recursion; it now takes `num_seats` (2 to `kMaxSeats`) and a per-seat `stack[]`, with `effective_stack` kept as the shorthand that fills unset entries.
+
+**The structural difference from heads-up is that a FOLD is not terminal until one seat remains.**
+That breaks the old shape, where every action either ended the street or handed play to "the other seat".
+The replacement is the machinery `build_preflop_tree` already had, ported over: `settle()` decides after every action whether the round continues, closes, or ends the hand, and `next_actor()` finds the next seat that still owes an action - alive, not all-in, and either yet to act since the last aggression or facing a raise made after it acted.
+
+Round bookkeeping lives in a **side table keyed by NodeId**, not on `Node`, for the reason the preflop builder records: `commit` and `folded_mask` cannot tell "has not acted yet" apart from "acted, and is still facing the same bet", and `Node` is the artifact-facing struct.
+It carries the acted mask, the raise count, the min-raise floor, this street's aggressor and the previous street's.
+
+**Other things that stopped being heads-up:**
+a call is `min(bet, stack[actor])`, so calling all-in for less builds a side pot the tree records as differing per-seat `commit`;
+a street runs out as pure chance when fewer than two seats can still act, replacing the old "both seats all-in" test (identical at 2 seats with equal stacks, and correct when stacks differ);
+the next actor at a street start is the first alive, non-all-in seat rather than seat 0 unconditionally.
+
+**Donk sizing needed a real generalization rather than a port.**
+The heads-up rule is `actor == 0 && prev_aggressor == Ip`.
+Read as "the non-aggressor bets first" it fires wrongly for a seat betting AFTER the previous aggressor checked.
+The correct statement is that a donk is a first-in bet INTO the previous street's aggressor, so the condition is that the aggressor is a different seat and **has not acted yet this street**.
+That reduces to exactly the heads-up rule at 2 seats and behaves at 3+.
+
+**The heads-up tree is bit-identical, and that is checked rather than asserted.**
+`tools/tree_hash.cpp` fingerprints every field of every node of four 2-seat trees (river, turn, donk, flop - 149361 nodes at the top end).
+Run across the change, the digests match exactly on every tree.
+The one field that does differ is `folded_mask`, which fold terminals now carry and the heads-up-only builder left at 0 because `fold_winner` already said everything at two seats - so the tool reports two digests and only the `folded_mask`-excluding one is required to hold.
+That is the right level of proof here: the existing tests check structure at a handful of nodes, and this is the Pio-gated artifact contract.
+
+`tests/test_tree_multiway.cpp` covers the rest at 3 and 4 seats: folds that continue the hand, folds that close it, round completion (every alive seat matched or all-in), pot conservation at every node, action wrapping back round after a raise, runout streets, and side pots whose `showdown_share` layers sum to exactly the pot across all 27 strength orderings.
+
+**What M8b still needs, so this is not mistaken for the milestone.**
+The TREE is N-seat; the GAME is not.
+`NlhePostflopGame` still reports `num_seats() == 2`, evaluates terminals through `showdown_2p`, computes pairwise `compat_weights`, and hardcodes `52 - known - 4` in `chance_weight` (two seats' hole cards).
+Wiring it up means using `Showdown3` for the 3-seat terminal, generalizing the compat weight, and adding side-pot LAYERING over that kernel - none of which is a research problem any more, and all of which is more than a rename.
+The config surface is also still heads-up: no `num_seats` for postflop, no per-seat stacks, and no per-seat sizing lists, which is why seat 0 reads `oop` and every other seat reads `ip` at 3+.
+
+### M8b - multiway POSTFLOP. Engine layer landed 2026-09-07.
+
+The tree and the terminal both landed earlier today (the two sections above); this is the game layer that joins them, so `engine solve` now solves multiway postflop end to end at 2 to 9 seats.
+
+**Two seat regimes, and the split is the terminal evaluator rather than a preference.**
+
+| | |
+|---|---|
+| **2-3 seats** | full vectorized support: exact terminals, exact best response, exact compat weights. Two seats is bit-identical to before and still Pio-gated. |
+| **4+ seats** | SAMPLED core only. The parser refuses the vectorized family and names the fix. No nashconv and no per-hand EVs; root EVs come from the sampled EV pass. |
+
+The boundary is `num_seats() <= 3`, which is the same one `br_exact` already used, and it is asked in one place - `Game::vectorized_terminals()`, a new virtual defaulting to true.
+It says the vectorized contract is ABSENT rather than approximate, which is what lets the best response and the per-hand EV export skip instead of calling and throwing.
+
+**Measured end to end**, tight15 ranges on `9c 5d Jc 7s 2h`:
+
+| | |
+|---|---|
+| 3-way, vectorized, 400 iters | 0.14 s, nashconv 0.0048, **root EVs 28.7199 + 29.5899 + 31.6902 = 90.0000** |
+| 4-way, sampled, 200k deals | 0.38 s solve, **EVs sum to 120.0000** |
+| 8-way, sampled, 200k deals | 0.20 s solve, **EVs sum to 240.0000** |
+
+Chip conservation is exact at every seat count, which is the headline: the preflop factorized estimator provably cannot reach it at 4+ (it carries a -0.55 residual), and here both cores hold it - the vectorized one because `Showdown3` is exact, the sampled one because conservation is a property of each dealt hand.
+
+**The cross-core gate is the one that matters.**
+Three seats is the only count both cores can solve, and they reach a showdown by routes that share none of their algebra: `Showdown3`'s O(52*H) inclusion-exclusion sweep against `showdown_share` on concrete dealt cards.
+They agree to **0.54 chips per seat, 0.60% of pot**, which is the sampled core's own noise at 400k deals.
+Side-pot conservation lands at -3.3e-07 chips.
+
+**Things that had to generalize, beyond the obvious loops.**
+`chance_weight` counts `52 - board - 2*num_seats` rather than a hardcoded four hole cards.
+`compat_weights` at three seats is the mass of DISJOINT opponent PAIRS, not the product of two pairwise compat weights - that product would let the two opponents hold the same card, and it is the same S(ALL,ALL) identity the showdown uses so the two agree by construction.
+`total_profile_weight` needs the disjoint-TRIPLE mass at three seats, computed by the same identity.
+`sample_ev_deal` deals every seat in proportion to its range conditioned on the cards already gone, and the importance weight is the product of the masses the conditioning divided out; the masses come from per-card sums by inclusion-exclusion over the dealt cards, because a 2-card combo holds at most two of them.
+Suit isomorphism is refused past two seats - it was built and gated against a heads-up tree and nothing checks the collapse is legal with a reach vector per seat.
+
+**One performance fix paid for here, and it was worth 5x.**
+`showdown_share` allocated a `std::vector` for its layer levels on every call, and the sampled EV pass calls it once per seat per terminal per deal - hundreds of millions of times on an 8-way tree. That cost **289 s of a 200k-deal 8-way EV pass against 3 s for everything else**; a fixed array and an insertion sort over at most nine levels took it to **54.7 s**, bit-identical EVs. The EV pass is still the dominant cost at eight seats and is the next thing to look at if that matters.
+
+**Still to do for the product**, none of it research: the artifact carries strategy and reach but no EV fields past three seats, so a 4+ seat result needs `dump-json` rollups the way `/multiway` already does; the config surface has no per-seat sizing lists (seat 0 reads `oop`, everyone else reads `ip`); and the backend job mode, the watcher mode and the `/compare` tab are not built yet.
 
 ### M9 - hand-sharing teams (cooperation/collusion). Landed 2026-08-31, on the sampled core.
 

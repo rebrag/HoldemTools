@@ -341,8 +341,18 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   // joint strategy that per-seat marginals cannot reproduce, so best
   // response is not a meaningful measure there at all - EVs come from the
   // sampled pass instead, and nashconv is stamped invalid.
-  const bool br_exact = !team && game.num_seats() <= 3;
-  if (!br_exact) {
+  // Past three seats a postflop game has no vectorized showdown at all, so
+  // the best response cannot be COMPUTED rather than merely being inexact.
+  // Root EVs still come from the sampled EV pass; the artifact stamps no
+  // nashconv, exactly as a team solve does.
+  const bool br_available = !team && (config.game != "nlhe" || game.num_seats() <= 3);
+  const bool br_exact = br_available && game.num_seats() <= 3;
+  if (!br_available && !team) {
+    std::cout << "note: there is no vectorized showdown at " << game.num_seats()
+              << " seats, so this solve reports NO nashconv and no per-hand EVs - the "
+                 "artifact carries strategy and reach only. Root EVs come from the sampled "
+                 "EV pass and conserve exactly. It runs to budget.iterations.\n";
+  } else if (!br_exact) {
     std::cout << "note: best response rides a first-order evaluator at "
               << game.num_seats()
               << " seats, so accuracy targets will NOT stop this solve - it runs to "
@@ -402,7 +412,7 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
                 << " iterations completed\n";
       break;
     }
-    if (team) {
+    if (!br_available) {
       std::cout << "iter " << done << "\n";
       continue;
     }
@@ -428,7 +438,7 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
       break;
     }
   }
-  if (done == started_at && !cancelled && !team) {
+  if (done == started_at && !cancelled && br_available) {
     // A run with nothing left to iterate - re-exporting a finished solve, which
     // is how a baseline gets looked at - never enters the loop, so it never
     // measures anything, and a stamped nashconv of 0.0 would read as "exact".

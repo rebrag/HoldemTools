@@ -77,8 +77,10 @@ add_library(engine_core STATIC
   src/game/public_tree.cpp
   src/eval/hand_eval.cpp
   src/eval/terminal.cpp
+  src/eval/terminal3.cpp
   src/solver/cfr.cpp
   src/solver/best_response.cpp
+  src/solver/depth_limit.cpp
   src/solver/sampled_cfr.cpp
   src/solver/agents.cpp
   src/solver/memory.cpp
@@ -97,6 +99,24 @@ target_link_libraries(engine_core PUBLIC nlohmann_json::nlohmann_json engine_fla
 add_executable(engine src/main.cpp)
 target_link_libraries(engine PRIVATE engine_core)
 
+# --- Probes ---------------------------------------------------------------
+# Measurement harnesses, not shipped. dl_probe answers "what does truncating
+# the tree cost in exploitability, and what does it buy in time".
+add_executable(dl_probe tools/depth_limit_probe.cpp)
+target_link_libraries(dl_probe PRIVATE engine_core)
+
+# terminal3_bench answers "does the showdown sweep generalize to three seats
+# at O(H)", which is what decides whether exact multiway postflop is reachable
+# on the vectorized core. Correctness is gated in tests/test_terminal3.cpp.
+add_executable(terminal3_bench tools/terminal3_bench.cpp)
+target_link_libraries(terminal3_bench PRIVATE engine_core)
+
+# tree_hash fingerprints every field of every node of the 2-seat postflop
+# trees. Run it across a revision that touches build_postflop_tree to prove
+# the Pio-gated heads-up tree did not move.
+add_executable(tree_hash tools/tree_hash.cpp)
+target_link_libraries(tree_hash PRIVATE engine_core)
+
 # --- Tests ----------------------------------------------------------------
 enable_testing()
 add_executable(engine_tests
@@ -104,8 +124,10 @@ add_executable(engine_tests
   tests/test_kuhn.cpp
   tests/test_leduc.cpp
   tests/test_tree.cpp
+  tests/test_tree_multiway.cpp
   tests/test_preflop_tree.cpp
   tests/test_terminal.cpp
+  tests/test_terminal3.cpp
   tests/test_multiway_terminal.cpp
   tests/test_preflop_game.cpp
   tests/test_memory.cpp
@@ -119,6 +141,7 @@ add_executable(engine_tests
   tests/test_sampled_kuhn.cpp
   tests/test_sampled_preflop.cpp
   tests/test_sampled_postflop.cpp
+  tests/test_multiway_postflop.cpp
 
   tests/test_team_preflop.cpp
 )

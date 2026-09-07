@@ -20,10 +20,13 @@ namespace engine {
 // inclusion-exclusion blocker correction, O(H) per call after an O(H log H)
 // setup per board.
 //
-// OPTIMIZATION SEAM (multiway): for 3+ players the blocker problem is
-// multi-way and the fast sweep does not directly apply. showdown_share()
-// below is the correct-but-slow building block; a vectorized multiway
-// terminal pass should be built against its outputs when M8 lands.
+// MULTIWAY: the fast sweep DOES generalize to three seats at O(H), measured
+// 2026-09-07 - see `eval/terminal3.hpp`, which is gated against
+// showdown_share() below and costs about 25x this path per call at equal H.
+// The opponents' mutual card removal, which is what breaks the obvious
+// factorization, comes out by the same inclusion-exclusion this file already
+// uses for the hero's own blockers. showdown_share() remains the
+// correct-but-slow ground truth and the side-pot rule.
 class RiverEvaluator {
  public:
   // `universe` is the hand universe in compact order; pass

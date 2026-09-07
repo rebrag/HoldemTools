@@ -25,6 +25,7 @@ export const routeImports = {
   "/private": () => import("@/pages/private/PrivatePage"),
   "/compare": () => import("@/pages/compare/SolverCompare"),
   "/multiway": () => import("@/pages/multiway/MultiwaySolver"),
+  "/multiway-postflop": () => import("@/pages/multiwayPostflop/MultiwayPostflopSolver"),
 } as const;
 
 export type RoutePath = keyof typeof routeImports;

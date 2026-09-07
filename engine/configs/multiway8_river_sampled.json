@@ -1,0 +1,32 @@
+{
+  // 8-way river spot: the seat count the product actually cares about at the
+  // top end. Sampled core, one bet size, no raises - the tree still branches
+  // eight ways on fold/call.
+  "schema": 1,
+  "game": "nlhe",
+  "board": "9c 5d Jc 7s 2h",
+  "pot": 240,
+  "chip_scale": 100,
+  "players": [
+    { "seat": "UTG", "stack": 200, "range": "@file:ranges/tight15.txt" },
+    { "seat": "UTG1", "stack": 200, "range": "@file:ranges/tight15.txt" },
+    { "seat": "MP", "stack": 200, "range": "@file:ranges/tight15.txt" },
+    { "seat": "MP1", "stack": 200, "range": "@file:ranges/tight15.txt" },
+    { "seat": "HJ", "stack": 200, "range": "@file:ranges/tight15.txt" },
+    { "seat": "CO", "stack": 200, "range": "@file:ranges/tight15.txt" },
+    { "seat": "BTN", "stack": 200, "range": "@file:ranges/tight15.txt" },
+    { "seat": "SB", "stack": 200, "range": "@file:ranges/tight15.txt" }
+  ],
+  "bet_sizing": {
+    "river": { "bets": [50], "raises": [], "max_raises": 0, "allin_threshold": 0.9 }
+  },
+  "algorithm": {
+    "update": "dcfr",
+    "family": "sampled",
+    "sampled": { "seed": 3, "batch": 4096, "lanes": 4 }
+  },
+  "qre": { "mode": "nash" },
+  "budget": { "iterations": 200000, "checkpoint_every": 100000 },
+  "memory_limit_gb": 12,
+  "output": { "path": "out/multiway8_river_sampled.hta", "strategy_quantize_u8": false, "ev_float32": true }
+}

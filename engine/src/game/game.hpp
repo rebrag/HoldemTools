@@ -21,6 +21,14 @@ class Game {
   virtual const PublicTree& tree() const = 0;
   virtual int num_seats() const = 0;
 
+  // Whether terminal_values() / compat_weights() exist for this game at all.
+  // False means the VECTORIZED contract is unavailable rather than merely
+  // approximate - multiway postflop past three seats, where the showdown
+  // sweep's inclusion-exclusion grows as 52^(N-2) - so the best response and
+  // the per-hand EV export skip rather than call and throw. The strategy
+  // itself is unaffected: the sampled core needs none of this surface.
+  virtual bool vectorized_terminals() const { return true; }
+
   // Size of seat's private-hand universe (e.g. 1326 for hold'em, 3 for Kuhn).
   virtual int num_hands(int seat) const = 0;
 
