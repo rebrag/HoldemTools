@@ -32,7 +32,9 @@ namespace PokerRangeAPI2.Services
                                              CancellationToken ct = default)
         {
             if (container == null) return;
-            foreach (var path in new[] { job.HtResultBlobPath, job.PioResultBlobPath, job.ResultBlobPath })
+            foreach (var path in new[] { job.HtResultBlobPath, job.SampledResultBlobPath,
+                                         job.PioResultBlobPath, job.ResultBlobPath })
+
             {
                 if (string.IsNullOrEmpty(path)) continue;
                 await container.GetBlobClient(path).DeleteIfExistsAsync(cancellationToken: ct);

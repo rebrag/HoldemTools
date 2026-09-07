@@ -85,7 +85,33 @@ export interface BuilderState extends TreeConfigText {
   sampling: boolean;
   samplingRunouts: string;
   samplingAnnealAt: string;
+
+  /* ---- the sampled core: a second htsolver run on the same tree ----
+   * Opt-in per run, like Pio. The job then solves the identical tree a
+   * second time on htsolver's sampled-deal core (`algorithm.family:
+   * "sampled"`: one dealt runout per iteration instead of every runout),
+   * AFTER the vectorized solve, so the two cores can be raced to the same
+   * accuracy target. The knobs below are that run's own: its iterations are
+   * ~1000x cheaper than vectorized ones, so it needs its own cap and its own
+   * check interval, while the accuracy target is shared - that is what makes
+   * time-to-target comparable. */
+  runSampledCore: boolean;
+  /** Stop-loss for the sampled run, in its own (cheap) iterations. */
+  sampledMaxIterations: string;
+  /** `budget.checkpoint_every` for the sampled run: iterations between
+   *  exploitability measurements. Each is a full vectorized best-response
+   *  pass, so it must be rare relative to a sampled iteration. */
+  sampledCheckEvery: string;
+  /** `algorithm.sampled.batch`: iterations per frozen-regret batch. Large,
+   *  because the per-batch discount and lane fold sweep the whole store. */
+  sampledBatch: string;
+  /** `algorithm.sampled.lanes`: each lane holds a full copy of solver
+   *  storage, so the engine default (16) blows the memory limit on a
+   *  turn tree. Few lanes, big batches. */
+  sampledLanes: string;
+  sampledSeed: string;
 }
+
 
 const street = (bet: string, raise: string, donk = ""): StreetBoxes => ({
   bet,
@@ -135,7 +161,16 @@ export const DEFAULT_BUILDER: BuilderState = {
   sampling: false,
   samplingRunouts: "12",
   samplingAnnealAt: "2000",
+  runSampledCore: false,
+  // First guesses, to be tuned from the first real turn-tree run: a river
+  // tree does ~60k sampled iterations/s on 16 threads.
+  sampledMaxIterations: "2000000",
+  sampledCheckEvery: "50000",
+  sampledBatch: "4096",
+  sampledLanes: "4",
+  sampledSeed: "20260830",
 };
+
 
 /* ---------- shared tree-building panel adapters ----------
  * BuilderState is a structural SUPERSET of TreeBuildingView, so these are a
@@ -210,7 +245,11 @@ export interface EngineConfigResult {
   disablePio: boolean;
   disableCompare: boolean;
   disableCrossCheck: boolean;
+  /** The second htsolver config (sampled core), when the run asked for one:
+   *  the same tree block as `config`, solved by the other core. */
+  sampledConfig?: object;
 }
+
 
 /** Build the htsolver config from the form; throws with a readable message
  *  on anything invalid. */
@@ -270,7 +309,54 @@ export const buildEngineConfig = (b: BuilderState): EngineConfigResult => {
   const iterations = Math.max(100, Number(b.maxIterations) || 20000);
 
   const qre = b.updateRule === "qre";
+  // The tree block both cores solve. Everything below `algorithm` is how it
+  // is solved; this is what it is.
+  const tree = {
+    schema: 1,
+    game: "nlhe",
+    board: board.join(" "),
+    pot,
+    chip_scale: 100,
+    players: [
+      { seat: "OOP", stack: stacks, range: engineRange(b.oopRange) },
+      { seat: "IP", stack: stacks, range: engineRange(b.ipRange) },
+    ],
+    bet_sizing: betSizing,
+    preflop_aggressor: b.preflopAggressor,
+  };
+  // The sampled core has no QRE port (the engine refuses the pair), so a QRE
+  // run never carries a second config even if the box was ticked earlier.
+  const sampledConfig =
+    b.runSampledCore && !qre
+      ? {
+          ...tree,
+          algorithm: {
+            family: "sampled",
+            // No update rule (the sampled core discounts linearly by
+            // iteration and ignores it), no recalc, no sampling: the engine
+            // refuses both on this family.
+            sampled: {
+              seed: Math.max(0, Math.floor(Number(b.sampledSeed) || 20260830)),
+              batch: Math.max(1, Math.floor(Number(b.sampledBatch) || 4096)),
+              lanes: Math.max(1, Math.min(256, Math.floor(Number(b.sampledLanes) || 4))),
+            },
+          },
+          // The sampled core cannot read through the suit-isomorphism
+          // redirect yet; the engine refuses the combination.
+          isomorphism: false,
+          qre: { mode: "nash" },
+          budget: {
+            iterations: Math.max(1000, Math.floor(Number(b.sampledMaxIterations) || 2000000)),
+            // The SAME target: the comparison is time to reach it.
+            target_exploitable_pct: accuracyPct,
+            checkpoint_every: Math.max(100, Math.floor(Number(b.sampledCheckEvery) || 50000)),
+          },
+          memory_limit_gb: 12,
+          threads: 0,
+        }
+      : undefined;
   // The engine's lambda is in 1/chips; the form's is per pot. Divide once,
+
   // here, so the number the user typed keeps its meaning on any tree.
   const lambdaFor = (raw: string, label: string) => {
     const v = Number(raw);
@@ -294,19 +380,11 @@ export const buildEngineConfig = (b: BuilderState): EngineConfigResult => {
     disablePio: b.disablePio,
     disableCompare: b.disableCompare,
     disableCrossCheck: qre ? true : b.disableCrossCheck,
+    ...(sampledConfig ? { sampledConfig } : {}),
     config: {
-      schema: 1,
-      game: "nlhe",
-      board: board.join(" "),
-      pot,
-      chip_scale: 100,
-      players: [
-        { seat: "OOP", stack: stacks, range: engineRange(b.oopRange) },
-        { seat: "IP", stack: stacks, range: engineRange(b.ipRange) },
-      ],
-      bet_sizing: betSizing,
-      preflop_aggressor: b.preflopAggressor,
+      ...tree,
       // The engine refuses sampling and recalc together (the recalc cache
+
       // holds full-enumeration values a sampled iteration never produces),
       // so sampling wins here rather than sending a config that will be
       // rejected after the job has already been queued.

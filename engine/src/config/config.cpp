@@ -352,17 +352,39 @@ SolveConfig load_config(const std::string& path_text) {
       fail("algorithm.sampled.lanes must be in [1, 256]");
     }
   }
+  // Parsed here rather than with the other top-level keys below because the
+  // sampled block has to see it.
+  config.isomorphism = j.value("isomorphism", config.isomorphism);
   if (config.sampled.enabled) {
-    // The sampled core deals concrete cards, so it needs a DealGame; today
-    // that is the preflop game and the toys. It has no chance-node
-    // subsampling, no recalc schedule (nothing is re-enumerated), and QRE
-    // has not been ported to it yet - refuse combinations rather than
+    // The sampled core deals concrete cards, so it needs a DealGame: the
+    // preflop game, the heads-up postflop game, and the toys. It has no
+    // chance-node subsampling, no recalc schedule (nothing is re-enumerated),
+    // and QRE has not been ported to it yet - refuse combinations rather than
     // silently ignoring the knobs.
     if (config.game == "nlhe") {
-      fail("algorithm.family \"sampled\" does not run postflop nlhe yet - the postflop "
-           "game has no deal interface. Use the vectorized family there.");
+      // The sampled core stores one row per decision node and reads it
+      // directly; a suit-isomorphic MEMBER subtree owns no storage and is
+      // read through Game::iso_rep()'s hand permutation, which this core
+      // cannot do yet. Refused here, in the parser, rather than left to the
+      // solver's own throw: build_isomorphism is a no-op on ranges with no
+      // usable permutation, so a solver-side gate would depend on the
+      // ranges. An absent key defaults to off for this combination - the
+      // engine-wide default is on, and refusing every config that merely
+      // omits the key would be perverse.
+      if (j.contains("isomorphism") && config.isomorphism) {
+        fail("isomorphism collapses suit-equivalent runout subtrees into shared solver "
+             "storage; the sampled family stores one row per node and cannot read "
+             "through the iso redirect yet. Set isomorphism false for a sampled "
+             "postflop solve.");
+      }
+      config.isomorphism = false;
+      if (config.sampled.symmetry_explicit && config.sampled.symmetry) {
+        fail("algorithm.sampled.symmetry: a postflop tree has the board in every "
+             "infoset, so there is no suit quotient to solve per class. Remove it.");
+      }
     }
     if (config.sampling.enabled) {
+
       fail("algorithm.sampling subsamples chance children inside the VECTORIZED core; "
            "the sampled family deals its own cards. Remove algorithm.sampling.");
     }
@@ -491,8 +513,8 @@ SolveConfig load_config(const std::string& path_text) {
     if (config.checkpoint_every == 0) config.checkpoint_every = 1000;
   }
 
-  config.isomorphism = j.value("isomorphism", config.isomorphism);
   config.memory_limit_gb = j.value("memory_limit_gb", config.memory_limit_gb);
+
   if (config.memory_limit_gb <= 0) fail("memory_limit_gb must be positive");
 
   if (j.contains("output")) {

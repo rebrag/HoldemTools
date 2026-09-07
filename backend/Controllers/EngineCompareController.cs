@@ -47,7 +47,12 @@ namespace PokerRangeAPI2.Controllers
             public bool DisablePio { get; set; } = true;
             public bool DisableCompare { get; set; } = true;
             public bool DisableCrossCheck { get; set; } = true;
+            // Compare mode only: a second htsolver config for the SAME tree on
+            // the sampled core, run after the vectorized solve. See
+            // EngineCompareJob.SampledConfigJson.
+            public JsonObject? SampledConfig { get; set; }
         }
+
 
         public class JobDto
         {
@@ -69,10 +74,14 @@ namespace PokerRangeAPI2.Controllers
             public bool DisablePio { get; set; }
             public bool DisableCompare { get; set; }
             public bool DisableCrossCheck { get; set; }
+            /// <summary>The job also solves the tree on htsolver's sampled core.</summary>
+            public bool RunSampledCore { get; set; }
 
             /// <summary>Which payloads this job has, so the page knows what to fetch.</summary>
             public bool HasHtResult { get; set; }
             public bool HasPioResult { get; set; }
+            public bool HasSampledResult { get; set; }
+
             /// <summary>A pre-split job: one merged payload the current page cannot read.</summary>
             public bool LegacyResult { get; set; }
 
@@ -117,8 +126,11 @@ namespace PokerRangeAPI2.Controllers
                 DisablePio = job.DisablePio,
                 DisableCompare = job.DisableCompare,
                 DisableCrossCheck = job.DisableCrossCheck,
+                RunSampledCore = !string.IsNullOrEmpty(job.SampledConfigJson),
                 HasHtResult = !string.IsNullOrEmpty(job.HtResultBlobPath),
                 HasPioResult = !string.IsNullOrEmpty(job.PioResultBlobPath),
+                HasSampledResult = !string.IsNullOrEmpty(job.SampledResultBlobPath),
+
                 LegacyResult = !string.IsNullOrEmpty(job.ResultBlobPath)
                                && string.IsNullOrEmpty(job.HtResultBlobPath)
                                && string.IsNullOrEmpty(job.PioResultBlobPath),
@@ -170,6 +182,28 @@ namespace PokerRangeAPI2.Controllers
             var configJson = request.Config.ToJsonString();
             if (configJson.Length > MaxConfigBytes)
                 return BadRequest($"config too large (max {MaxConfigBytes} bytes)");
+            // The second core is a compare-mode comparison of the SAME tree.
+            // Refuse anything else up front: a publish or pushfold job has no
+            // second column to show it in, and a config that is not actually
+            // on the sampled core would race the vectorized core against
+            // itself and call it a comparison.
+            string? sampledConfigJson = null;
+            if (request.SampledConfig != null)
+            {
+                if (request.Mode != EngineCompareJobMode.Compare)
+                    return BadRequest("sampledConfig is compare-mode only");
+                sampledConfigJson = request.SampledConfig.ToJsonString();
+                if (sampledConfigJson.Length > MaxConfigBytes)
+                    return BadRequest($"sampledConfig too large (max {MaxConfigBytes} bytes)");
+                var family = request.SampledConfig["algorithm"]?["family"]?.GetValue<string>();
+                if (family != "sampled")
+                    return BadRequest("sampledConfig.algorithm.family must be \"sampled\"");
+                var sampledBoard = request.SampledConfig["board"]?.GetValue<string>();
+                var mainBoard = request.Config["board"]?.GetValue<string>();
+                if (!string.Equals(sampledBoard, mainBoard, StringComparison.OrdinalIgnoreCase))
+                    return BadRequest("sampledConfig.board must match config.board");
+            }
+
             // A preflop solve has no board, and must not be given one: the
             // runout is averaged inside the all-in showdown rather than dealt
             // into the tree, so config.board is refused by the engine itself.
@@ -209,7 +243,9 @@ namespace PokerRangeAPI2.Controllers
                 DisablePio = request.DisablePio,
                 DisableCompare = request.DisableCompare,
                 DisableCrossCheck = request.DisableCrossCheck,
+                SampledConfigJson = sampledConfigJson,
                 Status = EngineCompareJobStatus.Queued,
+
                 CreatedAtUtc = DateTimeOffset.UtcNow,
             };
             _db.EngineCompareJobs.Add(job);
@@ -286,21 +322,29 @@ namespace PokerRangeAPI2.Controllers
         }
 
         // GET api/enginecompare/{id}/result/{solver} - one solver's payload
-        // ("ht" or "pio"). Deliberately does NOT require Status == Done: the
+        // ("ht", "sampled" or "pio"). Deliberately does NOT require Status == Done: the
+
         // htsolver half is uploaded before Pio finishes, and a Pio failure
         // must not cost the engine result.
         [HttpGet("{id:guid}/result/{solver}")]
         public async Task<IActionResult> ResultFor(Guid id, string solver)
         {
-            if (solver != "ht" && solver != "pio")
-                return BadRequest("solver must be \"ht\" or \"pio\"");
+            if (solver != "ht" && solver != "pio" && solver != "sampled")
+                return BadRequest("solver must be \"ht\", \"sampled\" or \"pio\"");
+
             var uid = this.CurrentUid();
             if (string.IsNullOrWhiteSpace(uid)) return Unauthorized();
             var job = await _db.EngineCompareJobs
                 .FirstOrDefaultAsync(j => j.Id == id && j.UserId == uid);
             if (job == null) return NotFound();
 
-            var path = solver == "ht" ? job.HtResultBlobPath : job.PioResultBlobPath;
+            var path = solver switch
+            {
+                "ht" => job.HtResultBlobPath,
+                "sampled" => job.SampledResultBlobPath,
+                _ => job.PioResultBlobPath,
+            };
+
             if (string.IsNullOrEmpty(path))
                 return NotFound($"Job has no {solver} payload.");
 

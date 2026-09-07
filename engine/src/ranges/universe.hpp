@@ -1,5 +1,7 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
+
 #include <vector>
 
 #include "cards/combos.hpp"
@@ -30,8 +32,20 @@ struct HandUniverse {
   std::vector<std::uint16_t> ids;    // canonical combo index, ascending
   std::vector<Combo> combos;         // canonical_combos()[ids[i]]
   std::vector<std::uint64_t> masks;  // two-card bitmask per compact hand
+  // The inverse of `ids`: canonical combo index -> compact hand, -1 when the
+  // combo is outside the universe. What a dealt pair of cards resolves
+  // through (the sampled core pins seats to concrete hands).
+  std::vector<std::int32_t> compact_of_canonical;
+
 
   int size() const { return static_cast<int>(ids.size()); }
+
+  // Compact index of the combo {a, b} (either order), or -1 when no seat's
+  // range carries it.
+  int compact_index(Card a, Card b) const {
+    return compact_of_canonical[static_cast<std::size_t>(combo_index(a, b))];
+  }
+
 
   // Ascending canonical order is load-bearing: the artifact's hand
   // dictionary is documented as universe ids in hand order, and readers
@@ -39,7 +53,9 @@ struct HandUniverse {
   static HandUniverse from_ranges(const std::vector<std::vector<float>>& ranges) {
     HandUniverse universe;
     const std::vector<Combo>& all = canonical_combos();
+    universe.compact_of_canonical.assign(static_cast<std::size_t>(kNumCombos), -1);
     for (int i = 0; i < kNumCombos; ++i) {
+
       bool live = false;
       for (const std::vector<float>& range : ranges) {
         if (range[static_cast<std::size_t>(i)] > 0.0f) {
@@ -48,7 +64,10 @@ struct HandUniverse {
         }
       }
       if (!live) continue;
+      universe.compact_of_canonical[static_cast<std::size_t>(i)] =
+          static_cast<std::int32_t>(universe.ids.size());
       universe.ids.push_back(static_cast<std::uint16_t>(i));
+
       universe.combos.push_back(all[static_cast<std::size_t>(i)]);
       universe.masks.push_back(combo_mask(i));
     }

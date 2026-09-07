@@ -47,9 +47,11 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
     if (node.kind != NodeKind::Decision) continue;
     if (layout_.node_offset[node.decision_index] == InfosetLayout::kNoOffset) {
       // A member subtree's storage would need the iso gather on every read
-      // and write; no game this core runs uses isomorphism yet, so refuse
-      // loudly instead of silently mis-indexing.
+      // and write, which this core does not do; the config parser already
+      // refuses isomorphism for a sampled postflop solve, so this is the
+      // backstop against mis-indexing rather than the user-facing message.
       throw std::runtime_error("the sampled core does not support suit-isomorphic trees yet");
+
     }
     if (node.num_children > kMaxActionsSampled) {
       throw std::runtime_error("sampled core caps a decision node at " +
@@ -776,9 +778,10 @@ void SampledCfrSolver::pinned_sigma(NodeId id, int actor, const Deal& deal,
 }
 
 void SampledCfrSolver::ev_walk(NodeId id, double weight, const Deal& deal,
-                               const std::vector<std::uint32_t>& strengths,
+                               const std::vector<std::uint32_t>& strengths, int chance_depth,
                                std::vector<double>& pinned_scratch,
                                std::vector<double>& ev) const {
+
   if (weight <= 0.0) return;
   const PublicTree& tree = game_.tree();
   const Node& node = tree[id];
@@ -800,11 +803,14 @@ void SampledCfrSolver::ev_walk(NodeId id, double weight, const Deal& deal,
   }
   if (node.kind == NodeKind::Chance) {
     // The EV walk follows the same dealt-board convention as the training
-    // traversal; preflop trees have no chance nodes, toys have one level.
+    // traversal: the chance level's card is deal.board[chance_depth]. A
+    // preflop tree has no chance nodes, a toy has one level, a flop tree has
+    // two - matching board[0] everywhere threw on the river card.
+    const int card = deal.board[static_cast<std::size_t>(chance_depth)];
     for (int c = 0; c < node.num_children; ++c) {
       const NodeId child = node.first_child + static_cast<NodeId>(c);
-      if (tree[child].dealt_card == deal.board[0]) {
-        ev_walk(child, weight, deal, strengths, pinned_scratch, ev);
+      if (tree[child].dealt_card == card) {
+        ev_walk(child, weight, deal, strengths, chance_depth + 1, pinned_scratch, ev);
         return;
       }
     }
@@ -814,9 +820,10 @@ void SampledCfrSolver::ev_walk(NodeId id, double weight, const Deal& deal,
   pinned_sigma(id, node.actor, deal, sigma);
   for (std::uint16_t a = 0; a < node.num_children; ++a) {
     ev_walk(node.first_child + a, weight * static_cast<double>(sigma[a]), deal, strengths,
-            pinned_scratch, ev);
+            chance_depth, pinned_scratch, ev);
   }
 }
+
 
 std::vector<double> SampledCfrSolver::sampled_ev(std::uint64_t num_deals,
                                                  std::uint64_t seed) const {
@@ -825,21 +832,28 @@ std::vector<double> SampledCfrSolver::sampled_ev(std::uint64_t num_deals,
   Deal deal;
   std::vector<std::uint32_t> strengths;
   std::vector<double> pinned_scratch;
-  std::uint64_t counted = 0;
+  double weight_sum = 0.0;
   for (std::uint64_t t = 0; t < num_deals; ++t) {
-    deals_.sample_deal(seed, t, deal);
-    bool ok = true;
-    for (int q = 0; q < seats; ++q) {
-      if (deal.hand[static_cast<std::size_t>(q)] == kNoHand) ok = false;
+    double w = 1.0;
+    if (!deals_.sample_ev_deal(seed, t, deal, w)) {
+      // A uniform deal: its prior mass is each seat's range weight for its
+      // dealt hand. A combo outside a range weighs 0 and the deal is skipped
+      // whole, so it never enters the denominator either.
+      for (int q = 0; q < seats; ++q) {
+        const std::uint16_t hq = deal.hand[static_cast<std::size_t>(q)];
+        w *= hq == kNoHand ? 0.0 : static_cast<double>(game_.initial_range(q)[hq]);
+      }
     }
-    if (!ok) continue;  // a zero-range combo: skip, count nothing
-    ++counted;
+
+    if (w <= 0.0) continue;
+    weight_sum += w;
     deals_.deal_strengths(deal, strengths);
-    ev_walk(game_.tree().root(), 1.0, deal, strengths, pinned_scratch, ev);
+    ev_walk(game_.tree().root(), w, deal, strengths, 0, pinned_scratch, ev);
   }
-  const double n = counted > 0 ? static_cast<double>(counted) : 1.0;
+  const double n = weight_sum > 0.0 ? weight_sum : 1.0;
   for (double& v : ev) v /= n;
   return ev;
+
 }
 
 nlohmann::json SampledCfrSolver::team_rollup_json() const {

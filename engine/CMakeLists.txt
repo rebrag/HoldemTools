@@ -118,6 +118,8 @@ add_executable(engine_tests
   tests/test_qre.cpp
   tests/test_sampled_kuhn.cpp
   tests/test_sampled_preflop.cpp
+  tests/test_sampled_postflop.cpp
+
   tests/test_team_preflop.cpp
 )
 target_link_libraries(engine_tests PRIVATE engine_core doctest::doctest)

@@ -532,8 +532,10 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
   meta["sampled"] = config.sampled.enabled
                         ? json({{"seed", config.sampled.seed},
                                 {"batch", config.sampled.batch},
-                                {"lanes", config.sampled.lanes}})
+                                {"lanes", config.sampled.lanes},
+                                {"ev_deals", stats.ev_deals}})
                         : json(nullptr);
+
   meta["lambda"] = config.qre.enabled ? json(config.qre.lambda) : json(nullptr);
   meta["iterations"] = stats.iterations;
   meta["final_nashconv"] = stats.nashconv;
@@ -573,6 +575,42 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
     meta["final_qre_gap_pct_pot"] = nullptr;
   }
   meta["ev_chips"] = stats.ev_chips;
+  // The convergence trace: every checkpoint this run measured, as parallel
+  // arrays (an array of objects costs ~40 more bytes per point). Thinned to
+  // at most kMaxConvergencePoints by a fixed stride that always keeps the
+  // LAST point, so the final entry is the final checkpoint whatever the
+  // stride; `total_points` and `stride` say what was dropped. Times rounded
+  // to a millisecond and chips to a micro-chip so 2000 points stay under
+  // ~100 KB. Absent on a team solve (no best response) and on artifacts from
+  // before it existed - additive, like every key here.
+  if (!stats.convergence.empty()) {
+    constexpr std::size_t kMaxConvergencePoints = 2000;
+    const std::size_t total = stats.convergence.size();
+    const std::size_t stride = (total + kMaxConvergencePoints - 1) / kMaxConvergencePoints;
+    const auto round_to = [](double v, double unit) { return std::round(v / unit) * unit; };
+    json iteration = json::array(), elapsed = json::array(), solve = json::array(),
+         nashconv = json::array(), exploitable = json::array();
+    for (std::size_t i = 0; i < total; ++i) {
+      if (i % stride != 0 && i + 1 != total) continue;
+      const ConvergencePoint& p = stats.convergence[i];
+      iteration.push_back(p.iteration);
+      elapsed.push_back(round_to(p.elapsed_s, 1e-3));
+      solve.push_back(round_to(p.solve_s, 1e-3));
+      nashconv.push_back(round_to(p.nashconv, 1e-6));
+      exploitable.push_back(round_to(p.exploitable_chips, 1e-6));
+    }
+    const std::size_t points = iteration.size();
+    meta["convergence"] = {{"iteration", std::move(iteration)},
+                           {"elapsed_s", std::move(elapsed)},
+                           {"solve_s", std::move(solve)},
+                           {"nashconv", std::move(nashconv)},
+                           {"exploitable_chips", std::move(exploitable)},
+                           {"points", points},
+                           {"total_points", total},
+                           {"stride", stride}};
+  }
+
+
   // Root EVs come from the sampled pass on sampled-family solves (each
   // deal's payoffs sum to the pot, so they conserve exactly); the
   // vectorized family keeps its best-response EVs.

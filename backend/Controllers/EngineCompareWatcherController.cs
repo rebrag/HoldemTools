@@ -58,6 +58,8 @@ namespace PokerRangeAPI2.Controllers
             // One blob per solver; the Pio one stays null when Pio did not run.
             public string? HtResultBlobPath { get; set; }
             public string? PioResultBlobPath { get; set; }
+            public string? SampledResultBlobPath { get; set; }
+
             // Per-stage wall times (flat dict of seconds), sent with the
             // terminal report. Stored verbatim; the frontend renders it.
             public JsonObject? Timings { get; set; }
@@ -92,7 +94,11 @@ namespace PokerRangeAPI2.Controllers
                 disablePio = job.DisablePio,
                 disableCompare = job.DisableCompare,
                 disableCrossCheck = job.DisableCrossCheck,
+                // The optional second htsolver config (sampled core); the
+                // watcher runs it after the vectorized solve when present.
+                sampledConfig = job.SampledConfigJson,
                 board = job.Board,
+
                 attemptCount = job.AttemptCount,
                 createdAtUtc = job.CreatedAtUtc,
             });
@@ -136,6 +142,9 @@ namespace PokerRangeAPI2.Controllers
                 job.HtResultBlobPath = Truncate(req.HtResultBlobPath, 512);
             if (req.PioResultBlobPath != null)
                 job.PioResultBlobPath = Truncate(req.PioResultBlobPath, 512);
+            if (req.SampledResultBlobPath != null)
+                job.SampledResultBlobPath = Truncate(req.SampledResultBlobPath, 512);
+
             if (req.Timings != null)
             {
                 // Never truncate: a cut-off JSON string is unparseable, so an

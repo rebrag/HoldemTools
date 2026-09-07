@@ -137,8 +137,10 @@ def claim() -> Optional[Dict[str, Any]]:
 def report(job_id: str, status: Optional[str] = None, error: Optional[str] = None,
            heartbeat: bool = False, result_blob_path: Optional[str] = None,
            ht_blob_path: Optional[str] = None, pio_blob_path: Optional[str] = None,
+           sampled_blob_path: Optional[str] = None,
            timings: Optional[Dict[str, Any]] = None,
            identity: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+
     """PATCH one job. Returns the API's response body, or None if the call
     itself failed.
 
@@ -160,6 +162,9 @@ def report(job_id: str, status: Optional[str] = None, error: Optional[str] = Non
         body["htResultBlobPath"] = ht_blob_path
     if pio_blob_path is not None:
         body["pioResultBlobPath"] = pio_blob_path
+    if sampled_blob_path is not None:
+        body["sampledResultBlobPath"] = sampled_blob_path
+
     if timings:
         body["timings"] = timings
     if identity:
@@ -427,7 +432,8 @@ def prepare_engine_config(config: Dict[str, Any], run_dir: str, *,
     return artifact
 
 
-def run_engine(config: Dict[str, Any], run_dir: str, cancel: Cancellation) -> str:
+def run_engine(config: Dict[str, Any], run_dir: str, cancel: Cancellation, *,
+               checkpoint_dir: str = CHECKPOINT_DIR, prefix: str = "ht") -> str:
     """Solve with htsolver; returns the artifact path.
 
     Stoppable: the engine is given a `budget.stop_file` under this run's own
@@ -435,8 +441,14 @@ def run_engine(config: Dict[str, Any], run_dir: str, cancel: Cancellation) -> st
     its checkpoint and export the artifact for the iterations it completed.
     Killing it instead would discard the whole run, since both the checkpoint
     and the artifact are written at the end.
+
+    `checkpoint_dir` is the checkpoint policy for THIS run; a compare job's
+    sampled-core run passes "" because a timing run must start from zero
+    every time - resumed from a checkpoint it would "converge" instantly.
     """
-    artifact = prepare_engine_config(config, run_dir)
+    os.makedirs(run_dir, exist_ok=True)
+    artifact = prepare_engine_config(config, run_dir, checkpoint_dir=checkpoint_dir)
+
     stop_file = config["budget"]["stop_file"]
     config_path = os.path.join(run_dir, "config.json")
     with open(config_path, "w", encoding="utf8") as f:
@@ -447,9 +459,10 @@ def run_engine(config: Dict[str, Any], run_dir: str, cancel: Cancellation) -> st
             f.write("cancelled by the owner")
 
     out = run_streamed([ENGINE_EXE, "solve", config_path],
-                       timeout=SOLVE_TIMEOUT_SECS, prefix="ht",
+                       timeout=SOLVE_TIMEOUT_SECS, prefix=prefix,
                        cancel=cancel, on_cancel=request_stop,
                        cancel_grace=CANCEL_GRACE_SECS)
+
     if out.returncode != 0 or not os.path.exists(artifact):
         # A cancelled solve that produced nothing is not a failure - it just
         # has nothing to upload. Say which one happened.
@@ -462,8 +475,9 @@ def run_engine(config: Dict[str, Any], run_dir: str, cancel: Cancellation) -> st
         # swept to another watcher). Uploading now would leave a blob nothing
         # points at, and the report would be refused anyway.
         raise Cancelled("the job was no longer claimed by this watcher")
-    log(f"  htsolver: {out.last_line() or 'done'}")
+    log(f"  htsolver ({prefix}): {out.last_line() or 'done'}")
     return artifact
+
 
 
 def terminal_status(cancel: Cancellation) -> str:
@@ -486,6 +500,24 @@ def handle_compare(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
     artifact = run_engine(config, run_dir, cancel)
     timings["engine_solve_s"] = round(time.perf_counter() - phase_start, 3)
 
+    # The optional second core: the SAME tree solved again on htsolver's
+    # sampled-deal core, strictly AFTER the vectorized solve so the two never
+    # share cores - concurrent runs would corrupt exactly the timing the job
+    # exists to measure. Never checkpointed: a timing run starts from zero.
+    # A Stop that landed during the first solve skips it entirely; one that
+    # lands during it still yields an artifact through the stop file.
+    sampled_artifact = None
+    sampled_raw = job.get("sampledConfig")
+    if sampled_raw and not cancel.applied:
+        sampled_config = json.loads(sampled_raw)
+        sampled_config["output"] = dict(config["output"])
+        sampled_config["output"].pop("path", None)
+        phase_start = time.perf_counter()
+        sampled_artifact = run_engine(sampled_config, os.path.join(run_dir, "sampled"), cancel,
+                                      checkpoint_dir="", prefix="hts")
+        timings["sampled_solve_s"] = round(time.perf_counter() - phase_start, 3)
+
+
     # Pio is opt-in per job. "No Pio" subsumes the other two (neither the
     # per-hand extraction nor the gate can run without a Pio process); the
     # API normalizes that too, so this is belt and braces.
@@ -504,9 +536,11 @@ def handle_compare(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
             cmd += ["--pio-detail"]
         if not disable_cross:
             cmd += ["--cross-check"]
-    log(f"  mode: htsolver{'' if disable_pio else ' + pio'}"
+    log(f"  mode: htsolver{' + sampled core' if sampled_artifact else ''}"
+        f"{'' if disable_pio else ' + pio'}"
         f"{'' if disable_compare else ' + per-hand'}"
         f"{'' if disable_cross else ' + cross-check'}")
+
     phase_start = time.perf_counter()
     # No stop file here: this child drives PioSOLVER, which has no cooperative
     # stop, and its own output is written at the end either way. A cancel kills
@@ -519,12 +553,26 @@ def handle_compare(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
     if not os.path.exists(ht_out):
         raise RuntimeError(f"engine_compare failed (exit {out.returncode}): "
                            f"{out.text[-1500:]}")
+    # The sampled core's payload: the same extraction, never Pio. Its keys are
+    # prefixed hts_ by the harness so the harvest below stays a plain merge.
+    sampled_out = os.path.join(run_dir, "compare.sampled.htc")
+    if sampled_artifact is not None:
+        phase_start = time.perf_counter()
+        out = run_streamed([sys.executable, "-u", os.path.join(WATCHER_DIR, "engine_compare.py"),
+                            "--artifact", sampled_artifact, "--engine-exe", ENGINE_EXE,
+                            "--ht-out", sampled_out, "--solver", "sampled"],
+                           cwd=WATCHER_DIR, timeout=1800, prefix="cmp", cancel=cancel)
+        timings["sampled_compare_s"] = round(time.perf_counter() - phase_start, 3)
+        if not os.path.exists(sampled_out):
+            raise RuntimeError(f"engine_compare failed on the sampled artifact "
+                               f"(exit {out.returncode}): {out.text[-1500:]}")
     # No keyword filter any more: every line already reached the terminal as it
     # was produced, so re-printing a chosen four here would only duplicate them.
     # Harvest each payload's per-phase numbers so the whole breakdown rides
     # one job row. Never fail the job on a harvest problem - the results
     # themselves are already good.
-    for path in (ht_out, pio_out):
+    for path in (ht_out, sampled_out, pio_out):
+
         if not os.path.exists(path):
             continue
         try:
@@ -536,12 +584,16 @@ def handle_compare(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
     report(job_id, status="Uploading")
     phase_start = time.perf_counter()
     ht_blob = upload_result(job_id, ht_out, "ht")
+    sampled_blob = (upload_result(job_id, sampled_out, "sampled")
+                    if os.path.exists(sampled_out) else None)
     pio_blob = (upload_result(job_id, pio_out, "pio")
                 if os.path.exists(pio_out) else None)
     timings["upload_s"] = round(time.perf_counter() - phase_start, 3)
     report(job_id, status=terminal_status(cancel), ht_blob_path=ht_blob,
-           pio_blob_path=pio_blob, timings=timings)
-    log(f"  done -> {ht_blob}" + (f" + {pio_blob}" if pio_blob else ""))
+           sampled_blob_path=sampled_blob, pio_blob_path=pio_blob, timings=timings)
+    log(f"  done -> {ht_blob}" + (f" + {sampled_blob}" if sampled_blob else "")
+        + (f" + {pio_blob}" if pio_blob else ""))
+
 
 
 def handle_publish(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],

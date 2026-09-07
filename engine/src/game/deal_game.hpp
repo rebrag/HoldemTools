@@ -45,7 +45,25 @@ class DealGame {
   // lanes to threads replays identically.
   virtual void sample_deal(std::uint64_t seed, std::uint64_t iter, Deal& out) const = 0;
 
+  // The deal for one step of the root-EV pass, where EVERY seat is pinned.
+  // Returns false after a plain sample_deal (the caller then weights the
+  // deal by the product of the seats' range weights - exact, and what the
+  // preflop game and the toys do). A game may instead return true and deal
+  // seats' hands IN PROPORTION to their ranges, setting `weight` to the
+  // importance weight that makes the estimator exact for the product
+  // measure; under tight ranges a uniform deal lands outside a range almost
+  // always, and 200k deals become a few hundred. Legitimate here and not in
+  // the training deal: with no vectorized hero there is no runout marginal
+  // to bias.
+  virtual bool sample_ev_deal(std::uint64_t seed, std::uint64_t iter, Deal& out,
+                              double& weight) const {
+    sample_deal(seed, iter, out);
+    weight = 1.0;
+    return false;
+  }
+
   // Per-iteration scratch: hand strengths for the WHOLE compact universe on
+
   // this deal's board, shared by all of the iteration's seat traversals.
   // Games whose showdowns need no board table leave it empty.
   virtual void deal_strengths(const Deal&, std::vector<std::uint32_t>& out) const {

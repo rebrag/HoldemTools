@@ -129,6 +129,8 @@ That is the fast loop - dump, extract, pack - and it is what the compare watcher
 | `--pio-out a.pio.htc` | PioSolver's payload - its summary (root EV, exploitability, solve time, peak memory) always, per-hand rows only with `--pio-detail`. |
 | `--pio-detail` | Extract Pio's per-hand rows. The expensive half: 4 + actions UPI round trips per node. |
 | `--cross-check` | The cross-exploitability gate. **Off by default**; without it a run reports "no verdict" rather than a cheap PASS. |
+| `--solver sampled` | Tag the `--ht-out` payload as htsolver's sampled-deal core (an artifact solved with `algorithm.family: "sampled"`). Same extraction, same summary shape; its timing/memory keys are prefixed `hts_` instead of `ht_` so a job that solved the same tree on both cores merges every payload's numbers into one flat dict without collisions. Every htsolver payload also carries `spot.tree_hash` (the tree's identity, independent of how it was solved) so `/compare` can put the two cores side by side despite their different `config_hash`, and `summary.ht.convergence`, the engine's per-checkpoint trace. |
+
 
 Anything comparing the two joins them **by hand string**, never by index: each file carries its own solver's hand universe and its own reach, and Pio legitimately drops hands it has no matchups for.
 Both sides spell combos the engine's way (`engine_combo_str`), which is what makes that join land.
@@ -152,6 +154,8 @@ A run against a pre-solved `--cfr` reports no Pio time: that tree was solved els
 
 The queue-driven sibling of the harness: claims `EngineCompareJob`s from `POST /api/enginecompare/claim` (same `X-Watcher-Key` + heartbeat protocol as the solve queue) and executes them on this machine.
 `compare` jobs solve with htsolver and upload its payload to ADLS `enginecompare/{id}.ht.htc.gz`, plus `{id}.pio.htc.gz` when the job asked for Pio; `publish` jobs solve with htsolver only and POST the artifact to the API, which publishes schema-4 bundles into the solutions library.
+A compare job may also carry `sampledConfig` - the same tree on htsolver's sampled-deal core - which runs strictly AFTER the vectorized solve (never beside it: the job exists to time them) in its own `sampled/` run directory, never from a checkpoint (`run_engine(..., checkpoint_dir="")` - a timing run resumed from last time would "converge" instantly), then through the harness with `--solver sampled`, and uploads as `{id}.sampled.htc.gz` (`sampledResultBlobPath`, served by `/result/sampled`). A Stop during the first solve skips it; a Stop during it still yields its artifact through the stop file.
+
 Three per-job options ride the claim payload and decide how much runs: `disablePio` (no Pio process at all - the default), `disableCompare` (Pio solves, but its per-hand rows are not extracted), and `disableCrossCheck` (no gate).
 The API normalizes them, so "no Pio" always implies the other two.
 The frontend fetches the htsolver half first and merges Pio's when it lands, and `/api/enginecompare/{id}/result/{ht|pio}` serves either without waiting for the job to reach `Done` - so a Pio failure cannot cost you the engine result.

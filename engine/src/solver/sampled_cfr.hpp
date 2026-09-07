@@ -30,8 +30,11 @@ namespace engine {
 //   - The combo universe never appears squared: PLO's 270,725 combos are
 //     reachable here and dead on arrival in a product-of-ranges terminal.
 // What it costs: stochastic convergence (~1/sqrt(T)) instead of the
-// vectorized core's exact gradient, which is why heads-up postflop stays on
-// CfrSolver, byte-identical and untouched.
+// vectorized core's exact gradient, which is why heads-up postflop's PRODUCT
+// path stays on CfrSolver, byte-identical and untouched. This core can run
+// the same heads-up postflop tree (NlhePostflopGame wears DealGame too) so
+// the two can be raced to one accuracy target on /compare.
+
 //
 // Determinism contract, matching the repo invariant: the result is a pure
 // function of (seed, iterations, batch, lanes) and the run() call
@@ -77,6 +80,12 @@ class SampledCfrSolver final : public StrategySource {
   // EVs conserve EXACTLY at any seat count; marginal per-seat strategies
   // cannot reproduce a team's correlated behavior, which is why the
   // factorized evaluator must not be used for team EVs.
+  // Deals are drawn uniformly and weighted by the product of the seats'
+  // range weights for their dealt hands (the universe is the UNION of the
+  // ranges, so a combo one seat holds at weight 0.3 must count 0.3 for it,
+  // not 1). Full unweighted ranges multiply by exactly 1.0, so every
+  // preflop number is bit-for-bit what the unweighted pass produced.
+
   std::vector<double> sampled_ev(std::uint64_t num_deals, std::uint64_t seed) const;
 
   // The conditioned chart for a hand-sharing team: for every team decision
@@ -187,9 +196,12 @@ class SampledCfrSolver final : public StrategySource {
   // Sigma for one pinned actor at `node` holding `hand` (partner-aware for
   // team seats, frozen-aware for frozen seats), written into out[actions].
   void pinned_sigma(NodeId node, int actor, const Deal& deal, float* out) const;
+  // chance_depth indexes deal.board exactly as traverse does: a postflop tree
+  // has a chance level per remaining street, so the walk must advance it.
   void ev_walk(NodeId id, double weight, const Deal& deal,
-               const std::vector<std::uint32_t>& strengths,
+               const std::vector<std::uint32_t>& strengths, int chance_depth,
                std::vector<double>& pinned_scratch, std::vector<double>& ev) const;
+
 
   const Game& game_;
   const DealGame& deals_;

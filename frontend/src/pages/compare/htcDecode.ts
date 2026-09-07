@@ -15,7 +15,10 @@ const FORMAT_VERSION = 2;
 const EV_NULL = -2147483648; // i32 sentinel
 const AEV_NULL_16 = -32768;
 
-export type SolverTag = "ht" | "pio";
+/** "ht" is htsolver's vectorized core, "sampled" its sampled-deal core on the
+ *  same tree (both write the same summary shape), "pio" is PioSolver. */
+export type SolverTag = "ht" | "pio" | "sampled";
+
 
 export interface HtcNodeMeta {
   id: string;
@@ -41,7 +44,15 @@ export interface HtcSpot {
    */
   effective_stack?: number | null;
   config_hash: string;
+  /**
+   * The TREE's identity, independent of how it was solved (core, budget,
+   * isomorphism). The two htsolver cores' payloads for one spot differ in
+   * config_hash and share this; it is what the page merges on. Absent from
+   * payloads written before it existed.
+   */
+  tree_hash?: string | null;
 }
+
 
 export interface HtcHeader {
   kind: string;
@@ -102,7 +113,8 @@ export const parseHtc = (buf: ArrayBuffer): HtcDoc => {
         `Format 1 held both solvers in one file, before the payload split - re-run the compare.`
     );
   }
-  if (header.solver !== "ht" && header.solver !== "pio") {
+  if (header.solver !== "ht" && header.solver !== "pio" && header.solver !== "sampled") {
+
     throw new Error(`Payload has no known solver tag (got ${String(header.solver)})`);
   }
   return { header, blocksAt: 16 + headerLen, buf };

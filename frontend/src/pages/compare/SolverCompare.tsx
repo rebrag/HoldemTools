@@ -54,6 +54,11 @@ import {
   type DecodedNode,
   type HtcDoc,
 } from "./htcDecode";
+import ConvergencePanel, {
+  targetCrossing,
+  type ConvergenceTrace,
+} from "./ConvergencePanel";
+
 
 /**
  * Hidden verification page (/compare, no nav entry): htsolver's own per-hand
@@ -127,16 +132,29 @@ const describeAnneal = (lambda: string, factor: string, at: string): string => {
   return `lambda ${l} reaches ${l * f} by iteration ${t}, which is effectively GTO.`;
 };
 
-/** htsolver's payload header. Everything here comes from the artifact, so it
- *  exists whether or not Pio ran. */
+/** htsolver's payload header, for EITHER of its cores: the vectorized one
+ *  (tag "ht") and the sampled-deal one (tag "sampled") write the same shape,
+ *  with the timing/memory keys prefixed by core so a job that ran both can
+ *  merge them into one flat dict. Everything here comes from the artifact,
+ *  so it exists whether or not Pio ran. */
 interface HtSummary {
-  solver: "ht";
+  solver: "ht" | "sampled";
   ht: {
     iterations: number;
     nashconv: number;
     exploitable_chips?: number;
     exploitable_pct_pot?: number | null;
     ev: number[];
+    /** Which core solved it (absent on payloads from before the second core). */
+    solver_family?: "vectorized" | "sampled";
+    /** Set when the loop ended before its accuracy target: "time_budget" or
+     *  "cancelled". Absent = ran to the target or to its iteration cap. */
+    stopped_reason?: string | null;
+    /** The exploitable-%-of-pot target this run was chasing. */
+    target_exploitable_pct?: number | null;
+    /** The per-checkpoint trace, when the engine stamped one. */
+    convergence?: ConvergenceTrace | null;
+
     /* QRE solves only. `exploitable_*` above stays the PLAIN measurement,
      * which on a QRE solve plateaus at a lambda-dependent floor by design -
      * the gap is what such a solve converges on and stops against. Both
@@ -154,8 +172,17 @@ interface HtSummary {
     meta_load_s?: number | null;
     dump_load_s?: number | null;
     ht_extract_s?: number | null;
+    // The sampled core's payload carries these instead.
+    hts_solve_s?: number | null;
+    hts_setup_s?: number | null;
+    hts_threads?: number | null;
+    hts_iterations?: number | null;
+    hts_meta_load_s?: number | null;
+    hts_dump_load_s?: number | null;
+    hts_extract_s?: number | null;
   };
-  memory?: { ht_peak_bytes?: number | null };
+  memory?: { ht_peak_bytes?: number | null; hts_peak_bytes?: number | null };
+
   sampled?: boolean;
   runouts?: number | null;
   decision_nodes?: number;
@@ -189,12 +216,28 @@ interface PioSummary {
   detail_nodes?: number;
 }
 
-/** What the page has loaded. Either half may be absent: an engine-only run
- *  has no Pio payload at all, and the htsolver half arrives first. */
+/** What the page has loaded. Any slot may be absent: an engine-only run has
+ *  no Pio payload at all, the sampled core is opt-in, and the htsolver half
+ *  arrives first. */
 interface Loaded {
   ht: HtcDoc | null;
   pio: HtcDoc | null;
+  sampled: HtcDoc | null;
 }
+
+const EMPTY_LOADED: Loaded = { ht: null, pio: null, sampled: null };
+
+/** The spot two payloads are "the same" on. The tree hash is the tree's
+ *  identity independent of how it was solved, which is what lets the two
+ *  htsolver cores (different config_hash: family, budget, isomorphism) sit
+ *  side by side; payloads from before it existed fall back to config_hash. */
+const sameSpot = (a: HtcDoc, b: HtcDoc): boolean => {
+  const ta = a.header.spot.tree_hash;
+  const tb = b.header.spot.tree_hash;
+  if (ta && tb) return ta === tb;
+  return a.header.spot.config_hash === b.header.spot.config_hash;
+};
+
 
 /* ---------- helpers ---------- */
 
@@ -374,7 +417,12 @@ interface CompareJob {
   /** Which payloads exist, so the page knows what to fetch. */
   hasHtResult: boolean;
   hasPioResult: boolean;
+  /** The job also solved the tree on htsolver's sampled core, and whether
+   *  that run's payload exists. */
+  runSampledCore?: boolean;
+  hasSampledResult?: boolean;
   /** A pre-split job whose single merged payload this build cannot read. */
+
   legacyResult: boolean;
   /** Set the moment Stop is pressed; the job stays active until the watcher
    * has stopped the engine and uploaded what it solved. */
@@ -471,14 +519,13 @@ const SolverCompare = () => {
     const htc = parseHtc(buf);
     let switchedSpot = false;
     setLoaded((cur) => {
-      const existing = cur?.ht ?? cur?.pio ?? null;
-      const sameSpot =
-        existing != null &&
-        existing.header.spot.config_hash === htc.header.spot.config_hash;
-      switchedSpot = !sameSpot;
-      const base: Loaded = sameSpot && cur ? cur : { ht: null, pio: null };
+      const existing = cur?.ht ?? cur?.sampled ?? cur?.pio ?? null;
+      const same = existing != null && sameSpot(existing, htc);
+      switchedSpot = !same;
+      const base: Loaded = same && cur ? cur : EMPTY_LOADED;
       return { ...base, [htc.header.solver]: htc };
     });
+
     if (switchedSpot) {
       setNodeIndex(0);
       setSelectedHand(null);
@@ -497,8 +544,9 @@ const SolverCompare = () => {
           const bufs = await Promise.all(list.map((f) => f.arrayBuffer()));
           // Dropping several files at once that disagree on the spot is a
           // mistake worth naming, rather than silently keeping the last one.
-          const hashes = new Set(bufs.map((b) => parseHtc(b).header.spot.config_hash));
-          if (hashes.size > 1) {
+          const docs = bufs.map(parseHtc);
+          if (docs.some((d) => !sameSpot(docs[0], d))) {
+
             throw new Error(
               "Those payloads are from different spots (config_hash differs) - " +
                 "load both halves of one run."
@@ -564,7 +612,25 @@ const SolverCompare = () => {
         };
         setPipeline({ job, marks });
 
+        // The sampled core's payload is the point of a two-core run, so it
+        // lands before Pio's.
+        if (job.hasSampledResult) {
+          const sampledStart = performance.now();
+          const sampledResp = await authedFetch(`/api/enginecompare/${job.id}/result/sampled`);
+          if (!sampledResp.ok) throw new Error(await sampledResp.text());
+          const sampledBuf = await sampledResp.arrayBuffer();
+          if (loadedJobRef.current !== job.id) return;
+          acceptPayload(sampledBuf);
+          const sampledMergeMs = performance.now() - sampledStart;
+          setPipeline((cur) =>
+            cur && cur.job.id === job.id
+              ? { ...cur, marks: { ...cur.marks, sampledMergeMs } }
+              : cur
+          );
+        }
+
         if (job.hasPioResult) {
+
           const pioStart = performance.now();
           const pioResp = await authedFetch(`/api/enginecompare/${job.id}/result/pio`);
           if (!pioResp.ok) throw new Error(await pioResp.text());
@@ -672,15 +738,22 @@ const SolverCompare = () => {
 
   const downloadConfig = useCallback(() => {
     try {
-      const { config } = buildEngineConfig(builder);
-      const blob = new Blob([JSON.stringify(config, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "htsolver_config.json";
-      a.click();
-      URL.revokeObjectURL(url);
+      const { config, sampledConfig } = buildEngineConfig(builder);
+      const save = (name: string, body: object) => {
+        const blob = new Blob([JSON.stringify(body, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+      save("htsolver_config.json", config);
+      // The second core's config is a file of its own: it is what the
+      // watcher runs second, and what a hand run of the comparison needs.
+      if (sampledConfig) save("htsolver_sampled_config.json", sampledConfig);
     } catch (e) {
+
       setError(e instanceof Error ? e.message : String(e));
     }
   }, [builder]);
@@ -688,27 +761,34 @@ const SolverCompare = () => {
   /* ---------- derived from whichever payloads are loaded ---------- */
 
   const htSummary = (loaded?.ht?.header.summary ?? null) as HtSummary | null;
+  const sampledSummary = (loaded?.sampled?.header.summary ?? null) as HtSummary | null;
   const pioSummary = (loaded?.pio?.header.summary ?? null) as PioSummary | null;
+
   // The form is asking for a QRE solve. Pio is not applicable to one, and the
   // accuracy target means the QRE gap rather than plain exploitability.
   const qreSelected = builder.updateRule === "qre";
   // The loaded RESULT was a QRE solve. Not the same question as the one above:
   // the form can have moved on since the run.
   const htIsQre = htSummary?.ht.mode === "qre";
-  const spot = loaded?.ht?.header.spot ?? loaded?.pio?.header.spot ?? null;
+  const spot =
+    loaded?.ht?.header.spot ?? loaded?.sampled?.header.spot ?? loaded?.pio?.header.spot ?? null;
   const cross = pioSummary?.cross_check ?? null;
-  /** Both halves' timing/memory merged: each file carries only its own. */
-  const timing = { ...htSummary?.timing, ...pioSummary?.timing };
-  const memory = { ...htSummary?.memory, ...pioSummary?.memory };
+  /** Every payload's timing/memory merged: each file carries only its own,
+   *  under its own key prefix (ht_, hts_, pio_), so this is collision-free. */
+  const timing = { ...htSummary?.timing, ...sampledSummary?.timing, ...pioSummary?.timing };
+  const memory = { ...htSummary?.memory, ...sampledSummary?.memory, ...pioSummary?.memory };
   /** Pio ran at all vs Pio extracted its per-hand rows - different questions. */
   const hasPio = loaded?.pio != null;
   const hasPioDetail = (loaded?.pio?.header.nodes.length ?? 0) > 0;
+  const hasSampled = loaded?.sampled != null;
+
 
   /** The node directory, from whichever payload is present. Read straight off
    *  the header, so no hand rows are decoded to populate the picker. */
   const nodeDir = useMemo(
     () =>
-      (loaded?.ht ?? loaded?.pio)?.header.nodes.map((n) => ({
+      (loaded?.ht ?? loaded?.sampled ?? loaded?.pio)?.header.nodes.map((n) => ({
+
         id: n.id,
         position: n.position,
         // Carried so the line strip can list a node's options without
@@ -744,6 +824,15 @@ const SolverCompare = () => {
     const at = loaded.pio.header.nodes.findIndex((n) => n.id === id);
     return at >= 0 ? decodeNode(loaded.pio, at) : null;
   }, [loaded, htNode, nodeDir, nodeIndex]);
+  // The sampled core's node, found the same way: same tree, same node ids,
+  // but its own file - and with isomorphism off it may list more of them.
+  const sampledNode = useMemo<CompareNode | null>(() => {
+    const id = htNode?.id ?? nodeDir[nodeIndex]?.id;
+    if (!loaded?.sampled || !id) return null;
+    const at = loaded.sampled.header.nodes.findIndex((n) => n.id === id);
+    return at >= 0 ? decodeNode(loaded.sampled, at) : null;
+  }, [loaded, htNode, nodeDir, nodeIndex]);
+
 
   /** This payload's action formatter. One instance for the whole page: every
    *  grid, panel and line tile has to agree, and the two solvers' columns are
@@ -761,23 +850,29 @@ const SolverCompare = () => {
     () => (pioNode ? buildSolverView(pioNode, displayLabel) : null),
     [pioNode, displayLabel]
   );
+  const sampledView = useMemo(
+    () => (sampledNode ? buildSolverView(sampledNode, displayLabel) : null),
+    [sampledNode, displayLabel]
+  );
   const board = useMemo(() => (spot ? parseBoardCards(spot.board) : []), [spot]);
 
   /** Shared across whichever grids are shown, so EV heat stays comparable. */
   const evRange = useMemo<ValueRange | null>(() => {
-    const present = [htView, pioView].filter(Boolean) as SolverView[];
+    const present = [htView, sampledView, pioView].filter(Boolean) as SolverView[];
     const min = Math.min(...present.map((v) => v.evMin));
     const max = Math.max(...present.map((v) => v.evMax));
     return present.length > 0 && min <= max ? { min, max } : null;
-  }, [htView, pioView]);
+  }, [htView, sampledView, pioView]);
 
   const displayData = useMemo(() => {
-    if (displayMode !== "ev") return { ht: null, pio: null };
+    if (displayMode !== "ev") return { ht: null, sampled: null, pio: null };
     return {
       ht: htView ? buildEvDisplay(htView.comboDetail, board, evRange) : null,
+      sampled: sampledView ? buildEvDisplay(sampledView.comboDetail, board, evRange) : null,
       pio: pioView ? buildEvDisplay(pioView.comboDetail, board, evRange) : null,
     };
-  }, [htView, pioView, displayMode, board, evRange]);
+  }, [htView, sampledView, pioView, displayMode, board, evRange]);
+
 
   const breakdownHand = hoverHand ?? selectedHand;
 
@@ -910,6 +1005,112 @@ const SolverCompare = () => {
   const speedup = ratioOf(timing.ht_solve_s, timing.pio_solve_s);
   const memRatio = ratioOf(memory.ht_peak_bytes, memory.pio_peak_bytes);
 
+  /* The two-core race. A ratio is quoted ONLY when both cores reached the
+   * shared target - a core that hit its iteration cap or its time budget is
+   * reported as exactly that, never folded into a number that would read as
+   * "x times slower". Measured on solver time (inside the loop), since the
+   * check cadence is a harness setting. */
+  const targetPct =
+    htSummary?.ht.target_exploitable_pct ?? sampledSummary?.ht.target_exploitable_pct ?? null;
+  const targetChips = spot && targetPct != null && targetPct > 0 ? (targetPct / 100) * spot.pot : 0;
+  const htCrossed = targetCrossing(htSummary?.ht.convergence, targetChips);
+  const sampledCrossed = targetCrossing(sampledSummary?.ht.convergence, targetChips);
+  const coreRace =
+    hasSampled && htCrossed && sampledCrossed && sampledCrossed.solve_s > 0
+      ? htCrossed.solve_s / sampledCrossed.solve_s
+      : null;
+  const sampledStopped = sampledSummary?.ht.stopped_reason;
+
+  /* The cost table's columns: one per loaded solver, vectorized htsolver
+   * first as the reference every ratio is against. */
+  interface CostCell {
+    value: string | null;
+    note: string;
+    ratio: number | null;
+  }
+  interface CostColumn {
+    key: string;
+    name: string;
+    color: string;
+    time: CostCell;
+    memory: CostCell;
+  }
+  const costColumns: CostColumn[] = [];
+  if (spot && (timing?.ht_solve_s != null || memory?.ht_peak_bytes != null)) {
+    costColumns.push({
+      key: "ht",
+      name: "htsolver",
+      color: "text-emerald-400",
+      time: {
+        value: timing?.ht_solve_s == null ? null : secs(timing.ht_solve_s),
+        note: [
+          `${timing?.ht_iterations ?? htSummary?.ht.iterations ?? "?"} iters`,
+          timing?.ht_threads ? `${timing.ht_threads} threads` : null,
+          // Sub-10ms setup would just read "setup 0.00s".
+          timing?.ht_setup_s != null && timing.ht_setup_s >= 0.01
+            ? `setup ${secs(timing.ht_setup_s)}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        ratio: null,
+      },
+      memory: {
+        value: memory?.ht_peak_bytes == null ? null : megabytes(memory.ht_peak_bytes),
+        note: "whole process, peak working set",
+        ratio: null,
+      },
+    });
+    if (hasSampled) {
+      costColumns.push({
+        key: "sampled",
+        name: "sampled core",
+        color: "text-fuchsia-400",
+        time: {
+          value: timing?.hts_solve_s == null ? null : secs(timing.hts_solve_s),
+          note: [
+            `${timing?.hts_iterations ?? sampledSummary?.ht.iterations ?? "?"} iters`,
+            sampledCrossed ? "reached the target" : "did not reach the target",
+          ].join(" · "),
+          // Time-to-target, not run length: a core that stopped short is
+          // not "faster", so no badge until both crossed the line.
+          ratio: coreRace == null ? null : 1 / coreRace,
+        },
+        memory: {
+          value: memory?.hts_peak_bytes == null ? null : megabytes(memory.hts_peak_bytes),
+          note: "whole process, peak working set",
+          ratio: ratioOf(memory.ht_peak_bytes, memory.hts_peak_bytes),
+        },
+      });
+    }
+    if (hasPio) {
+      costColumns.push({
+        key: "pio",
+        name: "PioSolver",
+        color: "text-sky-400",
+        time: {
+          value: timing?.pio_solve_s == null ? null : secs(timing.pio_solve_s),
+          note:
+            timing?.pio_solve_s == null
+              ? "loaded from a pre-solved .cfr"
+              : timing.pio_setup_s != null
+                ? `tree build ${secs(timing.pio_setup_s)}`
+                : "",
+          ratio: speedup,
+        },
+        memory: {
+          value: memory?.pio_peak_bytes == null ? null : megabytes(memory.pio_peak_bytes),
+          note:
+            memory?.pio_baseline_bytes != null
+              ? `${megabytes(memory.pio_baseline_bytes)} of that is idle baseline`
+              : "whole process, peak working set",
+          ratio: memRatio,
+        },
+      });
+    }
+  }
+
+
   /* Everything the collapsed metrics line says, as chips. Same values the
    * expanded panels use - this is a projection of them, never a second
    * derivation. */
@@ -940,6 +1141,39 @@ const SolverCompare = () => {
         tone: speedup >= 1 ? "good" : "bad",
       });
     }
+    if (hasSampled && timing?.hts_solve_s != null) {
+      metricChips.push({
+        key: "sampled",
+        label: `sampled core ${secs(timing.hts_solve_s)}${
+          memory?.hts_peak_bytes != null ? ` Â· ${megabytes(memory.hts_peak_bytes)}` : ""
+        }`,
+      });
+    }
+    if (hasSampled) {
+      metricChips.push(
+        coreRace != null
+          ? {
+              key: "corerace",
+              label: `sampled core ${(coreRace >= 1 ? coreRace : 1 / coreRace).toFixed(1)}x ${
+                coreRace >= 1 ? "faster" : "slower"
+              } to ${targetPct}%`,
+              tone: coreRace >= 1 ? "good" : "bad",
+            }
+          : {
+              key: "corerace",
+              label: sampledCrossed
+                ? "sampled core reached the target Â· vectorized did not"
+                : `sampled core: ${
+                    sampledStopped === "time_budget"
+                      ? "time budget"
+                      : sampledStopped === "cancelled"
+                        ? "stopped"
+                        : "cap reached"
+                  } before the target`,
+            }
+      );
+    }
+
     if (htSummary) {
       metricChips.push({
         key: "nashconv",
@@ -1025,6 +1259,10 @@ const SolverCompare = () => {
   const loadedSolvers = (
     [
       [htIsQre ? "htsolver (QRE)" : "htsolver", htView, displayData.ht, "text-emerald-400"],
+      // The second core solved the SAME tree; its grid beside the first is
+      // the by-eye check on the same solution reached a different way.
+      ["htsolver (sampled core)", sampledView, displayData.sampled, "text-fuchsia-400"],
+
       // Naming the Pio column for what it is on a QRE run. Pio always solves
       // for Nash, so beside a QRE strategy it is a GTO reference rather than a
       // second opinion on the same question - and the grids differing is the
@@ -1046,17 +1284,23 @@ const SolverCompare = () => {
           Solver comparison
         </h1>
         <span className="text-[11px] text-slate-500">
-          {hasPio ? (
+          <span className="font-medium text-emerald-400">htsolver</span>
+          {hasSampled && (
             <>
-              <span className="font-medium text-emerald-400">htsolver</span> vs{" "}
-              <span className="font-medium text-sky-400">PioSolver</span>
-            </>
-          ) : (
-            <>
-              <span className="font-medium text-emerald-400">htsolver</span> only
+              {" "}
+              vs <span className="font-medium text-fuchsia-400">sampled core</span>
             </>
           )}
+          {hasPio ? (
+            <>
+              {" "}
+              vs <span className="font-medium text-sky-400">PioSolver</span>
+            </>
+          ) : hasSampled ? null : (
+            " only"
+          )}
         </span>
+
 
         {spot && (
           <>
@@ -1304,97 +1548,55 @@ const SolverCompare = () => {
       {spot && metricsOpen && (
         <div className="max-h-[45vh] shrink-0 overflow-y-auto">
           {/* What the tree COST each solver: the headline when the point is
-              comparing the two on one tree at one accuracy target. */}
-          {(timing?.ht_solve_s != null || memory?.ht_peak_bytes != null) && (
+              comparing them on one tree at one accuracy target. One column
+              per loaded solver; every ratio is against vectorized htsolver. */}
+          {costColumns.length > 0 && (
             <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3">
-              <div className="grid gap-x-6 gap-y-2 sm:grid-cols-[auto_1fr_1fr_auto]">
+              <div
+                className="grid gap-x-6 gap-y-2"
+                style={{ gridTemplateColumns: `auto repeat(${costColumns.length}, minmax(0, 1fr))` }}
+              >
                 {(
                   [
-                    {
-                      key: "time",
-                      label: "Solve time",
-                      ht: timing?.ht_solve_s == null ? null : secs(timing.ht_solve_s),
-                      pio: timing?.pio_solve_s == null ? null : secs(timing.pio_solve_s),
-                      htNote: [
-                        `${timing?.ht_iterations ?? htSummary?.ht.iterations ?? "?"} iters`,
-                        timing?.ht_threads ? `${timing.ht_threads} threads` : null,
-                        // Sub-10ms setup would just read "setup 0.00s".
-                        timing?.ht_setup_s != null && timing.ht_setup_s >= 0.01
-                          ? `setup ${secs(timing.ht_setup_s)}`
-                          : null,
-                      ]
-                        .filter(Boolean)
-                        .join(" · "),
-                      pioNote: !hasPio
-                        ? "not run"
-                        : timing?.pio_solve_s == null
-                          ? "loaded from a pre-solved .cfr"
-                          : timing.pio_setup_s != null
-                            ? `tree build ${secs(timing.pio_setup_s)}`
-                            : "",
-                      ratio: speedup,
-                      win: "faster",
-                      lose: "slower",
-                    },
-                    {
-                      key: "memory",
-                      label: "Peak memory",
-                      ht: memory?.ht_peak_bytes == null ? null : megabytes(memory.ht_peak_bytes),
-                      pio: memory?.pio_peak_bytes == null ? null : megabytes(memory.pio_peak_bytes),
-                      htNote: "whole process, peak working set",
-                      pioNote:
-                        memory?.pio_baseline_bytes != null
-                          ? `${megabytes(memory.pio_baseline_bytes)} of that is idle baseline`
-                          : "whole process, peak working set",
-                      ratio: memRatio,
-                      win: "leaner",
-                      lose: "heavier",
-                    },
+                    { key: "time", label: "Solve time", win: "faster", lose: "slower" },
+                    { key: "memory", label: "Peak memory", win: "leaner", lose: "heavier" },
                   ] as const
                 ).map((row) => (
                   <div key={row.key} className="contents">
                     <div className="self-center text-[11px] font-medium uppercase tracking-wide text-slate-500">
                       {row.label}
                     </div>
-                    <div>
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-xl font-semibold tabular-nums leading-none tracking-tight text-emerald-400">
-                          {row.ht ?? "n/a"}
-                        </span>
-                        <span className="text-xs text-slate-400">htsolver</span>
-                      </div>
-                      <div className="mt-0.5 text-[11px] text-slate-500">{row.htNote}</div>
-                    </div>
-                    <div>
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-xl font-semibold tabular-nums leading-none tracking-tight text-sky-400">
-                          {row.pio ?? "n/a"}
-                        </span>
-                        <span className="text-xs text-slate-400">PioSolver</span>
-                      </div>
-                      <div className="mt-0.5 text-[11px] text-slate-500">{row.pioNote}</div>
-                    </div>
-                    <div className="self-center">
-                      {row.ratio != null && (
-                        <span
-                          className={`inline-block rounded-lg px-2.5 py-1 text-center ${
-                            row.ratio >= 1
-                              ? "bg-emerald-500/10 text-emerald-300"
-                              : "bg-amber-500/10 text-amber-300"
-                          }`}
-                        >
-                          <span className="block text-base font-semibold tabular-nums leading-none tracking-tight">
-                            {(row.ratio >= 1 ? row.ratio : 1 / row.ratio) >= 10
-                              ? (row.ratio >= 1 ? row.ratio : 1 / row.ratio).toFixed(0)
-                              : (row.ratio >= 1 ? row.ratio : 1 / row.ratio).toFixed(1)}
-                            x
-                          </span>
-                          <span className="mt-0.5 block text-[10px] opacity-80">
-                            htsolver {row.ratio >= 1 ? row.win : row.lose}
-                          </span>
-                        </span>
-                      )}
-                    </div>
+                    {costColumns.map((col) => {
+                      const cell = col[row.key];
+                      const ratio = cell.ratio;
+                      const mag = ratio == null ? null : ratio >= 1 ? ratio : 1 / ratio;
+                      return (
+                        <div key={col.key} className="min-w-0">
+                          <div className="flex flex-wrap items-baseline gap-2">
+                            <span
+                              className={`text-xl font-semibold tabular-nums leading-none tracking-tight ${col.color}`}
+                            >
+                              {cell.value ?? "n/a"}
+                            </span>
+                            <span className="text-xs text-slate-400">{col.name}</span>
+                            {ratio != null && mag != null && (
+                              <span
+                                className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${
+                                  ratio >= 1
+                                    ? "bg-emerald-500/10 text-emerald-300"
+                                    : "bg-amber-500/10 text-amber-300"
+                                }`}
+                                title={`vectorized htsolver is ${ratio >= 1 ? row.win : row.lose} than ${col.name}`}
+                              >
+                                htsolver {mag.toFixed(mag >= 10 ? 0 : 1)}x{" "}
+                                {ratio >= 1 ? row.win : row.lose}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-0.5 text-[11px] text-slate-500">{cell.note}</div>
+                        </div>
+                      );
+                    })}
                   </div>
                 ))}
               </div>
@@ -1403,8 +1605,14 @@ const SolverCompare = () => {
                 {timing?.accuracy_chips != null
                   ? ` (${timing.accuracy_chips} chips exploitable per player)`
                   : ""}
-                . Time excludes tree building on both sides; memory is the peak working
+                . Time excludes tree building on every side; memory is the peak working
                 set of each solver process, which does include it.
+                {hasSampled && (
+                  <span className="mt-1 block">
+                    The sampled core&apos;s time is a race result only if it reached the
+                    target - the convergence panel below says whether it did.
+                  </span>
+                )}
                 {htIsQre && (
                   <span className="mt-1 block text-amber-500/80">
                     On a QRE run these solve times are not like for like: that one number
@@ -1418,6 +1626,33 @@ const SolverCompare = () => {
             </div>
           )}
 
+          {hasSampled && (
+            <ConvergencePanel
+              series={[
+                {
+                  key: "ht",
+                  name: htIsQre ? "htsolver (QRE)" : "htsolver",
+                  color: "#34d399",
+                  textClass: "text-emerald-400",
+                  trace: htSummary?.ht.convergence,
+                  stoppedReason: htSummary?.ht.stopped_reason,
+                  iterations: htSummary?.ht.iterations,
+                },
+                {
+                  key: "sampled",
+                  name: "sampled core",
+                  color: "#e879f9",
+                  textClass: "text-fuchsia-400",
+                  trace: sampledSummary?.ht.convergence,
+                  stoppedReason: sampledSummary?.ht.stopped_reason,
+                  iterations: sampledSummary?.ht.iterations,
+                },
+              ]}
+              pot={spot.pot}
+              targetPct={targetPct}
+            />
+          )}
+
           {pipeline && pipeline.job.mode === "compare" && (
             <PipelineTimingPanel job={pipeline.job} marks={pipeline.marks} />
           )}
@@ -1429,6 +1664,12 @@ const SolverCompare = () => {
                 <span className="font-medium text-emerald-400">htsolver</span>{" "}
                 {chips(htSummary?.ht.ev[0])} / {chips(htSummary?.ht.ev[1])}
               </div>
+              {hasSampled && (
+                <div>
+                  <span className="font-medium text-fuchsia-400">sampled</span>{" "}
+                  {chips(sampledSummary?.ht.ev[0])} / {chips(sampledSummary?.ht.ev[1])}
+                </div>
+              )}
               {hasPio && (
                 <div>
                   <span className="font-medium text-sky-400">Pio</span>{" "}
@@ -1454,6 +1695,17 @@ const SolverCompare = () => {
                   </>
                 )}
               </div>
+              {hasSampled && (
+                <div>
+                  <span className="font-medium text-fuchsia-400">sampled</span>{" "}
+                  {chips(
+                    sampledSummary
+                      ? sampledSummary.ht.exploitable_chips ?? sampledSummary.ht.nashconv / 2
+                      : null
+                  )}{" "}
+                  <span className="text-slate-500">self</span>
+                </div>
+              )}
               {hasPio && (
                 <div>
                   <span className="font-medium text-sky-400">Pio</span>{" "}
@@ -1468,13 +1720,19 @@ const SolverCompare = () => {
                 {htSummary?.ht.iterations ?? "?"} iters · NashConv{" "}
                 {htSummary ? htSummary.ht.nashconv.toFixed(3) : "?"}
               </div>
+              {hasSampled && (
+                <div className="text-fuchsia-300/80">
+                  sampled {sampledSummary?.ht.iterations ?? "?"} iters · NashConv{" "}
+                  {sampledSummary ? sampledSummary.ht.nashconv.toFixed(3) : "?"}
+                </div>
+              )}
             </div>
             <div className="rounded-lg bg-slate-800/60 p-2.5">
               <div className="text-slate-500">Run mode</div>
               <div className="mt-0.5">
                 {!hasPio ? (
                   <span title="PioSolver was not run: htsolver's own per-hand results only. This is the fast iteration loop.">
-                    htsolver only
+                    {hasSampled ? "both htsolver cores" : "htsolver only"}
                   </span>
                 ) : hasPioDetail ? (
                   <span title="Both solvers' per-hand results are loaded and shown side by side.">
@@ -1549,7 +1807,8 @@ const SolverCompare = () => {
                 onExit={() => {}}
                 showExit={false}
                 actorSeat={nodeDir[nodeIndex]?.position}
-                actions={(htView?.labels ?? pioView?.labels ?? []).map((display) => ({
+                actions={(htView?.labels ?? sampledView?.labels ?? pioView?.labels ?? []).map((display) => ({
+
                   display,
                 }))}
                 onActionClick={onActionClick}
@@ -1636,7 +1895,8 @@ const SolverCompare = () => {
             </button>
             <span className="text-slate-600">
               Cell heights use each solver's own reach at this node
-              {hasPioDetail ? "; EV heat shares one colour scale across both" : ""}. Click
+              {loadedSolvers.length > 1 ? "; EV heat shares one colour scale across the grids" : ""}. Click
+
               an action panel or a line card to walk the tree; hover or click a hand class
               for its combos.
             </span>
@@ -2026,8 +2286,69 @@ const SolverCompare = () => {
                   </span>
                 </div>
               </fieldset>
+
+              {/* htsolver's OTHER core on the same tree: a race to the accuracy
+                  target above, run after the vectorized solve. */}
+              <fieldset>
+                <legend className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                  Sampled core comparison
+                </legend>
+                <div className="mt-1.5 flex flex-col gap-1.5">
+                  <Check
+                    label="Run sampled core"
+                    checked={builder.runSampledCore && !qreSelected}
+                    disabled={solving || qreSelected}
+                    onChange={(v) => setB("runSampledCore", v)}
+                    title={
+                      qreSelected
+                        ? "Not available for a QRE solve: the engine has not ported QRE to the sampled core and refuses the pair."
+                        : "Solve the identical tree a second time on htsolver's sampled-deal core (one dealt runout per iteration instead of every runout) and compare how fast each core reaches the accuracy target above. Runs after the vectorized solve, never beside it, so the timings stay clean."
+                    }
+                  />
+                  {builder.runSampledCore && !qreSelected && (
+                    <div className="ml-4 flex flex-col gap-1.5">
+                      {(
+                        [
+                          ["sampledMaxIterations", "max iterations", "w-24",
+                           "Stop-loss for the sampled run, in its own iterations - each walks one dealt runout, so they are far cheaper than vectorized ones."],
+                          ["sampledCheckEvery", "check every", "w-20",
+                           "Iterations between exploitability measurements. Each is a full vectorized best-response pass, so keep it rare relative to a sampled iteration."],
+                          ["sampledBatch", "batch", "w-16",
+                           "Iterations per frozen-regret batch. Large, because the per-batch discount and lane fold sweep the whole store."],
+                          ["sampledLanes", "lanes", "w-12",
+                           "Each lane holds a full copy of solver storage: the engine default of 16 blows the memory limit on a turn tree. Few lanes, big batches."],
+                          ["sampledSeed", "seed", "w-24",
+                           "The deal stream. Same seed, same deals, bitwise the same result at any thread count."],
+                        ] as const
+                      ).map(([field, label, width, hint]) => (
+                        <label
+                          key={field}
+                          className="flex items-center gap-2 text-[11px] text-slate-300"
+                          title={hint}
+                        >
+                          <span className="w-24 text-[10px] text-slate-400">{label}</span>
+                          <input
+                            className={`${inputCls} ${width} tabular-nums`}
+                            value={builder[field]}
+                            disabled={solving}
+                            onChange={(e) => setB(field, e.target.value)}
+                            aria-label={`Sampled core ${label}`}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  <span className="max-w-[16rem] text-[10px] leading-relaxed text-slate-500">
+                    Same tree, same accuracy target. That core has no suit isomorphism and
+                    discounts linearly (the update rule above does not apply to it). A dealt
+                    hand outside a seat&apos;s range contributes nothing, so tight ranges waste
+                    deals; memory scales with lanes, so keep them few on flop trees.
+                  </span>
+                </div>
+              </fieldset>
             </div>
             </div>
+
 
             {/* The tree library: built-in benchmark spots and the user's own
                 saved trees, one click each. Replaces the write-only

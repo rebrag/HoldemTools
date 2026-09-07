@@ -12,9 +12,22 @@ export interface JobTimings {
   engine_solve_s?: number | null;
   compare_total_s?: number | null;
   upload_s?: number | null;
+  // The sampled core's second run, when the job asked for one: the watcher's
+  // perf_counter around the engine and around the second harness pass, and
+  // that payload's own (hts_-prefixed) numbers.
+  sampled_solve_s?: number | null;
+  sampled_compare_s?: number | null;
+  hts_solve_s?: number | null;
+  hts_setup_s?: number | null;
+  hts_threads?: number | null;
+  hts_iterations?: number | null;
+  hts_meta_load_s?: number | null;
+  hts_dump_load_s?: number | null;
+  hts_extract_s?: number | null;
   // Harness phases, harvested from each payload's header.
   ht_extract_s?: number | null;
   pio_extract_s?: number | null;
+
   // Engine self-report, harvested from the artifact meta.
   ht_solve_s?: number | null;
   ht_setup_s?: number | null;
@@ -40,6 +53,9 @@ export interface ClientMarks {
   /** Fetch + merge of PioSolver's payload, which arrives after the page has
    *  already rendered htsolver's. Absent on engine-only runs. */
   pioMergeMs?: number;
+  /** Same for the sampled core's payload. */
+  sampledMergeMs?: number;
+
   totalMs?: number;
 }
 
@@ -137,6 +153,23 @@ const PipelineTimingPanel = ({ job, marks }: PipelineRun) => {
     .filter(Boolean)
     .join(" · ");
   push("engine", "Engine solve", num(t.engine_solve_s), "engine", engineNote || undefined);
+  // The second core runs strictly after the first, so it is its own row
+  // rather than a share of the one above.
+  const sampledNote = [
+    num(t.hts_setup_s) != null ? `setup ${secs(t.hts_setup_s as number)}` : null,
+    num(t.hts_solve_s) != null ? `solve ${secs(t.hts_solve_s as number)}` : null,
+    num(t.hts_iterations) != null ? `${t.hts_iterations} iters` : null,
+  ]
+    .filter(Boolean)
+    .join(" Â· ");
+  push(
+    "sampled",
+    "Sampled core solve",
+    num(t.sampled_solve_s),
+    "engine",
+    sampledNote || "htsolver's sampled-deal core, same tree"
+  );
+
 
   const engineDump =
     num(t.meta_load_s) != null || num(t.dump_load_s) != null
@@ -150,7 +183,20 @@ const PipelineTimingPanel = ({ job, marks }: PipelineRun) => {
     "engine",
     "per-hand strategy and EV read out of the engine dump, then packed"
   );
+  const sampledDump =
+    num(t.hts_meta_load_s) != null || num(t.hts_dump_load_s) != null
+      ? (num(t.hts_meta_load_s) ?? 0) + (num(t.hts_dump_load_s) ?? 0)
+      : null;
+  push("sampleddump", "Sampled dump", sampledDump, "engine", "dump-json export + parse");
+  push(
+    "sampledrows",
+    "Sampled rows",
+    num(t.hts_extract_s),
+    "engine",
+    "the sampled core's per-hand rows, read out and packed"
+  );
   push("spawn", "Pio spawn", num(t.pio_spawn_s), "pio", "PioSolver process start");
+
   push("build", "Pio tree build", num(t.pio_setup_s), "pio", "set_range + add_line + build_tree");
   push("piosolve", "Pio solve", num(t.pio_solve_s), "pio");
   push("piorows", "Pio rows", num(t.pio_extract_s), "pio", "per-node, per-hand UPI queries");
@@ -162,11 +208,19 @@ const PipelineTimingPanel = ({ job, marks }: PipelineRun) => {
     "action map + engine strategy uploaded to Pio + calc_results"
   );
 
-  const compareTotal = num(t.compare_total_s);
+  // Both harness invocations count: the second one only exists on a
+  // two-core run, and its phases are the sampled rows above.
+  const compareTotal =
+    num(t.compare_total_s) == null && num(t.sampled_compare_s) == null
+      ? null
+      : (num(t.compare_total_s) ?? 0) + (num(t.sampled_compare_s) ?? 0);
   if (compareTotal != null) {
     const childSum = [
       engineDump,
       num(t.ht_extract_s),
+      sampledDump,
+      num(t.hts_extract_s),
+
       num(t.pio_spawn_s),
       num(t.pio_setup_s),
       num(t.pio_solve_s),
@@ -195,7 +249,11 @@ const PipelineTimingPanel = ({ job, marks }: PipelineRun) => {
 
   const watcherSpan = spanSecs(job.claimedAtUtc, job.completedAtUtc);
   const watcherAttrib =
-    (num(t.engine_solve_s) ?? 0) + (compareTotal ?? 0) + (num(t.upload_s) ?? 0);
+    (num(t.engine_solve_s) ?? 0) +
+    (num(t.sampled_solve_s) ?? 0) +
+    (compareTotal ?? 0) +
+    (num(t.upload_s) ?? 0);
+
   if (watcherSpan != null && watcherAttrib > 0) {
     push(
       "watcher",
@@ -229,9 +287,17 @@ const PipelineTimingPanel = ({ job, marks }: PipelineRun) => {
       true
     );
   }
-  // After the total: this lands once htsolver's half is already on screen, so
-  // it is not part of the click-to-results measurement above.
+  // After the total: these land once htsolver's half is already on screen,
+  // so they are not part of the click-to-results measurement above.
   push(
+    "sampledmerge",
+    "Sampled core detail (after render)",
+    ms(marks.sampledMergeMs),
+    "client",
+    "the sampled core's payload fetched and merged once the vectorized result was already showing"
+  );
+  push(
+
     "piomerge",
     "Pio detail (after render)",
     ms(marks.pioMergeMs),

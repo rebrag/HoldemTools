@@ -34,6 +34,10 @@ class RiverEvaluator {
 
   bool valid(int combo) const { return valid_[combo] != 0; }
   std::uint32_t strength(int combo) const { return strength_[combo]; }
+  // Every compact hand's strength on this board, 0 where the hand is blocked
+  // by a board card. The sampled core copies it once per dealt runout.
+  const std::vector<std::uint32_t>& strengths() const { return strength_; }
+
 
   // Counterfactual showdown values for the hero against one opponent range:
   // out[h] = sum over compatible opponent combos o of
