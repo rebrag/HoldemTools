@@ -127,6 +127,8 @@ namespace PokerRangeAPI2.Data
                 entity.Property(e => e.ResultBlobPath).HasMaxLength(512);
                 entity.Property(e => e.HtResultBlobPath).HasMaxLength(512);
                 entity.Property(e => e.PioResultBlobPath).HasMaxLength(512);
+                entity.Property(e => e.SampledResultBlobPath).HasMaxLength(512);
+
                 // The engine caps solve.id at 64 chars; a solve key is a
                 // 64-hex SHA-256. Both are looked up when a lineage's newer
                 // result supersedes its older ones.

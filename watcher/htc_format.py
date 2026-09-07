@@ -62,7 +62,10 @@ from typing import Any, Dict, List, Optional, Sequence
 MAGIC = b"HTCMP01\0"
 FORMAT_VERSION = 2
 KIND = "htsolver_compare_binary"
-SOLVERS = ("ht", "pio")
+# "sampled" is htsolver's second core (algorithm.family "sampled") solving the
+# same tree, so /compare can race the two cores to one accuracy target.
+SOLVERS = ("ht", "pio", "sampled")
+
 
 # Fixed-point scales, shipped in the payload rather than hardcoded in readers
 # (the same convention as the schema-4 bundles' COMBO_SCALE).

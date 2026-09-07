@@ -108,7 +108,33 @@ def test_sampled_jobs_opt_in() -> None:
           "a job that names its own checkpoint file is not also given the directory")
 
 
+def test_compare_second_core_is_never_resumed() -> None:
+    print("run_engine: a compare job's sampled-core run starts from zero")
+    # The sampled config /compare queues beside its vectorized one. The engine
+    # would happily checkpoint it (sampled family), and prepare_engine_config
+    # would opt it in under ENGINE_CHECKPOINT_DIR - but a convergence-speed
+    # run resumed from last time's checkpoint "converges" instantly, so the
+    # call site passes an empty directory for that run and nothing else.
+    cfg = copy.deepcopy(HU_POSTFLOP)
+    cfg["algorithm"] = {"family": "sampled", "sampled": {"seed": 1, "batch": 4096, "lanes": 4}}
+    cfg["isomorphism"] = False
+    prepare_engine_config(cfg, RUN_DIR, checkpoint_dir="")
+    check("checkpoint_dir" not in cfg["output"] and "checkpoint_path" not in cfg["output"],
+          "an empty checkpoint directory leaves the sampled postflop run un-checkpointed")
+    check(cfg["budget"]["stop_file"] == os.path.join(RUN_DIR, "STOP").replace("\\", "/"),
+          "it still gets a stop file, so Stop reaches the second run too")
+    check(solver_family(cfg) == "sampled", "and it is the sampled core")
+    # The same config under the default policy WOULD be checkpointed, which
+    # is exactly why the compare path must not use the default.
+    cfg = copy.deepcopy(HU_POSTFLOP)
+    cfg["algorithm"] = {"family": "sampled"}
+    prepare_engine_config(cfg, RUN_DIR, checkpoint_dir=CKPT)
+    check(cfg["output"].get("checkpoint_dir") == CKPT,
+          "under the default policy the same config is checkpointed")
+
+
 def test_paths_and_budget() -> None:
+
     print("prepare_engine_config: artifact, budget, stop file")
     cfg = copy.deepcopy(HU_POSTFLOP)
     artifact = prepare_engine_config(cfg, RUN_DIR, checkpoint_dir=CKPT)
@@ -143,6 +169,8 @@ if __name__ == "__main__":
     test_solver_family()
     test_vectorized_jobs_are_never_checkpointed()
     test_sampled_jobs_opt_in()
+    test_compare_second_core_is_never_resumed()
+
     test_paths_and_budget()
     print("\n" + ("FAILED" if failures else "all engine config tests passed"))
     sys.exit(1 if failures else 0)

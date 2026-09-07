@@ -52,8 +52,10 @@ expected rather than discrepancies, and are labelled as such.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+
 import os
 import subprocess
 import sys
@@ -65,6 +67,26 @@ from htc_format import HtcWriter  # noqa: E402
 
 DEFAULT_PIO_DIR = os.environ.get("PIO_DIR", r"C:\PioSOLVER")
 DEFAULT_PIO_EXE = os.environ.get("PIO_EXE", "PioSOLVER2-edge.exe")
+
+# The htsolver payload's timing/memory keys carry the solver tag as a prefix,
+# so a job that solved the same tree on BOTH cores can merge every payload's
+# `summary.timing` into one flat dict (the watcher does exactly that) with
+# no collisions. The vectorized core keeps the historical `ht_` keys.
+TIMING_PREFIX = {"ht": "ht_", "sampled": "hts_"}
+
+# The keys of an engine config that define the TREE, as opposed to how it was
+# solved. Two artifacts sharing this hash are the same spot solved differently
+# (another core, another budget, isomorphism on or off), which is what
+# /compare merges side by side; config_hash differs between them.
+TREE_KEYS = ("game", "board", "pot", "chip_scale", "players", "bet_sizing",
+             "preflop_aggressor")
+
+
+def tree_hash(config: dict) -> str:
+    tree = {k: config[k] for k in TREE_KEYS if k in config}
+    canonical = json.dumps(tree, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf8")).hexdigest()[:16]
+
 
 
 def _memory_counters(pid: int):
@@ -591,7 +613,12 @@ def main() -> int:
     parser.add_argument("--runouts", type=int, default=3,
                         help="sampled mode: cards followed per chance node (evenly spaced, "
                              "deterministic)")
+    parser.add_argument("--solver", choices=sorted(TIMING_PREFIX), default="ht",
+                        help="the tag the --ht-out payload is written under: 'ht' for the "
+                             "vectorized core (default), 'sampled' for an artifact solved on "
+                             "the sampled core, whose timing keys are then prefixed hts_")
     args = parser.parse_args()
+
 
     pio_enabled = bool(args.solve_pio or args.cfr)
     if not args.artifact and not args.dump:
@@ -683,20 +710,29 @@ def main() -> int:
         # the wrong shade too.
         "effective_stack": meta.get("effective_stack"),
         "config_hash": meta["config_hash"],
+        # The spot's identity independent of how it was solved, so the two
+        # cores' payloads (different config_hash) merge on /compare. Absent
+        # when the artifact predates the embedded config.
+        "tree_hash": tree_hash(meta["config"]) if isinstance(meta.get("config"), dict) else None,
     }
+
     exploit_threshold = max(pot * args.exploit_threshold_frac, 1e-4)
 
     # --- htsolver's own payload: no Pio involved. ------------------------
     if args.ht_out:
         phase_start = time.perf_counter()
-        ht_writer = HtcWriter("ht")
+        ht_writer = HtcWriter(args.solver)
         ht_nodes = extract_ht_nodes(dump, colon_ids, ht_writer)
         harness_timing["ht_extract_s"] = time.perf_counter() - phase_start
         if ht_nodes == 0:
             print("FAIL: the engine dump has no decision nodes with reachable hands")
             return 1
+        p = TIMING_PREFIX[args.solver]
+        budget = (meta.get("config") or {}).get("budget") or {}
         size = ht_writer.write(args.ht_out, spot_block, {
-            "solver": "ht",
+            "solver": args.solver,
+            # Keyed "ht" for both cores: this is htsolver's own summary either
+            # way, and /compare reads one shape for both payloads.
             "ht": {
                 "iterations": meta["iterations"],
                 "nashconv": meta["final_nashconv"],
@@ -704,6 +740,14 @@ def main() -> int:
                                               meta["final_nashconv"] / 2.0),
                 "exploitable_pct_pot": meta.get("final_exploitable_pct_pot"),
                 "ev": meta["ev_chips"],
+                # Which core solved it, whether it ended early and why, the
+                # target it was chasing, and the per-checkpoint trace - what
+                # a convergence-speed comparison between the cores is made of.
+                "solver_family": meta.get("solver_family", "vectorized"),
+                "stopped_reason": meta.get("stopped_reason"),
+                "target_exploitable_pct": budget.get("target_exploitable_pct"),
+                "convergence": meta.get("convergence"),
+
                 # QRE solves only (null on a Nash solve). `exploitable_*` above
                 # stays the PLAIN measurement, which on a QRE solve plateaus at
                 # a lambda-dependent floor by design; the gap is what such a
@@ -716,20 +760,24 @@ def main() -> int:
                 "qre_gap_pct_pot": meta.get("final_qre_gap_pct_pot"),
             },
             "timing": {
-                "ht_solve_s": meta.get("wall_time_s"),
-                "ht_setup_s": meta.get("setup_time_s"),
-                "ht_threads": meta.get("threads"),
-                "ht_iterations": meta["iterations"],
-                **{k: round(v, 3) for k, v in harness_timing.items()},
+                f"{p}solve_s": meta.get("wall_time_s"),
+                f"{p}setup_s": meta.get("setup_time_s"),
+                f"{p}threads": meta.get("threads"),
+                f"{p}iterations": meta["iterations"],
+                # Harness phases keep their historical names on the vectorized
+                # payload and take the prefix on the sampled one.
+                **{(k if p == "ht_" else p + k.removeprefix("ht_")): round(v, 3)
+                   for k, v in harness_timing.items()},
             },
             # ht_peak_bytes stays the Pio-comparable solve-phase figure (see
             # print_cost_line); the whole-run peak travels beside it.
             "memory": {
-                "ht_peak_bytes": (meta.get("solve_peak_rss_bytes")
-                                  or meta.get("peak_rss_bytes")),
-                "ht_run_peak_bytes": meta.get("peak_rss_bytes"),
-                "ht_run_peak_commit_bytes": meta.get("peak_commit_bytes"),
+                f"{p}peak_bytes": (meta.get("solve_peak_rss_bytes")
+                                   or meta.get("peak_rss_bytes")),
+                f"{p}run_peak_bytes": meta.get("peak_rss_bytes"),
+                f"{p}run_peak_commit_bytes": meta.get("peak_commit_bytes"),
             },
+
             "sampled": not full_mode,
             "runouts": None if full_mode else args.runouts,
             "decision_nodes": decision_count,

@@ -73,11 +73,11 @@ See the commented `configs/example_river_hu.json`. Summary:
 
 | key | meaning |
 |---|---|
-| `game` | `nlhe` (river-only this pass), `kuhn`, `leduc` |
+| `game` | `nlhe` (any 3/4/5-card root board), `nlhe_preflop` (multiway jam/fold), `kuhn`, `leduc` |
 | `board`, `pot`, `chip_scale` | 5-card board; root pot in chips; chips per display unit (100 = 1bb) |
 | `players[]` | seat label, stack (chips behind), range string or `@file:` |
 | `bet_sizing.<street>` | per seat: `bets`/`raises` (and OOP `donks`) as %-of-pot lists, plus `no_3bet` (that seat never makes the street's third aggression); `allin_threshold` and `max_raises` are street-wide |
-| `algorithm` | `rm` \| `cfr_plus` \| `dcfr` (+ `dcfr.alpha/beta/gamma`; default DCFR, linear averaging) |
+| `algorithm` | `update`: `rm` \| `cfr_plus` \| `dcfr` (+ `dcfr.alpha/beta/gamma`; default DCFR, linear averaging). `family`: `vectorized` (default, exact gradient) \| `sampled` (the deal-sampling core: one concrete deal per iteration, `sampled.{seed, batch, lanes, symmetry}`). The sampled family runs preflop and heads-up postflop; on postflop it needs `isomorphism: false` (no iso redirect yet) and FEW lanes - each lane holds a full copy of solver storage, so the default 16 blows a turn tree past 12 GB - with large batches, and it ignores `update` (linear discount by iteration) |
 | `qre` | `mode: "nash" \| "qre"`; for `"qre"`, `lambda` (per seat, in 1/chips - a scalar broadcasts) and optional `anneal: {factor, full_at}`. A QRE solve stops on the **QRE gap**, not on plain exploitability - see below |
 | `agents` | `partition` (identity only this pass), `payoff_weights`, `collusion` (reserved) |
 | `budget` | `iterations` (a TOTAL when resuming from a checkpoint), `target_nashconv` (chips, early stop), `checkpoint_every`, `max_seconds` (wall-clock ceiling for the whole run: stops cleanly and still writes the artifact, stamping `stopped_reason`) |

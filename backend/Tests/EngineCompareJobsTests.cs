@@ -80,6 +80,8 @@ public class EngineCompareJobsTests
         Assert.Equal(true, claimed.GetProperty("disableCompare")!.GetValue(claim.Value));
         Assert.Equal(true, claimed.GetProperty("disableCrossCheck")!.GetValue(claim.Value));
         Assert.Equal(0.02, claimed.GetProperty("pioAccuracyPct")!.GetValue(claim.Value));
+        Assert.Null(claimed.GetProperty("sampledConfig")!.GetValue(claim.Value));
+
 
         foreach (var status in new[] { "Running", "Uploading" })
         {
@@ -204,10 +206,87 @@ public class EngineCompareJobsTests
 
         Assert.IsType<BadRequestObjectResult>(
             await UserController(db, "uid-1").ResultFor(job.Id, "bogus"));
-        // A job with no Pio payload 404s for that half rather than 500ing.
+        // A job with no Pio (or sampled) payload 404s for that half rather than 500ing.
         Assert.IsType<NotFoundObjectResult>(
             await UserController(db, "uid-1").ResultFor(job.Id, "pio"));
+        Assert.IsType<NotFoundObjectResult>(
+            await UserController(db, "uid-1").ResultFor(job.Id, "sampled"));
     }
+
+    private static JsonObject SampledSpotConfig()
+    {
+        var config = SpotConfig();
+        config["algorithm"] = new JsonObject
+        {
+            ["family"] = "sampled",
+            ["sampled"] = new JsonObject { ["seed"] = 1, ["batch"] = 4096, ["lanes"] = 4 },
+        };
+        config["isomorphism"] = false;
+        return config;
+    }
+
+    [Fact]
+    public async Task Sampled_core_config_rides_the_claim_and_its_payload_the_dto()
+    {
+        using var db = NewDb();
+        var created = await UserController(db, "uid-1").Create(
+            new EngineCompareController.CreateDto
+            { Config = SpotConfig(), SampledConfig = SampledSpotConfig() });
+        var job = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>(created.Result).Value);
+        Assert.True(job.RunSampledCore);
+        Assert.False(job.HasSampledResult);
+
+        // The claim body is the only channel to the watcher: the second
+        // config must reach it verbatim.
+        var watcher = WatcherController(db);
+        var claim = Assert.IsType<OkObjectResult>(await watcher.Claim(
+            new EngineCompareWatcherController.ClaimRequestDto { WatcherId = "w1" }));
+        var sampled = claim.Value!.GetType().GetProperty("sampledConfig")!.GetValue(claim.Value);
+        Assert.Equal(SampledSpotConfig().ToJsonString(), sampled);
+
+        foreach (var status in new[] { "Running", "Uploading" })
+            await watcher.Report(job.Id, new EngineCompareWatcherController.ReportRequestDto
+            { WatcherId = "w1", Status = status });
+        Assert.IsType<OkObjectResult>(await watcher.Report(job.Id,
+            new EngineCompareWatcherController.ReportRequestDto
+            {
+                WatcherId = "w1",
+                Status = "Done",
+                HtResultBlobPath = "enginecompare/x.ht.htc.gz",
+                SampledResultBlobPath = "enginecompare/x.sampled.htc.gz",
+            }));
+
+        var stored = await db.EngineCompareJobs.SingleAsync();
+        Assert.Equal("enginecompare/x.sampled.htc.gz", stored.SampledResultBlobPath);
+        var polled = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>(
+                (await UserController(db, "uid-1").Get(job.Id)).Result).Value);
+        Assert.True(polled.HasHtResult);
+        Assert.True(polled.HasSampledResult);
+        Assert.False(polled.HasPioResult);
+    }
+
+    [Fact]
+    public async Task Sampled_core_config_is_validated()
+    {
+        using var db = NewDb();
+        // Not on the sampled core: that would race the vectorized core against itself.
+        Assert.IsType<BadRequestObjectResult>((await UserController(db, "uid-1").Create(
+            new EngineCompareController.CreateDto
+            { Config = SpotConfig(), SampledConfig = SpotConfig() })).Result);
+        // A different board is a different tree, not a comparison.
+        var other = SampledSpotConfig();
+        other["board"] = "Ah Kd 7c 4s 2d";
+        Assert.IsType<BadRequestObjectResult>((await UserController(db, "uid-1").Create(
+            new EngineCompareController.CreateDto
+            { Config = SpotConfig(), SampledConfig = other })).Result);
+        // Compare mode only.
+        Assert.IsType<BadRequestObjectResult>((await UserController(db, "uid-1").Create(
+            new EngineCompareController.CreateDto
+            { Config = SpotConfig(), SampledConfig = SampledSpotConfig(), Mode = "pushfold" })).Result);
+    }
+
 
     [Fact]
     public async Task Pio_accuracy_outside_its_range_is_rejected()

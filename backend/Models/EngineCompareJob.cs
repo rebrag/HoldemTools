@@ -40,6 +40,13 @@ namespace PokerRangeAPI2.Models
         public bool DisableCompare { get; set; } = true;      // Pio's per-hand extraction
         public bool DisableCrossCheck { get; set; } = true;   // the cross-exploitability gate
 
+        // Compare mode, optional: a SECOND htsolver config for the same tree
+        // on the sampled-deal core (algorithm.family "sampled"), solved after
+        // the vectorized one so the two cores can be raced to one accuracy
+        // target. Stored verbatim like ConfigJson; null = no second run.
+        public string? SampledConfigJson { get; set; }
+
+
         public string Status { get; set; } = EngineCompareJobStatus.Queued;
 
         public int AttemptCount { get; set; }
@@ -50,6 +57,10 @@ namespace PokerRangeAPI2.Models
         // one per solver). The Pio path stays null when Pio did not run.
         public string? HtResultBlobPath { get; set; }
         public string? PioResultBlobPath { get; set; }
+        // The sampled core's payload; null unless the job carried a
+        // SampledConfigJson and that run wrote an artifact.
+        public string? SampledResultBlobPath { get; set; }
+
 
         // LEGACY: the single merged payload written before the per-solver
         // split. Never set by the current watcher; kept so old rows are

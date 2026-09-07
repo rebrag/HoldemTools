@@ -63,7 +63,23 @@ std::uint64_t deadline_slice(std::uint64_t remaining, std::uint64_t batch) {
   return std::min(slice, remaining);
 }
 
+// Nodes one deal of the sampled EV pass visits: every action at decision
+// nodes, ONE child at chance nodes (the dealt card). What the pass costs per
+// deal, so its deal count can be bounded on big trees - a compare-scale flop
+// tree is 10^4-10^5 nodes per runout, and 200k deals of that is minutes.
+std::uint64_t runout_nodes(const PublicTree& tree, NodeId id) {
+  const Node& node = tree[id];
+  std::uint64_t count = 1;
+  if (node.kind == NodeKind::Terminal) return count;
+  if (node.kind == NodeKind::Chance) return count + runout_nodes(tree, node.first_child);
+  for (int c = 0; c < node.num_children; ++c) {
+    count += runout_nodes(tree, node.first_child + static_cast<NodeId>(c));
+  }
+  return count;
+}
+
 std::unique_ptr<Game> make_game(const SolveConfig& config) {
+
   if (config.game == "kuhn") return std::make_unique<toy::KuhnGame>();
   if (config.game == "leduc") return std::make_unique<toy::LeducGame>();
   if (config.game == "nlhe_preflop") return std::make_unique<NlhePreflopGame>(config);
@@ -99,8 +115,18 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   const AgentMap agents = AgentMap::from_config(config, game.num_seats());
   const bool team = agents.has_team();
   // The EV stream is independent of the training stream by construction.
-  constexpr std::uint64_t kEvDeals = 200000;
+  // 200k deals is the ceiling; on a tree whose single-runout walk is large
+  // (postflop) the count is bounded by a node-visit budget instead, and
+  // never below 20k. Preflop trees (~29 nodes) always get the full 200k.
+  constexpr std::uint64_t kEvDealsMax = 200000;
+  constexpr std::uint64_t kEvDealsMin = 20000;
+  constexpr std::uint64_t kEvVisitBudget = 2000000000ULL;
+  const std::uint64_t per_deal =
+      std::max<std::uint64_t>(1, runout_nodes(game.tree(), game.tree().root()));
+  const std::uint64_t kEvDeals =
+      std::min(kEvDealsMax, std::max(kEvDealsMin, kEvVisitBudget / per_deal));
   const std::uint64_t ev_seed = config.sampled.seed ^ 0x9E3779B97F4A7C15ULL;
+
 
   std::cout << "sampled core: seed " << config.sampled.seed << ", batch "
             << config.sampled.batch << ", lanes " << config.sampled.lanes << "\n";
@@ -324,7 +350,12 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   }
   const auto start = std::chrono::steady_clock::now();
   double nashconv = 0.0;
+  double solve_s = 0.0;  // time inside solver.run() alone, for the trace
+  const auto loop_elapsed = [&start]() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  };
   // budget.iterations is the TOTAL for the solve, not this run's share, so
+
   // re-running a config with a larger budget walks toward the target rather
   // than redoing what the checkpoint already holds.
   std::uint64_t done = solver.iteration();
@@ -344,8 +375,12 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
     while (ran < step) {
       const std::uint64_t slice =
           sliced ? deadline_slice(step - ran, config.sampled.batch) : step - ran;
+      const auto run_start = std::chrono::steady_clock::now();
       solver.run(slice);
+      solve_s += std::chrono::duration<double>(std::chrono::steady_clock::now() - run_start)
+                     .count();
       ran += slice;
+
       if (stop_requested(config.stop_file)) {
         cancelled = true;
         break;
@@ -374,12 +409,15 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
     const BrResult br = compute_best_response(game, solver);
     nashconv = br.nashconv();
     const double exploitable = nashconv / game.num_seats();
+    stats.convergence.push_back({done, loop_elapsed(), solve_s, nashconv, exploitable});
     std::cout << "iter " << done << "  nashconv " << nashconv << "  exploitable "
               << exploitable;
     if (pot > 0.0) std::cout << " (" << 100.0 * exploitable / pot << "% of pot)";
     std::cout << "  ev";
     for (double ev : br.ev) std::cout << " " << ev;
-    std::cout << "\n";
+    // Appended, never inserted: anything parsing the prefix keeps working.
+    std::cout << "  elapsed " << loop_elapsed() << " s\n";
+
     if (br_exact && config.target_nashconv > 0.0 && nashconv <= config.target_nashconv) {
       std::cout << "target_nashconv reached\n";
       break;
@@ -397,9 +435,12 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
     // Measure once so the artifact says what the strategy is actually worth.
     const BrResult br = compute_best_response(game, solver);
     nashconv = br.nashconv();
+    stats.convergence.push_back(
+        {done, loop_elapsed(), solve_s, nashconv, nashconv / game.num_seats()});
     std::cout << "iter " << done << "  nashconv " << nashconv << "  exploitable "
               << nashconv / game.num_seats() << " (measured on re-export; nothing iterated)\n";
   }
+
   const double wall_s =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
@@ -423,12 +464,17 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   // payoffs sum to the pot, so these conserve exactly at any seat count -
   // and they are the only honest EVs for a team, whose correlated play no
   // per-seat marginal can reproduce.
+  const auto ev_start = std::chrono::steady_clock::now();
   stats.ev_chips = solver.sampled_ev(kEvDeals, ev_seed);
+  const double ev_s =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - ev_start).count();
+  stats.ev_deals = kEvDeals;
   stats.wall_time_s = wall_s;
   stats.setup_time_s = setup_s;
   stats.threads = threads;
   stats.peak_rss_bytes = peak_rss_bytes();
-  std::cout << "sampled ev (" << kEvDeals << " deals)";
+  std::cout << "sampled ev (" << kEvDeals << " deals, " << ev_s << " s)";
+
   for (double ev : stats.ev_chips) std::cout << " " << ev;
   std::cout << "\n";
   if (team) {
@@ -538,8 +584,14 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   const auto start = std::chrono::steady_clock::now();
   double nashconv = 0.0;
   double qre_gap = 0.0;
+  double solve_s = 0.0;  // time inside solver.run() alone, for the trace
+  const auto loop_elapsed = [&start]() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  };
+  SolveStats stats;
   BrResult br;
   std::uint64_t done = 0;
+
   bool out_of_time = false;
   bool cancelled = false;
   const double pot = static_cast<double>(config.pot);
@@ -605,9 +657,13 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   while (done < config.iterations) {
     const std::uint64_t step =
         std::min<std::uint64_t>(config.checkpoint_every, config.iterations - done);
+    const auto run_start = std::chrono::steady_clock::now();
     solver.run(step);
+    solve_s += std::chrono::duration<double>(std::chrono::steady_clock::now() - run_start)
+                   .count();
     done += step;
     br = compute_best_response(*game, solver);
+
     nashconv = br.nashconv();
     // Under QRE this is the number the solve is actually minimizing; the plain
     // one above is kept as the diagnostic that shows the lambda-dependent
@@ -620,6 +676,8 @@ int run_solve(const SolveConfig& config, bool dry_run) {
     // from best-responding = NashConv / num_seats for 2 players.
     const double exploitable = nashconv / game->num_seats();
     const double qre_exploitable = driving / game->num_seats();
+    stats.convergence.push_back({done, loop_elapsed(), solve_s, nashconv, exploitable});
+
     // Feed the recalc schedule its annealing budget: subtrees may be frozen
     // only while their movement is small against CURRENT exploitability. Under
     // QRE that has to be the REGULARIZED number - the plain one plateaus, and
@@ -636,8 +694,10 @@ int run_solve(const SolveConfig& config, bool dry_run) {
     }
     std::cout << "  ev";
     for (double ev : br.ev) std::cout << " " << ev;
-    std::cout << "\n";
+    // Appended, never inserted: anything parsing the prefix keeps working.
+    std::cout << "  elapsed " << loop_elapsed() << " s\n";
     // The accuracy stop must not fire while the solver is still subsampling
+
     // runouts. Exploitability itself is honest (best response always
     // enumerates), but the average strategy it is rating is still noisy, so a
     // lucky checkpoint could stop the solve at a strategy that is not there.
@@ -687,8 +747,8 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   const double wall_s =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
-  SolveStats stats;
   stats.iterations = solver.iteration();
+
   stats.nashconv = nashconv;
   if (out_of_time) stats.stopped_reason = "time_budget";
   if (cancelled) stats.stopped_reason = "cancelled";

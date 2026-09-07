@@ -1,16 +1,22 @@
 #include "game/nlhe_river.hpp"
 
+#include <algorithm>
 #include <bit>
+
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <map>
+
 #include <memory>
 #include <stdexcept>
 #include <vector>
 
 #include "game/betting_tree.hpp"
 #include "ranges/range.hpp"
+#include "solver/deal.hpp"
 #include "util/parallel.hpp"
+
 
 namespace engine {
 
@@ -20,6 +26,11 @@ NlhePostflopGame::NlhePostflopGame(const SolveConfig& config) {
   }
   board_ = parse_cards(config.board);
   board_mask_ = cards_mask(board_);
+  for (int c = 0; c < kNumCards; ++c) {
+    if ((board_mask_ & (1ULL << c)) == 0) live_deck_.push_back(static_cast<std::uint8_t>(c));
+  }
+  runout_count_ = 5 - static_cast<int>(board_.size());
+
 
   // Parse both ranges over the canonical 1326 order, mask them against the
   // root board, and only then derive the universe - so a combo that survives
@@ -63,7 +74,24 @@ NlhePostflopGame::NlhePostflopGame(const SolveConfig& config) {
            (total1 - per_card[combos[i].hi] - per_card[combos[i].lo] + r1[i]);
     }
     profile_weight_ = z;
+    // The EV pass's tables, from the same per-card sums: seat 1's mass
+    // disjoint from each seat-0 hand, and both seats' cumulative ranges.
+    compat_mass_.resize(static_cast<std::size_t>(hands));
+    for (int i = 0; i < hands; ++i) {
+      compat_mass_[static_cast<std::size_t>(i)] =
+          total1 - per_card[combos[i].hi] - per_card[combos[i].lo] + r1[i];
+    }
+    for (int s = 0; s < 2; ++s) {
+      std::vector<double>& cdf = range_cdf_[static_cast<std::size_t>(s)];
+      cdf.resize(static_cast<std::size_t>(hands));
+      double acc = 0.0;
+      for (int i = 0; i < hands; ++i) {
+        acc += static_cast<double>(ranges_[static_cast<std::size_t>(s)][static_cast<std::size_t>(i)]);
+        cdf[static_cast<std::size_t>(i)] = acc;
+      }
+    }
   }
+
   if (profile_weight_ <= 0.0) {
     throw std::runtime_error("the two ranges have no card-disjoint combo pairs");
   }
@@ -232,8 +260,145 @@ std::size_t NlhePostflopGame::auxiliary_bytes() const {
   constexpr std::size_t kPerCombo = sizeof(std::uint32_t) + sizeof(std::uint8_t) +
                                     sizeof(std::uint64_t) + sizeof(Combo) + sizeof(int) +
                                     2 * sizeof(int);
-  return evaluators_.size() * static_cast<std::size_t>(universe_.size()) * kPerCombo;
+  return evaluators_.size() * static_cast<std::size_t>(universe_.size()) * kPerCombo +
+         live_deck_.size() + universe_.compact_of_canonical.size() * sizeof(std::int32_t);
 }
+
+// ---- DealGame ----
+
+void NlhePostflopGame::sample_deal(std::uint64_t seed, std::uint64_t iter, Deal& out) const {
+  // Seats' holes first, then the runout - the order is part of the deal's
+  // definition (deal.hpp), and deal_cards is a pure function of (seed, iter).
+  constexpr int kHole = 2 * 2;
+  std::uint8_t drawn[kHole + 5];
+  deal_cards(seed, iter, static_cast<int>(live_deck_.size()), kHole + runout_count_, drawn);
+  out.hole_per_seat = 2;
+  out.board_count = runout_count_;
+  for (int s = 0; s < 2; ++s) {
+    const Card a = live_deck_[drawn[2 * s]];
+    const Card b = live_deck_[drawn[2 * s + 1]];
+    out.hole[static_cast<std::size_t>(2 * s)] = a;
+    out.hole[static_cast<std::size_t>(2 * s) + 1] = b;
+    const int idx = universe_.compact_index(a, b);
+    out.hand[static_cast<std::size_t>(s)] =
+        idx < 0 ? std::numeric_limits<std::uint16_t>::max() : static_cast<std::uint16_t>(idx);
+  }
+  for (int b = 0; b < runout_count_; ++b) {
+    out.board[static_cast<std::size_t>(b)] = live_deck_[drawn[kHole + b]];
+  }
+}
+
+bool NlhePostflopGame::sample_ev_deal(std::uint64_t seed, std::uint64_t iter, Deal& out,
+                                      double& weight) const {
+  // One draw per selection step, counter-based like every draw in the
+  // engine: (seed, iter, k) -> a unit in [0, 1), never a stateful RNG.
+  const auto unit = [seed, iter](std::uint32_t k) {
+    return static_cast<double>(deal_draw(seed, iter, k) >> 11) * 0x1.0p-53;
+  };
+  const auto pick = [](const std::vector<double>& cdf, double u) {
+    const double target = u * cdf.back();
+    const auto it = std::upper_bound(cdf.begin(), cdf.end(), target);
+    return static_cast<int>(std::min<std::ptrdiff_t>(it - cdf.begin(),
+                                                     static_cast<std::ptrdiff_t>(cdf.size()) - 1));
+  };
+  const int h0 = pick(range_cdf_[0], unit(0));
+  const std::uint64_t mask0 = universe_.masks[static_cast<std::size_t>(h0)];
+  // Seat 1 conditioned on not colliding: rejection over fresh draws. Its
+  // acceptance rate is compat_mass / total, which is also the factor the
+  // conditioning divided out of the product measure - so it is the weight.
+  weight = compat_mass_[static_cast<std::size_t>(h0)];
+  int h1 = -1;
+  for (std::uint32_t k = 1; k <= 64; ++k) {
+    const int cand = pick(range_cdf_[1], unit(k));
+    if ((universe_.masks[static_cast<std::size_t>(cand)] & mask0) == 0) {
+      h1 = cand;
+      break;
+    }
+  }
+  if (h1 < 0 || weight <= 0.0) {
+    // Seat 1's whole range collides with h0 (weight 0 already says so), or
+    // an absurd rejection streak: skip the deal by weighing it nothing.
+    weight = 0.0;
+    h1 = h0;
+  }
+  const Combo& c0 = universe_.combos[static_cast<std::size_t>(h0)];
+  const Combo& c1 = universe_.combos[static_cast<std::size_t>(h1)];
+  out.hole_per_seat = 2;
+  out.hole[0] = c0.hi;
+  out.hole[1] = c0.lo;
+  out.hole[2] = c1.hi;
+  out.hole[3] = c1.lo;
+  out.hand[0] = static_cast<std::uint16_t>(h0);
+  out.hand[1] = static_cast<std::uint16_t>(h1);
+  // The runout: uniform over what is left of the deck. A distinct seed
+  // stream from the hand draws (deal_cards keys on k from 0 too).
+  out.board_count = runout_count_;
+  if (runout_count_ > 0) {
+    const std::uint64_t taken =
+        board_mask_ | mask0 | universe_.masks[static_cast<std::size_t>(h1)];
+    std::uint8_t remaining[kNumCards];
+    int n = 0;
+    for (int c = 0; c < kNumCards; ++c) {
+      if ((taken & (1ULL << c)) == 0) remaining[n++] = static_cast<std::uint8_t>(c);
+    }
+    std::uint8_t drawn[5];
+    deal_cards(seed ^ 0xC2B2AE3D27D4EB4FULL, iter, n, runout_count_, drawn);
+    for (int b = 0; b < runout_count_; ++b) {
+      out.board[static_cast<std::size_t>(b)] = remaining[drawn[b]];
+    }
+  }
+  return true;
+}
+
+void NlhePostflopGame::deal_strengths(const Deal& deal, std::vector<std::uint32_t>& out) const {
+
+  std::uint64_t mask = board_mask_;
+  for (int b = 0; b < deal.board_count; ++b) mask |= 1ULL << deal.board[static_cast<std::size_t>(b)];
+  const auto it = evaluators_.find(mask);
+  if (it == evaluators_.end()) {
+    // Every runout reaches a showdown terminal by construction, so a miss
+    // means the deal and the tree disagree - say so rather than evaluate a
+    // board the tree cannot reach.
+    throw std::runtime_error("no showdown evaluator for the dealt runout - tree and deal disagree");
+  }
+  out = it->second->strengths();
+}
+
+void NlhePostflopGame::deal_showdown_values(NodeId id, int seat, const Deal& deal,
+                                            const std::vector<std::uint32_t>& strengths,
+                                            std::vector<float>& out) const {
+  const Node& node = tree_[id];
+  const int hands = universe_.size();
+  const float base = -static_cast<float>(node.commit[static_cast<std::size_t>(seat)]);
+  out.assign(static_cast<std::size_t>(hands), base);
+  const std::uint16_t opp = deal.hand[static_cast<std::size_t>(1 - seat)];
+  // A pinned opponent outside its range: the caller multiplies this row by
+  // its zero reach, so the values never surface; return the commitment row
+  // rather than index the sentinel.
+  if (opp == std::numeric_limits<std::uint16_t>::max()) return;
+  const std::uint32_t s_opp = strengths[opp];
+  const float pot = static_cast<float>(node.pot);
+  const float half = pot * 0.5f;
+  for (int h = 0; h < hands; ++h) {
+    // Hands colliding with the deal (board or the opponent's cards) carry
+    // garbage here; the caller's reach is zero there, same as preflop.
+    const std::uint32_t sh = strengths[static_cast<std::size_t>(h)];
+    out[static_cast<std::size_t>(h)] += sh > s_opp ? pot : (sh == s_opp ? half : 0.0f);
+  }
+}
+
+void NlhePostflopGame::deal_showdown_pinned(NodeId id, const Deal& deal,
+                                            const std::vector<std::uint32_t>& strengths,
+                                            int num_seats, std::vector<double>& out) const {
+  const Node& node = tree_[id];
+  out.assign(static_cast<std::size_t>(num_seats), 0.0);
+  const std::uint32_t s0 = strengths[deal.hand[0]];
+  const std::uint32_t s1 = strengths[deal.hand[1]];
+  const double pot = static_cast<double>(node.pot);
+  out[0] = -static_cast<double>(node.commit[0]) + (s0 > s1 ? pot : (s0 == s1 ? pot * 0.5 : 0.0));
+  out[1] = -static_cast<double>(node.commit[1]) + (s1 > s0 ? pot : (s0 == s1 ? pot * 0.5 : 0.0));
+}
+
 
 void NlhePostflopGame::terminal_values(NodeId id, int seat,
                                        const std::vector<std::vector<float>>& reach,

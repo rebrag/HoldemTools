@@ -14,7 +14,22 @@
 
 namespace engine {
 
+// One exploitability checkpoint of a solve loop, for the convergence trace.
+// `elapsed_s` is the loop clock (iterating AND measuring, the same clock as
+// SolveStats::wall_time_s); `solve_s` is the time spent inside solver.run()
+// alone. The second is what makes two cores comparable: the measurement
+// cadence is the caller's choice, and a full vectorized best-response pass
+// per checkpoint is a large share of the sampled core's wall clock.
+struct ConvergencePoint {
+  std::uint64_t iteration = 0;
+  double elapsed_s = 0.0;
+  double solve_s = 0.0;
+  double nashconv = 0.0;
+  double exploitable_chips = 0.0;
+};
+
 struct SolveStats {
+
   // The solve LINEAGE this run advanced (config.solve_id): stable across
   // resumes, so an artifact can be tied back to the checkpoint that produced
   // it and to every earlier artifact of the same solve.
@@ -74,7 +89,15 @@ struct SolveStats {
   // both are recorded so the plateau is visible rather than mistaken for a
   // stall. Zero when qre.mode is "nash".
   double qre_gap = 0.0;
+  // Every exploitability checkpoint THIS run measured, in order. Empty on a
+  // team solve (no best response to measure). A resumed lineage's earlier
+  // points live in the earlier artifact. Written as metadata.convergence.
+  std::vector<ConvergencePoint> convergence;
+  // Sampled family: deals the root-EV pass actually walked (bounded by a
+  // node-visit budget on big trees, so not always the 200k ceiling).
+  std::uint64_t ev_deals = 0;
 };
+
 
 // Bytes the export pass inside write_artifact holds live at its peak. It
 // keeps one per-node export record for EVERY decision node alive at once, so
