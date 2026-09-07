@@ -33,13 +33,8 @@ import {
   type CompareJob,
 } from "@/pages/multiway/compareJob";
 import { fetchPushFoldDump } from "@/pages/multiway/fetchPushFoldDump";
-import {
-  actionLabels,
-  gridFor,
-  walkLine,
-  type DumpNode,
-  type PushFoldDump,
-} from "@/pages/multiway/pushfoldResult";
+import type { DumpNode, PushFoldDump } from "@/pages/multiway/pushfoldResult";
+import { postflopActionLabels, postflopGridFor, postflopWalkLine } from "./postflopLabels";
 import {
   boardCards,
   buildConfig,
@@ -139,13 +134,19 @@ const MultiwayPostflopSolver = () => {
     }
   }, [view]);
 
-  const line = useMemo(() => (dump ? walkLine(dump, path) : null), [dump, path]);
+  const line = useMemo(() => (dump ? postflopWalkLine(dump, path) : null), [dump, path]);
   const node: DumpNode | null = line?.node ?? null;
+  // NOT pushfoldResult's gridFor/actionLabels: those assume a jam/fold tree
+  // and collapse a three-action postflop node to one label - see
+  // postflopLabels.ts.
   const grid = useMemo(
-    () => (node && node.kind === "decision" ? gridFor(node) : null),
-    [node]
+    () => (dump && node && node.kind === "decision" ? postflopGridFor(dump, node) : null),
+    [dump, node]
   );
-  const labels = useMemo(() => (node && node.kind === "decision" ? actionLabels(node) : []), [node]);
+  const labels = useMemo(
+    () => (dump && node && node.kind === "decision" ? postflopActionLabels(dump, node) : []),
+    [dump, node]
+  );
   const seatNames = dump?.metadata.seats ?? view.seats;
 
   return (
