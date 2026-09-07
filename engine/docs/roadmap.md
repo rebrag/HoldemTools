@@ -974,6 +974,47 @@ The TREE is N-seat; the GAME is not.
 Wiring it up means using `Showdown3` for the 3-seat terminal, generalizing the compat weight, and adding side-pot LAYERING over that kernel - none of which is a research problem any more, and all of which is more than a rename.
 The config surface is also still heads-up: no `num_seats` for postflop, no per-seat stacks, and no per-seat sizing lists, which is why seat 0 reads `oop` and every other seat reads `ip` at 3+.
 
+### M8b - multiway POSTFLOP. Engine layer landed 2026-09-07.
+
+The tree and the terminal both landed earlier today (the two sections above); this is the game layer that joins them, so `engine solve` now solves multiway postflop end to end at 2 to 9 seats.
+
+**Two seat regimes, and the split is the terminal evaluator rather than a preference.**
+
+| | |
+|---|---|
+| **2-3 seats** | full vectorized support: exact terminals, exact best response, exact compat weights. Two seats is bit-identical to before and still Pio-gated. |
+| **4+ seats** | SAMPLED core only. The parser refuses the vectorized family and names the fix. No nashconv and no per-hand EVs; root EVs come from the sampled EV pass. |
+
+The boundary is `num_seats() <= 3`, which is the same one `br_exact` already used, and it is asked in one place - `Game::vectorized_terminals()`, a new virtual defaulting to true.
+It says the vectorized contract is ABSENT rather than approximate, which is what lets the best response and the per-hand EV export skip instead of calling and throwing.
+
+**Measured end to end**, tight15 ranges on `9c 5d Jc 7s 2h`:
+
+| | |
+|---|---|
+| 3-way, vectorized, 400 iters | 0.14 s, nashconv 0.0048, **root EVs 28.7199 + 29.5899 + 31.6902 = 90.0000** |
+| 4-way, sampled, 200k deals | 0.38 s solve, **EVs sum to 120.0000** |
+| 8-way, sampled, 200k deals | 0.20 s solve, **EVs sum to 240.0000** |
+
+Chip conservation is exact at every seat count, which is the headline: the preflop factorized estimator provably cannot reach it at 4+ (it carries a -0.55 residual), and here both cores hold it - the vectorized one because `Showdown3` is exact, the sampled one because conservation is a property of each dealt hand.
+
+**The cross-core gate is the one that matters.**
+Three seats is the only count both cores can solve, and they reach a showdown by routes that share none of their algebra: `Showdown3`'s O(52*H) inclusion-exclusion sweep against `showdown_share` on concrete dealt cards.
+They agree to **0.54 chips per seat, 0.60% of pot**, which is the sampled core's own noise at 400k deals.
+Side-pot conservation lands at -3.3e-07 chips.
+
+**Things that had to generalize, beyond the obvious loops.**
+`chance_weight` counts `52 - board - 2*num_seats` rather than a hardcoded four hole cards.
+`compat_weights` at three seats is the mass of DISJOINT opponent PAIRS, not the product of two pairwise compat weights - that product would let the two opponents hold the same card, and it is the same S(ALL,ALL) identity the showdown uses so the two agree by construction.
+`total_profile_weight` needs the disjoint-TRIPLE mass at three seats, computed by the same identity.
+`sample_ev_deal` deals every seat in proportion to its range conditioned on the cards already gone, and the importance weight is the product of the masses the conditioning divided out; the masses come from per-card sums by inclusion-exclusion over the dealt cards, because a 2-card combo holds at most two of them.
+Suit isomorphism is refused past two seats - it was built and gated against a heads-up tree and nothing checks the collapse is legal with a reach vector per seat.
+
+**One performance fix paid for here, and it was worth 5x.**
+`showdown_share` allocated a `std::vector` for its layer levels on every call, and the sampled EV pass calls it once per seat per terminal per deal - hundreds of millions of times on an 8-way tree. That cost **289 s of a 200k-deal 8-way EV pass against 3 s for everything else**; a fixed array and an insertion sort over at most nine levels took it to **54.7 s**, bit-identical EVs. The EV pass is still the dominant cost at eight seats and is the next thing to look at if that matters.
+
+**Still to do for the product**, none of it research: the artifact carries strategy and reach but no EV fields past three seats, so a 4+ seat result needs `dump-json` rollups the way `/multiway` already does; the config surface has no per-seat sizing lists (seat 0 reads `oop`, everyone else reads `ip`); and the backend job mode, the watcher mode and the `/compare` tab are not built yet.
+
 ### M9 - hand-sharing teams (cooperation/collusion). Landed 2026-08-31, on the sampled core.
 
 The original M9 plan ("joint-range representation, 1326x1225 - river-only on 16 GB") was written for the vectorized core and is SUPERSEDED: on the sampled core a teammate is PINNED to a dealt hand during a traversal, so hand-sharing became an indexing change - which storage row the hero reads - not a joint-range representation, and it runs preflop multiway on ~180 MB in under 30 s.

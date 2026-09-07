@@ -141,6 +141,7 @@ add_executable(engine_tests
   tests/test_sampled_kuhn.cpp
   tests/test_sampled_preflop.cpp
   tests/test_sampled_postflop.cpp
+  tests/test_multiway_postflop.cpp
 
   tests/test_team_preflop.cpp
 )

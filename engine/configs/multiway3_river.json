@@ -1,0 +1,23 @@
+{
+  // 3-way river spot: the smallest tree that exercises the exact multiway
+  // terminal end to end. Vectorized core, so the showdown runs through
+  // Showdown3's O(52*H) sweep and the best response is exact.
+  "schema": 1,
+  "game": "nlhe",
+  "board": "9c 5d Jc 7s 2h",
+  "pot": 90,
+  "chip_scale": 100,
+  "players": [
+    { "seat": "OOP", "stack": 200, "range": "@file:ranges/tight15.txt" },
+    { "seat": "MID", "stack": 200, "range": "@file:ranges/tight15.txt" },
+    { "seat": "BTN", "stack": 200, "range": "@file:ranges/tight15.txt" }
+  ],
+  "bet_sizing": {
+    "river": { "bets": [50], "raises": [100], "max_raises": 1, "allin_threshold": 0.9 }
+  },
+  "algorithm": { "update": "dcfr" },
+  "qre": { "mode": "nash" },
+  "budget": { "iterations": 400, "checkpoint_every": 100 },
+  "memory_limit_gb": 12,
+  "output": { "path": "out/multiway3_river.hta", "strategy_quantize_u8": false, "ev_float32": true }
+}

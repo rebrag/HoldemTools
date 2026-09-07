@@ -42,13 +42,21 @@ namespace engine {
 // Every quantity is a running total over the strength-sorted order, so the
 // ascending sweep carries them at O(1) per hand plus the 52-wide dot product.
 //
-// SCOPE. Single pot, all three seats eligible, ties handled exactly. Side
-// pots are a LAYERING wrapper over this kernel, not a change to it: the
-// eligible set per layer is fixed by the commitments (public information), a
-// layer with two eligible seats is the same S(A,B) with the ineligible seat's
-// set taken as everything, and a layer with one is the compat weight. That
-// wrapper is not implemented here - this exists to settle the complexity
-// question, and layering does not change the complexity class.
+// SIDE POTS are a LAYERING wrapper over that kernel rather than a change to
+// it. The eligible set per layer is fixed by the commitments, which are
+// public, so the layers are known before any hand is looked at and each one
+// picks a kernel:
+//
+//   all three eligible   S(W,W) + 1/2 [S(T,W) + S(W,T)] + 1/3 S(T,T)
+//   hero + opponent 1    S(W1,ALL) + 1/2 S(T1,ALL)
+//   hero + opponent 2    S(ALL,W2) + 1/2 S(ALL,T2)
+//   hero alone           S(ALL,ALL)
+//   hero not eligible    0
+//
+// An ineligible seat's set is taken as EVERYTHING, which marginalizes over it
+// while keeping its card removal exact - a folded seat still holds cards. So
+// nine S terms cover every layer shape, they share one 52-wide loop, and the
+// cost does not grow with the number of layers.
 class Showdown3 {
  public:
   Showdown3(const std::vector<Card>& board, const std::vector<Combo>& universe);
@@ -56,10 +64,22 @@ class Showdown3 {
   int num_hands() const { return static_cast<int>(combos_.size()); }
   bool valid(int hand) const { return valid_[static_cast<std::size_t>(hand)] != 0; }
 
-  // out[h] = sum over mutually disjoint (o1,o2) of
-  //          r1(o1) * r2(o2) * (hero's share of `pot`) - R3(h) * my_delta,
-  // with the hero taking the whole pot when it beats both, half on a two-way
-  // tie and a third on a three-way tie. 0 for board-blocked hands.
+  // One side-pot layer: the chips in it and which seats can win it. Bit 0 is
+  // the hero, bit 1 opponent 1, bit 2 opponent 2, in the order their reach
+  // vectors are passed to showdown(). Folded seats are never eligible; their
+  // chips are still in the layers and their cards still block.
+  struct Layer {
+    double amount = 0.0;
+    std::uint8_t eligible = 0;
+  };
+
+  // out[h] = sum over mutually disjoint (o1,o2) of r1(o1) * r2(o2) *
+  //          (hero's share of every layer it wins) - R3(h) * my_delta.
+  // 0 for board-blocked hands.
+  void showdown(const float* r1, const float* r2, const std::vector<Layer>& layers,
+                double my_delta, float* out) const;
+
+  // Single-pot convenience: one layer, all three seats eligible.
   void showdown(const float* r1, const float* r2, double pot, double my_delta,
                 float* out) const;
 
@@ -70,8 +90,17 @@ class Showdown3 {
 
   // O(H^2) per hero hand reference built on `showdown_share`, the canonical
   // side-pot-correct N-seat rule. The fast path is gated against this.
-  void showdown_slow(const float* r1, const float* r2, double pot, double my_delta,
-                     float* out) const;
+  // `commit` is the three seats' post-root commitments in the same order,
+  // `dead` the chips already in the middle, and `folded` a mask over them, so
+  // the reference derives its own layers exactly as the real game does.
+  void showdown_slow(const float* r1, const float* r2, const std::array<Chips, 3>& commit,
+                     Chips dead, std::uint8_t folded, double my_delta, float* out) const;
+
+  // The layers a showdown with these commitments pays out, in the form
+  // showdown() wants. Pure public information; `showdown_share` is the rule
+  // it reproduces.
+  static std::vector<Layer> layers_from_commits(const std::array<Chips, 3>& commit, Chips dead,
+                                                std::uint8_t folded);
 
  private:
   std::vector<Combo> combos_;

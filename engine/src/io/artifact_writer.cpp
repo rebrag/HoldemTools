@@ -77,7 +77,10 @@ struct ExportPass {
     if (node.kind == NodeKind::Terminal) {
       for (int s = 0; s < seats; ++s) {
         values[s].assign(game.num_hands(s), 0.0f);
-        game.terminal_values(id, s, reach, values[s]);
+        // Without a vectorized terminal there is no per-hand value to carry
+        // up. The strategy and the reach still export; the EV fields stay
+        // zero and the artifact says so rather than shipping a wrong number.
+        if (game.vectorized_terminals()) game.terminal_values(id, s, reach, values[s]);
       }
       return values;
     }
@@ -152,8 +155,10 @@ struct ExportPass {
     data.action_ev_cond.resize(actions);
 
     for (int s = 0; s < seats; ++s) values[s].assign(game.num_hands(s), 0.0f);
+    const bool with_ev = game.vectorized_terminals();
     std::vector<float> compat;
-    game.compat_weights(actor, reach, compat);
+    if (with_ev) game.compat_weights(actor, reach, compat);
+    else compat.assign(static_cast<std::size_t>(game.num_hands(actor)), 0.0f);
 
     // The per-action fold-back below is identical in both paths; only where
     // the child values came from differs. Keeping it in one lambda is what
@@ -224,9 +229,13 @@ struct ExportPass {
     // actor's committed chips at every node past the street root.
     data.ev_cond.resize(seats);
     for (int s = 0; s < seats; ++s) {
+      // Always SIZED, even with no vectorized terminal to fill it from: the
+      // writer downstream indexes this by hand, so leaving it empty reads off
+      // the end. Zero is the honest value when there is no EV to report.
+      data.ev_cond[s].assign(game.num_hands(s), 0.0f);
+      if (!with_ev) continue;
       std::vector<float> compat_s;
       game.compat_weights(s, reach, compat_s);
-      data.ev_cond[s].assign(game.num_hands(s), 0.0f);
       for (int h = 0; h < game.num_hands(s); ++h) {
         if (compat_s[h] > 0.0f) {
           data.ev_cond[s][h] = values[s][h] / compat_s[h];

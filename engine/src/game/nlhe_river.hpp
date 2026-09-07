@@ -9,6 +9,7 @@
 
 #include "config/schema.hpp"
 #include "eval/terminal.hpp"
+#include "eval/terminal3.hpp"
 #include "game/deal_game.hpp"
 #include "game/game.hpp"
 
@@ -17,11 +18,29 @@
 
 namespace engine {
 
-// Heads-up NLHE postflop game from any 3/4/5-card root board: betting rounds
-// joined by chance nodes down to the river. Seat 0 is OOP and acts first on
-// every street.
+// NLHE postflop game from any 3/4/5-card root board: betting rounds joined by
+// chance nodes down to the river. Seat 0 is OOP and acts first on every
+// street; at 3+ seats action proceeds in seat order.
 //
-// Both seats share one COMPACT hand universe (`ranges/universe.hpp`): the
+// TWO SEAT REGIMES, and the split is the terminal evaluator rather than a
+// preference. The vectorized core needs a showdown that values every hero
+// hand against the opponents' whole ranges at once, and that sweep is O(H)
+// at two seats (`showdown_2p`) and O(52*H) at three (`Showdown3`) but grows
+// as 52^(N-2) beyond - dead at five and marginal at four. So:
+//
+//   2-3 seats  full vectorized support. Exact terminals, exact best
+//              response, exact compat weights. The Pio-gated path at 2.
+//   4+ seats   SAMPLED core only. Opponents are pinned to a dealt hand, so
+//              the terminal is O(1) per hero hand at any seat count and the
+//              wall disappears. terminal_values() and compat_weights() throw
+//              rather than approximating, the config parser refuses the
+//              vectorized family, and the solve reports no nashconv - root
+//              EVs come from the sampled EV pass instead.
+//
+// That boundary is the same `num_seats() <= 3` the preflop game already uses
+// for `br_exact`, and it is checked in one place (`vectorized_terminals()`).
+//
+// Every seat shares one COMPACT hand universe (`ranges/universe.hpp`): the
 // combos with non-zero weight in at least one starting range after root-board
 // removal, in ascending canonical order. Every per-hand array in the solver
 // is sized by it, so a 15%-range spot costs a fraction of a 100%-range one
@@ -42,8 +61,12 @@ class NlhePostflopGame final : public Game, public DealGame {
   explicit NlhePostflopGame(const SolveConfig& config);
 
   const PublicTree& tree() const override { return tree_; }
-  int num_seats() const override { return 2; }
+  int num_seats() const override { return num_seats_; }
   int num_hands(int) const override { return universe_.size(); }
+  // Whether this seat count has a vectorized showdown at all. False means the
+  // sampled core is the only way to solve it, and that best response and the
+  // per-hand EV export are unavailable rather than approximate.
+  bool vectorized_terminals() const override { return num_seats_ <= 3; }
   const std::vector<float>& initial_range(int seat) const override { return ranges_[seat]; }
   bool hand_blocks_card(int, int hand, int card) const override {
     return (universe_.masks[static_cast<std::size_t>(hand)] & (1ULL << card)) != 0;
@@ -56,9 +79,15 @@ class NlhePostflopGame final : public Game, public DealGame {
   // hands is handled by reach masking).
   double chance_weight(NodeId id) const override {
     const int known = std::popcount(tree_[id].board_mask);
-    return 1.0 / static_cast<double>(52 - known - 4);
+    // The deck minus the board minus every seat's two hole cards. Blocking of
+    // SPECIFIC hands is reach masking's job; this is the public count.
+    return 1.0 / static_cast<double>(52 - known - 2 * num_seats_);
   }
-  double total_profile_weight() const override { return profile_weight_; }
+  // The mass of mutually card-disjoint hand tuples under the starting
+  // ranges. Only the vectorized core and the best response consume it, and
+  // both are unavailable past three seats, so it is not computed there rather
+  // than being computed wrongly.
+  double total_profile_weight() const override;
 
   void terminal_values(NodeId id, int seat,
                        const std::vector<std::vector<float>>& reach,
@@ -171,10 +200,14 @@ class NlhePostflopGame final : public Game, public DealGame {
   std::vector<std::uint8_t> live_deck_;
   int runout_count_ = 0;  // 5 - root board size: cards a deal adds to the board
   // For sample_ev_deal: each seat's cumulative range over the compact
-  // universe (last entry = the range's total mass), and per seat-0 hand the
-  // mass of seat 1's range disjoint from it.
-  std::array<std::vector<double>, 2> range_cdf_;
-  std::vector<double> compat_mass_;
+  // universe (last entry = the range's total mass), plus the per-card mass of
+  // each seat's range. The per-card sums are what let the importance weight
+  // be computed by inclusion-exclusion over the cards ALREADY DEALT rather
+  // than by rescanning the range for every seat of every deal - a 2-card
+  // combo can hold at most two of them, so the series stops at pairs.
+  std::vector<std::vector<double>> range_cdf_;
+  std::vector<std::array<double, kNumCards>> range_per_card_;
+  std::vector<double> range_total_;
 
 
   // Every member is valid vs the ROOT board by construction: the ranges are
@@ -192,6 +225,8 @@ class NlhePostflopGame final : public Game, public DealGame {
   std::vector<std::vector<std::uint16_t>> perm_maps_;
   std::size_t iso_collapsed_ = 0;
   std::vector<std::vector<float>> ranges_;  // compact, one per seat
+  int num_seats_ = 2;
+  std::vector<Chips> stacks_;  // per seat, chips behind at the root
   double profile_weight_ = 0.0;
   // Showdown machinery per completed 5-card board: a flop tree needs up to
   // C(49,2) of these, each a sort + one strength per universe member.
@@ -203,6 +238,11 @@ class NlhePostflopGame final : public Game, public DealGame {
   // lookups afterwards are pure reads. Solving touches all of them on the
   // first iteration anyway, so this only moves the work, and parallelizes it.
   std::map<std::uint64_t, std::unique_ptr<RiverEvaluator>> evaluators_;
+  // The 3-seat counterpart, built only at three seats. Same eager, per-board,
+  // written-once-before-any-traversal discipline as `evaluators_` and for the
+  // same reason: terminal evaluation is the hot path and it is multithreaded.
+  std::map<std::uint64_t, std::unique_ptr<Showdown3>> evaluators3_;
+  std::vector<const Showdown3*> terminal_eval3_;
   // Depth-limit leaf table, empty until set_leaf_values. A tree with
   // DepthLimit terminals and no table throws on evaluation rather than
   // returning a plausible zero.

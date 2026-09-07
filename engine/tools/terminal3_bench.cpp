@@ -15,6 +15,7 @@
 //
 // Correctness is gated separately, in tests/test_terminal3.cpp.
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <iomanip>
@@ -115,8 +116,9 @@ int main() {
       sd3.showdown(r1.data(), r2.data(), 300.0, 40.0, out.data());
       sink += out[0];
     });
+    const std::array<Chips, 3> commit{100, 100, 100};
     const double slow = time_calls(1, [&] {
-      sd3.showdown_slow(r1.data(), r2.data(), 300.0, 40.0, out.data());
+      sd3.showdown_slow(r1.data(), r2.data(), commit, 0, 0, 100.0, out.data());
       sink += out[0];
     });
     std::cout << "\nagainst the O(H^2)-per-hand reference at H = " << live << ":\n"

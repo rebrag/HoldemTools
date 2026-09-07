@@ -156,15 +156,15 @@ SolveConfig load_config(const std::string& path_text) {
     config.pot = j.at("pot").get<Chips>();
     if (config.pot <= 0) fail("pot must be positive");
 
-    if (config.players.size() != 2) {
-      fail("postflop solves are 2-player (3+ players preflop is game \"nlhe_preflop\"; "
-           "multiway POSTFLOP is a later pass); got " +
-           std::to_string(config.players.size()) + " players");
+    if (config.players.size() < 2 ||
+        config.players.size() > static_cast<std::size_t>(kMaxSeats)) {
+      fail("postflop solves need 2 to " + std::to_string(kMaxSeats) + " players; got " +
+           std::to_string(config.players.size()));
     }
-    if (config.players[0].stack != config.players[1].stack) {
-      fail("postflop solves require equal stacks (the terminal evaluator is side-pot "
-           "capable, but the 2p betting tree does not generate all-in-for-less lines yet)");
-    }
+    // Unequal stacks are fine now: the tree caps a call at the caller's own
+    // stack and records the side pot as differing per-seat commitments, which
+    // showdown_share resolves by layer. The seat-count/core rule is checked
+    // after algorithm.family is parsed, below.
 
     if (!j.contains("bet_sizing")) fail("nlhe solves need bet_sizing");
     const json& bs = j.at("bet_sizing");
@@ -352,6 +352,17 @@ SolveConfig load_config(const std::string& path_text) {
       fail("algorithm.sampled.lanes must be in [1, 256]");
     }
   }
+  // Which core can run this many seats. The vectorized showdown sweep is O(H)
+  // at two seats and O(52*H) at three; past that its inclusion-exclusion grows
+  // as 52^(N-2) and there is no vectorized terminal at all. The sampled core
+  // has no such wall - it pins opponents to a dealt hand - so the refusal
+  // names the fix rather than just saying no.
+  if (config.game == "nlhe" && config.players.size() > 3 && !config.sampled.enabled) {
+    fail("postflop solves past 3 players need algorithm.family \"sampled\": the vectorized "
+         "showdown has no O(H) form beyond three seats, while the sampled core pins "
+         "opponents and costs O(1) per hero hand at any seat count. Got " +
+         std::to_string(config.players.size()) + " players on the vectorized core");
+  }
   // Parsed after algorithm.family so the sampled-core refusal below can see
   // which core was actually selected.
   if (j.contains("algorithm") && j.at("algorithm").contains("depth_limit")) {
@@ -376,6 +387,16 @@ SolveConfig load_config(const std::string& path_text) {
   // Parsed here rather than with the other top-level keys below because the
   // sampled block has to see it.
   config.isomorphism = j.value("isomorphism", config.isomorphism);
+  // Suit isomorphism collapses runout subtrees into shared solver storage and
+  // was built and gated against a HEADS-UP tree. A multiway tree carries a
+  // reach vector per seat through every node, and nothing checks the collapse
+  // is legal there, so it stays off rather than silently wrong.
+  if (config.game == "nlhe" && config.players.size() > 2) {
+    if (j.contains("isomorphism") && config.isomorphism) {
+      fail("isomorphism is not supported on multiway postflop trees yet; set it false");
+    }
+    config.isomorphism = false;
+  }
   if (config.sampled.enabled) {
     // The sampled core deals concrete cards, so it needs a DealGame: the
     // preflop game, the heads-up postflop game, and the toys. It has no

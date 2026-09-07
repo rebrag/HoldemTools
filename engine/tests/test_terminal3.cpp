@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cstdint>
 #include <random>
 #include <vector>
@@ -34,7 +35,11 @@ std::vector<float> random_reach(std::size_t n, std::uint64_t seed, double zero_f
   return r;
 }
 
-void check_against_reference(const char* board_text, std::uint64_t seed, double zero_fraction) {
+// `commit` drives the side-pot layers; equal commitments collapse to a single
+// pot, and unequal ones exercise every layer shape the kernel can be handed.
+void check_against_reference(const char* board_text, std::uint64_t seed, double zero_fraction,
+                             std::array<Chips, 3> commit = {100, 100, 100},
+                             std::uint8_t folded = 0) {
   const std::vector<Card> board = parse_cards(board_text);
   const std::vector<Combo> universe = strided_universe(17);
   const Showdown3 sd(board, universe);
@@ -43,11 +48,12 @@ void check_against_reference(const char* board_text, std::uint64_t seed, double 
   const std::vector<float> r1 = random_reach(n, seed, zero_fraction);
   const std::vector<float> r2 = random_reach(n, seed + 1, zero_fraction);
 
-  const double pot = 300.0;
-  const double my_delta = 40.0;
+  const Chips dead = 30;
+  const double my_delta = static_cast<double>(commit[0]);
   std::vector<float> fast(n), slow(n);
-  sd.showdown(r1.data(), r2.data(), pot, my_delta, fast.data());
-  sd.showdown_slow(r1.data(), r2.data(), pot, my_delta, slow.data());
+  sd.showdown(r1.data(), r2.data(), Showdown3::layers_from_commits(commit, dead, folded),
+              my_delta, fast.data());
+  sd.showdown_slow(r1.data(), r2.data(), commit, dead, folded, my_delta, slow.data());
 
   // Values run to thousands here (pot x pairwise reach mass), so the tolerance
   // is relative to the magnitude actually being compared.
@@ -77,6 +83,28 @@ TEST_CASE("3-way showdown sweep is exact with sparse ranges") {
   // still in the universe and still block, they just carry no mass.
   check_against_reference("Qs Jh 2h 8d 6c", 555, 0.6);
   check_against_reference("9c 9d 5h 5s 2c", 556, 0.85);
+}
+
+TEST_CASE("3-way showdown sweep is exact with side pots") {
+  // A short seat all-in for less makes a main pot all three can win and a
+  // side pot only the two deeper seats can. Every ordering of who is short
+  // matters, because the hero's own eligibility differs in each.
+  check_against_reference("Qs Jh 2h 8d 6c", 8001, 0.0, {40, 100, 100});
+  check_against_reference("Qs Jh 2h 8d 6c", 8002, 0.0, {100, 40, 100});
+  check_against_reference("Qs Jh 2h 8d 6c", 8003, 0.0, {100, 100, 40});
+  // Three distinct commitments: a main pot, a middle side pot and a top one.
+  check_against_reference("9c 9d 5h 5s 2c", 8004, 0.0, {30, 70, 120});
+  check_against_reference("9c 9d 5h 5s 2c", 8005, 0.0, {120, 70, 30});
+  // The hero alone above everyone else takes the top layer uncontested.
+  check_against_reference("Qs Jh 2h 8d 6c", 8006, 0.0, {150, 60, 60});
+}
+
+TEST_CASE("3-way showdown sweep is exact when a seat has folded") {
+  // A folded seat wins nothing but its chips stay in the pot and its cards
+  // still block, so it has to be marginalized rather than dropped.
+  check_against_reference("Qs Jh 2h 8d 6c", 9001, 0.0, {100, 100, 40}, 0b100);
+  check_against_reference("Qs Jh 2h 8d 6c", 9002, 0.0, {100, 40, 100}, 0b010);
+  check_against_reference("9c 9d 5h 5s 2c", 9003, 0.3, {100, 60, 100}, 0b010);
 }
 
 TEST_CASE("3-way compat weight is the pairwise disjoint mass") {

@@ -81,8 +81,51 @@ Showdown3::Showdown3(const std::vector<Card>& board, const std::vector<Combo>& u
   }
 }
 
+std::vector<Showdown3::Layer> Showdown3::layers_from_commits(const std::array<Chips, 3>& commit,
+                                                             Chips dead, std::uint8_t folded) {
+  // Distinct commit levels of ALIVE seats define the layers; every seat's
+  // chips (folded included) fill the layers up to their own commitment. Same
+  // rule as showdown_share, which is the reference this must reproduce.
+  std::vector<Chips> levels;
+  for (int s = 0; s < 3; ++s) {
+    if (folded & (1u << s)) continue;
+    levels.push_back(commit[static_cast<std::size_t>(s)]);
+  }
+  std::sort(levels.begin(), levels.end());
+  levels.erase(std::unique(levels.begin(), levels.end()), levels.end());
+
+  std::vector<Layer> out;
+  Chips prev = 0;
+  bool first = true;
+  for (Chips level : levels) {
+    Layer layer;
+    layer.amount = first ? static_cast<double>(dead) : 0.0;
+    first = false;
+    for (int s = 0; s < 3; ++s) {
+      const Chips c = commit[static_cast<std::size_t>(s)];
+      const Chips lo = c < prev ? c : prev;
+      const Chips hi = c < level ? c : level;
+      if (hi > lo) layer.amount += static_cast<double>(hi - lo);
+    }
+    for (int s = 0; s < 3; ++s) {
+      if (folded & (1u << s)) continue;
+      if (commit[static_cast<std::size_t>(s)] < level) continue;
+      layer.eligible |= static_cast<std::uint8_t>(1u << s);
+    }
+    if (layer.amount > 0.0) out.push_back(layer);
+    prev = level;
+  }
+  return out;
+}
+
 void Showdown3::showdown(const float* r1, const float* r2, double pot, double my_delta,
                          float* out) const {
+  const std::vector<Layer> single{{pot, 0b111}};
+  showdown(r1, r2, single, my_delta, out);
+}
+
+void Showdown3::showdown(const float* r1, const float* r2, const std::vector<Layer>& layers,
+                         double my_delta, float* out) const {
   const int hands = num_hands();
   for (int i = 0; i < hands; ++i) out[i] = 0.0f;
 
@@ -135,6 +178,7 @@ void Showdown3::showdown(const float* r1, const float* r2, double pot, double my
       // are the only members that hold c AND block the hero. Cards the hero
       // holds contribute nothing on either side.
       double cross_ww = 0.0, cross_tw = 0.0, cross_wt = 0.0, cross_tt = 0.0, cross_aa = 0.0;
+      double cross_w1a = 0.0, cross_t1a = 0.0, cross_aw2 = 0.0, cross_at2 = 0.0;
       for (int c = 0; c < kNumCards; ++c) {
         if (c == x || c == y) continue;
         const std::int32_t px = pair_at(static_cast<Card>(c), x);
@@ -165,18 +209,45 @@ void Showdown3::showdown(const float* r1, const float* r2, double pot, double my
         cross_wt += cw1 * ct2;
         cross_tt += ct1 * ct2;
         cross_aa += ca1 * ca2;
+        cross_w1a += cw1 * ca2;
+        cross_t1a += ct1 * ca2;
+        cross_aw2 += ca1 * cw2;
+        cross_at2 += ca1 * ct2;
       }
 
-      // S(A,B) for the four outcomes, then the share weights: the hero takes
-      // the pot outright beating both, half tying one, a third tying both.
+      // S(A,B) for every set pair a layer can ask for. The diagonal is the
+      // correction for both opponents holding the identical combo, so it is
+      // non-zero exactly when the two sets intersect - which rules it out for
+      // the mixed tie-versus-worse terms and keeps it as W, T or ALL
+      // everywhere else.
       const double s_ww = w1 * w2 - cross_ww + wd;
       const double s_tw = t1 * w2 - cross_tw;  // T and W are disjoint: no diagonal
       const double s_wt = w1 * t2 - cross_wt;
       const double s_tt = t1 * t2 - cross_tt + td;
+      const double s_w1a = w1 * a2 - cross_w1a + wd;
+      const double s_t1a = t1 * a2 - cross_t1a + td;
+      const double s_aw2 = a1 * w2 - cross_aw2 + wd;
+      const double s_at2 = a1 * t2 - cross_at2 + td;
       const double compat = a1 * a2 - cross_aa + ad;
 
-      out[i] = static_cast<float>(
-          pot * (s_ww + 0.5 * (s_tw + s_wt) + (1.0 / 3.0) * s_tt) - compat * my_delta);
+      // One kernel per layer shape. An ineligible opponent is marginalized by
+      // taking its set as ALL, which keeps its card removal exact - a folded
+      // seat still holds cards.
+      double value = 0.0;
+      for (const Layer& layer : layers) {
+        if ((layer.eligible & 1u) == 0) continue;  // hero cannot win this layer
+        double share = 0.0;
+        switch (layer.eligible) {
+          case 0b111:
+            share = s_ww + 0.5 * (s_tw + s_wt) + (1.0 / 3.0) * s_tt;
+            break;
+          case 0b011: share = s_w1a + 0.5 * s_t1a; break;
+          case 0b101: share = s_aw2 + 0.5 * s_at2; break;
+          default: share = compat; break;  // 0b001: hero alone takes it
+        }
+        value += layer.amount * share;
+      }
+      out[i] = static_cast<float>(value - compat * my_delta);
     }
 
     for (int s = begin; s < end; ++s) {
@@ -213,17 +284,12 @@ void Showdown3::compat(const float* r1, const float* r2, float* out) const {
   }
 }
 
-void Showdown3::showdown_slow(const float* r1, const float* r2, double pot, double my_delta,
-                              float* out) const {
+void Showdown3::showdown_slow(const float* r1, const float* r2,
+                              const std::array<Chips, 3>& commit, Chips dead,
+                              std::uint8_t folded, double my_delta, float* out) const {
   const int hands = num_hands();
-  // Equal commitments, so showdown_share collapses to the single-pot rule and
-  // this is the canonical N-seat reference rather than a second guess at it.
-  std::array<Chips, kMaxSeats> commit{};
-  const Chips stake = 1;
-  commit[0] = stake;
-  commit[1] = stake;
-  commit[2] = stake;
-  const Chips dead = static_cast<Chips>(3 * stake);  // pot = 3 units, scaled below
+  std::array<Chips, kMaxSeats> seat_commit{};
+  for (int s = 0; s < 3; ++s) seat_commit[static_cast<std::size_t>(s)] = commit[static_cast<std::size_t>(s)];
 
   for (int i = 0; i < hands; ++i) {
     out[i] = 0.0f;
@@ -242,8 +308,9 @@ void Showdown3::showdown_slow(const float* r1, const float* r2, double pot, doub
         const std::uint32_t str[3] = {strength_[static_cast<std::size_t>(i)],
                                       strength_[static_cast<std::size_t>(o1)],
                                       strength_[static_cast<std::size_t>(o2)]};
-        const double share = showdown_share(0, 3, commit, dead - 3 * stake, 0, str);
-        v += a * b * (share / static_cast<double>(3 * stake) * pot - my_delta);
+        // The canonical rule, layers and all - not a second guess at it.
+        const double share = showdown_share(0, 3, seat_commit, dead, folded, str);
+        v += a * b * (share - my_delta);
       }
     }
     out[i] = static_cast<float>(v);

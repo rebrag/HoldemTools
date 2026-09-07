@@ -1,0 +1,32 @@
+{
+  // 4-way river spot on the SAMPLED core. Past three seats there is no
+  // vectorized showdown (the sweep's inclusion-exclusion grows as 52^(N-2)),
+  // but pinning opponents to a dealt hand makes the terminal O(1) per hero
+  // hand at any seat count - which is the whole reason this core exists.
+  // No best response is reported: it would need the terminal that does not
+  // exist. Root EVs come from the sampled EV pass and conserve by
+  // construction.
+  "schema": 1,
+  "game": "nlhe",
+  "board": "9c 5d Jc 7s 2h",
+  "pot": 120,
+  "chip_scale": 100,
+  "players": [
+    { "seat": "OOP", "stack": 200, "range": "@file:ranges/tight15.txt" },
+    { "seat": "MID", "stack": 200, "range": "@file:ranges/tight15.txt" },
+    { "seat": "CO",  "stack": 200, "range": "@file:ranges/tight15.txt" },
+    { "seat": "BTN", "stack": 200, "range": "@file:ranges/tight15.txt" }
+  ],
+  "bet_sizing": {
+    "river": { "bets": [50], "raises": [100], "max_raises": 1, "allin_threshold": 0.9 }
+  },
+  "algorithm": {
+    "update": "dcfr",
+    "family": "sampled",
+    "sampled": { "seed": 7, "batch": 4096, "lanes": 4 }
+  },
+  "qre": { "mode": "nash" },
+  "budget": { "iterations": 200000, "checkpoint_every": 50000 },
+  "memory_limit_gb": 12,
+  "output": { "path": "out/multiway4_river_sampled.hta", "strategy_quantize_u8": false, "ev_float32": true }
+}

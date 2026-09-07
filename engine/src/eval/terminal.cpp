@@ -155,18 +155,31 @@ double showdown_share(int seat, int num_seats, const std::array<Chips, kMaxSeats
                       Chips dead, std::uint16_t folded_mask, const std::uint32_t* strengths) {
   // Distinct commit levels of ALIVE seats define the layers; every seat's
   // chips (folded included) fill the layers up to their own commitment.
-  std::vector<Chips> levels;
+  //
+  // ALLOCATION-FREE on purpose. The sampled EV pass calls this once per seat
+  // per terminal per deal - hundreds of millions of times on a multiway tree
+  // - and a std::vector here cost 289 s of a 200k-deal 8-way pass against
+  // 3 s for the whole rest of it. Seat counts are bounded by kMaxSeats, so
+  // the levels fit a fixed array and the sort is an insertion sort over at
+  // most nine elements.
+  std::array<Chips, kMaxSeats> levels{};
+  int num_levels = 0;
   for (int s = 0; s < num_seats; ++s) {
     if (folded_mask & (1u << s)) continue;
-    levels.push_back(commit[s]);
+    const Chips c = commit[s];
+    int at = 0;
+    while (at < num_levels && levels[at] < c) ++at;
+    if (at < num_levels && levels[at] == c) continue;  // already a level
+    for (int k = num_levels; k > at; --k) levels[k] = levels[k - 1];
+    levels[at] = c;
+    ++num_levels;
   }
-  std::sort(levels.begin(), levels.end());
-  levels.erase(std::unique(levels.begin(), levels.end()), levels.end());
 
   double share = 0.0;
   Chips prev = 0;
   bool first = true;
-  for (Chips level : levels) {
+  for (int li = 0; li < num_levels; ++li) {
+    const Chips level = levels[li];
     double layer = first ? static_cast<double>(dead) : 0.0;
     first = false;
     for (int s = 0; s < num_seats; ++s) {
