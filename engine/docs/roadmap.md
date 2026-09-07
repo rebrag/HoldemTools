@@ -542,7 +542,7 @@ Next (config schema already carries the keys; do not re-plumb):
   It is also the only multiway milestone with a real external correctness gate: published heads-up Nash push/fold charts.
 
 - **M8b - multiway POSTFLOP (3+ players)**: N-seat public tree over streets, fast side-pot terminal path, NashConv already generalizes. `multiway_no_nash_guarantee` stays surfaced - CFR converges to coarse correlated equilibria with 3+ players.
-  **The terminal half is answered: the sweep generalizes at O(H)** (`src/eval/terminal3.hpp`, measured 2026-09-07 - see "the 3-way terminal sweep" below). So the remaining M8b work is the N-seat tree builder, not a research problem, and M8b can be built EXACT rather than depth-limited-from-the-start for correctness.
+  **Both halves of the groundwork landed 2026-09-07** (see the two sections below): the terminal sweep **generalizes at O(H)** (`src/eval/terminal3.hpp`), and `build_postflop_tree` is now **N-seat** with the heads-up tree bit-identical. So M8b can be built EXACT rather than depth-limited-from-the-start for correctness, and what remains is wiring `NlhePostflopGame` to N seats plus the config surface - engineering, not research.
   **This is the milestone that forces the depth-limiting decision, and it should be designed with that in mind rather than built exact-only and retrofitted.** A 3-way tree is at least 8x the size of the heads-up equivalent and costs GTO Wizard 1.5x per iteration on flop/turn and 2x on the river even after their reductions; their own *classical* engine needs "multiple minutes on 64 cores" for a 3-way turn. Exact full-tree multiway at interactive speed is not a thing anyone has shipped. The shape that works, and that they use, is **exact on the river** (no future left to approximate, and they explicitly run no network there) with **depth-limited turn and flop**. Building M8 as exact-everywhere first would produce something correct that cannot be served on demand, which is half the product.
 ### M8a - multiway preflop push/fold. Landed 2026-08-30.
 
@@ -937,6 +937,42 @@ Four or more seats is `S` over three sets and was not attempted.
 Exact 3-way postflop terminals are reachable on the vectorized core, so M8b's remaining work is the N-seat tree builder rather than a research problem, and M8b does not have to be depth-limited from the start to be CORRECT.
 It still has to be depth-limited to be FAST: a 3-way tree is at least 8x its heads-up equivalent and now carries a ~25x terminal constant on top.
 And the exact terminal is needed under a depth-limited engine anyway - the shape that works is exact on the river, where there is no future to approximate and GTO Wizard explicitly runs no network.
+
+### M8b groundwork - the N-seat tree builder. Landed 2026-09-07.
+
+`build_postflop_tree` was 2-player in every line of its recursion; it now takes `num_seats` (2 to `kMaxSeats`) and a per-seat `stack[]`, with `effective_stack` kept as the shorthand that fills unset entries.
+
+**The structural difference from heads-up is that a FOLD is not terminal until one seat remains.**
+That breaks the old shape, where every action either ended the street or handed play to "the other seat".
+The replacement is the machinery `build_preflop_tree` already had, ported over: `settle()` decides after every action whether the round continues, closes, or ends the hand, and `next_actor()` finds the next seat that still owes an action - alive, not all-in, and either yet to act since the last aggression or facing a raise made after it acted.
+
+Round bookkeeping lives in a **side table keyed by NodeId**, not on `Node`, for the reason the preflop builder records: `commit` and `folded_mask` cannot tell "has not acted yet" apart from "acted, and is still facing the same bet", and `Node` is the artifact-facing struct.
+It carries the acted mask, the raise count, the min-raise floor, this street's aggressor and the previous street's.
+
+**Other things that stopped being heads-up:**
+a call is `min(bet, stack[actor])`, so calling all-in for less builds a side pot the tree records as differing per-seat `commit`;
+a street runs out as pure chance when fewer than two seats can still act, replacing the old "both seats all-in" test (identical at 2 seats with equal stacks, and correct when stacks differ);
+the next actor at a street start is the first alive, non-all-in seat rather than seat 0 unconditionally.
+
+**Donk sizing needed a real generalization rather than a port.**
+The heads-up rule is `actor == 0 && prev_aggressor == Ip`.
+Read as "the non-aggressor bets first" it fires wrongly for a seat betting AFTER the previous aggressor checked.
+The correct statement is that a donk is a first-in bet INTO the previous street's aggressor, so the condition is that the aggressor is a different seat and **has not acted yet this street**.
+That reduces to exactly the heads-up rule at 2 seats and behaves at 3+.
+
+**The heads-up tree is bit-identical, and that is checked rather than asserted.**
+`tools/tree_hash.cpp` fingerprints every field of every node of four 2-seat trees (river, turn, donk, flop - 149361 nodes at the top end).
+Run across the change, the digests match exactly on every tree.
+The one field that does differ is `folded_mask`, which fold terminals now carry and the heads-up-only builder left at 0 because `fold_winner` already said everything at two seats - so the tool reports two digests and only the `folded_mask`-excluding one is required to hold.
+That is the right level of proof here: the existing tests check structure at a handful of nodes, and this is the Pio-gated artifact contract.
+
+`tests/test_tree_multiway.cpp` covers the rest at 3 and 4 seats: folds that continue the hand, folds that close it, round completion (every alive seat matched or all-in), pot conservation at every node, action wrapping back round after a raise, runout streets, and side pots whose `showdown_share` layers sum to exactly the pot across all 27 strength orderings.
+
+**What M8b still needs, so this is not mistaken for the milestone.**
+The TREE is N-seat; the GAME is not.
+`NlhePostflopGame` still reports `num_seats() == 2`, evaluates terminals through `showdown_2p`, computes pairwise `compat_weights`, and hardcodes `52 - known - 4` in `chance_weight` (two seats' hole cards).
+Wiring it up means using `Showdown3` for the 3-seat terminal, generalizing the compat weight, and adding side-pot LAYERING over that kernel - none of which is a research problem any more, and all of which is more than a rename.
+The config surface is also still heads-up: no `num_seats` for postflop, no per-seat stacks, and no per-seat sizing lists, which is why seat 0 reads `oop` and every other seat reads `ip` at 3+.
 
 ### M9 - hand-sharing teams (cooperation/collusion). Landed 2026-08-31, on the sampled core.
 

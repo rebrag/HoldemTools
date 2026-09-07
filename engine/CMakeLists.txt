@@ -111,6 +111,12 @@ target_link_libraries(dl_probe PRIVATE engine_core)
 add_executable(terminal3_bench tools/terminal3_bench.cpp)
 target_link_libraries(terminal3_bench PRIVATE engine_core)
 
+# tree_hash fingerprints every field of every node of the 2-seat postflop
+# trees. Run it across a revision that touches build_postflop_tree to prove
+# the Pio-gated heads-up tree did not move.
+add_executable(tree_hash tools/tree_hash.cpp)
+target_link_libraries(tree_hash PRIVATE engine_core)
+
 # --- Tests ----------------------------------------------------------------
 enable_testing()
 add_executable(engine_tests
@@ -118,6 +124,7 @@ add_executable(engine_tests
   tests/test_kuhn.cpp
   tests/test_leduc.cpp
   tests/test_tree.cpp
+  tests/test_tree_multiway.cpp
   tests/test_preflop_tree.cpp
   tests/test_terminal.cpp
   tests/test_terminal3.cpp
