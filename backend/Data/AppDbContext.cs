@@ -120,7 +120,11 @@ namespace PokerRangeAPI2.Data
                 // nvarchar(max)); ConfigJson and Error are wide, never indexed.
                 entity.Property(e => e.UserId).HasMaxLength(128);
                 entity.Property(e => e.Mode).HasMaxLength(16);
-                entity.Property(e => e.Board).HasMaxLength(12);
+                // 32, not 12: a multiway row's label carries the seat count as
+                // well as the board ("4-way 9c5dJc7s9h" is 16), because a board
+                // alone does not say which of these a row is. 12 fit a bare
+                // 5-card board and nothing more.
+                entity.Property(e => e.Board).HasMaxLength(32);
                 entity.Property(e => e.Status).HasMaxLength(16);
                 entity.Property(e => e.Error).HasMaxLength(2000);
                 entity.Property(e => e.WatcherId).HasMaxLength(64);
