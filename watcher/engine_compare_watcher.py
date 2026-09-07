@@ -43,7 +43,10 @@ Env (same .env as the main watcher):
       sampled solves resumable: each job continues from the checkpoint its
       own config identifies, so re-queuing the same spot with a bigger
       budget.iterations adds iterations instead of restarting. Checkpoints
-      are small (~15 MB for a 4-way team spot) but never cleaned up.
+      are small (~15 MB for a 4-way team spot) but never cleaned up. Only
+      sampled-core jobs (algorithm.family "sampled", the /multiway solves)
+      opt in; the vectorized core behind heads-up postflop /compare jobs
+      cannot checkpoint and is left alone.
 
 Run alongside the main watcher:  python engine_compare_watcher.py
 Only ONE compare watcher instance should run (it spawns Pio processes).
@@ -93,7 +96,8 @@ SOLVE_WRITE_MARGIN_SECS = float(os.getenv("ENGINE_SOLVE_WRITE_MARGIN_SECS", "300
 # over. That is what turns the one-hour ceiling into arbitrarily long solves
 # done in chunks. Off by default: it makes re-running an identical job a
 # no-op (already at the target) instead of a fresh solve, which should be a
-# deliberate choice.
+# deliberate choice. Applies to sampled-core jobs only - see
+# prepare_engine_config for why the vectorized core is left out.
 CHECKPOINT_DIR = os.getenv("ENGINE_CHECKPOINT_DIR", "").strip()
 # How often a claim reports in. This is ALSO how long the owner's Stop takes
 # to reach the solver, which is what sets it: the server's claim timeout is
@@ -370,14 +374,28 @@ def run_streamed(cmd: Sequence[str], *, timeout: float, prefix: str,
     return ChildResult(proc.returncode, tail)
 
 
-def run_engine(config: Dict[str, Any], run_dir: str, cancel: Cancellation) -> str:
-    """Solve with htsolver; returns the artifact path.
+def solver_family(config: Dict[str, Any]) -> str:
+    """Which engine core a config runs on: "vectorized" (the engine's default,
+    heads-up postflop) or "sampled" (multiway preflop). Mirrors the engine's
+    own default so an absent `algorithm.family` reads the way the engine
+    reads it."""
+    algorithm = config.get("algorithm")
+    if not isinstance(algorithm, dict):
+        return "vectorized"
+    family = algorithm.get("family")
+    return family if isinstance(family, str) and family else "vectorized"
 
-    Stoppable: the engine is given a `budget.stop_file` under this run's own
-    directory, and creating that file makes it stop at its next slice, write
-    its checkpoint and export the artifact for the iterations it completed.
-    Killing it instead would discard the whole run, since both the checkpoint
-    and the artifact are written at the end.
+
+def prepare_engine_config(config: Dict[str, Any], run_dir: str, *,
+                          checkpoint_dir: str = CHECKPOINT_DIR) -> str:
+    """Fill in the watcher-owned parts of a job's engine config; returns the
+    artifact path the engine will write.
+
+    Everything here is policy that belongs to this process rather than to the
+    job: where the artifact goes, the time budget that keeps a long solve
+    from being killed, the per-run stop file, and whether the solve is
+    resumable. Pure apart from mutating `config`, so the rules are testable
+    without an engine (test_engine_config.py).
     """
     artifact = os.path.join(run_dir, "solve.hta")
     config["output"] = dict(config.get("output") or {})
@@ -390,15 +408,36 @@ def run_engine(config: Dict[str, Any], run_dir: str, cancel: Cancellation) -> st
     if not budget.get("max_seconds") or budget["max_seconds"] > engine_budget:
         budget["max_seconds"] = engine_budget
     config["budget"] = budget
-    # The engine names the file from the config itself, so identical spots
-    # share one checkpoint and different spots can never collide - no key
-    # derivation duplicated here.
-    if CHECKPOINT_DIR and not config["output"].get("checkpoint_path"):
-        config["output"]["checkpoint_dir"] = CHECKPOINT_DIR.replace("\\", "/")
+    # Checkpoints exist for the SAMPLED core only: the vectorized core carries
+    # discount history and schedule state the checkpoint does not serialize,
+    # and the engine refuses a checkpoint path for it rather than resuming a
+    # subtly different solver. So a heads-up postflop job (vectorized) must
+    # not be opted in just because this process has a checkpoint directory -
+    # that turned every /compare job into a config error. The engine names
+    # the file from the config itself, so identical spots share one
+    # checkpoint and different spots can never collide - no key derivation
+    # duplicated here.
+    if (checkpoint_dir and solver_family(config) == "sampled"
+            and not config["output"].get("checkpoint_path")):
+        config["output"]["checkpoint_dir"] = checkpoint_dir.replace("\\", "/")
     # Per-run path inside the job's temp directory: it cannot be left over
     # from an earlier job, and it disappears with the directory.
     stop_file = os.path.join(run_dir, "STOP")
     budget["stop_file"] = stop_file.replace("\\", "/")
+    return artifact
+
+
+def run_engine(config: Dict[str, Any], run_dir: str, cancel: Cancellation) -> str:
+    """Solve with htsolver; returns the artifact path.
+
+    Stoppable: the engine is given a `budget.stop_file` under this run's own
+    directory, and creating that file makes it stop at its next slice, write
+    its checkpoint and export the artifact for the iterations it completed.
+    Killing it instead would discard the whole run, since both the checkpoint
+    and the artifact are written at the end.
+    """
+    artifact = prepare_engine_config(config, run_dir)
+    stop_file = config["budget"]["stop_file"]
     config_path = os.path.join(run_dir, "config.json")
     with open(config_path, "w", encoding="utf8") as f:
         json.dump(config, f)
@@ -612,8 +651,9 @@ def main() -> int:
     # Whether solves are resumable changes what re-queuing a job MEANS, so it
     # belongs in the startup banner rather than being inferred from behaviour.
     if CHECKPOINT_DIR:
-        log(f"  checkpoints ON ({CHECKPOINT_DIR}) - a re-queued job continues from its "
-            f"checkpoint; budget.iterations is a total")
+        log(f"  checkpoints ON ({CHECKPOINT_DIR}) - a re-queued sampled-core job "
+            f"continues from its checkpoint; budget.iterations is a total. "
+            f"Vectorized (heads-up postflop) jobs cannot checkpoint and run fresh")
     else:
         log("  checkpoints off (set ENGINE_CHECKPOINT_DIR to make solves resumable)")
     log(f"  heartbeat {HEARTBEAT_SECS:.0f}s (= cancel latency), cancel grace "

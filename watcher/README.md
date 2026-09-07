@@ -167,6 +167,11 @@ So a stopped solve is a viewable, resumable result rather than a discarded hour:
 A job cancelled while still `Queued` never runs at all, and one whose watcher dies mid-cancel is marked `Cancelled` by the stale sweep rather than re-queued.
 `test_cancel.py` covers the protocol and both grace outcomes.
 
+Setting `ENGINE_CHECKPOINT_DIR` makes solves **resumable**: the watcher hands the engine `output.checkpoint_dir`, the engine names the checkpoint from the config's own solve id, and a re-queued job with a larger `budget.iterations` continues instead of restarting.
+This is for the sampled core only (`algorithm.family: "sampled"`, the `/multiway` solves).
+The vectorized core behind heads-up postflop `/compare` jobs has no checkpoint format and the engine rejects one as a config error, so the watcher never opts those jobs in - with or without the directory set, they run fresh.
+`test_engine_config.py` pins that rule and the rest of the per-job config the watcher owns (artifact path, time budget, stop file).
+
 **This is the only watcher `/compare` needs.**
 It claims from its own queue, runs `engine.exe` itself, and `engine_compare.py` spawns its own PioSOLVER process over UPI; the result upload to ADLS is its own too.
 `watch_adls_and_run_pio_headless.py` serves a different queue entirely (the gametree/SolveJobs pipeline behind `/solutions`, driving PioViewer through pywinauto), and nothing on the compare path goes through it.
