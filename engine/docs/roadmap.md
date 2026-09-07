@@ -968,6 +968,41 @@ That is the right level of proof here: the existing tests check structure at a h
 
 `tests/test_tree_multiway.cpp` covers the rest at 3 and 4 seats: folds that continue the hand, folds that close it, round completion (every alive seat matched or all-in), pot conservation at every node, action wrapping back round after a raise, runout streets, and side pots whose `showdown_share` layers sum to exactly the pot across all 27 strength orderings.
 
+**Convergence on tight ranges, measured 2026-09-07 (`tools/bench_multiway.py`).**
+Conservation says nothing about this - it is a property of each dealt hand, so a completely unconverged solve still conserves perfectly - which is why it needed its own measurement.
+
+The M8c fear was that a dealt hand outside a seat's range weighs zero, so the effective sample size is the opponents' range fraction, and with N-1 opponents that is a PRODUCT.
+The mechanism is real and the numbers are stark (river SPR 7, fraction of deals where EVERY opponent is in range):
+
+| range | combos | 3 seats | 4 | 5 | 6 | 8 |
+|---|---|---|---|---|---|---|
+| 100% | 1326 | 100% | 100% | 100% | 100% | 100% |
+| 15% | 176 | 1.87% | 0.21% | 0.02% | 0.00% | 0.00% |
+| 6% | 76 | 0.40% | 0.02% | 0.00% | 0.00% | 0.00% |
+
+**But the fear was wrong about where it bites.** Narrow ranges are not the problem at a fixed seat count - at three seats they are if anything slightly EASIER, because the universe is smaller and there is less to learn:
+
+| range | vectorized (2000 iters) | sampled, 200k deals |
+|---|---|---|
+| 100% | 0.0028% of pot | ~3-14% (bumpy) |
+| 15% | 0.0013% | 1.81% |
+| 6% | 0.0016% | 1.57% |
+
+The problem is SEAT COUNT, and the seed spread shows the cliff exactly where the deal rate does (tight range, 200k deals, worst per-seat root EV gap between seeds 1 and 999):
+
+| seats | 3 | 4 | 6 | 8 |
+|---|---|---|---|---|
+| gap | **0.78% of pot** | **1.07%** | **13.41%** | **10.11%** |
+
+**The usable conclusion.**
+Three seats is production-ready and should always run VECTORIZED: exact, 0.0013% of pot in 2000 iterations (about 3 s), at any range width.
+Four seats is marginal - seeds agree to about 1% of pot at 200k deals, and there is no exploitability number to tell you when to stop.
+Six and up does not converge on tight ranges at all; 200k deals buys roughly eight usable ones.
+
+**One property to design around: sampled multiway exploitability is not monotone in iterations.** Measured at three seats, 100% ranges: 19.2% at 25k deals, 7.5% at 50k, 3.1% at 100k, **14.5% at 200k**, 4.0% at 400k, 1.4% at 800k. The trend is real and downward, but a single reading is not evidence of anything. Two causes, both already recorded: a stochastic gradient, and `multiway_no_nash_guarantee` - with 3+ players CFR converges to coarse correlated equilibria, so nashconv need not decrease. Quote a curve, never a point.
+
+The fix direction, not built: the training deal is uniform because dealing the HERO in proportion to its range biases the runout the vectorized hero sees. Dealing only the OPPONENTS proportionally, with the importance weight `sample_ev_deal` already uses, would restore the rate - but the runout also avoids the opponents' cards, so it needs the same correction and its variance under tiny acceptance is unmeasured. The recorded alternative (one deal per seat per iteration) fixes the hero bias but not the rate.
+
 **What M8b still needs, so this is not mistaken for the milestone.**
 The TREE is N-seat; the GAME is not.
 `NlhePostflopGame` still reports `num_seats() == 2`, evaluates terminals through `showdown_2p`, computes pairwise `compat_weights`, and hardcodes `52 - known - 4` in `chance_weight` (two seats' hole cards).
