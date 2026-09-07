@@ -288,6 +288,86 @@ public class EngineCompareJobsTests
     }
 
 
+    private static JsonObject MultiwayConfig(int seats, bool sampled)
+    {
+        var players = new JsonArray();
+        for (var i = 0; i < seats; i++)
+        {
+            players.Add(new JsonObject { ["seat"] = $"S{i}", ["stack"] = 200, ["range"] = "AA" });
+        }
+        var algorithm = new JsonObject { ["update"] = "dcfr" };
+        if (sampled) algorithm["family"] = "sampled";
+        return new JsonObject
+        {
+            ["schema"] = 1,
+            ["game"] = "nlhe",
+            ["board"] = "9c 5d Jc 7s 9h",
+            ["pot"] = 100,
+            ["players"] = players,
+            ["algorithm"] = algorithm,
+        };
+    }
+
+    [Fact]
+    public async Task Multiway_mode_queues_with_a_board_and_a_seat_labelled_row()
+    {
+        using var db = NewDb();
+        var create = await UserController(db, "uid-1").Create(
+            new EngineCompareController.CreateDto
+            { Config = MultiwayConfig(3, sampled: false), Mode = "multiway" });
+        var job = Assert.IsType<EngineCompareController.JobDto>(
+            Assert.IsType<OkObjectResult>(create.Result).Value);
+        Assert.Equal("multiway", job.Mode);
+        // The label carries the seat count as well as the board: a board alone
+        // does not say which of these a row is.
+        Assert.Equal("3-way 9c5dJc7s9h", job.Board);
+
+        // Pio cannot build an N-seat postflop tree at all, so the flags are
+        // normalized rather than trusted from the client.
+        var watcher = WatcherController(db);
+        var claim = Assert.IsType<OkObjectResult>(await watcher.Claim(
+            new EngineCompareWatcherController.ClaimRequestDto { WatcherId = "w1" }));
+        var claimed = claim.Value!.GetType();
+        Assert.Equal(true, claimed.GetProperty("disablePio")!.GetValue(claim.Value));
+        Assert.Equal(true, claimed.GetProperty("disableCompare")!.GetValue(claim.Value));
+    }
+
+    [Fact]
+    public async Task Multiway_mode_rejects_seat_counts_the_engine_cannot_solve()
+    {
+        using var db = NewDb();
+        var ctl = UserController(db, "uid-1");
+
+        // Heads-up postflop is the compare tab's job; running it here would be
+        // the same solve under a second name.
+        Assert.IsType<BadRequestObjectResult>((await ctl.Create(
+            new EngineCompareController.CreateDto
+            { Config = MultiwayConfig(2, sampled: false), Mode = "multiway" })).Result);
+
+        // Past three seats there is no vectorized showdown, so the vectorized
+        // core cannot solve this at all. Fail at queue time rather than on the
+        // watcher's machine twenty minutes later.
+        Assert.IsType<BadRequestObjectResult>((await ctl.Create(
+            new EngineCompareController.CreateDto
+            { Config = MultiwayConfig(5, sampled: false), Mode = "multiway" })).Result);
+
+        // The same spot on the sampled core is fine.
+        Assert.IsType<OkObjectResult>((await ctl.Create(
+            new EngineCompareController.CreateDto
+            { Config = MultiwayConfig(5, sampled: true), Mode = "multiway" })).Result);
+
+        // Three seats needs no sampled flag: the vectorized sweep still works.
+        Assert.IsType<OkObjectResult>((await ctl.Create(
+            new EngineCompareController.CreateDto
+            { Config = MultiwayConfig(3, sampled: false), Mode = "multiway" })).Result);
+
+        // And it is postflop, so a board is required.
+        var noBoard = MultiwayConfig(4, sampled: true);
+        noBoard.Remove("board");
+        Assert.IsType<BadRequestObjectResult>((await ctl.Create(
+            new EngineCompareController.CreateDto { Config = noBoard, Mode = "multiway" })).Result);
+    }
+
     [Fact]
     public async Task Pio_accuracy_outside_its_range_is_rejected()
     {

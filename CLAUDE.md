@@ -67,6 +67,11 @@ Publish mode is the transition path to dropping PioSolver: once htsolver is trus
 A `compare` job may also carry a `sampledConfig`: the same tree on htsolver's sampled-deal core (`algorithm.family: "sampled"`, isomorphism off), which the watcher solves AFTER the vectorized run (never beside it, so the timings stay clean, and never from a checkpoint) and uploads as a third blob, `enginecompare/{id}.sampled.htc.gz`, served by `/result/sampled`.
 Both artifacts stamp a per-checkpoint `metadata.convergence` trace, and `/compare` draws the two cores' exploitability against solver time with the shared target - the honest answer to "which core converges faster" is time to that target, never iteration counts, which mean different work on the two cores.
 
+A fourth mode, (d) `multiway`, carries **multiway POSTFLOP** (engine M8b): `POST /api/enginecompare` with `mode: "multiway"`, a real 3/4/5-card board and 3 to 9 players.
+It shares `pushfold`'s watcher handler and payload exactly - `rollup_169` per decision node plus `metadata.ev_chips` - because the render and a MonkerSolver comparison read the same two things, and it is htsolver-only for the same reason: Pio cannot build an N-seat postflop tree at all.
+What differs is that the SEAT COUNT picks the engine core, and the API checks it at queue time rather than letting the watcher fail twenty minutes later: 2-3 seats have an exact vectorized showdown, 4+ require `algorithm.family: "sampled"`, and past three seats there is no nashconv and no per-hand EV in the artifact.
+The `/compare` tab for it is not built yet; the job, the watcher and the engine are.
+
 A third mode, (c) `pushfold`, carries the **multiway preflop** solver (engine M8a): `/multiway` -> `POST /api/enginecompare` with `mode: "pushfold"` -> the watcher solves an N-seat jam-or-fold tree with htsolver and uploads `engine.exe dump-json` output, which `/result/ht` serves back to the page.
 It takes no `config.board` and never involves Pio - not because Pio is disabled but because Pio is heads-up postflop and cannot build a 4-way preflop tree at all - and it does not go through `EngineSolutionExporter`, whose schema-4 bundle contract is `oop`/`ip`-keyed and correctly refuses a 4-seat artifact.
 The artifact's own 169-class rollup is the push/fold chart, so `/multiway` renders it with the same `DecisionMatrix` as `/solutions`.

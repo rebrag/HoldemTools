@@ -21,6 +21,11 @@ Job modes:
            a 4-way preflop tree at all, so there is nothing to compare against.
            The artifact is dumped to JSON and uploaded as the htsolver payload,
            which /api/enginecompare/{id}/result/ht already serves.
+  multiway multiway POSTFLOP on a board (engine M8b). Same handler and same
+           payload as pushfold, and htsolver-only for the same reason. Which
+           core runs is the engine's call from the seat count: 2-3 seats have
+           an exact vectorized showdown, 4+ need algorithm.family "sampled",
+           and the API refuses the wrong combination at queue time.
 
 Env (same .env as the main watcher):
   HOLDEMTOOLS_API_BASE, WATCHER_API_KEY, WATCHER_ID   queue API (api_client)
@@ -645,15 +650,23 @@ def result_identity(dump_path: str) -> Dict[str, Any]:
     return out
 
 
-def handle_pushfold(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
-                   cancel: Cancellation) -> None:
-    """Multiway preflop jam/fold (engine M8a).
+def handle_htsolver_only(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
+                         cancel: Cancellation, label: str = "pushfold") -> None:
+    """htsolver-only modes: multiway PREFLOP jam/fold (M8a) and multiway
+    POSTFLOP on a board (M8b).
 
     Deliberately does NOT shell engine_compare.py. That harness exists to drive
-    PioSOLVER, which is heads-up postflop and cannot build a 4-way preflop tree
-    at all, so there is nothing to compare against and no gate to run. The
-    artifact is dumped to JSON and uploaded as the htsolver payload, which
+    PioSOLVER, which is heads-up postflop and cannot build either of these
+    trees - a 4-way preflop tree or an N-seat postflop one - so there is
+    nothing to compare against and no gate to run. The artifact is dumped to
+    JSON and uploaded as the htsolver payload, which
     /api/enginecompare/{id}/result/ht already serves.
+
+    One handler for both because the PAYLOAD is the same: `rollup_169` per
+    decision node plus `metadata.ev_chips`, which is what the page renders and
+    what a MonkerSolver comparison reads. The only thing that differs is which
+    core the config selected, and the engine decides that from the seat count
+    rather than from anything here.
     """
     job_id = job["id"]
     config = json.loads(job["config"])
@@ -665,7 +678,7 @@ def handle_pushfold(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
     timings["engine_solve_s"] = round(time.perf_counter() - phase_start, 3)
 
     phase_start = time.perf_counter()
-    dump_path = os.path.join(run_dir, "pushfold.json")
+    dump_path = os.path.join(run_dir, f"{label}.json")
     # --fields rollup: /multiway renders only the 169-class rollup chart,
     # and the per-hand fields were ~98% of the payload it ignored.
     # NOT cancellable: the solve is already on disk and this is the step that
@@ -688,7 +701,7 @@ def handle_pushfold(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
     timings["upload_s"] = round(time.perf_counter() - phase_start, 3)
     report(job_id, status=terminal_status(cancel), ht_blob_path=blob, timings=timings,
            identity=identity)
-    log(f"  pushfold -> {blob} ({timings['dump_bytes']} bytes before gzip)")
+    log(f"  {label} -> {blob} ({timings['dump_bytes']} bytes before gzip)")
 
 
 def main() -> int:
@@ -734,7 +747,9 @@ def main() -> int:
                     if mode == "publish":
                         handle_publish(job, run_dir, timings, cancel)
                     elif mode == "pushfold":
-                        handle_pushfold(job, run_dir, timings, cancel)
+                        handle_htsolver_only(job, run_dir, timings, cancel, "pushfold")
+                    elif mode == "multiway":
+                        handle_htsolver_only(job, run_dir, timings, cancel, "multiway")
                     else:
                         handle_compare(job, run_dir, timings, cancel)
             except Cancelled as e:
