@@ -117,3 +117,8 @@ export const postflopWalkLine = (dump: PushFoldDump, path: number[]) => {
   }
   return { steps, node };
 };
+
+/** The shared helpers (walkLine, buildLineModel, lineHandlers, gridFor) take a
+ *  one-argument labeller; this binds the dump into one. */
+export const labellerFor = (dump: PushFoldDump) => (node: DumpNode) =>
+  postflopActionLabels(dump, node);

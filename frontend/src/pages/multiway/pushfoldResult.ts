@@ -43,6 +43,9 @@ export interface PushFoldDump {
   metadata: {
     seats: string[];
     stacks?: number[];
+    /** The root board, "9c 5d Jc 7s 2h". Absent on preflop solves, which is
+     *  the whole reason it is optional: the board is not in that tree. */
+    board?: string;
     ev_chips: number[];
     final_nashconv: number | null;
     iterations: number;
@@ -303,13 +306,27 @@ export const conditionedGridFor = (
   });
 };
 
-export const actionLabels = (node: DumpNode): string[] =>
+/** One label per child of a decision node, in child order.
+ *
+ *  Injectable because the two trees this module serves label differently and
+ *  neither rule generalizes to the other. A jam/fold node either faces a bet
+ *  (fold or jam) or does not (jam), which is what `actionLabels` below
+ *  encodes. A postflop node has check, any number of bet sizes and a shove -
+ *  see multiwayPostflop/postflopLabels.ts. Going the other way is just as
+ *  wrong: an all-in CALL for less carries action_kind "check_call", so the
+ *  postflop rule would label a jam "Call".
+ *
+ *  Bind the dump at construction where a labeller needs it, so every consumer
+ *  here keeps the same one-argument shape. */
+export type ActionLabeller = (node: DumpNode) => string[];
+
+export const actionLabels: ActionLabeller = (node) =>
   node.num_children === 2 ? ["Fold", "ALLIN"] : ["ALLIN"];
 
 /** The node's 169-class chart, in the shape DecisionMatrix consumes. */
-export const gridFor = (node: DumpNode): HandCellData[] => {
+export const gridFor = (node: DumpNode, labelsFor: ActionLabeller = actionLabels): HandCellData[] => {
   const rollup = node.data?.rollup_169 ?? [];
-  const labels = actionLabels(node);
+  const labels = labelsFor(node);
   const byClass = new Map(rollup.map((r) => [r.class, r]));
   return HAND_ORDER.map((hand) => {
     const entry = byClass.get(hand);
@@ -354,12 +371,16 @@ export interface LineStep {
 /** Walk from the root down a chosen path, collecting the decision nodes met
  *  along the way. Returns the steps taken plus wherever the path ended -
  *  which may be a terminal, since folding everyone out ends the hand. */
-export const walkLine = (dump: PushFoldDump, path: number[]) => {
+export const walkLine = (
+  dump: PushFoldDump,
+  path: number[],
+  labelsFor: ActionLabeller = actionLabels
+) => {
   const steps: LineStep[] = [];
   let node = dump.nodes["0"];
   for (const choice of path) {
     if (!node || node.kind !== "decision" || node.first_child == null) break;
-    const labels = actionLabels(node);
+    const labels = labelsFor(node);
     const child = node.first_child + choice;
     steps.push({ node, child, label: labels[choice] ?? "?", seat: node.actor ?? -1 });
     node = dump.nodes[String(child)];

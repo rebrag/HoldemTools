@@ -34,7 +34,11 @@ import {
 } from "@/pages/multiway/compareJob";
 import { fetchPushFoldDump } from "@/pages/multiway/fetchPushFoldDump";
 import type { DumpNode, PushFoldDump } from "@/pages/multiway/pushfoldResult";
-import { postflopActionLabels, postflopGridFor, postflopWalkLine } from "./postflopLabels";
+import { buildLineModel, lineHandlers } from "@/pages/multiway/lineModel";
+import ActionSummary from "@/pages/solver/ActionSummary";
+import HandBreakdown from "@/pages/solver/HandBreakdown";
+import Line from "@/pages/solver/Line";
+import { labellerFor, postflopGridFor } from "./postflopLabels";
 import {
   boardCards,
   buildConfig,
@@ -69,6 +73,7 @@ const MultiwayPostflopSolver = () => {
   const [error, setError] = useState<string | null>(null);
   const [path, setPath] = useState<number[]>([]);
   const [elapsed, setElapsed] = useState(0);
+  const [breakdownHand, setBreakdownHand] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
 
   const seats = seatCount(view);
@@ -90,6 +95,7 @@ const MultiwayPostflopSolver = () => {
     setError(null);
     setDump(null);
     setPath([]);
+    setBreakdownHand(null);
     setJob(null);
     setSolving(true);
     setElapsed(0);
@@ -134,20 +140,41 @@ const MultiwayPostflopSolver = () => {
     }
   }, [view]);
 
-  const line = useMemo(() => (dump ? postflopWalkLine(dump, path) : null), [dump, path]);
-  const node: DumpNode | null = line?.node ?? null;
-  // NOT pushfoldResult's gridFor/actionLabels: those assume a jam/fold tree
-  // and collapse a three-action postflop node to one label - see
-  // postflopLabels.ts.
+  /* The dump's own labeller, bound once and handed to every shared helper.
+     NOT the default jam/fold one: it collapses a three-action postflop node to
+     a single "ALLIN" - see postflopLabels.ts. */
+  const labeller = useMemo(() => (dump ? labellerFor(dump) : null), [dump]);
+  /* /multiway's dump -> Line adapter, reused wholesale. It builds the seat
+     cards, the per-seat bets and the rewind targets; only the labeller
+     differs. */
+  const model = useMemo(
+    () => (dump && labeller ? buildLineModel(dump, path, labeller) : null),
+    [dump, labeller, path]
+  );
+  const handlers = useMemo(
+    () => (dump && model && labeller ? lineHandlers(dump, path, setPath, model.seatOf, labeller) : null),
+    [dump, model, labeller, path]
+  );
+  const node: DumpNode | null = model?.node ?? null;
   const grid = useMemo(
     () => (dump && node && node.kind === "decision" ? postflopGridFor(dump, node) : null),
     [dump, node]
   );
-  const labels = useMemo(
-    () => (dump && node && node.kind === "decision" ? postflopActionLabels(dump, node) : []),
-    [dump, node]
-  );
   const seatNames = dump?.metadata.seats ?? view.seats;
+  /* Bet labels are percentages of THIS node's pot, the same reference
+     /compare uses, so a "Bet 50" into 100 colours like a half-pot bet rather
+     than like 50 big blinds. */
+  const potHere = node?.pot ?? dump?.metadata.pot ?? view.potChips;
+
+  /* Click an action panel or a seat option -> walk there. */
+  const onActionClick = useCallback(
+    (action: string) => {
+      if (!node || node.kind !== "decision" || !labeller) return;
+      const k = labeller(node).indexOf(action);
+      if (k >= 0) setPath([...path, k]);
+    },
+    [node, labeller, path]
+  );
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-3 px-3 py-4 text-slate-200">
@@ -234,55 +261,96 @@ const MultiwayPostflopSolver = () => {
             </p>
           </section>
 
-          {/* The line walked so far, and what can be done next. */}
+          {/* Seat strip, action panels, matrix and combo breakdown - the
+              same four the /compare study view shows for one solver. */}
           <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
-            <div className="flex flex-wrap items-center gap-1 text-[11px]">
-              <button
-                type="button"
-                onClick={() => setPath([])}
-                className="rounded border border-slate-700 px-2 py-0.5 hover:border-slate-500"
-              >
-                Root
-              </button>
-              {line?.steps.map((step, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => setPath(path.slice(0, i + 1))}
-                  className="rounded border border-slate-700 px-2 py-0.5 hover:border-slate-500"
-                >
-                  {seatNames[step.seat] ?? `S${step.seat}`} {step.label}
-                </button>
-              ))}
-            </div>
+            {model && handlers && (
+              <div className="mb-3 w-full min-w-0">
+                <Line
+                  line={model.line}
+                  positions={model.positions}
+                  activePlayer={model.activePlayer}
+                  plateData={model.plateData}
+                  plateMapping={model.plateMapping}
+                  playerBets={model.playerBets}
+                  alivePlayers={model.alivePlayers}
+                  onActionClick={handlers.onActionClick}
+                  onSkipToSeat={handlers.onSkipToSeat}
+                  onRewindTo={handlers.onRewindTo}
+                />
+              </div>
+            )}
+
             {node && node.kind === "decision" ? (
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <span className="text-[10px] uppercase tracking-wide text-slate-500">
-                  {seatNames[node.actor ?? 0] ?? `S${node.actor}`} to act
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="text-xs font-semibold text-slate-200">
+                  {seatNames[node.actor ?? 0] ?? `S${node.actor}`}{" "}
+                  {model && model.steps.length === 0 ? "opens" : "decides"} · pot {node.pot}
                 </span>
-                {labels.map((label, k) => (
-                  <button
-                    key={k}
-                    type="button"
-                    onClick={() => setPath([...path, k])}
-                    className="rounded-lg border border-slate-700 px-2 py-1 text-xs hover:border-sky-500"
-                  >
-                    {label}
-                  </button>
-                ))}
+                <button
+                  type="button"
+                  onClick={() => setPath([])}
+                  className="rounded border border-slate-700 px-2 py-0.5 text-[10px] hover:border-slate-500"
+                >
+                  Back to root
+                </button>
               </div>
             ) : (
-              <p className="mt-2 text-[11px] text-slate-500">
+              <p className="text-[11px] text-slate-500">
                 {node?.terminal === "fold"
                   ? "Everyone else folded - the hand ends here."
-                  : "Showdown."}
+                  : "Showdown."}{" "}
+                <button
+                  type="button"
+                  onClick={() => setPath([])}
+                  className="underline hover:text-slate-300"
+                >
+                  Back to root
+                </button>
               </p>
+            )}
+
+            {grid && (
+              <div className="mt-2">
+                <ActionSummary
+                  data={grid}
+                  sizeRef={potHere}
+                  sizeUnit="pct"
+                  onActionClick={onActionClick}
+                />
+              </div>
             )}
           </section>
 
           {grid && (
-            <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-2">
-              <DecisionMatrix gridData={grid} randomFillEnabled={false} />
+            <section className="grid gap-2 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+              <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-2">
+                <DecisionMatrix
+                  gridData={grid}
+                  randomFillEnabled={false}
+                  sizeRef={potHere}
+                  sizeUnit="pct"
+                  onHandSelect={setBreakdownHand}
+                  onHandHover={setBreakdownHand}
+                  selectedHand={breakdownHand ?? undefined}
+                />
+              </div>
+              {/* No comboDetail: the watcher uploads `dump-json --fields
+                  rollup`, which drops the per-hand rows to keep the payload
+                  small, so every combo of a class shows the class strategy.
+                  Postflop that is a real simplification - blockers make Ah5h
+                  a different hand from Ac5c - and the panel says as much by
+                  showing identical tiles. Full per-combo data means dropping
+                  --fields rollup, which is ~27x the payload. */}
+              <HandBreakdown
+                data={grid}
+                hand={breakdownHand}
+                board={boardCards(dump.metadata.board ?? view.board)}
+                sizeRef={potHere}
+                sizeUnit="pct"
+                chipEv={false}
+                className="min-h-[18rem]"
+              />
             </section>
           )}
         </>
