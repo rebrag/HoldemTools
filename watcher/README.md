@@ -159,7 +159,11 @@ A compare job may also carry `sampledConfig` - the same tree on htsolver's sampl
 Three per-job options ride the claim payload and decide how much runs: `disablePio` (no Pio process at all - the default), `disableCompare` (Pio solves, but its per-hand rows are not extracted), and `disableCrossCheck` (no gate).
 The API normalizes them, so "no Pio" always implies the other two.
 The frontend fetches the htsolver half first and merges Pio's when it lands, and `/api/enginecompare/{id}/result/{ht|pio}` serves either without waiting for the job to reach `Done` - so a Pio failure cannot cost you the engine result.
-`pushfold` jobs also report the result's lineage with the terminal status - `solveId`, `solveKey` and `iterations`, read from the dumped artifact's metadata - and the API keeps ONE result per lineage: an earlier job of the same solve id and spot with no more iterations is deleted (row and blob) when the new one lands, so Recent on `/multiway` shows a solve once, at its most converged.
+`multiway` jobs (multiway POSTFLOP on a board, 3-9 seats) solve with htsolver and then run the SAME harness a compare job runs, with `--ht-out` and no Pio flags, uploading `{id}.ht.htc.gz` like any other compare job.
+That is deliberate rather than incidental: sharing the payload is what lets `/compare` render a 3-way solve in its own viewer instead of growing a second one.
+The extraction is seat-count agnostic - positions come from the artifact's own seat labels, each node carries its pooled pot (the colon id names the betting level, not who matched it), and the EV columns go out null on an artifact whose `metadata.per_hand_ev` is false.
+`pushfold` jobs (multiway PREFLOP jam/fold, `/multiway`'s charts) keep the `dump-json --fields rollup` JSON payload: the 169-class rollup IS that chart, and the per-hand rows were ~98% of a payload it ignores.
+They also report the result's lineage with the terminal status - `solveId`, `solveKey` and `iterations`, read from the dumped artifact's metadata - and the API keeps ONE result per lineage: an earlier job of the same solve id and spot with no more iterations is deleted (row and blob) when the new one lands, so Recent on `/multiway` shows a solve once, at its most converged.
 Run it with `python engine_compare_watcher.py` (same `.env`; set `ENGINE_EXE` if the engine binary is not at `../engine/build/engine.exe`).
 Only one instance - it spawns Pio processes.
 

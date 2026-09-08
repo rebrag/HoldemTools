@@ -161,7 +161,7 @@ const PipelineTimingPanel = ({ job, marks }: PipelineRun) => {
     num(t.hts_iterations) != null ? `${t.hts_iterations} iters` : null,
   ]
     .filter(Boolean)
-    .join(" Â· ");
+    .join(" · ");
   push(
     "sampled",
     "Sampled core solve",

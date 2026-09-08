@@ -22,8 +22,22 @@ export type SolverTag = "ht" | "pio" | "sampled";
 
 export interface HtcNodeMeta {
   id: string;
+  /** The seat to act, by the artifact's OWN label - "OOP"/"IP" heads-up,
+   *  "OOP"/"MID"/"BTN" three-handed. Never derived from the seat index here. */
   position: string;
   actions: string[];
+  /**
+   * Chips POOLED at this node: the root pot plus every completed street's
+   * commits, with the current street's live bets still in front of their
+   * seats. The reference a bet size is a percentage of, and so the colour
+   * ramp's.
+   *
+   * Carried rather than re-derived from the node id because the id names the
+   * betting LEVEL, not who matched it - which is enough heads-up and wrong
+   * the moment a third seat can fold. Absent from payloads written before it
+   * existed; those fall back to the heads-up derivation.
+   */
+  pot?: number;
   reach_sum: number;
   hands: number;
   ev_wide: boolean;
@@ -44,6 +58,13 @@ export interface HtcSpot {
    */
   effective_stack?: number | null;
   config_hash: string;
+  /**
+   * Seat labels in seat order. Its LENGTH is how the page knows how many
+   * players the solve had - "OOP / IP" is not a caption a three-handed solve
+   * can wear. Absent from payloads written before multiway postflop; those
+   * are all heads-up.
+   */
+  seats?: string[] | null;
   /**
    * The TREE's identity, independent of how it was solved (core, budget,
    * isomorphism). The two htsolver cores' payloads for one spot differ in

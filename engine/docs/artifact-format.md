@@ -49,6 +49,10 @@ One JSON object. Fields (all present unless marked optional):
 - `iterations`, `final_nashconv` (chips), `ev_chips` (per-seat root EVs; they sum to the root pot).
 - `partition` (seat->agent), `payoff_weights` (`null` = identity), `collusion` (`{mode, p}`).
 - `multiway_no_nash_guarantee` - `true` whenever the game has 3+ seats. CFR converges to the coarse correlated equilibrium set there, not necessarily Nash; consumers must not over-trust multiway results.
+- `per_hand_ev` - whether the per-hand `ev` and `action_ev` columns in the node blobs mean anything.
+  `false` when the game has no vectorized terminal (4+ seats), where there is no per-hand value to carry up and the export leaves those columns at zero.
+  A zero that cannot be told apart from a real EV is worse than no number, so `dump-json` omits the keys entirely on such an artifact and a consumer should do the same.
+  Absent on artifacts written before 2026-09-07; every one of those is a vectorized solve and so carries EVs.
 - `team` - `null` without a hand-sharing team; otherwise `seats`, `awareness`, `ev_chips`, the baseline fields, and `strategy_export: "marginal_over_partner"`: a team seat's per-hand strategy blob and 169 rollup are marginals over the partner's hand.
 - `team_rollup` (with a team) - per team decision node, keyed by node id: the conditioned chart as reach-weighted `freq[partner class][own class][action]` for the first `num_actions - 1` actions, conditioned TEAM `ev[pc][oc][action]` (`null` where unreached) and `partner_reach[pc]` relative to the node's most-reached partner class.
 - `team_joint` (with a team; engines from 2026-09-03) - the exact joint strategy the rollup is marginalized from, keyed by real cards.

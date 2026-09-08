@@ -53,6 +53,7 @@ import PipelineTimingPanel, {
 } from "./PipelineTimingPanel";
 import {
   decodeNode,
+  isHtc,
   parseHtc,
   type DecodedNode,
   type HtcDoc,
@@ -144,7 +145,10 @@ interface HtSummary {
   solver: "ht" | "sampled";
   ht: {
     iterations: number;
-    nashconv: number;
+    /** Null past three seats: without a vectorized showdown the engine has no
+     *  exact best response to measure against, so there is no number rather
+     *  than a misleading zero. */
+    nashconv: number | null;
     exploitable_chips?: number;
     exploitable_pct_pot?: number | null;
     ev: number[];
@@ -439,6 +443,18 @@ interface CompareJob {
 const TERMINAL_STATUSES = ["Done", "Failed", "Cancelled"];
 const RESULT_STATUSES = ["Done", "Cancelled"];
 
+/** NashConv, or why there is none. Null is not "0" and not "unknown": past
+ *  three seats the showdown is sampled, so there is no exact best response to
+ *  measure the strategy against at all. */
+const nashconvText = (v: number | null | undefined): string =>
+  v === undefined ? "?" : v === null ? "n/a (sampled showdown)" : v.toFixed(3);
+
+/** Root EVs as one line, whatever the seat count: "31.70 / 33.02 / 35.28". */
+const rootEvText = (ev: number[] | undefined): string =>
+  ev == null || ev.length === 0
+    ? "-"
+    : ev.map((v) => v.toFixed(2)).join(" / ");
+
 const solutionsUrl = (job: CompareJob): string =>
   `/solutions?open=${encodeURIComponent(
     `${job.resultStacks}|${job.resultNodeName}|${job.board}`
@@ -473,9 +489,12 @@ const SolverCompare = () => {
   );
   const [builder, setBuilder] = useState<BuilderState>(() => cloneBuilder(DEFAULT_BUILDER));
   const [builderOpen, setBuilderOpen] = useState(false);
-  /* A multiway solve renders in its own mode: its payload is a JSON node
-     tree with 169-class rollups, not the binary per-node .htc the two-solver
-     columns are decoded from. Non-null means "show that instead". */
+  /* LEGACY multiway payload: a JSON node tree of 169-class rollups, which is
+     what multiway postflop jobs uploaded before they moved onto the .htc the
+     rest of this page reads. Kept so solves already in the library still
+     open; nothing produces one any more (watcher handle_multiway). Non-null
+     means "render that instead", and it is mutually exclusive with `loaded` -
+     see acceptPayload and loadJobResult. */
   const [multiwayDump, setMultiwayDump] = useState<PushFoldDump | null>(null);
   const [solvesOpen, setSolvesOpen] = useState(false);
   /* Seats for the tree being built. 2 is the heads-up path this page has
@@ -545,6 +564,10 @@ const SolverCompare = () => {
       setSelectedHand(null);
       setHoverHand(null);
     }
+    // The two views are alternatives, never a stack: without this a .htc
+    // opened after a legacy multiway solve rendered UNDER it, leaving the
+    // previous solve occupying the top half of the page.
+    setMultiwayDump(null);
     setBuilderOpen(false);
     setError(null);
   }, []);
@@ -607,20 +630,22 @@ const SolverCompare = () => {
         const t0 = performance.now();
         const resp = await authedFetch(`/api/enginecompare/${job.id}/result/ht`);
         if (!resp.ok) throw new Error(await resp.text());
-        // Multiway and push/fold jobs upload `dump-json` output, not a .htc.
-        // Branch on the MODE rather than sniffing the bytes: the mode is what
-        // the watcher keyed its handler off, so it is the same fact.
-        if (job.mode === "multiway" || job.mode === "pushfold") {
-          const dump = JSON.parse(await resp.text()) as PushFoldDump;
+        const t1 = performance.now();
+        const buf = await resp.arrayBuffer();
+        const t2 = performance.now();
+        // Multiway postflop now writes the same .htc every compare job does,
+        // so the payload is sniffed rather than inferred from the mode: the
+        // mode no longer decides the shape, and jobs of BOTH shapes are in
+        // the library. Push/fold (multiway PREFLOP, /multiway's charts) has
+        // no board and never had a .htc at all.
+        if (!isHtc(buf)) {
+          const dump = JSON.parse(new TextDecoder().decode(buf)) as PushFoldDump;
           if (loadedJobRef.current !== job.id) return;
+          setLoaded(null); // alternatives, never stacked
           setMultiwayDump(dump);
           setPipeline({ job, marks: { submitMs: opts.submitMs } });
           return;
         }
-        setMultiwayDump(null);
-        const t1 = performance.now();
-        const buf = await resp.arrayBuffer();
-        const t2 = performance.now();
         if (loadedJobRef.current !== job.id) return; // a newer job took over
         acceptPayload(buf);
         // Two rAFs bracket the commit + paint: the first fires before the
@@ -740,7 +765,10 @@ const SolverCompare = () => {
         if (job.status === "Cancelled" && !job.hasHtResult && job.mode !== "publish") {
           throw new Error(job.error ?? "Stopped before the solve had written anything.");
         }
-        if (mode === "compare") {
+        if (mode !== "publish") {
+          // Multiway included: it now produces a payload this page renders,
+          // so treating anything non-compare as a publish would have shown
+          // "Published to the solutions library" for a solve that was not.
           await loadJobResult(job, { submitMs, tClickMs: tClick });
         } else {
           setPublishedJob(job);
@@ -835,10 +863,14 @@ const SolverCompare = () => {
         // re-deriving them from the directory, which cannot see a chance-node
         // child. See compareLineNodes.CompareNodeRef.
         actions: n.actions,
+        pot: n.pot,
       })) ?? [],
     [loaded]
   );
 
+  /** The solve's seats, in seat order. A payload from before multiway
+   *  postflop carries none, and every one of those is heads-up. */
+  const seatNames = useMemo(() => spot?.seats ?? ["OOP", "IP"], [spot]);
   const chipScale = spot?.chip_scale ?? 100;
   // Everything on this page displays in chips (mode "money" = plain numbers,
   // no bb suffix). The colour ramp does NOT read bbSize any more - this page
@@ -932,8 +964,15 @@ const SolverCompare = () => {
   const childIndex = useMemo(() => buildChildIndex(nodeDir), [nodeDir]);
   const currentNodeId = nodeDir[nodeIndex]?.id ?? ROOT_ID;
   const line = useMemo(
-    () => buildCompareLine(currentNodeId, nodeById, displayLabel, spot?.pot ?? 0),
-    [currentNodeId, nodeById, displayLabel, spot?.pot]
+    () =>
+      buildCompareLine(
+        currentNodeId,
+        nodeById,
+        displayLabel,
+        spot?.pot ?? 0,
+        seatNames.length
+      ),
+    [currentNodeId, nodeById, displayLabel, spot?.pot, seatNames.length]
   );
 
   /**
@@ -948,10 +987,14 @@ const SolverCompare = () => {
    * blinds - unlike every /solver view, its trees have no big blind at all,
    * and percent of pot is literally how the tree builder specifies sizes.
    */
-  const currentPot = useMemo(
-    () => (spot ? spot.pot + 2 * priorStreetCommitChips(currentNodeId) : 0),
-    [spot, currentNodeId]
-  );
+  const currentPot = useMemo(() => {
+    if (!spot) return 0;
+    const own = nodeDir[nodeIndex]?.pot;
+    if (own != null) return own;
+    // Older payloads: one seat's share of the completed streets, times the
+    // seats who matched it. Exact heads-up, which is all those payloads are.
+    return spot.pot + seatNames.length * priorStreetCommitChips(currentNodeId);
+  }, [spot, currentNodeId, nodeDir, nodeIndex, seatNames.length]);
 
   /** The board as it stood at the ROOT. A 5-card board is a river solve, so
    *  the strip's first card has to say RIVER and show all five - calling it
@@ -1185,7 +1228,7 @@ const SolverCompare = () => {
       metricChips.push({
         key: "sampled",
         label: `sampled core ${secs(timing.hts_solve_s)}${
-          memory?.hts_peak_bytes != null ? ` Â· ${megabytes(memory.hts_peak_bytes)}` : ""
+          memory?.hts_peak_bytes != null ? ` · ${megabytes(memory.hts_peak_bytes)}` : ""
         }`,
       });
     }
@@ -1202,7 +1245,7 @@ const SolverCompare = () => {
           : {
               key: "corerace",
               label: sampledCrossed
-                ? "sampled core reached the target Â· vectorized did not"
+                ? "sampled core reached the target · vectorized did not"
                 : `sampled core: ${
                     sampledStopped === "time_budget"
                       ? "time budget"
@@ -1217,9 +1260,10 @@ const SolverCompare = () => {
     if (htSummary) {
       metricChips.push({
         key: "nashconv",
-        label: `NashConv ${htSummary.ht.nashconv.toFixed(3)} · ${
-          htSummary.ht.iterations
-        } iters`,
+        label:
+          htSummary.ht.nashconv == null
+            ? `${htSummary.ht.iterations} iters · no exploitability past 3 seats`
+            : `NashConv ${htSummary.ht.nashconv.toFixed(3)} · ${htSummary.ht.iterations} iters`,
       });
       // A QRE solve stopped on the gap, not on NashConv, so showing NashConv
       // alone would look like a run that never converged.
@@ -1659,8 +1703,8 @@ const SolverCompare = () => {
               </span>
             </span>
           ))}
-          <span className="ml-auto shrink-0 text-[10px] text-slate-600">
-            root EV {chips(htSummary?.ht.ev[0])} / {chips(htSummary?.ht.ev[1])}
+          <span className="ml-auto shrink-0 whitespace-nowrap text-[10px] text-slate-600">
+            root EV {rootEvText(htSummary?.ht.ev)}
           </span>
         </div>
       )}
@@ -1774,21 +1818,35 @@ const SolverCompare = () => {
             />
           )}
 
-          {pipeline && pipeline.job.mode === "compare" && (
+          {pipeline && pipeline.job.mode !== "publish" && (
             <PipelineTimingPanel job={pipeline.job} marks={pipeline.marks} />
           )}
 
           <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
             <div className="rounded-lg bg-slate-800/60 p-2.5">
-              <div className="text-slate-500">Root EV chips (OOP / IP)</div>
-              <div className="mt-0.5">
-                <span className="font-medium text-emerald-400">htsolver</span>{" "}
-                {chips(htSummary?.ht.ev[0])} / {chips(htSummary?.ht.ev[1])}
+              <div className="text-slate-500">
+                Root EV chips ({seatNames.join(" / ")})
               </div>
+              <div className="mt-0.5 tabular-nums">
+                <span className="font-medium text-emerald-400">htsolver</span>{" "}
+                {rootEvText(htSummary?.ht.ev)}
+              </div>
+              {/* Chip conservation: the seats' EVs sum to the root pot, which
+                  is the first thing to check against another solver and the
+                  first thing to go wrong in an N-seat showdown. Heads-up it
+                  is the same statement as the two numbers themselves, so it
+                  only earns its line once there is a third seat. */}
+              {seatNames.length > 2 && htSummary && (
+                <div className="tabular-nums text-slate-400">
+                  <span className="font-medium">sum</span>{" "}
+                  {chips(htSummary.ht.ev.reduce((a, b) => a + b, 0))}
+                  <span className="text-slate-600"> / {spot.pot}</span>
+                </div>
+              )}
               {hasSampled && (
-                <div>
+                <div className="tabular-nums">
                   <span className="font-medium text-fuchsia-400">sampled</span>{" "}
-                  {chips(sampledSummary?.ht.ev[0])} / {chips(sampledSummary?.ht.ev[1])}
+                  {rootEvText(sampledSummary?.ht.ev)}
                 </div>
               )}
               {hasPio && (
@@ -1804,7 +1862,8 @@ const SolverCompare = () => {
                 <span className="font-medium text-emerald-400">htsolver</span>{" "}
                 {chips(
                   htSummary
-                    ? htSummary.ht.exploitable_chips ?? htSummary.ht.nashconv / 2
+                    ? htSummary.ht.exploitable_chips ??
+                        (htSummary.ht.nashconv == null ? null : htSummary.ht.nashconv / 2)
                     : null
                 )}{" "}
                 <span className="text-slate-500">self</span>
@@ -1821,7 +1880,10 @@ const SolverCompare = () => {
                   <span className="font-medium text-fuchsia-400">sampled</span>{" "}
                   {chips(
                     sampledSummary
-                      ? sampledSummary.ht.exploitable_chips ?? sampledSummary.ht.nashconv / 2
+                      ? sampledSummary.ht.exploitable_chips ??
+                          (sampledSummary.ht.nashconv == null
+                            ? null
+                            : sampledSummary.ht.nashconv / 2)
                       : null
                   )}{" "}
                   <span className="text-slate-500">self</span>
@@ -1839,12 +1901,12 @@ const SolverCompare = () => {
               <div className="text-slate-500">htsolver solve</div>
               <div className="mt-0.5">
                 {htSummary?.ht.iterations ?? "?"} iters · NashConv{" "}
-                {htSummary ? htSummary.ht.nashconv.toFixed(3) : "?"}
+                {nashconvText(htSummary?.ht.nashconv)}
               </div>
               {hasSampled && (
                 <div className="text-fuchsia-300/80">
                   sampled {sampledSummary?.ht.iterations ?? "?"} iters · NashConv{" "}
-                  {sampledSummary ? sampledSummary.ht.nashconv.toFixed(3) : "?"}
+                  {nashconvText(sampledSummary?.ht.nashconv)}
                 </div>
               )}
             </div>

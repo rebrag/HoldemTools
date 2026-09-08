@@ -676,6 +676,13 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
   // correlated equilibrium set); flagged here so downstream consumers can
   // surface it.
   meta["multiway_no_nash_guarantee"] = game.num_seats() > 2;
+  // Whether the per-hand `ev` / `action_ev` fields in the node blobs mean
+  // anything. Without a vectorized terminal there is no per-hand value to
+  // carry up, so the export leaves those columns at zero (see visit()) - and
+  // a zero that is indistinguishable from a real EV is worse than no number
+  // at all. Stated here so a reader can drop the columns rather than having
+  // to infer the rule from the seat count.
+  meta["per_hand_ev"] = game.vectorized_terminals();
   meta["wall_time_s"] = stats.wall_time_s;
   meta["setup_time_s"] = stats.setup_time_s;
   // The export pass and file write, which wall_time_s excludes by design.

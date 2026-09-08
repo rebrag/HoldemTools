@@ -44,9 +44,14 @@ json node_to_json(const ArtifactNodeRecord& record, bool nlhe, int num_seats) {
 double round7(float v) { return std::round(static_cast<double>(v) * 1e7) / 1e7; }
 
 json node_data_to_json(const ArtifactReader& reader, const ArtifactNodeData& data,
-                       bool nlhe, DumpFields fields, bool is_root) {
+                       bool nlhe, DumpFields fields, bool is_root, bool artifact_has_ev) {
   const bool trimmed = fields != DumpFields::kFull;
-  const bool with_ev = fields != DumpFields::kGate;
+  // Two independent reasons the EV columns can be absent: the gate diet does
+  // not ask for them, and an artifact solved without vectorized terminals
+  // does not have them (its blobs carry zeros - see artifact_writer's
+  // per_hand_ev). Omitting the keys rather than dumping the zeros is what
+  // keeps a 4+-seat dump from reading as "every hand is worth 0.00".
+  const bool with_ev = fields != DumpFields::kGate && artifact_has_ev;
   const auto& dicts = reader.hand_dicts();
   json j;
   j["actor"] = data.actor;
@@ -147,6 +152,9 @@ json dump_artifact_json(ArtifactStore& store, const std::string& path,
   // num_seats of them are meaningful, and the seat labels are the only place
   // the count is recorded outside the per-node blobs.
   const int num_seats = static_cast<int>(reader.hand_dicts().size());
+  // Defaults true: artifacts written before the flag existed are all
+  // heads-up or three-handed vectorized solves, which do carry EVs.
+  const bool artifact_has_ev = reader.metadata().value("per_hand_ev", true);
   const auto& records = reader.nodes();
 
   // Top-down include set: betting children always follow; chance-node
@@ -197,7 +205,7 @@ json dump_artifact_json(ArtifactStore& store, const std::string& path,
     json j = node_to_json(record, nlhe, num_seats);
     if (record.kind == 0) {
       j["data"] = node_data_to_json(reader, reader.read_node(record.node_id), nlhe,
-                                    fields, record.node_id == 0);
+                                    fields, record.node_id == 0, artifact_has_ev);
     }
     nodes[std::to_string(record.node_id)] = std::move(j);
   }
