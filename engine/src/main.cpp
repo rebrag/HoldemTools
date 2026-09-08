@@ -465,7 +465,13 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   }
   stats.iterations = solver.iteration();
   stats.nashconv = nashconv;
-  stats.nashconv_valid = !team;
+  // Two ways there is no honest number to stamp, and both must null it out.
+  // A team's correlated joint strategy cannot be rated by best response
+  // against per-seat marginals; and past three seats there is no exact best
+  // response at all (br_available), so `nashconv` was never measured and is
+  // still its initial 0.0 - which reads as "exact" rather than as "unknown".
+  // The same hazard the re-export branch above exists to avoid.
+  stats.nashconv_valid = !team && br_available;
   if (out_of_time) stats.stopped_reason = "time_budget";
   // A cancel outranks the time budget in the label: both stopped the solve
   // early, but only one of them is something the user did.
