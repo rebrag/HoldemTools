@@ -29,7 +29,6 @@ const PrivatePage = lazy(routeImports["/private"]);
 // Hidden solver-verification page: no NavBar entry, reachable only by URL.
 const SolverCompare = lazy(routeImports["/compare"]);
 const MultiwaySolver = lazy(routeImports["/multiway"]);
-const MultiwayPostflopSolver = lazy(routeImports["/multiway-postflop"]);
 import { DEV_AUTH_BYPASS, useDevAuthUser } from "@/lib/devAuth";
 import "./index.css";
 
@@ -160,7 +159,6 @@ function App() {
             <Route path="/private" element={<PrivatePage user={effectiveUser} />} />
             <Route path="/compare" element={<SolverCompare />} />
             <Route path="/multiway" element={<MultiwaySolver />} />
-            <Route path="/multiway-postflop" element={<MultiwayPostflopSolver />} />
           </Route>
         </Routes>
       </div>

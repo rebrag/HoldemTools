@@ -17,6 +17,9 @@ import { authedFetch } from "@/lib/api";
 import type { MoneyOpts } from "@/pages/solver/boardDisplay";
 import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import EngineCoreTabs from "@/components/EngineCoreTabs";
+import MultiwayResultView from "@/pages/multiwayPostflop/MultiwayResultView";
+import type { PushFoldDump } from "@/pages/multiway/pushfoldResult";
+import { MAX_COMPARE_SEATS, seatCoreNote, widenToSeats } from "./multiwaySeats";
 import PostflopLine from "@/pages/solver/PostflopLine";
 import TreeBuilding, { Check, inputCls } from "@/components/TreeBuilding";
 import { useLocalStorageState } from "@/hooks/useLocalStorageState";
@@ -400,7 +403,9 @@ const buildEvDisplay = (
 
 interface CompareJob {
   id: string;
-  mode: "compare" | "publish";
+  /* "multiway" and "pushfold" rows come back from the same endpoint - the
+     list is unfiltered - and open in the multiway render mode. */
+  mode: "compare" | "publish" | "multiway" | "pushfold";
   board: string | null;
   status: "Queued" | "Claimed" | "Running" | "Uploading" | "Done" | "Failed" | "Cancelled";
   error: string | null;
@@ -468,6 +473,15 @@ const SolverCompare = () => {
   );
   const [builder, setBuilder] = useState<BuilderState>(() => cloneBuilder(DEFAULT_BUILDER));
   const [builderOpen, setBuilderOpen] = useState(false);
+  /* A multiway solve renders in its own mode: its payload is a JSON node
+     tree with 169-class rollups, not the binary per-node .htc the two-solver
+     columns are decoded from. Non-null means "show that instead". */
+  const [multiwayDump, setMultiwayDump] = useState<PushFoldDump | null>(null);
+  const [solvesOpen, setSolvesOpen] = useState(false);
+  /* Seats for the tree being built. 2 is the heads-up path this page has
+     always been; 3+ queues a multiway job instead, which has no Pio column
+     because Pio cannot build an N-seat postflop tree at all. */
+  const [seats, setSeats] = useState(2);
   const [solving, setSolving] = useState(false);
   const [runLog, setRunLog] = useState<string | null>(null);
   const [jobs, setJobs] = useState<CompareJob[]>([]);
@@ -593,6 +607,17 @@ const SolverCompare = () => {
         const t0 = performance.now();
         const resp = await authedFetch(`/api/enginecompare/${job.id}/result/ht`);
         if (!resp.ok) throw new Error(await resp.text());
+        // Multiway and push/fold jobs upload `dump-json` output, not a .htc.
+        // Branch on the MODE rather than sniffing the bytes: the mode is what
+        // the watcher keyed its handler off, so it is the same fact.
+        if (job.mode === "multiway" || job.mode === "pushfold") {
+          const dump = JSON.parse(await resp.text()) as PushFoldDump;
+          if (loadedJobRef.current !== job.id) return;
+          setMultiwayDump(dump);
+          setPipeline({ job, marks: { submitMs: opts.submitMs } });
+          return;
+        }
+        setMultiwayDump(null);
         const t1 = performance.now();
         const buf = await resp.arrayBuffer();
         const t2 = performance.now();
@@ -653,7 +678,7 @@ const SolverCompare = () => {
 
   /** Queue a job for the compare watcher and poll it to completion. */
   const submitJob = useCallback(
-    async (mode: "compare" | "publish") => {
+    async (mode: "compare" | "publish" | "multiway") => {
       setError(null);
       setRunLog(null);
       let payload: EngineConfigResult;
@@ -663,10 +688,25 @@ const SolverCompare = () => {
         setError(e instanceof Error ? e.message : String(e));
         return;
       }
+      // 3+ seats is a different job kind, whatever button was pressed: the
+      // vectorized showdown runs out at three seats, and Pio has no N-seat
+      // postflop tree to compare against either way.
+      if (seats > 2 && mode !== "publish") {
+        payload = {
+          ...payload,
+          config: widenToSeats(payload.config, seats),
+          disablePio: true,
+          disableCompare: true,
+          disableCrossCheck: true,
+          sampledConfig: undefined,
+        };
+        mode = "multiway";
+      }
       setSolving(true);
       setStopRequested(false);
       setPublishedJob(null);
       setPipeline(null);
+      setMultiwayDump(null);
       try {
         const tClick = performance.now();
         const createResp = await authedFetch("/api/enginecompare", {
@@ -713,7 +753,7 @@ const SolverCompare = () => {
         setActiveJob(null);
       }
     },
-    [builder, refreshJobs, loadJobResult]
+    [builder, refreshJobs, loadJobResult, seats]
   );
 
   /* Stop, not abandon: the watcher asks the engine to stop at its next slice
@@ -1425,8 +1465,79 @@ const SolverCompare = () => {
           re-opened, which belongs next to the results rather than inside the
           builder. One line that scrolls, rather than a block that wraps. */}
       {jobs.length > 0 && (
-        <div className="no-scrollbar flex shrink-0 items-center gap-1.5 overflow-x-auto">
+        <div className="relative flex shrink-0 items-center gap-1.5">
+          {/* Every solve, not just the twelve that fit. The strip below is the
+              recent-runs shortcut; this is the whole list, grouped by mode, the
+              way /multiway's solves drawer works. */}
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setSolvesOpen((v) => !v)}
+              title="All solves"
+              aria-expanded={solvesOpen}
+              className="relative z-50 flex items-center gap-1 rounded-md border border-slate-700 px-2 py-0.5 text-[11px] text-slate-300 hover:border-slate-500"
+            >
+              All solves
+              <span className="tabular-nums text-slate-500">{jobs.length}</span>
+              <span aria-hidden="true" className="text-slate-500">
+                {solvesOpen ? "\u25b4" : "\u25be"}
+              </span>
+            </button>
+            {solvesOpen && (
+              <>
+                {/* Click-away, behind the panel and above everything else. */}
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setSolvesOpen(false)}
+                  aria-hidden="true"
+                />
+                <div className="absolute left-0 top-full z-50 mt-1 max-h-[60vh] w-80 overflow-y-auto rounded-lg border border-slate-700 bg-slate-900 p-1 shadow-xl">
+                  {jobs.length === 0 && (
+                    <p className="px-2 py-3 text-center text-[11px] text-slate-500">
+                      No solves yet.
+                    </p>
+                  )}
+                  {jobs.map((job) => {
+                    const canOpen =
+                      RESULT_STATUSES.includes(job.status) &&
+                      (job.mode === "publish" || job.hasHtResult || job.legacyResult);
+                    return (
+                      <button
+                        key={job.id}
+                        type="button"
+                        disabled={!canOpen}
+                        onClick={() => {
+                          if (!canOpen) return;
+                          setSolvesOpen(false);
+                          if (job.mode === "publish") window.location.href = solutionsUrl(job);
+                          else void loadJobResult(job);
+                        }}
+                        className={`flex w-full items-baseline justify-between gap-2 rounded px-2 py-1 text-left text-[11px] ${
+                          canOpen
+                            ? "text-slate-200 hover:bg-emerald-500/10"
+                            : "cursor-default text-slate-600"
+                        }`}
+                      >
+                        <span className="min-w-0 truncate">{job.board ?? "?"}</span>
+                        <span className="shrink-0 text-[10px] text-slate-500">
+                          {job.mode ?? "compare"}
+                        </span>
+                        <span
+                          className={`shrink-0 text-[10px] ${
+                            job.status === "Failed" ? "text-red-400" : "text-slate-500"
+                          }`}
+                        >
+                          {job.status}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
           <span className="shrink-0 text-[11px] font-medium text-slate-500">Recent</span>
+          <div className="no-scrollbar flex min-w-0 items-center gap-1.5 overflow-x-auto">
           {jobs.slice(0, 12).map((job) => {
             // A compare job is openable only if its htsolver payload is
             // actually pointed at from the row. A job whose watcher uploaded
@@ -1462,11 +1573,12 @@ const SolverCompare = () => {
                       : "border-slate-700 text-slate-500"
                 }`}
               >
-                {job.board ?? "?"} · {job.mode === "publish" ? "publish" : "compare"} ·{" "}
+                {job.board ?? "?"} · {job.mode ?? "compare"} ·{" "}
                 {RESULT_STATUSES.includes(job.status) && !openable ? "no payload" : job.status}
               </button>
             );
           })}
+          </div>
         </div>
       )}
 
@@ -1517,6 +1629,15 @@ const SolverCompare = () => {
         <p className="max-h-24 shrink-0 overflow-y-auto whitespace-pre-wrap rounded-lg bg-red-500/10 p-2 text-xs text-red-400">
           {error}
         </p>
+      )}
+
+      {/* A multiway solve renders here instead of the two-solver columns
+          below. Those are all gated on `spot`, which only a .htc payload
+          sets, so they hide themselves without needing a second condition. */}
+      {multiwayDump && (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <MultiwayResultView dump={multiwayDump} />
+        </div>
       )}
 
       {/* ---------- cost, collapsed to one line by default ---------- */}
@@ -1765,7 +1886,10 @@ const SolverCompare = () => {
       )}
 
       {/* ---------- empty state: drop zone ---------- */}
-      {!spot && (
+      {/* Also hidden while a multiway solve is open: that view IS the result,
+          and the drop zone would sit under it competing for the same flex
+          space. */}
+      {!spot && !multiwayDump && (
         <button
           type="button"
           onClick={() => fileRef.current?.click()}
@@ -1952,12 +2076,33 @@ const SolverCompare = () => {
                 other one. /multiway renders the same control above its own
                 builder, so the pair is symmetric. */}
             <EngineCoreTabs value="postflop" className="mb-2" />
-            <h2 className="text-sm font-semibold tracking-tight text-white">
-              Tree building parameters
-            </h2>
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-sm font-semibold tracking-tight text-white">
+                Tree building parameters
+              </h2>
+              {/* Seats live here rather than inside TreeBuilding: that panel is
+                  shared with the PioSOLVER upload path, where there is no such
+                  choice to make. */}
+              <label className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                Players
+                <input
+                  type="number"
+                  min={2}
+                  max={MAX_COMPARE_SEATS}
+                  value={seats}
+                  disabled={solving}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    setSeats(Number.isFinite(n) ? Math.min(MAX_COMPARE_SEATS, Math.max(2, n)) : 2);
+                  }}
+                  className="w-14 rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-right tabular-nums text-slate-100 outline-none focus:border-sky-500"
+                />
+              </label>
+            </div>
             <p className="text-[11px] text-slate-500">
-              htsolver solves this tree; when PioSolver is enabled it gets the identical
-              tree, node for node.
+              {seats <= 2
+                ? "htsolver solves this tree; when PioSolver is enabled it gets the identical tree, node for node."
+                : seatCoreNote(seats)}
             </p>
           </div>
 

@@ -62,7 +62,7 @@ export interface ClientMarks {
 /** The structural slice of CompareJob the panel needs. */
 export interface PipelineJob {
   id: string;
-  mode: "compare" | "publish";
+  mode: "compare" | "publish" | "multiway" | "pushfold";
   createdAtUtc: string;
   claimedAtUtc: string | null;
   completedAtUtc: string | null;
