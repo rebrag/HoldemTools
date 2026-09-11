@@ -31,6 +31,7 @@ import {
   parseBoardCards,
   parseBoardInputStrict,
   randomBoard,
+  seatNamesFor,
   sizeOk,
   streetHasLead,
   type TreeBuildingView,
@@ -40,6 +41,10 @@ import {
   type TreeStreet,
   type TreeStreetView,
 } from "@/components/treeBuildingView";
+
+/** A starting-range card: one of the two named seats, or the index of a seat
+ *  between them in `TreeBuildingView.midRanges`. */
+type RangeSlot = TreeSeat | number;
 
 /** Style tokens shared with the pages that host this panel, so a solve-settings
  *  fieldset sitting directly beneath it matches without re-deriving them. */
@@ -305,7 +310,9 @@ const TreeBuilding = ({
   headerSlot,
   footerSlot,
 }: TreeBuildingProps) => {
-  const [editingRange, setEditingRange] = useState<TreeSeat | null>(null);
+  /* Which starting range the editor is open on: a seat key, or the index of
+     a middle seat (see TreeBuildingView.midRanges). */
+  const [editingRange, setEditingRange] = useState<RangeSlot | null>(null);
   const [pickerOpen, setPickerOpen] = useState(
     () => boardVariant === "slots" && parseBoardCards(value.board).length < boardMaxCards
   );
@@ -420,14 +427,39 @@ const TreeBuilding = ({
     set("oop", next);
   };
 
+  /* The seats between OOP and the button, in acting order. Empty on every
+     heads-up caller. Once there is one, the seats stop being "OOP and IP"
+     and take their positional names, the same ones the engine config and
+     the artifact's metadata.seats carry. */
+  const midRanges = value.midRanges ?? [];
+  const seatNames = midRanges.length > 0
+    ? seatNamesFor(midRanges.length + 2)
+    : [oopLabel, ipLabel];
+  const rangeOf = (slot: RangeSlot): Record<string, number> =>
+    slot === "oop" ? value.oopRange : slot === "ip" ? value.ipRange : midRanges[slot];
+  const labelOf = (slot: RangeSlot): string =>
+    slot === "oop"
+      ? seatNames[0]
+      : slot === "ip"
+        ? seatNames[seatNames.length - 1]
+        : seatNames[slot + 1];
+  const setRange = (slot: RangeSlot, next: Record<string, number>) => {
+    if (slot === "oop") set("oopRange", next);
+    else if (slot === "ip") set("ipRange", next);
+    else set("midRanges", midRanges.map((r, i) => (i === slot ? next : r)));
+  };
+  /* Every range card, in acting order: OOP, the middles, the button. */
+  const rangeSlots: RangeSlot[] = ["oop", ...midRanges.map((_, i) => i), "ip"];
+
   /** Thumbnail, not an editor - clicking opens the real 13x13 grid, so this
    *  only has to be big enough to recognise the shape of a range. */
-  const rangeCard = (which: TreeSeat) => {
-    const weights = which === "oop" ? value.oopRange : value.ipRange;
-    const label = which === "oop" ? oopLabel : ipLabel;
+  const rangeCard = (which: RangeSlot) => {
+    const weights = rangeOf(which);
+    const label = labelOf(which);
     const pct = (weightedComboCount(weights) / 1326) * 100;
     return (
       <button
+        key={String(which)}
         type="button"
         onClick={() => setEditingRange(which)}
         disabled={disabled}
@@ -485,21 +517,32 @@ const TreeBuilding = ({
 
       {/* Row 1: ranges, board, pot, stacks */}
       <div className="flex flex-wrap items-start gap-3">
-        <div className="flex items-center gap-1">
-          {rangeCard("oop")}
-          <button
-            type="button"
-            onClick={() => onChange({ ...value, oopRange: value.ipRange, ipRange: value.oopRange })}
-            disabled={disabled}
-            className={`${buttonCls} px-1.5 py-2`}
-            title="Swap the two starting ranges"
-            aria-label="Swap OOP and IP starting ranges"
-          >
-            <span aria-hidden="true" className="leading-none">
-              ⇄
-            </span>
-          </button>
-          {rangeCard("ip")}
+        {/* One card per seat, in acting order. Heads-up keeps the swap between
+            its two; with a third seat the row IS the table order, and swapping
+            the ends of it would be a different, stranger operation. */}
+        <div className="flex flex-wrap items-center gap-1">
+          {midRanges.length === 0 ? (
+            <>
+              {rangeCard("oop")}
+              <button
+                type="button"
+                onClick={() =>
+                  onChange({ ...value, oopRange: value.ipRange, ipRange: value.oopRange })
+                }
+                disabled={disabled}
+                className={`${buttonCls} px-1.5 py-2`}
+                title="Swap the two starting ranges"
+                aria-label="Swap OOP and IP starting ranges"
+              >
+                <span aria-hidden="true" className="leading-none">
+                  ⇄
+                </span>
+              </button>
+              {rangeCard("ip")}
+            </>
+          ) : (
+            rangeSlots.map(rangeCard)
+          )}
         </div>
 
         <div className="flex min-w-[15rem] flex-1 flex-col gap-1">
@@ -846,8 +889,10 @@ const TreeBuilding = ({
 
       {footerSlot}
 
-      {/* Range editor - a second layer over whatever modal hosts this panel. */}
-      {editingRange && (
+      {/* Range editor - a second layer over whatever modal hosts this panel.
+          `!= null`, not truthiness: the first middle seat is index 0, and
+          `{0 && ...}` renders a literal "0" instead of the editor. */}
+      {editingRange != null && (
         <ResponsiveDrawer
           open
           onClose={() => setEditingRange(null)}
@@ -865,7 +910,7 @@ const TreeBuilding = ({
           <div className="flex h-[80vh] flex-col px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3">
             <div className="mb-2 flex items-center justify-between">
               <h3 className="text-sm font-semibold">
-                Starting range - {editingRange === "oop" ? oopLabel : ipLabel}
+                Starting range - {labelOf(editingRange)}
               </h3>
               <button
                 type="button"
@@ -877,8 +922,8 @@ const TreeBuilding = ({
             </div>
             <div className="min-h-0 flex-1">
               <RangeSelector
-                weights={editingRange === "oop" ? value.oopRange : value.ipRange}
-                onChange={(next) => set(editingRange === "oop" ? "oopRange" : "ipRange", next)}
+                weights={rangeOf(editingRange)}
+                onChange={(next) => setRange(editingRange, next)}
                 codec={rangeCodec}
                 disabled={disabled}
               />

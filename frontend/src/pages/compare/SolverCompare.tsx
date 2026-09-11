@@ -19,7 +19,7 @@ import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import EngineCoreTabs from "@/components/EngineCoreTabs";
 import MultiwayResultView from "@/pages/multiwayPostflop/MultiwayResultView";
 import type { PushFoldDump } from "@/pages/multiway/pushfoldResult";
-import { MAX_COMPARE_SEATS, seatCoreNote, widenToSeats } from "./multiwaySeats";
+import { MAX_COMPARE_SEATS, seatCoreNote } from "./multiwaySeats";
 import PostflopLine from "@/pages/solver/PostflopLine";
 import TreeBuilding, { Check, inputCls } from "@/components/TreeBuilding";
 import { useLocalStorageState } from "@/hooks/useLocalStorageState";
@@ -36,6 +36,8 @@ import {
   builderToView,
   cloneBuilder,
   DEFAULT_BUILDER,
+  seatCount,
+  withSeatCount,
   type BuilderState,
   type EngineConfigResult,
 } from "./builderState";
@@ -497,10 +499,12 @@ const SolverCompare = () => {
      see acceptPayload and loadJobResult. */
   const [multiwayDump, setMultiwayDump] = useState<PushFoldDump | null>(null);
   const [solvesOpen, setSolvesOpen] = useState(false);
-  /* Seats for the tree being built. 2 is the heads-up path this page has
-     always been; 3+ queues a multiway job instead, which has no Pio column
-     because Pio cannot build an N-seat postflop tree at all. */
-  const [seats, setSeats] = useState(2);
+  /* Seats for the tree being built: 2 plus one range per seat between OOP
+     and the button, so the count IS the builder's ranges rather than a second
+     piece of state that has to agree with them. 2 is the heads-up path this
+     page has always been; 3+ queues a multiway job instead, which has no Pio
+     column because Pio cannot build an N-seat postflop tree at all. */
+  const seats = seatCount(builder);
   const [solving, setSolving] = useState(false);
   const [runLog, setRunLog] = useState<string | null>(null);
   const [jobs, setJobs] = useState<CompareJob[]>([]);
@@ -715,11 +719,12 @@ const SolverCompare = () => {
       }
       // 3+ seats is a different job kind, whatever button was pressed: the
       // vectorized showdown runs out at three seats, and Pio has no N-seat
-      // postflop tree to compare against either way.
+      // postflop tree to compare against either way. The config already has
+      // its N players - buildEngineConfig emits one per range - so this only
+      // strips the heads-up-only extras.
       if (seats > 2 && mode !== "publish") {
         payload = {
           ...payload,
-          config: widenToSeats(payload.config, seats),
           disablePio: true,
           disableCompare: true,
           disableCrossCheck: true,
@@ -2142,9 +2147,10 @@ const SolverCompare = () => {
               <h2 className="text-sm font-semibold tracking-tight text-white">
                 Tree building parameters
               </h2>
-              {/* Seats live here rather than inside TreeBuilding: that panel is
-                  shared with the PioSOLVER upload path, where there is no such
-                  choice to make. */}
+              {/* The COUNT lives here rather than inside TreeBuilding: that
+                  panel is shared with the PioSOLVER upload path, where there
+                  is no such choice to make. The ranges it adds render there,
+                  one card per seat, in acting order. */}
               <label className="flex items-center gap-1.5 text-[11px] text-slate-400">
                 Players
                 <input
@@ -2155,7 +2161,10 @@ const SolverCompare = () => {
                   disabled={solving}
                   onChange={(e) => {
                     const n = Number(e.target.value);
-                    setSeats(Number.isFinite(n) ? Math.min(MAX_COMPARE_SEATS, Math.max(2, n)) : 2);
+                    const next = Number.isFinite(n)
+                      ? Math.min(MAX_COMPARE_SEATS, Math.max(2, n))
+                      : 2;
+                    setBuilder((cur) => withSeatCount(cur, next));
                   }}
                   className="w-14 rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-right tabular-nums text-slate-100 outline-none focus:border-sky-500"
                 />
