@@ -683,6 +683,13 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
   // at all. Stated here so a reader can drop the columns rather than having
   // to infer the rule from the seat count.
   meta["per_hand_ev"] = game.vectorized_terminals();
+  // Hand abstraction, when the sampled core solved per bucket. The blobs
+  // are still per hand (average_strategy expands through the bucket map),
+  // and hands sharing a bucket carry identical rows; this says which hands
+  // those were and how the buckets were formed. Absent = solved per hand.
+  meta["hand_abstraction"] = !stats.abstraction.empty();
+  if (!stats.abstraction.empty()) meta["abstraction"] = stats.abstraction;
+  meta["export"] = config.export_bucketed ? "bucketed" : "per_hand";
   meta["wall_time_s"] = stats.wall_time_s;
   meta["setup_time_s"] = stats.setup_time_s;
   // The export pass and file write, which wall_time_s excludes by design.

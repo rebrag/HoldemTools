@@ -174,6 +174,96 @@ NlhePostflopGame::NlhePostflopGame(const SolveConfig& config) {
   iso_perm_.assign(tree_.size(), 0);
   if (config.isomorphism) build_isomorphism();
   build_evaluators(config.threads);
+  // Root symmetries for hand abstraction: every suit permutation that fixes
+  // the root board set-wise and leaves every seat's range invariant. Cheap
+  // (23 candidates) and only read by the InfosetIndexer.
+  for (const SuitPerm& p : all_suit_perms()) {
+    if (!perm_fixes_mask(p, board_mask_)) continue;
+    if (!ranges_invariant(p, universe_, ranges_)) continue;
+    root_syms_.push_back(p);
+    root_sym_maps_.push_back(perm_hand_map(p, universe_));
+  }
+}
+
+// ---- Hand abstraction features ----
+
+void NlhePostflopGame::abstraction_strengths(std::uint64_t key,
+                                             std::vector<std::uint32_t>& out) const {
+  const auto it = evaluators_.find(key);
+  if (it == evaluators_.end()) {
+    throw std::runtime_error("hand abstraction: no evaluator for a river board the tree "
+                             "holds a decision on");
+  }
+  out = it->second->strengths();
+}
+
+std::uint64_t NlhePostflopGame::abstraction_symmetric_key(int sym, std::uint64_t key) const {
+  return perm_mask(root_syms_[static_cast<std::size_t>(sym)], key);
+}
+
+void NlhePostflopGame::abstraction_equities(std::uint64_t key, std::vector<float>& out,
+                                            int& per_hand,
+                                            std::vector<std::uint8_t>& valid) const {
+  const int hands = universe_.size();
+  const int known = std::popcount(key);
+  const int missing = 5 - known;
+  if (missing < 1 || missing > 2) {
+    throw std::runtime_error("hand abstraction: equities are defined for flop and turn boards");
+  }
+  // Cards that can still come.
+  std::vector<Card> rest;
+  for (int c = 0; c < kNumCards; ++c) {
+    if ((key & (1ULL << c)) == 0) rest.push_back(static_cast<Card>(c));
+  }
+  // Every valid hand sees the same number of completions: the deck minus the
+  // board minus its own two cards, choose `missing`.
+  const int free_cards = static_cast<int>(rest.size()) - 2;
+  per_hand = missing == 1 ? free_cards : free_cards * (free_cards - 1) / 2;
+  valid.assign(static_cast<std::size_t>(hands), 1);
+  for (int h = 0; h < hands; ++h) {
+    if (universe_.masks[static_cast<std::size_t>(h)] & key) valid[static_cast<std::size_t>(h)] = 0;
+  }
+  out.assign(static_cast<std::size_t>(hands) * static_cast<std::size_t>(per_hand), 0.0f);
+  std::vector<int> fill(static_cast<std::size_t>(hands), 0);
+  // A uniform opponent over the universe; the evaluator only reads the
+  // hands its board leaves valid, and compat_reach removes the ones sharing
+  // a card with the hero.
+  const std::vector<float> uniform(static_cast<std::size_t>(hands), 1.0f);
+  std::vector<float> share(static_cast<std::size_t>(hands));
+  std::vector<float> compat(static_cast<std::size_t>(hands));
+  const auto visit = [&](std::uint64_t board) {
+    const auto it = evaluators_.find(board);
+    if (it == evaluators_.end()) {
+      throw std::runtime_error("hand abstraction: no evaluator for a completed board below a "
+                               "decision node - tree and abstraction disagree");
+    }
+    const RiverEvaluator& eval = *it->second;
+    // showdown_2p with pot 1 and no commitment: wins + half the ties.
+    eval.showdown_2p(uniform.data(), 1.0, 0.0, share.data());
+    eval.compat_reach(uniform.data(), compat.data());
+    for (int h = 0; h < hands; ++h) {
+      const std::size_t hi = static_cast<std::size_t>(h);
+      if (!valid[hi]) continue;
+      if (universe_.masks[hi] & board) continue;  // this completion collides with the hand
+      const float eq = compat[hi] > 0.0f ? share[hi] / compat[hi] : 0.0f;
+      out[hi * static_cast<std::size_t>(per_hand) + static_cast<std::size_t>(fill[hi]++)] = eq;
+    }
+  };
+  if (missing == 1) {
+    for (Card c : rest) visit(key | (1ULL << c));
+  } else {
+    for (std::size_t i = 0; i < rest.size(); ++i) {
+      for (std::size_t j = i + 1; j < rest.size(); ++j) {
+        visit(key | (1ULL << rest[i]) | (1ULL << rest[j]));
+      }
+    }
+  }
+  for (int h = 0; h < hands; ++h) {
+    const std::size_t hi = static_cast<std::size_t>(h);
+    if (valid[hi] && fill[hi] != per_hand) {
+      throw std::runtime_error("hand abstraction: completion count mismatch");
+    }
+  }
 }
 
 // Group each live chance node's children into suit-equivalence classes and

@@ -50,8 +50,34 @@ std::string MemoryEstimate::to_string() const {
   return out.str();
 }
 
+namespace {
+
+// The most cells ONE deal can touch: every decision node on one runout (the
+// pinned seats' action loops enumerate, so the whole betting subtree along
+// that runout), one child at every chance node. Sum at decision nodes, max
+// at chance nodes.
+std::size_t path_cells(const PublicTree& tree, const InfosetIndexer& ix, NodeId id) {
+  const Node& node = tree[id];
+  if (node.kind == NodeKind::Terminal) return 0;
+  if (node.kind == NodeKind::Chance) {
+    std::size_t best = 0;
+    for (std::uint16_t c = 0; c < node.num_children; ++c) {
+      best = std::max(best, path_cells(tree, ix, node.first_child + c));
+    }
+    return best;
+  }
+  std::size_t cells = static_cast<std::size_t>(node.num_children) * ix.rows(node.decision_index);
+  for (std::uint16_t c = 0; c < node.num_children; ++c) {
+    cells += path_cells(tree, ix, node.first_child + c);
+  }
+  return cells;
+}
+
+}  // namespace
+
 MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc,
-                               Precision precision, const SampledConfig* sampled) {
+                               Precision precision, const SampledConfig* sampled,
+                               bool export_bucketed) {
   MemoryEstimate est;
   est.regret_strategy_bytes = CfrSolver::state_bytes(game, precision);
   est.tree_bytes = game.tree().size() * sizeof(Node);
@@ -66,6 +92,8 @@ MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc,
     // this cannot drift from the allocation. No recalc caches - nothing is
     // re-enumerated there.
     std::size_t total = InfosetLayout::build(game).total;
+    std::size_t lane_cells = total;
+    std::size_t lane_index_bytes = 0;
     if (const auto* deal_game = dynamic_cast<const DealGame*>(&game)) {
       // A hand-sharing team's decision nodes store one row per JOINT suit
       // orbit - dominant when present, so the estimate must count it.
@@ -81,14 +109,41 @@ MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc,
               sampled->partition_team[0];
         }
       }
-      total = InfosetIndexer::plan(game, *deal_game, *sampled, teammate_of, joint_classes)
-                  .store_total;
+      const InfosetIndexer ix =
+          InfosetIndexer::plan(game, *deal_game, *sampled, teammate_of, joint_classes);
+      total = ix.store_total;
+      // Sparse per-lane deltas: a lane holds one block per storage group it
+      // touched in a batch, and a deal touches at most path_cells(root), so
+      // ceil(batch / lanes) deals bound the lane. A CEILING - the same runout
+      // dealt twice shares its blocks - never above the store itself. Plus
+      // the per-lane block index, one u32 per group.
+      const std::size_t deals_per_lane =
+          (static_cast<std::size_t>(sampled->batch) + sampled->lanes - 1) / sampled->lanes;
+      const std::size_t path = path_cells(game.tree(), ix, game.tree().root());
+      lane_cells = std::min(total, deals_per_lane * path);
+      lane_index_bytes = static_cast<std::size_t>(ix.num_groups) * sizeof(std::uint32_t);
+      if (export_bucketed) {
+        // The bucketed export streams one group's blob at a time; what it
+        // holds is the index (one entry per group) and one blob.
+        std::size_t max_cells = 0;
+        for (const Node& n : game.tree().nodes) {
+          if (n.kind != NodeKind::Decision) continue;
+          max_cells = std::max(max_cells, static_cast<std::size_t>(ix.rows(n.decision_index)) *
+                                              n.num_children);
+        }
+        est.export_bytes = static_cast<std::size_t>(ix.num_groups) * 24 + max_cells * 4 +
+                           static_cast<std::size_t>(game.num_seats()) *
+                               static_cast<std::size_t>(ix.num_hands) * sizeof(float);
+      }
     }
-    // Master + per-lane pairs: regrets/strategy always; a team adds the
-    // conditioned-EV numerator/denominator pair (same size, same lanes).
+    // Master plus per-lane sparse blocks: regrets/strategy always; a team
+    // adds the conditioned-EV numerator/denominator pair (same size, same
+    // lanes).
     const std::size_t arrays_per_tier = sampled->partition_team.empty() ? 2 : 4;
-    est.regret_strategy_bytes = static_cast<std::size_t>(sampled->lanes + 1) *
-                                arrays_per_tier * total * sizeof(float);
+    est.regret_strategy_bytes =
+        arrays_per_tier * total * sizeof(float) +
+        static_cast<std::size_t>(sampled->lanes) *
+            (arrays_per_tier * lane_cells * sizeof(float) + lane_index_bytes);
     est.recalc_bytes = 0;
   }
 

@@ -22,6 +22,7 @@
 #include "solver/best_response.hpp"
 #include "solver/cfr.hpp"
 #include "game/deal_game.hpp"
+#include "solver/infoset_indexer.hpp"
 #include "solver/sampled_cfr.hpp"
 #include "solver/memory.hpp"
 #include "util/parallel.hpp"
@@ -89,7 +90,7 @@ std::unique_ptr<Game> make_game(const SolveConfig& config) {
 int check_memory(const Game& game, const SolveConfig& config, bool print_always) {
   const MemoryEstimate estimate =
       estimate_memory(game, config.threads, config.recalc.enabled, config.update.precision,
-                      &config.sampled);
+                      &config.sampled, config.export_bucketed);
   if (print_always) std::cout << estimate.to_string() << "\n";
   const double limit_bytes = config.memory_limit_gb * 1024.0 * 1024.0 * 1024.0;
   if (static_cast<double>(estimate.total()) > limit_bytes) {
@@ -143,6 +144,27 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   }
   SampledCfrSolver solver(game, *deals, config.sampled, config.threads, agents);
   stats.solve_id = config.solve_id;
+  if (config.sampled.abstraction.enabled) {
+    const AbstractionConfig& ab = config.sampled.abstraction;
+    const InfosetIndexer& ix = solver.indexer();
+    std::ostringstream fp;
+    fp << std::hex << ix.fingerprint();
+    stats.abstraction = {{"method", ab.method},
+                         {"flop", ab.flop},
+                         {"turn", ab.turn},
+                         {"river", ab.river},
+                         {"bins", ab.bins},
+                         {"seed", ab.seed},
+                         {"board_isomorphism", ab.board_isomorphism},
+                         {"storage_rows", ix.store_total},
+                         {"storage_groups", ix.num_groups},
+                         {"canonical_boards", ix.board_maps.size()},
+                         {"symmetric_images", ix.composed_maps.size()},
+                         {"fingerprint", fp.str()}};
+    std::cout << "hand abstraction: " << ab.method << " buckets flop " << ab.flop << " / turn "
+              << ab.turn << " / river " << ab.river << ", " << ix.store_total
+              << " storage cells in " << ix.num_groups << " groups\n";
+  }
   const bool unaware_team = team && config.awareness == "unaware";
   if (unaware_team) stats.baseline_solve_id = config.baseline_solve_id;
   std::cout << "solve id " << config.solve_id;
@@ -575,11 +597,23 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   if (dry_run) {
     const MemoryEstimate estimate =
         estimate_memory(*game, config.threads, config.recalc.enabled,
-                        config.update.precision, &config.sampled);
+                        config.update.precision, &config.sampled, config.export_bucketed);
     std::cout << estimate.to_string() << "\n";
     std::cout << "tree: " << game->tree().size() << " nodes ("
               << game->tree().num_decision_nodes << " decision, "
               << game->tree().num_terminal_nodes << " terminal)\n";
+    if (config.sampled.enabled && config.sampled.abstraction.enabled) {
+      // The storage the buckets produce, without clustering anything.
+      const auto* deals = dynamic_cast<const DealGame*>(game.get());
+      if (deals != nullptr) {
+        const InfosetIndexer ix =
+            InfosetIndexer::plan(*game, *deals, config.sampled, {}, 0);
+        std::cout << "abstraction: " << ix.store_total << " storage cells in " << ix.num_groups
+                  << " groups over " << game->tree().num_decision_nodes
+                  << " decision nodes (" << ix.board_maps.size() << " canonical boards, "
+                  << ix.composed_maps.size() << " symmetric images)\n";
+      }
+    }
     std::cout << "threads: " << threads << " (setup took " << setup_s << " s)\n";
     // The identities a solve would checkpoint under, so a caller can find
     // (or migrate) files without running anything.

@@ -132,6 +132,9 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
   }
   pool_ = std::make_unique<ThreadPool>(resolve_thread_count(threads));
   split_budget_ = pool_->threads() > 1 ? pool_->threads() * 4 : 1;
+  // Abstraction maps are clustered here, once, before any traversal reads
+  // them; a no-op in the other two modes.
+  indexer_.fit(deals, config_, *pool_);
 }
 
 void SampledCfrSolver::run(std::uint64_t iterations) {
@@ -723,13 +726,23 @@ void SampledCfrSolver::average_strategy(NodeId id, std::vector<float>& out) cons
   // so members emit IDENTICAL rows by construction - the consumers cannot
   // tell a quotiented solve apart from a converged symmetric one.
   const std::uint16_t* const row_of = indexer_.map(node.decision_index);
+  // Abstraction mode only: a hand this node's board blocks was never trained
+  // (its reach is zero everywhere) and maps to row 0 as a placeholder, so it
+  // exports uniform rather than another hand's row. Null in the other modes,
+  // which keeps them literally the old loop.
+  const std::uint8_t* const valid = indexer_.valid(node.decision_index);
   for (std::uint32_t h = 0; h < hands; ++h) {
+    float* row = out.data() + static_cast<std::size_t>(h) * actions;
+    if (valid != nullptr && !valid[h]) {
+      const float uniform = 1.0f / static_cast<float>(actions);
+      for (std::uint16_t a = 0; a < actions; ++a) row[a] = uniform;
+      continue;
+    }
     const std::uint16_t c = row_of[h];
     float sum = 0.0f;
     for (std::uint16_t a = 0; a < actions; ++a) {
       sum += strat_sum_[offset + static_cast<std::size_t>(a) * rows + c];
     }
-    float* row = out.data() + static_cast<std::size_t>(h) * actions;
     if (sum > 0.0f) {
       for (std::uint16_t a = 0; a < actions; ++a) {
         row[a] = strat_sum_[offset + static_cast<std::size_t>(a) * rows + c] / sum;

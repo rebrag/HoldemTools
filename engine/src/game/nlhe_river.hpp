@@ -182,6 +182,26 @@ class NlhePostflopGame final : public Game, public DealGame {
   // No hand_classes: the board sits in every infoset, so there is no suit
   // quotient. No team support: hand sharing is a preflop (M9) feature.
 
+  // ---- Hand abstraction features (DealGame) ----
+  // Keys are board masks. Strengths come off the evaluator the tree already
+  // built for that completed board; equities are one showdown_2p sweep per
+  // completion against a uniform opponent from the universe, O(H) each.
+  // Symmetries are the suit permutations fixing the root board and every
+  // seat's range - the same test build_isomorphism applies, but here they
+  // relabel WHOLE runouts (turn Xc river Yd against turn Xd river Yc), which
+  // the vectorized iso cannot express because it canonicalizes one chance
+  // node's children at a time.
+  bool abstraction_supported() const override { return depth_limit_terminals_ == 0; }
+  std::uint64_t abstraction_key(NodeId id) const override { return tree_[id].board_mask; }
+  void abstraction_strengths(std::uint64_t key, std::vector<std::uint32_t>& out) const override;
+  void abstraction_equities(std::uint64_t key, std::vector<float>& out, int& per_hand,
+                            std::vector<std::uint8_t>& valid) const override;
+  int abstraction_symmetries() const override { return static_cast<int>(root_syms_.size()); }
+  std::uint64_t abstraction_symmetric_key(int sym, std::uint64_t key) const override;
+  const std::vector<std::uint16_t>& abstraction_symmetric_map(int sym) const override {
+    return root_sym_maps_[static_cast<std::size_t>(sym)];
+  }
+
  private:
 
   // Fill `evaluators_` for every showdown terminal in the tree, in parallel.
@@ -224,6 +244,9 @@ class NlhePostflopGame final : public Game, public DealGame {
   std::vector<std::uint16_t> iso_perm_;
   std::vector<std::vector<std::uint16_t>> perm_maps_;
   std::size_t iso_collapsed_ = 0;
+  // Root symmetries for hand abstraction (see abstraction_symmetries).
+  std::vector<SuitPerm> root_syms_;
+  std::vector<std::vector<std::uint16_t>> root_sym_maps_;
   std::vector<std::vector<float>> ranges_;  // compact, one per seat
   int num_seats_ = 2;
   std::vector<Chips> stacks_;  // per seat, chips behind at the root

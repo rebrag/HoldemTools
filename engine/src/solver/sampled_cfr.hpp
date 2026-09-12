@@ -136,6 +136,12 @@ class SampledCfrSolver final : public StrategySource {
   // Layout fingerprint: a checkpoint written against a different tree,
   // universe, or team must be refused rather than silently reinterpreted.
   std::size_t store_total() const { return store_total_; }
+  // The bucket assignment, for the checkpoint trailer: two abstractions with
+  // equal bucket counts have equal store_total, so the layout check alone
+  // cannot tell them apart. 0 outside abstraction mode.
+  std::uint64_t bucket_map_hash() const {
+    return indexer_.mode == InfosetIndexer::Mode::Abstraction ? indexer_.fingerprint() : 0;
+  }
   int joint_classes() const { return joint_classes_; }
   int universe_hands() const { return universe_hands_; }
   // Restore state read from a checkpoint. Throws on any size mismatch -

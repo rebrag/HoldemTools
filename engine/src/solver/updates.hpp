@@ -154,11 +154,42 @@ struct SamplingConfig {
 // against that deal. `batch` iterations run against regrets frozen at batch
 // start, partitioned over `lanes` fixed accumulation lanes; the result is a
 // pure function of (seed, iterations, batch, lanes) at any thread count.
+// Hand abstraction for the sampled core (solver/infoset_indexer.hpp): the
+// storage rows at a decision node are BUCKETS of strategically similar hands
+// rather than hands. Regrets and strategy sums pool across a bucket, which is
+// what lets a sampler converge on hands it rarely deals (a 6-seat tight-range
+// spot deals every opponent in range about never) and what makes a 3-way
+// flop tree fit in memory at all. Buckets are per public board: a strength
+// bucket on the river, an equity bucket on earlier streets. Deals, showdowns
+// and chip conservation stay on real cards; only the storage is quotiented.
+//
+// Out of the vectorized core permanently - that core's whole value is the
+// exact per-combo gradient - and never consulted by it.
+struct AbstractionConfig {
+  bool enabled = false;
+  // "equity": quantiles of mean equity against a uniform opponent over every
+  // completion of the board (deterministic, seedless). "histogram": seeded
+  // k-means over a `bins`-bin histogram of those equities, which can tell a
+  // draw from a made hand of the same mean equity.
+  std::string method = "equity";
+  // Buckets per street; 0 keeps per-hand rows on that street.
+  int flop = 0;
+  int turn = 0;
+  int river = 0;
+  int bins = 16;
+  std::uint64_t seed = 1;
+  // Share one set of storage rows between runouts that are suit
+  // permutations of each other under a permutation that fixes the root
+  // board and every seat's range. An exact relabeling; off for the A/B.
+  bool board_isomorphism = true;
+};
+
 struct SampledConfig {
   bool enabled = false;
   std::uint64_t seed = 20260830;
   std::uint32_t batch = 512;
   std::uint32_t lanes = 16;
+  AbstractionConfig abstraction;
   // Solve one row per suit-symmetry class when the game reports a quotient
   // (169 preflop). Lossless there and a direct variance reduction - every
   // member combo's sample lands in the shared row. Identity when the game

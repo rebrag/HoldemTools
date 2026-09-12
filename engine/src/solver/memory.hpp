@@ -54,9 +54,13 @@ struct MemoryEstimate {
 // copies of the regret and strategy arrays (master plus per-lane deltas),
 // per-class rows when the symmetry quotient is on, no recalc caches.
 // Null = the vectorized core.
+// `export_bucketed` sizes the export term for output.export "bucketed"
+// (one strategy blob per storage group, no per-node records) instead of the
+// per-hand export pass.
 MemoryEstimate estimate_memory(const Game& game, int threads = 1, bool recalc = true,
                                Precision precision = Precision::F32,
-                               const SampledConfig* sampled = nullptr);
+                               const SampledConfig* sampled = nullptr,
+                               bool export_bucketed = false);
 
 // Process memory high-water marks, in bytes (0 where unavailable).
 //

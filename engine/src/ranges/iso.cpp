@@ -17,12 +17,16 @@ std::vector<SuitPerm> all_suit_perms() {
   return perms;
 }
 
-bool perm_fixes_mask(const SuitPerm& p, std::uint64_t mask) {
+std::uint64_t perm_mask(const SuitPerm& p, std::uint64_t mask) {
   std::uint64_t image = 0;
   for (int c = 0; c < kNumCards; ++c) {
     if (mask & (1ULL << c)) image |= 1ULL << perm_card(p, static_cast<Card>(c));
   }
-  return image == mask;
+  return image;
+}
+
+bool perm_fixes_mask(const SuitPerm& p, std::uint64_t mask) {
+  return perm_mask(p, mask) == mask;
 }
 
 namespace {
