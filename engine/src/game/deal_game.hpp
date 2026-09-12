@@ -161,6 +161,10 @@ class DealGame {
   // image[h] = original[map[h]].
   virtual int abstraction_symmetries() const { return 0; }
   virtual std::uint64_t abstraction_symmetric_key(int, std::uint64_t key) const { return key; }
+  // The same relabeling applied to one public card, so the indexer can
+  // canonicalize a runout ORDER (turn X then river Y is a different public
+  // state from turn Y then river X even though the board sets agree).
+  virtual int abstraction_symmetric_card(int, int card) const { return card; }
   virtual const std::vector<std::uint16_t>& abstraction_symmetric_map(int) const {
     throw std::runtime_error("this game has no abstraction symmetries");
   }

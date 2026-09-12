@@ -52,25 +52,53 @@ std::string MemoryEstimate::to_string() const {
 
 namespace {
 
-// The most cells ONE deal can touch: every decision node on one runout (the
-// pinned seats' action loops enumerate, so the whole betting subtree along
-// that runout), one child at every chance node. Sum at decision nodes, max
-// at chance nodes.
-std::size_t path_cells(const PublicTree& tree, const InfosetIndexer& ix, NodeId id) {
+// Storage cells below a node: `full` counts every decision node, `path`
+// the most one deal can touch (every decision node along ONE runout - the
+// pinned seats' action loops enumerate - one child at each chance node).
+struct SubtreeCells {
+  std::size_t full = 0;
+  std::size_t path = 0;
+};
+
+SubtreeCells subtree_cells(const PublicTree& tree, const InfosetIndexer& ix, NodeId id) {
+  const Node& node = tree[id];
+  SubtreeCells out;
+  if (node.kind == NodeKind::Terminal) return out;
+  if (node.kind == NodeKind::Chance) {
+    for (std::uint16_t c = 0; c < node.num_children; ++c) {
+      const SubtreeCells child = subtree_cells(tree, ix, node.first_child + c);
+      out.full += child.full;
+      out.path = std::max(out.path, child.path);
+    }
+    return out;
+  }
+  const std::size_t own = static_cast<std::size_t>(node.num_children) * ix.rows(node.decision_index);
+  out.full = own;
+  out.path = own;
+  for (std::uint16_t c = 0; c < node.num_children; ++c) {
+    const SubtreeCells child = subtree_cells(tree, ix, node.first_child + c);
+    out.full += child.full;
+    out.path += child.path;
+  }
+  return out;
+}
+
+// A ceiling on the cells `deals` deals can touch below a node. Nodes above
+// the first chance node are shared by every deal and count once; below a
+// chance node at most min(everything, deals x one runout) is reachable.
+std::size_t lane_bound(const PublicTree& tree, const InfosetIndexer& ix, NodeId id,
+                       std::size_t deals) {
   const Node& node = tree[id];
   if (node.kind == NodeKind::Terminal) return 0;
   if (node.kind == NodeKind::Chance) {
-    std::size_t best = 0;
-    for (std::uint16_t c = 0; c < node.num_children; ++c) {
-      best = std::max(best, path_cells(tree, ix, node.first_child + c));
-    }
-    return best;
+    const SubtreeCells cells = subtree_cells(tree, ix, id);
+    return std::min(cells.full, deals * cells.path);
   }
-  std::size_t cells = static_cast<std::size_t>(node.num_children) * ix.rows(node.decision_index);
+  std::size_t bound = static_cast<std::size_t>(node.num_children) * ix.rows(node.decision_index);
   for (std::uint16_t c = 0; c < node.num_children; ++c) {
-    cells += path_cells(tree, ix, node.first_child + c);
+    bound += lane_bound(tree, ix, node.first_child + c, deals);
   }
-  return cells;
+  return bound;
 }
 
 }  // namespace
@@ -113,14 +141,13 @@ MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc,
           InfosetIndexer::plan(game, *deal_game, *sampled, teammate_of, joint_classes);
       total = ix.store_total;
       // Sparse per-lane deltas: a lane holds one block per storage group it
-      // touched in a batch, and a deal touches at most path_cells(root), so
-      // ceil(batch / lanes) deals bound the lane. A CEILING - the same runout
-      // dealt twice shares its blocks - never above the store itself. Plus
-      // the per-lane block index, one u32 per group.
+      // touched in a batch, and ceil(batch / lanes) deals bound what it can
+      // touch (lane_bound). A CEILING - the same runout dealt twice shares
+      // its blocks - never above the store itself. Plus the per-lane block
+      // index, one u32 per group.
       const std::size_t deals_per_lane =
           (static_cast<std::size_t>(sampled->batch) + sampled->lanes - 1) / sampled->lanes;
-      const std::size_t path = path_cells(game.tree(), ix, game.tree().root());
-      lane_cells = std::min(total, deals_per_lane * path);
+      lane_cells = std::min(total, lane_bound(game.tree(), ix, game.tree().root(), deals_per_lane));
       lane_index_bytes = static_cast<std::size_t>(ix.num_groups) * sizeof(std::uint32_t);
       if (export_bucketed) {
         // The bucketed export streams one group's blob at a time; what it

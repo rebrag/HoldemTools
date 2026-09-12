@@ -198,6 +198,9 @@ class NlhePostflopGame final : public Game, public DealGame {
                             std::vector<std::uint8_t>& valid) const override;
   int abstraction_symmetries() const override { return static_cast<int>(root_syms_.size()); }
   std::uint64_t abstraction_symmetric_key(int sym, std::uint64_t key) const override;
+  int abstraction_symmetric_card(int sym, int card) const override {
+    return perm_card(root_syms_[static_cast<std::size_t>(sym)], static_cast<Card>(card));
+  }
   const std::vector<std::uint16_t>& abstraction_symmetric_map(int sym) const override {
     return root_sym_maps_[static_cast<std::size_t>(sym)];
   }

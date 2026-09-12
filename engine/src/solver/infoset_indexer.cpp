@@ -302,8 +302,31 @@ InfosetIndexer InfosetIndexer::plan(const Game& game, const DealGame& deals,
   for (std::uint32_t h = 0; h < ix.num_hands; ++h) ix.map_storage[h] = static_cast<std::uint16_t>(h);
   ix.num_maps = 1;
 
-  // Per distinct board key: its canonical key and the symmetry taking the
-  // canonical key to it (identity when the key is its own canonical form).
+  // A public state's ORDERED key: the board set in the low 52 bits and the
+  // runout cards in the order they came, one plus the card code per 6-bit
+  // slot above (0 = no card). Two slots cover every tree this engine builds
+  // (a flop root deals a turn and a river); anything deeper is refused.
+  constexpr int kMaxRunout = 2;
+  const auto pack = [](std::uint64_t mask, const std::vector<std::uint8_t>& runout) {
+    std::uint64_t key = mask & ((std::uint64_t{1} << 52) - 1);
+    for (std::size_t i = 0; i < runout.size(); ++i) {
+      key |= static_cast<std::uint64_t>(runout[i] + 1) << (52 + 6 * i);
+    }
+    return key;
+  };
+  const auto mask_of = [](std::uint64_t key) { return key & ((std::uint64_t{1} << 52) - 1); };
+  const auto image = [&](int s, std::uint64_t key) {
+    std::uint64_t out = deals.abstraction_symmetric_key(s, mask_of(key));
+    for (int i = 0; i < kMaxRunout; ++i) {
+      const std::uint64_t slot = (key >> (52 + 6 * i)) & 63u;
+      if (slot == 0) continue;
+      const int card = deals.abstraction_symmetric_card(s, static_cast<int>(slot) - 1);
+      out |= static_cast<std::uint64_t>(card + 1) << (52 + 6 * i);
+    }
+    return out;
+  };
+  // Per distinct ordered key: its canonical form and the symmetry taking the
+  // canonical form to it (identity when the key is its own canonical form).
   struct KeyInfo {
     std::uint64_t canonical;
     int symmetry;  // -1 = identity
@@ -313,13 +336,11 @@ InfosetIndexer InfosetIndexer::plan(const Game& game, const DealGame& deals,
     auto it = key_info.find(key);
     if (it != key_info.end()) return it->second;
     std::uint64_t canonical = key;
-    for (int s = 0; s < syms; ++s) {
-      canonical = std::min(canonical, deals.abstraction_symmetric_key(s, key));
-    }
+    for (int s = 0; s < syms; ++s) canonical = std::min(canonical, image(s, key));
     int symmetry = -1;
     if (canonical != key) {
       for (int s = 0; s < syms; ++s) {
-        if (deals.abstraction_symmetric_key(s, canonical) == key) {
+        if (image(s, canonical) == key) {
           symmetry = s;
           break;
         }
@@ -361,12 +382,21 @@ InfosetIndexer InfosetIndexer::plan(const Game& game, const DealGame& deals,
   std::vector<std::pair<std::uint32_t, std::uint32_t>> group_line;  // offset, length
   std::vector<std::uint32_t> group_cells;
   std::vector<std::uint16_t> line;
+  std::vector<std::uint8_t> runout;
 
   const auto walk = [&](auto& self, NodeId id) -> void {
     const Node& node = tree[id];
     if (node.kind == NodeKind::Terminal) return;
     if (node.kind == NodeKind::Chance) {
-      for (std::uint16_t c = 0; c < node.num_children; ++c) self(self, node.first_child + c);
+      if (runout.size() >= static_cast<std::size_t>(kMaxRunout)) {
+        throw std::runtime_error("hand abstraction: more than two runout cards below the root");
+      }
+      for (std::uint16_t c = 0; c < node.num_children; ++c) {
+        const NodeId child = node.first_child + c;
+        runout.push_back(static_cast<std::uint8_t>(tree[child].dealt_card));
+        self(self, child);
+        runout.pop_back();
+      }
       return;
     }
     const std::uint32_t d = node.decision_index;
@@ -382,8 +412,9 @@ InfosetIndexer InfosetIndexer::plan(const Game& game, const DealGame& deals,
       group_cells.push_back(static_cast<std::uint32_t>(node.num_children) * hands);
       group_line.push_back({0, 0});
     } else {
-      const std::uint64_t key = deals.abstraction_key(id);
+      const std::uint64_t key = pack(deals.abstraction_key(id), runout);
       const KeyInfo& info = canonicalize(key);
+      const std::uint64_t canonical_mask = mask_of(info.canonical);
       std::uint64_t line_hash = 14695981039346656037ULL;
       line_hash = fnv1a(line_hash, line.data(), line.size() * sizeof(std::uint16_t));
       const LineKey lk{info.canonical, line_hash};
@@ -413,11 +444,15 @@ InfosetIndexer InfosetIndexer::plan(const Game& game, const DealGame& deals,
       }
       ix.group_of[d] = g;
       ix.rows_of[d] = buckets;
-      const std::uint32_t cmap = canonical_map_index(info.canonical, node.street, buckets);
+      // The MAP is a property of the board set alone (strengths and
+      // equities do not depend on the order), keyed by the canonical
+      // runout's set; the relabeling is the one that identifies the two
+      // ordered public states, so a member's rows read consistently.
+      const std::uint32_t cmap = canonical_map_index(canonical_mask, node.street, buckets);
       if (info.symmetry < 0) {
         ix.map_of[d] = cmap;
       } else {
-        ix.map_of[d] = composed_map_index(info.canonical, info.symmetry, cmap);
+        ix.map_of[d] = composed_map_index(canonical_mask, info.symmetry, cmap);
         ix.perm_of[d] = static_cast<std::uint16_t>(info.symmetry);
       }
     }

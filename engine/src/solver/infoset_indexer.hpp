@@ -32,9 +32,13 @@ namespace engine {
 // team actor's map is never consulted - those paths index the joint
 // quotient directly.
 //
-// Abstraction mode groups decision nodes by (canonical board, betting line):
-// the board canonicalized under the game's root symmetries and the sequence
-// of action indices at DECISION nodes from the root, chance edges ignored.
+// Abstraction mode groups decision nodes by (canonical runout, betting line):
+// the board AND the order its cards came in, canonicalized under the game's
+// root symmetries, and the sequence of action indices at DECISION nodes from
+// the root. The order matters even though the bucket map does not depend on
+// it: turn X then river Y and turn Y then river X hold the same five cards
+// but the turn was played on different boards, so the ranges arriving at the
+// river differ and the two are different public states.
 // Two nodes with equal canonical board and equal line are the same public
 // state up to a suit relabeling, so sharing their rows merges only what the
 // game makes identical. The k-th decision node under one runout is NOT in
