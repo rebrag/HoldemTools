@@ -1128,10 +1128,67 @@ Unaware phase 1 is capped at half the budget so a team artifact can never be a b
 
 Still open under M9: teams of three or more seats and multiple teams (the joint quotient generalizes but the orbit space grows), general payoff-weight matrices (only summed-EV teams exist), and a team-aware best-response evaluator so team solves get a convergence number again.
 
+### M8e - hand abstraction on the sampled core. Landed 2026-09-11.
+
+The per-core rule below became code: `algorithm.sampled.abstraction.{flop,turn,river}` solves a postflop tree on the sampled core with storage rows per BUCKET, through the `InfosetIndexer` seam (`src/solver/infoset_indexer.*`).
+Strength quantiles on the river, seeded k-means over equity histograms (`method: "histogram"`, default `bins: 16`) or equity quantiles (`method: "equity"`) on earlier streets, per public board; suit-isomorphic runouts share one storage group (`board_isomorphism`).
+Deals, showdowns and chip conservation stay on real cards; only the storage is quotiented, and `average_strategy` expands through the map so every consumer sees per-hand rows.
+The vectorized core is untouched.
+
+**Two things had to change under it before the flop spot could fit at all**, both bitwise neutral and both pinned by the new absolute digests (`tests/test_sampled_digest.cpp`): the per-lane delta copies became SPARSE (one block per storage group a lane touched in a batch, instead of a full copy of the store per lane), and the discount sweep runs on the pool and canonicalizes zero.
+The sparse fold is neutral because an untouched cell contributed an exact `+0.0f`; the zero canonicalization exists because a negative denormal regret times a scale below one rounds to `-0.0f`, which the dense fold used to repair.
+
+**The flop spot, sized** (`Ts 6h 9h`, 3-way, 100% ranges, pot 100, stacks 400, two sizes per street plus raises and all-in; 7,282,835 nodes, 2,775,762 decision nodes, 1176-hand universe):
+
+| storage | cells | groups |
+|---|---|---|
+| per hand | 6.5 billion (55.0 GB regrets+strategy) | 2,775,762 |
+| histogram 300 turn / 100 river, runouts shared | 389 million | 1,688,936 |
+| histogram 300 / 100, no sharing | 637 million | 2,775,762 |
+| histogram 200 / 200, runouts shared | 765 million (6.1 GB) | 1,688,936 |
+
+Runout sharing is the predicted 1.64x (2352 ordered runouts, 1429 orbits under the c/d swap).
+The per-hand ARTIFACT export of that tree is 130 GB of export pass and a 160 GB file, and bucketing cannot touch it; the bucketed export (`output.export: "bucketed"`, flag bit 3, `docs/artifact-format.md`) writes one strategy blob per group and the readers expand it, which is what makes the spot writable at all.
+
+**The gate, on the Ts 6h 9h 9c 3-way turn** (same sizing, 62,947 nodes, 25,164 decision nodes, 1128 hands; three suits on the board, so no runout sharing is possible here).
+
+The exact vectorized reference: 250 iterations to 0.135 chips per seat exploitable (0.13% of pot), root EVs OOP 30.63 / MID 32.74 / BTN 36.63 against MonkerSolver's 30.53 / 32.83 / 36.65.
+
+The abstraction's OWN cost, by projecting that exact strategy onto the bucket map (reach-weighted, `tools/bucket_probe.cpp`) and rating the projection with the exact best response, chips per seat of a 100 pot:
+
+| turn \ river | 50 | 100 | 200 | 400 |
+|---|---|---|---|---|
+| equity 100 | 1.85 | 1.79 | 1.79 | 1.79 |
+| equity 400 | 0.79 | 0.63 | 0.59 | 0.58 |
+| equity 800 | 0.66 | 0.49 | 0.44 | 0.43 |
+| histogram 100 | 0.62 | 0.47 | 0.42 | 0.41 |
+| histogram 200 and up | 0.60 | 0.43 | 0.39 | 0.38 |
+
+The histogram method beats equity quantiles at every count (200 histogram turn buckets do what 800 equity buckets do), river buckets stop paying past 200, and 16-bin histograms cannot tell more than about 200 turn hands apart, which is why 200, 400 and 800 read the same.
+The floor is 0.25% of pot above exact at histogram 200/200.
+**Weighting the projection by range instead of reach reports 5% at near-per-hand counts** - deep in the tree most of a bucket's members never arrive and their placeholder rows outvote the hands that are there - and that number was the probe's own error, not the abstraction's.
+
+The bucketed SAMPLED solves themselves, exact best response at every checkpoint, exploitable per seat as % of pot, 16 threads, `lanes 16, batch 2048`:
+
+| solve | 250k | 500k | 750k | 1M | 1.25M | 1.5M | 1.75M | 2M | deals/s | peak RSS |
+|---|---|---|---|---|---|---|---|---|---|---|
+| per hand | 6.44 | 3.94 | 3.03 | 2.46 | 2.16 | 1.87 | 1.66 | 1.49 | 298 | 9.8 GB |
+| histogram 200/100 | 7.59 | 4.32 | 3.22 | 2.67 | | | | | 361 | 2.1 GB |
+| histogram 400/200 | 7.46 | 4.35 | 3.24 | 2.69 | | | | | 350 | 2.9 GB |
+| histogram 100/200 | 7.15 | 4.34 | 3.29 | 2.67 | | | | | 351 | 2.8 GB |
+| equity 400/200 | 7.06 | 4.40 | 3.29 | 2.66 | | | | | 349 | 2.9 GB |
+
+Root EVs at one million deals are within 0.1 chips of the exact solve on every row (per hand 30.73 / 32.66 / 36.61; histogram 200/100 30.71 / 32.67 / 36.62).
+
+**Read it straight.** On a 100%-range 3-way turn the buckets do not converge faster per deal - they sit 0.2% of pot behind the per-hand solve at every checkpoint, and bucket count and feature method are invisible at this budget because both are far above the abstraction's 0.25% floor.
+Sampling noise is the bottleneck here, exactly as the M8c entry said it would be on three seats, which should run vectorized anyway.
+What the buckets buy on this spot is 4.6x less memory and 18% more deals per second.
+The variance win they exist for is on tight ranges at four seats and up, where the per-hand solve deals every opponent in range about never - that measurement is `bench_multiway.py --abstraction` below - and the memory win is what makes the 3-way flop tree solvable at all.
+
 - **M10 - Bayesian unknown-collusion**: chance root over team type with probability p - now precisely the p-interpolation between M9's two awareness modes (p=0 is unaware, p=1 is aware); opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.
 
 Out of scope, permanently (do not build speculatively): TMECor / coordination-without-card-visibility, cloud SDKs inside the engine.
-Hand abstraction/bucketing became a PER-CORE rule with M8c: still permanently out of the vectorized core, in scope for the sampled core as the route to multiway postflop and PLO (the `InfosetIndexer` seam is where it lands).
+Hand abstraction/bucketing became a PER-CORE rule with M8c and LANDED on the sampled core as M8e: still permanently out of the vectorized core, in scope for the sampled core as the route to multiway postflop and PLO (the `InfosetIndexer` seam is where it lives).
 
 **"GPU" moved off that list and needs splitting, because the depth-limiting direction above touches it.** The boundary that still holds is the *engine binary*: `engine.exe` stays a headless CPU-only CLI with no cloud SDK, and a value network it consults would be a local file it reads, with inference on the CPU. What is no longer forbidden is a **separate, offline training tool** that produces that file - training a value network is the one part of the Ruse approach that plausibly wants a GPU, and it is not part of the solver. Keep them apart: if a GPU dependency ever appears inside `engine.exe`, that is the line being crossed, not training hardware.
 
@@ -1141,4 +1198,4 @@ Hand abstraction stays out for the same reason it always was, and note that this
 
 - Correctness before speed, speed before scale. Every solver change re-passes Kuhn/Leduc CI and a Pio cross-check on at least one spot.
 - The artifact format is a versioned contract; changes move the spec, both readers, and the fixture in one commit.
-- The 16GB dev box is the memory budget; the estimator must not drift from reality.
+- The 32 GB dev box is the memory budget (it was 16 GB when this was written); the estimator must not drift from reality.
