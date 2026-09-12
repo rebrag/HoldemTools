@@ -19,6 +19,11 @@ namespace engine {
 // dropped as unreached read uniform, which is what the solver would have
 // exported for them.
 //
+// A per-hand artifact also carries every seat's reach at every decision
+// node, which is what a bucket projection needs to weight members by how
+// often they are actually there (`reach()`); a bucketed artifact derives
+// the same numbers in the reader.
+//
 // The artifact must have been written for THIS game: same tree, same hand
 // dictionaries. That is checked on the node count and dictionary sizes,
 // which is what the reader can see.
@@ -32,6 +37,7 @@ class ArtifactStrategySource final : public StrategySource {
                                " nodes, the game has " + std::to_string(tree.size()));
     }
     rows_.resize(tree.num_decision_nodes);
+    reach_.resize(tree.num_decision_nodes);
     for (NodeId id = 0; id < tree.size(); ++id) {
       const Node& node = tree[id];
       if (node.kind != NodeKind::Decision) continue;
@@ -40,9 +46,12 @@ class ArtifactStrategySource final : public StrategySource {
       const int actions = node.num_children;
       std::vector<float>& rows = rows_[node.decision_index];
       rows.assign(static_cast<std::size_t>(hands) * actions, 1.0f / static_cast<float>(actions));
+      std::vector<float>& reach = reach_[node.decision_index];
+      reach.assign(static_cast<std::size_t>(hands), 0.0f);
       const ArtifactSeatData& actor = data.seats[data.actor];
       for (std::size_t i = 0; i < actor.idx.size(); ++i) {
         const std::size_t h = actor.idx[i];
+        reach[h] = actor.reach[i];
         for (int a = 0; a < actions; ++a) {
           rows[h * actions + a] = data.strategy[i * actions + a];
         }
@@ -55,6 +64,11 @@ class ArtifactStrategySource final : public StrategySource {
   void average_strategy(NodeId id, std::vector<float>& out) const override {
     out = rows_[game_.tree()[id].decision_index];
   }
+  // The ACTOR's reach at a decision node under the artifact's strategy, per
+  // hand (0 for hands the artifact dropped as unreached).
+  const std::vector<float>& actor_reach(NodeId id) const {
+    return reach_[game_.tree()[id].decision_index];
+  }
   ThreadPool& pool() const override { return *pool_; }
   int split_budget() const override { return split_budget_; }
   std::uint64_t iteration() const override { return iterations_; }
@@ -62,7 +76,8 @@ class ArtifactStrategySource final : public StrategySource {
 
  private:
   const Game& game_;
-  std::vector<std::vector<float>> rows_;  // by decision index, [hand][action]
+  std::vector<std::vector<float>> rows_;   // by decision index, [hand][action]
+  std::vector<std::vector<float>> reach_;  // by decision index, actor's per-hand reach
   std::unique_ptr<ThreadPool> pool_;
   std::uint64_t iterations_ = 0;
   int split_budget_ = 1;

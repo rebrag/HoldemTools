@@ -197,7 +197,11 @@ int main(int argc, char** argv) {
           const auto t0 = std::chrono::steady_clock::now();
           InfosetIndexer ix = InfosetIndexer::plan(game, game, sc, {}, 0);
           ix.fit(game, sc, exact->pool());
-          BucketProjectedSource projected(game, *exact, ix);
+          BucketProjectedSource::ReachFn reach;
+          if (from_artifact) {
+            reach = [&](NodeId id) { return &from_artifact->actor_reach(id); };
+          }
+          BucketProjectedSource projected(game, *exact, ix, reach);
           const BrResult br = compute_best_response(game, projected);
           const double per_seat = br.nashconv() / game.num_seats();
           const double secs =
