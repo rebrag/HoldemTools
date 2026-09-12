@@ -118,6 +118,12 @@ target_link_libraries(terminal3_bench PRIVATE engine_core)
 add_executable(tree_hash tools/tree_hash.cpp)
 target_link_libraries(tree_hash PRIVATE engine_core)
 
+# bucket_probe answers "what does a hand abstraction cost by itself": an
+# exact solve projected onto a bucket map and rated by the exact best
+# response, swept over bucket counts and feature methods.
+add_executable(bucket_probe tools/bucket_probe.cpp)
+target_link_libraries(bucket_probe PRIVATE engine_core)
+
 # --- Tests ----------------------------------------------------------------
 enable_testing()
 add_executable(engine_tests
