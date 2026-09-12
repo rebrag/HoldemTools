@@ -155,11 +155,23 @@ class SampledCfrSolver final : public StrategySource {
   // Everything one lane touches while its iterations run: private delta
   // buffers plus per-depth scratch so the recursion allocates nothing.
   struct Lane {
+    // SPARSE deltas. A deal walks one runout, so a lane touches a small
+    // fraction of the store per batch; a dense copy per lane would cost
+    // (lanes + 1) x the store, which on a flop tree is the whole box. Each
+    // storage group touched this batch gets one zeroed block of
+    // actions x rows floats in every arena below, at the same block offset,
+    // allocated on first touch (touch()) and released by the reset that
+    // starts the next batch. Bitwise neutral against the dense copy: an
+    // untouched cell held +0.0f, and the master never holds -0.0f (run()
+    // canonicalizes it in the discount sweep), so skipping the add of that
+    // +0.0f changes no bit.
     std::vector<float> regret_delta, strat_delta;
     // Conditioned-EV accumulators, allocated only for team solves: value
     // numerators per (row, action) and reach denominators per row (stored
-    // in the action-0 block of a store_total_-sized array).
+    // in the action-0 part of the group's block).
     std::vector<float> ev_delta, evw_delta;
+    std::vector<std::uint32_t> block_of;  // per storage group: arena offset, kNoBlock if untouched
+    std::vector<std::uint32_t> touched;   // groups touched this batch, in first-touch order
     Deal deal;
     std::vector<std::uint32_t> strengths;
     std::vector<float> hero_root;                  // masked root reach
@@ -174,6 +186,12 @@ class SampledCfrSolver final : public StrategySource {
   };
 
   void run_iteration(std::uint64_t t, Lane& lane);
+  // The lane's delta block for decision node d, allocating (zeroed, in every
+  // arena) on the batch's first touch. Take pointers from it only AFTER a
+  // node's descent into its children: a child's first touch can grow the
+  // arenas and move them.
+  std::size_t touch(Lane& lane, std::uint32_t decision_index);
+  std::size_t group_cells(std::uint32_t group) const;
   // Counterfactual values for `hero`'s hands at `id` under the lane's deal,
   // scaled by the pinned opponents' reach `opp_w`. Writes into out (length =
   // hero hands).
@@ -217,6 +235,7 @@ class SampledCfrSolver final : public StrategySource {
   InfosetIndexer indexer_;
   std::vector<std::size_t> store_offset_;    // by decision_index
   std::vector<std::uint32_t> store_hands_;   // by decision_index: rows (buckets, classes or hands)
+  std::vector<std::uint32_t> store_cells_;   // by decision_index: actions x rows
   std::size_t store_total_ = 0;
   // Team state. joint_class_[own * H + partner] -> joint storage row
   // (0xFFFFFFFF on overlapping pairs); sized only when a team exists.

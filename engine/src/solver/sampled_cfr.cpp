@@ -20,6 +20,7 @@ constexpr std::uint32_t kNoJointRow = std::numeric_limits<std::uint32_t>::max();
 // Small fixed bound on actions per node so the pinned-seat hot loop never
 // allocates; every current tree is far below it.
 constexpr int kMaxActionsSampled = 64;
+constexpr std::uint32_t kNoBlock = std::numeric_limits<std::uint32_t>::max();
 
 int tree_depth(const PublicTree& tree) {
   std::vector<int> depth(tree.size(), 0);
@@ -103,11 +104,13 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
   indexer_ = InfosetIndexer::plan(game, deals, config_, agents_.teammate_of, joint_classes_);
   store_offset_.assign(layout_.node_offset.size(), InfosetLayout::kNoOffset);
   store_hands_.assign(layout_.node_hands.size(), 0);
+  store_cells_.assign(layout_.node_hands.size(), 0);
   for (const Node& node : game.tree().nodes) {
     if (node.kind != NodeKind::Decision) continue;
     const std::uint32_t d = node.decision_index;
     store_offset_[d] = indexer_.offset(d);
     store_hands_[d] = indexer_.rows(d);
+    store_cells_[d] = static_cast<std::uint32_t>(node.num_children) * indexer_.rows(d);
   }
   store_total_ = indexer_.store_total;
   regrets_.assign(store_total_, 0.0f);
@@ -119,12 +122,7 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
   max_depth_ = tree_depth(game.tree());
   lanes_.resize(config_.lanes);
   for (Lane& lane : lanes_) {
-    lane.regret_delta.assign(store_total_, 0.0f);
-    lane.strat_delta.assign(store_total_, 0.0f);
-    if (agents_.has_team()) {
-      lane.ev_delta.assign(store_total_, 0.0f);
-      lane.evw_delta.assign(store_total_, 0.0f);
-    }
+    lane.block_of.assign(indexer_.num_groups, kNoBlock);
     lane.class_sigma.resize(static_cast<std::size_t>(max_depth_) + 2);
     lane.mate_stack.resize(static_cast<std::size_t>(max_depth_) + 2);
     lane.sigma_stack.resize(static_cast<std::size_t>(max_depth_) + 2);
@@ -168,10 +166,15 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
     // writes it) and accumulate into private buffers, each in ascending t.
     pool_->parallel_for(lanes, [&](int l) {
       Lane& lane = lanes_[static_cast<std::size_t>(l)];
-      std::fill(lane.regret_delta.begin(), lane.regret_delta.end(), 0.0f);
-      std::fill(lane.strat_delta.begin(), lane.strat_delta.end(), 0.0f);
-      std::fill(lane.ev_delta.begin(), lane.ev_delta.end(), 0.0f);
-      std::fill(lane.evw_delta.begin(), lane.evw_delta.end(), 0.0f);
+      // Release last batch's blocks: O(touched), and the arenas keep their
+      // capacity so the next batch's blocks come back zeroed by resize
+      // without a fresh allocation.
+      for (std::uint32_t g : lane.touched) lane.block_of[g] = kNoBlock;
+      lane.touched.clear();
+      lane.regret_delta.clear();
+      lane.strat_delta.clear();
+      lane.ev_delta.clear();
+      lane.evw_delta.clear();
       for (std::uint64_t t = b0; t < b1; ++t) {
         if (static_cast<int>(t % static_cast<std::uint64_t>(lanes)) != l) continue;
         run_iteration(t, lane);
@@ -181,15 +184,59 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
     // The fold-back is SERIAL and in lane order - the float-addition
     // ordering that makes any thread-to-lane assignment produce the same
     // bits, mirroring the vectorized core's child-order fold.
+    // Only touched blocks are added; every other cell would receive an exact
+    // +0.0f, which is the identity on a master that never holds -0.0f. The
+    // order of groups within a lane is irrelevant to the bits (cells are
+    // independent); only the lane order per cell is, and that stays serial.
+    const bool team = agents_.has_team();
     for (int l = 0; l < lanes; ++l) {
       const Lane& lane = lanes_[static_cast<std::size_t>(l)];
-      for (std::size_t i = 0; i < store_total_; ++i) regrets_[i] += lane.regret_delta[i];
-      for (std::size_t i = 0; i < store_total_; ++i) strat_sum_[i] += lane.strat_delta[i];
-      for (std::size_t i = 0; i < ev_sum_.size(); ++i) ev_sum_[i] += lane.ev_delta[i];
-      for (std::size_t i = 0; i < ev_w_.size(); ++i) ev_w_[i] += lane.evw_delta[i];
+      for (std::uint32_t g : lane.touched) {
+        const std::size_t blk = lane.block_of[g];
+        const std::size_t base = indexer_.group_offset[g];
+        const std::size_t cells = group_cells(g);
+        const float* rd = lane.regret_delta.data() + blk;
+        const float* sd = lane.strat_delta.data() + blk;
+        for (std::size_t i = 0; i < cells; ++i) regrets_[base + i] += rd[i];
+        for (std::size_t i = 0; i < cells; ++i) strat_sum_[base + i] += sd[i];
+        if (team) {
+          const float* ed = lane.ev_delta.data() + blk;
+          const float* ewd = lane.evw_delta.data() + blk;
+          for (std::size_t i = 0; i < cells; ++i) ev_sum_[base + i] += ed[i];
+          for (std::size_t i = 0; i < cells; ++i) ev_w_[base + i] += ewd[i];
+        }
+      }
     }
     t_ = b1;
   }
+}
+
+std::size_t SampledCfrSolver::group_cells(std::uint32_t group) const {
+  // Every member of a group has the same actions x rows; the representative
+  // is the node whose decision index the group was formed from.
+  return store_cells_[indexer_.group_rep[group]];
+}
+
+std::size_t SampledCfrSolver::touch(Lane& lane, std::uint32_t decision_index) {
+  const std::uint32_t g = indexer_.group(decision_index);
+  std::uint32_t& blk = lane.block_of[g];
+  if (blk == kNoBlock) {
+    const std::size_t used = lane.regret_delta.size();
+    const std::size_t cells = store_cells_[decision_index];
+    if (used + cells > static_cast<std::size_t>(kNoBlock)) {
+      throw std::runtime_error("sampled core: a lane's delta arena exceeded 4G cells");
+    }
+    blk = static_cast<std::uint32_t>(used);
+    // resize on growth value-initializes: the new block arrives zeroed.
+    lane.regret_delta.resize(used + cells, 0.0f);
+    lane.strat_delta.resize(used + cells, 0.0f);
+    if (agents_.has_team()) {
+      lane.ev_delta.resize(used + cells, 0.0f);
+      lane.evw_delta.resize(used + cells, 0.0f);
+    }
+    lane.touched.push_back(g);
+  }
+  return blk;
 }
 
 void SampledCfrSolver::run_iteration(std::uint64_t t, Lane& lane) {
@@ -380,10 +427,11 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
       // sigma in only after its own descent. Strategy sum: weighted by the
       // hero's reach (the actor's PARTNER) and the actor's own earlier
       // sigma, so the stored mass is the conditioning's actual reach.
-      float* rd = lane.regret_delta.data() + offset;
-      float* sd = lane.strat_delta.data() + offset;
-      float* ed = lane.ev_delta.data() + offset;
-      float* ewd = lane.evw_delta.data() + offset;
+      const std::size_t blk = touch(lane, node.decision_index);
+      float* rd = lane.regret_delta.data() + blk;
+      float* sd = lane.strat_delta.data() + blk;
+      float* ed = lane.ev_delta.data() + blk;
+      float* ewd = lane.evw_delta.data() + blk;
       // Conditioned EVs: vrow already carries opp_w (the external prefix
       // reach), so accumulating hero_reach * vrow against a denominator of
       // hero_reach * opp_w averages to E[team chips | infoset, action].
@@ -523,10 +571,11 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
     // see the traverse contract in the header. Conditioned EVs accumulate
     // with the same weight against an opp_w denominator (values carry the
     // external prefix reach), averaging to E[team chips | infoset, action].
-    float* rd = lane.regret_delta.data() + offset;
-    float* sd = lane.strat_delta.data() + offset;
-    float* ed = lane.ev_delta.data() + offset;
-    float* ewd = lane.evw_delta.data() + offset;
+    const std::size_t blk = touch(lane, node.decision_index);
+    float* rd = lane.regret_delta.data() + blk;
+    float* sd = lane.strat_delta.data() + blk;
+    float* ed = lane.ev_delta.data() + blk;
+    float* ewd = lane.evw_delta.data() + blk;
     const float wpre = static_cast<float>(opp_w);
     for (std::uint16_t a = 0; a < actions; ++a) {
       const std::size_t srow_off = static_cast<std::size_t>(a) * my_hands;
@@ -606,8 +655,9 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
   // of a class adds its sample into the shared row - that pooling IS the
   // variance reduction. Hand order is fixed, so the accumulation stays
   // deterministic; identity reduces to the original per-hand loop.
-  float* rd = lane.regret_delta.data() + offset;
-  float* sd = lane.strat_delta.data() + offset;
+  const std::size_t blk = touch(lane, node.decision_index);
+  float* rd = lane.regret_delta.data() + blk;
+  float* sd = lane.strat_delta.data() + blk;
   for (std::uint16_t a = 0; a < actions; ++a) {
     const std::size_t srow_off = static_cast<std::size_t>(a) * my_hands;
     const std::size_t drow_off = static_cast<std::size_t>(a) * rows;

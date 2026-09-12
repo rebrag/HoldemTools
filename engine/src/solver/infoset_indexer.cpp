@@ -66,6 +66,7 @@ InfosetIndexer InfosetIndexer::plan(const Game& game, const DealGame& deals,
   ix.map_of.assign(decisions, 0);
   ix.perm_of.assign(decisions, kIdentityPerm);
   ix.group_offset.resize(decisions);
+  ix.group_rep.resize(decisions);
   ix.store_total = 0;
   for (const Node& node : tree.nodes) {
     if (node.kind != NodeKind::Decision) continue;
@@ -80,6 +81,7 @@ InfosetIndexer InfosetIndexer::plan(const Game& game, const DealGame& deals,
     ix.group_of[d] = d;
     ix.rows_of[d] = rows;
     ix.group_offset[d] = ix.store_total;
+    ix.group_rep[d] = d;
     ix.store_total += static_cast<std::size_t>(node.num_children) * rows;
   }
   ix.num_groups = decisions;

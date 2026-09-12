@@ -50,6 +50,7 @@ struct InfosetIndexer {
   std::vector<std::uint16_t> perm_of;   // suit perm composing a member's map; kIdentityPerm otherwise
   // Per group.
   std::vector<std::size_t> group_offset;
+  std::vector<std::uint32_t> group_rep;  // the decision index the group was formed from
   std::size_t store_total = 0;
   std::uint32_t num_groups = 0;
   // Concatenated hand -> row maps, each num_hands long.
