@@ -35,6 +35,8 @@ Usage:
     python tools/bench_multiway.py                      # the standard sweep
     python tools/bench_multiway.py --quick              # fewer points
     python tools/bench_multiway.py --engine ./build/engine.exe
+    python tools/bench_multiway.py --abstraction river=100 --widths 15% --seats 4,6,8
+                                                        # bucketed arm beside the plain one
 """
 from __future__ import annotations
 
@@ -152,12 +154,17 @@ def in_range_rate(range_text: str, seats: int, board: str, trials: int = 40000) 
 
 
 def build_config(seats: int, range_text: str, iters: int, sampled: bool, seed: int,
-                 out_path: str) -> dict:
+                 out_path: str, abstraction: dict | None = None) -> dict:
     sizing = {"bets": [50, 700], "raises": [700], "max_raises": 1, "allin_threshold": 0.9}
     algorithm: dict = {"update": "dcfr"}
     if sampled:
         algorithm["family"] = "sampled"
         algorithm["sampled"] = {"seed": seed, "batch": 4096, "lanes": 4}
+        if abstraction:
+            # Hand abstraction on the sampled core: storage rows per bucket,
+            # pooling updates across similar hands - the thing that is
+            # supposed to fix the rare-hand variance the tables below show.
+            algorithm["sampled"]["abstraction"] = dict(abstraction)
     names = ["OOP", "MID", "BTN", "S3", "S4", "S5", "S6", "S7", "S8"]
     return {
         "schema": 1,
@@ -212,14 +219,31 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--engine", default=DEFAULT_ENGINE)
     ap.add_argument("--quick", action="store_true")
+    ap.add_argument("--abstraction", default="",
+                    help="bucketed arm beside the plain one, e.g. 'river=100' or "
+                         "'river=100,method=histogram' (this bench is a river tree, so "
+                         "only river buckets apply)")
+    ap.add_argument("--widths", default="", help="comma list of range widths to run, e.g. 15%%,6%%")
+    ap.add_argument("--seats", default="", help="comma list of seat counts for the seed spread")
+    ap.add_argument("--skip-exploitability", action="store_true",
+                    help="skip the 3-seat exploitability table")
     args = ap.parse_args()
+    abstraction = None
+    if args.abstraction:
+        abstraction = {}
+        for item in args.abstraction.split(","):
+            key, _, value = item.partition("=")
+            abstraction[key.strip()] = value.strip() if key.strip() == "method" else int(value)
     if not os.path.exists(args.engine):
         print(f"engine not found at {args.engine} - build it first (engine/build.ps1)")
         return 2
 
     pot = 100.0
     widths = ["100%", "15%", "6%"] if args.quick else ["100%", "40%", "15%", "6%"]
+    if args.widths:
+        widths = [w.strip() for w in args.widths.split(",") if w.strip()]
     sampled_iters = [50_000, 200_000] if args.quick else [50_000, 200_000, 800_000]
+    arms = [("plain", None)] + ([("bucketed", abstraction)] if abstraction else [])
 
     print(f"board {BOARD}, pot 100, stacks 700 (SPR 7), b50 + shove, one raise\n")
 
@@ -238,36 +262,42 @@ def main() -> int:
         out = os.path.join(tmp, "bench.hta")
 
         # ---- 1. exploitability at three seats, against exact ground truth --
-        print("== 3 seats: exploitability, % of pot (best response is EXACT here) ==")
-        cols = "".join(f"{n // 1000:>10}k" for n in sampled_iters)
-        print(f"  range      vectorized{cols}   sampled deals")
-        for w in widths:
-            ref = run(args.engine, build_config(3, RANGES[w], 2000, False, 1, out), tmp)
-            ref_expl = ref["curve"][-1][1] if ref["curve"] else float("nan")
-            cells = []
-            for iters in sampled_iters:
-                got = run(args.engine, build_config(3, RANGES[w], iters, True, 1, out), tmp)
-                expl = got["curve"][-1][1] if got["curve"] else float("nan")
-                cells.append(f"{100 * expl / pot:>10.3f}%")
-            print(f"  {w:<8} {100 * ref_expl / pot:>10.4f}%" + "".join(cells))
-        print("  vectorized = 2000 iterations of the exact core, the reference.\n")
+        if not args.skip_exploitability:
+            print("== 3 seats: exploitability, % of pot (best response is EXACT here) ==")
+            cols = "".join(f"{n // 1000:>10}k" for n in sampled_iters)
+            print(f"  range     arm        vectorized{cols}   sampled deals")
+            for w in widths:
+                ref = run(args.engine, build_config(3, RANGES[w], 2000, False, 1, out), tmp)
+                ref_expl = ref["curve"][-1][1] if ref["curve"] else float("nan")
+                for arm_name, arm in arms:
+                    cells = []
+                    for iters in sampled_iters:
+                        got = run(args.engine,
+                                  build_config(3, RANGES[w], iters, True, 1, out, arm), tmp)
+                        expl = got["curve"][-1][1] if got["curve"] else float("nan")
+                        cells.append(f"{100 * expl / pot:>10.3f}%")
+                    print(f"  {w:<8} {arm_name:<9} {100 * ref_expl / pot:>10.4f}%" + "".join(cells))
+            print("  vectorized = 2000 iterations of the exact core, the reference.\n")
 
         # ---- 2. seed spread, which works at any seat count -----------------
-        print("== seed spread: worst per-seat root EV gap between two seeds, chips ==")
+        print("== seed spread: worst per-seat root EV gap between two seeds, chips (% of pot) ==")
         seat_counts = [3, 4, 6] if args.quick else [3, 4, 6, 8]
-        print("  range    " + "".join(f"{s:>12}-way" for s in seat_counts))
+        if args.seats:
+            seat_counts = [int(x) for x in args.seats.split(",") if x.strip()]
+        print("  range    arm      " + "".join(f"{s:>18}-way" for s in seat_counts))
         for w in widths:
-            cells = []
-            for seats in seat_counts:
-                iters = sampled_iters[-1]
-                a = run(args.engine, build_config(seats, RANGES[w], iters, True, 1, out), tmp)
-                b = run(args.engine, build_config(seats, RANGES[w], iters, True, 999, out), tmp)
-                if not a["evs"] or not b["evs"]:
-                    cells.append(f"{'n/a':>16}")
-                    continue
-                worst = max(abs(x - y) for x, y in zip(a["evs"], b["evs"]))
-                cells.append(f"{worst:>16.3f}")
-            print(f"  {w:<8}" + "".join(cells))
+            for arm_name, arm in arms:
+                cells = []
+                for seats in seat_counts:
+                    iters = sampled_iters[-1]
+                    a = run(args.engine, build_config(seats, RANGES[w], iters, True, 1, out, arm), tmp)
+                    b = run(args.engine, build_config(seats, RANGES[w], iters, True, 999, out, arm), tmp)
+                    if not a["evs"] or not b["evs"]:
+                        cells.append(f"{'n/a':>22}")
+                        continue
+                    worst = max(abs(x - y) for x, y in zip(a["evs"], b["evs"]))
+                    cells.append(f"{worst:>12.3f} ({100 * worst / pot:>5.2f}%)")
+                print(f"  {w:<8} {arm_name:<9}" + "".join(cells))
         print(f"  {sampled_iters[-1]:,} deals per solve, seeds 1 and 999.")
         print("  A gap here is noise the solve has not resolved. Agreement is\n"
               "  necessary, not sufficient - two seeds can agree and both be wrong.")
