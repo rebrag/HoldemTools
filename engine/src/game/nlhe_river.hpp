@@ -169,6 +169,12 @@ class NlhePostflopGame final : public Game, public DealGame {
   // both ranges once in a thousand tries.
   bool sample_ev_deal(std::uint64_t seed, std::uint64_t iter, Deal& out,
                       double& weight) const override;
+  // The training deal with the opponents in proportion to their ranges and
+  // the hero uniform (deal_game.hpp). Same per-card inclusion-exclusion
+  // masses as the EV pass; the hero's draw and the runout come from their
+  // own counter streams so the deal is a pure function of (seed, iter, hero).
+  bool sample_hero_deal(std::uint64_t seed, std::uint64_t iter, int hero, Deal& out,
+                        double& weight) const override;
 
   // The whole universe's 7-card strength on root + runout, read off the
   // evaluator this tree already built for that completed board.
@@ -214,6 +220,12 @@ class NlhePostflopGame final : public Game, public DealGame {
   void build_isomorphism();
   void map_member_subtree(NodeId rep, NodeId member, std::uint16_t perm_id,
                           const SuitPerm& perm);
+
+  // Shared body of sample_ev_deal (skip_seat < 0: every seat proportional)
+  // and sample_hero_deal (skip_seat = the hero, dealt uniformly after the
+  // opponents).
+  bool deal_in_range(std::uint64_t seed, std::uint64_t iter, int skip_seat, Deal& out,
+                     double& weight) const;
 
   PublicTree tree_;
   std::vector<Card> board_;  // root board (3-5 cards)

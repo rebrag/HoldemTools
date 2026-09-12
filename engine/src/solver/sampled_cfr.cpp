@@ -243,13 +243,36 @@ std::size_t SampledCfrSolver::touch(Lane& lane, std::uint32_t decision_index) {
 }
 
 void SampledCfrSolver::run_iteration(std::uint64_t t, Lane& lane) {
-  deals_.sample_deal(config_.seed, t, lane.deal);
-  deals_.deal_strengths(lane.deal, lane.strengths);
   const int seats = game_.num_seats();
+  // The shared uniform deal, drawn once per iteration. Under range dealing
+  // each hero gets its own deal below and this one is only the fallback for
+  // a game without the seam.
+  bool shared_dealt = false;
+  const auto deal_shared = [&]() {
+    if (shared_dealt) return;
+    deals_.sample_deal(config_.seed, t, lane.deal);
+    deals_.deal_strengths(lane.deal, lane.strengths);
+    shared_dealt = true;
+  };
+  if (!config_.range_deal) deal_shared();
   for (int hero = 0; hero < seats; ++hero) {
     // Frozen seats (unaware mode) do not train; their policy is read from
     // the frozen rows wherever they are pinned.
     if (frozen_seat_[static_cast<std::size_t>(hero)]) continue;
+    // Range dealing: the opponents in proportion to their ranges, weighted
+    // by the masses the conditioning divided out (deal_game.hpp). A weight
+    // of zero (a range with nothing left to deal) is an honest nothing.
+    double range_weight = 1.0;
+    bool range_dealt = false;
+    if (config_.range_deal) {
+      range_dealt = deals_.sample_hero_deal(config_.seed, t, hero, lane.deal, range_weight);
+      if (range_dealt) {
+        if (range_weight <= 0.0) continue;
+        deals_.deal_strengths(lane.deal, lane.strengths);
+      } else {
+        deal_shared();
+      }
+    }
     // Hero's universe restricted to the deal: every hand colliding with an
     // opponent's dealt cards or the board is zeroed. Hero's OWN dealt cards
     // do not restrict anything - see deal_game.hpp for why ignoring them is
@@ -278,11 +301,13 @@ void SampledCfrSolver::run_iteration(std::uint64_t t, Lane& lane) {
     // multiplies in at their decision nodes on the way down. A dealt combo
     // outside a seat's range zeroes the whole traversal's values (an
     // unbiased zero, not an error) but hero's strategy still accumulates.
-    double w = 1.0;
-    for (int q = 0; q < seats; ++q) {
-      if (q == hero) continue;
-      const std::uint16_t hq = lane.deal.hand[static_cast<std::size_t>(q)];
-      w *= hq == kNoHand ? 0.0 : static_cast<double>(game_.initial_range(q)[hq]);
+    double w = range_weight;
+    if (!range_dealt) {
+      for (int q = 0; q < seats; ++q) {
+        if (q == hero) continue;
+        const std::uint16_t hq = lane.deal.hand[static_cast<std::size_t>(q)];
+        w *= hq == kNoHand ? 0.0 : static_cast<double>(game_.initial_range(q)[hq]);
+      }
     }
     traverse(game_.tree().root(), hero, lane, w, lane.hero_root, nullptr, 0, 0,
              lane.value_stack[0]);

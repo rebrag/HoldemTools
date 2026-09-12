@@ -62,6 +62,24 @@ class DealGame {
     return false;
   }
 
+  // The training deal for ONE hero's traversal with the other seats dealt IN
+  // PROPORTION to their ranges: each opponent in seat order from its range
+  // conditioned on the cards already out, the hero's own two cards and the
+  // runout uniform from what is left, and `weight` the product of the
+  // range masses the conditioning divided out - the importance weight that
+  // makes the estimator exact for the uniform-deal measure. On a tight range
+  // a uniform deal lands every opponent in range about never (0.21% of deals
+  // at four seats on a 15% range, ~0 at six), and every miss weighs the
+  // hero's whole traversal by zero; this is the fix. The hero stays uniform
+  // because a range-proportional hero hand would bias the runout its
+  // vectorized traversal sees (the runout avoids the hero's own cards), and
+  // one deal per hero per iteration is what keeps that honest. Returns false
+  // when the game does not implement it (the solver then shares one uniform
+  // deal across the iteration's traversals, weighted by the range product).
+  virtual bool sample_hero_deal(std::uint64_t, std::uint64_t, int, Deal&, double&) const {
+    return false;
+  }
+
   // Per-iteration scratch: hand strengths for the WHOLE compact universe on
 
   // this deal's board, shared by all of the iteration's seat traversals.

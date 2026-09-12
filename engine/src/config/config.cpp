@@ -351,6 +351,13 @@ SolveConfig load_config(const std::string& path_text) {
     if (config.sampled.lanes < 1 || config.sampled.lanes > 256) {
       fail("algorithm.sampled.lanes must be in [1, 256]");
     }
+    if (s.contains("deal")) {
+      const std::string deal = s.at("deal").get<std::string>();
+      if (deal == "uniform") config.sampled.range_deal = false;
+      else if (deal == "range") config.sampled.range_deal = true;
+      else fail("algorithm.sampled.deal must be uniform | range, got '" + deal + "'");
+      config.sampled.range_deal_explicit = true;
+    }
     if (s.contains("abstraction")) {
       const json& a = s.at("abstraction");
       AbstractionConfig& ab = config.sampled.abstraction;
@@ -431,6 +438,14 @@ SolveConfig load_config(const std::string& path_text) {
       fail("isomorphism is not supported on multiway postflop trees yet; set it false");
     }
     config.isomorphism = false;
+  }
+  if (config.sampled.enabled && config.game == "nlhe" && !config.sampled.range_deal_explicit) {
+    // Postflop defaults to range-proportional opponent dealing: on a tight
+    // range the uniform deal lands every opponent in range about never, and
+    // each miss weighs the hero's whole traversal by zero. Unbiased (an
+    // importance weight, the same one the EV pass uses) and bit-different,
+    // so it is a config key rather than a silent change.
+    config.sampled.range_deal = true;
   }
   if (config.sampled.enabled) {
     // The sampled core deals concrete cards, so it needs a DealGame: the

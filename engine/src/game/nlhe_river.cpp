@@ -484,6 +484,20 @@ void NlhePostflopGame::sample_deal(std::uint64_t seed, std::uint64_t iter, Deal&
 
 bool NlhePostflopGame::sample_ev_deal(std::uint64_t seed, std::uint64_t iter, Deal& out,
                                       double& weight) const {
+  return deal_in_range(seed, iter, -1, out, weight);
+}
+
+bool NlhePostflopGame::sample_hero_deal(std::uint64_t seed, std::uint64_t iter, int hero,
+                                        Deal& out, double& weight) const {
+  // A distinct stream per hero: the same (seed, iter) must not hand two
+  // heroes correlated opponents, and nothing may key on a thread.
+  const std::uint64_t hero_seed =
+      seed ^ (0x9E3779B97F4A7C15ULL * static_cast<std::uint64_t>(hero + 1));
+  return deal_in_range(hero_seed, iter, hero, out, weight);
+}
+
+bool NlhePostflopGame::deal_in_range(std::uint64_t seed, std::uint64_t iter, int skip_seat,
+                                     Deal& out, double& weight) const {
   // One draw per selection step, counter-based like every draw in the
   // engine: (seed, iter, k) -> a unit in [0, 1), never a stateful RNG.
   const auto unit = [seed, iter](std::uint32_t k) {
@@ -517,6 +531,7 @@ bool NlhePostflopGame::sample_ev_deal(std::uint64_t seed, std::uint64_t iter, De
   double w = 1.0;
   std::uint32_t k = 0;
   for (int seat = 0; seat < num_seats_; ++seat) {
+    if (seat == skip_seat) continue;
     const std::size_t si = static_cast<std::size_t>(seat);
     // Mass of this seat's range disjoint from `used`, by inclusion-exclusion
     // over the dealt cards. A 2-card combo can hold at most two of them, so
@@ -558,18 +573,32 @@ bool NlhePostflopGame::sample_ev_deal(std::uint64_t seed, std::uint64_t iter, De
   }
   weight = w;
 
-  // The runout: uniform over what is left of the deck. A distinct seed
-  // stream from the hand draws (deal_cards keys on k from 0 too).
-  if (runout_count_ > 0) {
+  // The skipped seat's two cards and the runout: uniform over what is left
+  // of the deck, in that order, from a distinct seed stream (deal_cards keys
+  // on k from 0 too). The hero's cards are drawn even though its traversal
+  // ignores them, because the runout must avoid them exactly as it does
+  // under the uniform deal - that is the exchangeability argument.
+  const int extra = skip_seat >= 0 ? 2 : 0;
+  if (runout_count_ + extra > 0) {
     std::uint8_t remaining[kNumCards];
     int n = 0;
     for (int c = 0; c < kNumCards; ++c) {
       if ((used & (1ULL << c)) == 0) remaining[n++] = static_cast<std::uint8_t>(c);
     }
-    std::uint8_t drawn[5];
-    deal_cards(seed ^ 0xC2B2AE3D27D4EB4FULL, iter, n, runout_count_, drawn);
+    std::uint8_t drawn[7];
+    deal_cards(seed ^ 0xC2B2AE3D27D4EB4FULL, iter, n, runout_count_ + extra, drawn);
+    if (skip_seat >= 0) {
+      const Card a = remaining[drawn[0]];
+      const Card b = remaining[drawn[1]];
+      const std::size_t si = static_cast<std::size_t>(skip_seat);
+      out.hole[2 * si] = a;
+      out.hole[2 * si + 1] = b;
+      const int idx = universe_.compact_index(a, b);
+      out.hand[si] =
+          idx < 0 ? std::numeric_limits<std::uint16_t>::max() : static_cast<std::uint16_t>(idx);
+    }
     for (int b = 0; b < runout_count_; ++b) {
-      out.board[static_cast<std::size_t>(b)] = remaining[drawn[b]];
+      out.board[static_cast<std::size_t>(b)] = remaining[drawn[extra + b]];
     }
   }
   return true;

@@ -190,6 +190,14 @@ struct SampledConfig {
   std::uint32_t batch = 512;
   std::uint32_t lanes = 16;
   AbstractionConfig abstraction;
+  // Deal the OPPONENTS of each hero traversal in proportion to their ranges
+  // (DealGame::sample_hero_deal), one deal per hero per iteration, weighted
+  // by the range masses the conditioning divided out. Off here so the
+  // in-test solver stays the pinned original; the config parser turns it on
+  // for postflop nlhe, where a tight range otherwise wastes almost every
+  // deal. Games without the seam fall back to the shared uniform deal.
+  bool range_deal = false;
+  bool range_deal_explicit = false;
   // Solve one row per suit-symmetry class when the game reports a quotient
   // (169 preflop). Lossless there and a direct variance reduction - every
   // member combo's sample lands in the shared row. Identity when the game

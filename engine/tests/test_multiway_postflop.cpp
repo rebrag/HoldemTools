@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -203,4 +204,64 @@ TEST_CASE("multiway postflop on the sampled core conserves chips at 4 and 8 seat
     MESSAGE(seats << "-way sampled: EVs sum to " << sum << " into a " << config.pot
                   << " chip pot");
   }
+}
+
+TEST_CASE("range dealing: the 3-way sampled core still agrees with the exact core") {
+  // Unbiasedness gate for DealGame::sample_hero_deal: the opponents dealt in
+  // proportion to their ranges with the importance weight must land on the
+  // same root EVs as the exact vectorized solve, exactly as the uniform
+  // deal does in the cross-core gate above.
+  const SolveConfig config = multiway_config(3, 200);
+  NlhePostflopGame game(config);
+  CfrSolver exact(game, config.update, config.threads, recalc_off(), config.sampling,
+                  config.qre);
+  exact.run(1500);
+  const BrResult ref = compute_best_response(game, exact);
+  SampledConfig sc = sampled_cfg(11);
+  sc.range_deal = true;
+  SampledCfrSolver solver(game, game, sc, config.threads);
+  solver.run(200000);
+  const std::vector<double> ev = solver.sampled_ev(200000, 11 ^ 0x5EED);
+  double sum = 0.0, worst = 0.0;
+  for (int s = 0; s < 3; ++s) {
+    sum += ev[static_cast<std::size_t>(s)];
+    worst = std::max(worst, std::abs(ev[static_cast<std::size_t>(s)] - ref.ev[static_cast<std::size_t>(s)]));
+  }
+  MESSAGE("range-dealt 3-way: worst root EV gap to exact " << worst << " chips");
+  CHECK(std::abs(sum - static_cast<double>(config.pot)) < 1e-3);
+  CHECK(worst < 0.02 * static_cast<double>(config.pot));
+}
+
+TEST_CASE("range dealing: bitwise identical at any thread count, and a tight range converges where uniform does not") {
+  SolveConfig config = multiway_config(3, 200);
+  // A tight range: every opponent must land in it for a uniform deal to
+  // count, which happens about 2% of the time at three seats.
+  for (PlayerConfig& p : config.players) p.range = "AA,KK,QQ,JJ,TT,AKs,AKo,AQs";
+  NlhePostflopGame game(config);
+  auto solve = [&](bool range, int threads, std::uint64_t iters) {
+    SampledConfig sc = sampled_cfg(5);
+    sc.batch = 256;
+    sc.lanes = 8;
+    sc.range_deal = range;
+    SampledCfrSolver solver(game, game, sc, threads);
+    solver.run(iters);
+    return solver;
+  };
+  {
+    const SampledCfrSolver one = solve(true, 1, 4096);
+    const SampledCfrSolver eight = solve(true, 8, 4096);
+    REQUIRE(one.regrets().size() == eight.regrets().size());
+    CHECK(std::memcmp(one.regrets().data(), eight.regrets().data(),
+                      one.regrets().size() * sizeof(float)) == 0);
+    CHECK(std::memcmp(one.strategy_sums().data(), eight.strategy_sums().data(),
+                      one.strategy_sums().size() * sizeof(float)) == 0);
+  }
+  const SampledCfrSolver uniform = solve(false, 0, 40000);
+  const SampledCfrSolver ranged = solve(true, 0, 40000);
+  const double expl_uniform = compute_best_response(game, uniform).nashconv();
+  const double expl_ranged = compute_best_response(game, ranged).nashconv();
+  MESSAGE("tight 3-way, 40k deals: nashconv uniform " << expl_uniform << ", range-dealt "
+          << expl_ranged);
+  // Measured 10.92 against 3.74 (2.9x); the bound leaves room for the seed.
+  CHECK(expl_ranged < 0.5 * expl_uniform);
 }
