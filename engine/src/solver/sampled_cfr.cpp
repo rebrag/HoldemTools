@@ -754,6 +754,32 @@ void SampledCfrSolver::average_strategy(NodeId id, std::vector<float>& out) cons
   }
 }
 
+void SampledCfrSolver::bucket_strategy(std::uint32_t group, std::vector<float>& out) const {
+  // The average strategy of one storage group's rows, before any expansion
+  // to hands: what the bucketed export writes. Same normalization as
+  // average_strategy (uniform where nothing accumulated).
+  const std::uint32_t rep = indexer_.group_rep[group];
+  const std::size_t offset = indexer_.group_offset[group];
+  const std::uint32_t rows = store_hands_[rep];
+  const std::uint16_t actions = layout_.node_actions[rep];
+  out.assign(static_cast<std::size_t>(rows) * actions, 0.0f);
+  for (std::uint32_t r = 0; r < rows; ++r) {
+    float sum = 0.0f;
+    for (std::uint16_t a = 0; a < actions; ++a) {
+      sum += strat_sum_[offset + static_cast<std::size_t>(a) * rows + r];
+    }
+    float* row = out.data() + static_cast<std::size_t>(r) * actions;
+    if (sum > 0.0f) {
+      for (std::uint16_t a = 0; a < actions; ++a) {
+        row[a] = strat_sum_[offset + static_cast<std::size_t>(a) * rows + r] / sum;
+      }
+    } else {
+      const float uniform = 1.0f / static_cast<float>(actions);
+      for (std::uint16_t a = 0; a < actions; ++a) row[a] = uniform;
+    }
+  }
+}
+
 void SampledCfrSolver::restore(std::uint64_t iteration, std::vector<float> regrets,
                                std::vector<float> strat_sum, std::vector<float> ev_sum,
                                std::vector<float> ev_w, std::vector<bool> frozen_seat,

@@ -62,9 +62,26 @@ class ArtifactReader {
   const std::vector<std::vector<std::uint16_t>>& hand_dicts() const { return dicts_; }
   std::vector<std::uint32_t> decision_node_ids() const;
 
+  // Per-hand data for a decision node. On a BUCKETED artifact (flag bit 3)
+  // this expands the node's group rows through its bucket map and derives
+  // every seat's reach from the root - so callers see today's per-hand
+  // shape, with the EV columns zero-filled (metadata.per_hand_ev is false)
+  // and the 169 rollup recomputed by the writer's rule.
   ArtifactNodeData read_node(std::uint32_t node_id) const;
 
+  bool bucketed() const { return bucketed_; }
+
  private:
+  // Bucketed artifacts: the expanded [hand][action] strategy of a decision
+  // node, dense over the actor's universe, and every seat's reach there
+  // under the average strategy (root ranges x the actor's row along the
+  // path, zeroed at chance edges for hands holding the dealt card). Both
+  // memoized with a bounded cache: consecutive node ids share almost all
+  // their ancestors.
+  const std::vector<float>& dense_strategy(std::uint32_t node_id) const;
+  const std::vector<std::vector<float>>& reach_at(std::uint32_t node_id) const;
+  ArtifactNodeData read_bucketed_node(std::uint32_t node_id) const;
+
   ArtifactStore& store_;
   std::string path_;
   std::uint32_t version_ = 0;
@@ -73,6 +90,18 @@ class ArtifactReader {
   std::vector<ArtifactNodeRecord> nodes_;
   std::vector<std::vector<std::uint16_t>> dicts_;
   std::map<std::uint32_t, std::pair<std::uint64_t, std::uint64_t>> index_;  // id -> (off, len)
+
+  bool bucketed_ = false;
+  std::uint32_t map_hands_ = 0;
+  std::vector<std::uint16_t> maps_;             // num_maps x map_hands_
+  std::vector<std::uint32_t> group_rows_;       // per group
+  std::vector<std::uint32_t> node_group_;       // per decision index
+  std::vector<std::uint32_t> node_map_;         // per decision index
+  std::vector<std::uint32_t> decision_index_;   // per node id (0xFFFFFFFF = not a decision)
+  std::vector<std::vector<float>> root_reach_;  // per seat
+  bool nlhe_ = false;
+  mutable std::map<std::uint32_t, std::vector<float>> strategy_cache_;
+  mutable std::map<std::uint32_t, std::vector<std::vector<float>>> reach_cache_;
 };
 
 }  // namespace engine

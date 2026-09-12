@@ -29,6 +29,10 @@ public sealed class EngineSolutionExporter
         var reader = await EngineArtifactReader.OpenAsync(source, ct);
 
         var meta = reader.Metadata;
+        if (reader.Header.Bucketed)
+            throw new InvalidOperationException(
+                "Bucketed artifacts (hand abstraction on the sampled core) are multiway trees " +
+                "the /solutions bundle exporter does not publish; they are viewed on /compare.");
         if (meta.Mode != "nash")
             throw new InvalidOperationException(
                 "Only Nash-mode artifacts can be exported: a QRE solve is not comparable to " +

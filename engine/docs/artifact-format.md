@@ -34,7 +34,10 @@ Section positions are discovered through the header (metadata, index) and the me
 | 48 | 8 | u64 | index length |
 | 56 | 8 | u64 | reserved (0) |
 
-Flags: bit 0 = strategy stored as `u8` (else `f32`); bit 1 = EVs stored as `f16` (else `f32`, the default - f16 is an opt-in size optimization); bit 2 = node blobs carry a trailing 169-class rollup block.
+Flags: bit 0 = strategy stored as `u8` (else `f32`); bit 1 = EVs stored as `f16` (else `f32`, the default - f16 is an opt-in size optimization); bit 2 = node blobs carry a trailing 169-class rollup block; bit 3 = BUCKETED blobs (see "Bucketed export" below).
+
+Flag bits and optional sections are how this format carries variants without a version bump: an artifact without a given bit is byte-for-byte what it was before the bit existed, and both readers resolve sections by name and ignore names they do not know.
+The version bumps when an EXISTING byte changes meaning.
 
 The index is written last and the header is patched by seeking back to offset 0 (which is why `ArtifactStore` has `seek`).
 
@@ -69,6 +72,9 @@ One JSON object. Fields (all present unless marked optional):
   - `solve_peak_rss_bytes` - peak resident bytes at the end of the solve loop, before anything is written. This is the number comparable against another solver's reported footprint (PioSolver's is read straight after its own solve) and against the solver terms of the memory estimate.
 - `board` (as configured, e.g. `"Qs Jh 2h 8d 6c"`), `chip_scale`, `pot`, `effective_stack` (optional), `seats` (labels, seat 0 = OOP first to act).
 - `node_count`, `decision_node_count`, `hand_universe` (`"nlhe_combos_1326"` or `"toy"`).
+- `hand_abstraction` (engines from 2026-09-11) - `true` when the sampled core solved with per-board hand buckets (`algorithm.sampled.abstraction`); `abstraction` then echoes the config (`method`, `flop`, `turn`, `river`, `bins`, `seed`, `board_isomorphism`) beside `storage_rows`, `storage_groups`, `canonical_boards`, `symmetric_images` and the assignment's `fingerprint`.
+  In the per-hand export the blobs are still per hand (the solver expands each bucket's row to its member hands), so hands that share a bucket carry identical rows; consumers need not care.
+- `export` - `"per_hand"` (this document's default layout) or `"bucketed"` (below). Absent on artifacts written before 2026-09-11, all of which are per hand.
 - `sections`:
   - `node_table`: `{offset, length, record_size, count}`.
   - `hand_dicts`: array of `{seat, offset, length, count}`. Each dictionary is the seat's hand universe - one `u16` canonical combo index per solver hand, in ascending canonical order - so **a dictionary position and a solver hand index are the same number**, and the per-node sparse `idx` arrays are positions into it. The universe holds only combos some seat can actually hold (non-zero range after board removal), so a narrow-range solve has a short dictionary; do not assume it covers every board-legal combo.
@@ -136,9 +142,29 @@ rollup block (only when flag bit 2 set):
   The alternative convention - treating already-committed chips as sunk and not subtracting them - reads more naturally hand-by-hand but is **wrong for this format**. It agrees at the root, which is exactly why a river-only solve looks fine under it, and then diverges by precisely the actor's commitment at every node past the street root.
 - **Rollup aggregation rule** (matches `watcher/extraction.py`): class frequency = reach-weighted mean of the actor's per-hand action frequency; when the class carries zero reach the plain mean over its present combos is used. `class_ev` is the reach-weighted mean per-hand EV, 0 when weightless. Rollups are derived data - readers must be able to recompute them from the arrays above when the flag is absent.
 
+## Bucketed export (flag bit 3)
+
+`output.export: "bucketed"` on a solve with `algorithm.sampled.abstraction` writes the solver's rows as they are stored - one strategy blob per storage GROUP (a bucket map's rows, shared by every suit-relabeled runout that maps onto it) - instead of a per-hand blob per decision node.
+It exists because the per-hand export of a 2.8 million decision node flop tree is a 130 GB export pass and a 160 GB file; the bucketed file is the store's cell count in bytes.
+Nothing past the readers ever sees a bucket: `ArtifactReader` (C++) and `EngineArtifactReader` (C#) expand a node's rows to per-hand rows through its map and derive every seat's reach from the root, so `dump-json`, the rollups and the `.htc` path see the per-hand shape above.
+
+Layout additions, all located through `metadata.sections`:
+
+- `sections.bucket_map` `{offset, length, maps, hands, groups, decision_count}`, 8-byte aligned:
+  `u32 maps; u32 hands; u16 row_of[maps x hands]; u32 groups; u32 rows[groups]; u32 decision_count; per decision node (dense decision index, i.e. node order) { u32 group; u32 map }`.
+  `row_of[map][hand]` is the storage row hand `hand` (a position in the seat dictionary) reads at any node using that map; a suit-relabeled runout has its own map, already composed, so no permutation travels.
+- `sections.root_reach` `{offset, length, seats, hands}`: `u32 seats; u32 hands; f32 reach[seats x hands]`, each seat's starting range over its dictionary. The root has no per-hand blob in this mode, and this is what reach derivation starts from.
+- Blobs: one per GROUP, 64-byte aligned, keyed in the index by GROUP id (the `node_id` field), `u16 num_seats  u16 num_actions  u16 actor_seat  u16 1;  u32 rows;  STRAT strategy[rows x num_actions]` (row-major by row, `u8` or `f32` per flag bit 0, renormalized on read).
+  No reach, no EV, no rollup block: `per_hand_ev` is `false` and the rollup is derived data.
+
+Reading a decision node: `group` and `map` come from the bucket map entry at the node's decision index; the blob's row `row_of[map][h]` is hand `h`'s strategy row.
+Reach at a node is the root reach times, at every decision ancestor, the actor's expanded row entry for the action taken, and zeroed at every chance ancestor for hands holding the dealt card (the dictionary names the cards).
+That is exactly what the per-hand export pass computes, so a per-hand and a bucketed export of the same solve agree hand for hand (`tests/test_abstraction.cpp` asserts it).
+The 169 rollup is recomputed by the rule above with class EV 0.
+
 ## Index (at EOF)
 
-`decision_node_count` entries of 24 bytes, sorted by node_id ascending:
+`decision_node_count` entries of 24 bytes, sorted by node_id ascending (bucketed export: one entry per storage group, sorted by group id):
 
 | offset | size | type | field |
 |---|---|---|---|

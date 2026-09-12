@@ -10,6 +10,9 @@
 
 #include "config/schema.hpp"
 #include "game/nlhe_river.hpp"
+#include "io/artifact_reader.hpp"
+#include "io/artifact_store.hpp"
+#include "io/artifact_writer.hpp"
 #include "io/checkpoint.hpp"
 #include "solver/best_response.hpp"
 #include "solver/infoset_indexer.hpp"
@@ -350,4 +353,66 @@ TEST_CASE("config: abstraction and export gating") {
   CHECK_THROWS(load_config(make("none", "nlhe", "9c 5d Jc 7s 2h",
                                 R"({"family": "sampled", "sampled": {"abstraction": {"bins": 8}}})",
                                 out)));
+}
+
+TEST_CASE("abstraction: the bucketed export reads back as the per-hand export") {
+  SolveConfig config = turn3_config();
+  config.strategy_quantize_u8 = false;
+  config.rollups_169 = true;
+  config.raw = nlohmann::json::object();
+  NlhePostflopGame game(config);
+  SampledCfrSolver solver(game, game, sampled_cfg(8, 6), config.threads);
+  solver.run(2048);
+  SolveStats stats;
+  stats.iterations = 2048;
+  stats.ev_chips = {30.0, 30.0, 30.0};
+  const std::filesystem::path dir = std::filesystem::temp_directory_path() / "engine_abstraction";
+  std::filesystem::create_directories(dir);
+  const std::string per_hand = (dir / "per_hand.hta").string();
+  const std::string bucketed = (dir / "bucketed.hta").string();
+  LocalStore store;
+  config.export_bucketed = false;
+  write_artifact(store, per_hand, game, solver, config, stats);
+  config.export_bucketed = true;
+  write_artifact(store, bucketed, game, solver, config, stats);
+  CHECK(std::filesystem::file_size(bucketed) < std::filesystem::file_size(per_hand));
+
+  ArtifactReader a(store, per_hand);
+  ArtifactReader b(store, bucketed);
+  REQUIRE_FALSE(a.bucketed());
+  REQUIRE(b.bucketed());
+  CHECK(a.metadata().value("per_hand_ev", false));
+  CHECK_FALSE(b.metadata().value("per_hand_ev", true));
+  CHECK(b.metadata().value("export", "") == "bucketed");
+  CHECK(b.metadata().value("hand_abstraction", false));
+  const std::vector<std::uint32_t> ids = a.decision_node_ids();
+  REQUIRE(ids == b.decision_node_ids());
+  std::size_t rows_checked = 0;
+  for (std::uint32_t id : ids) {
+    const ArtifactNodeData da = a.read_node(id);
+    const ArtifactNodeData db = b.read_node(id);
+    REQUIRE(da.num_seats == db.num_seats);
+    REQUIRE(da.num_actions == db.num_actions);
+    REQUIRE(da.actor == db.actor);
+    for (int s = 0; s < da.num_seats; ++s) {
+      REQUIRE(da.seats[s].idx == db.seats[s].idx);
+      for (std::size_t i = 0; i < da.seats[s].idx.size(); ++i) {
+        CHECK(db.seats[s].reach[i] == doctest::Approx(da.seats[s].reach[i]).epsilon(1e-5));
+      }
+    }
+    REQUIRE(da.strategy.size() == db.strategy.size());
+    for (std::size_t i = 0; i < da.strategy.size(); ++i) {
+      CHECK(db.strategy[i] == doctest::Approx(da.strategy[i]).epsilon(1e-6));
+      ++rows_checked;
+    }
+    REQUIRE(da.has_rollup);
+    REQUIRE(db.has_rollup);
+    for (int cls = 0; cls < 169; ++cls) {
+      CHECK(db.rollup_weight[cls] == doctest::Approx(da.rollup_weight[cls]).epsilon(1e-5));
+      for (int k = 0; k < da.num_actions; ++k) {
+        CHECK(db.rollup_freq[cls][k] == doctest::Approx(da.rollup_freq[cls][k]).epsilon(2e-4));
+      }
+    }
+  }
+  CHECK(rows_checked > 0);
 }

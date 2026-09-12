@@ -20,6 +20,12 @@ inline constexpr std::uint32_t kIndexEntrySize = 24;
 inline constexpr std::uint32_t kFlagStrategyU8 = 1u << 0;
 inline constexpr std::uint32_t kFlagEvF16 = 1u << 1;
 inline constexpr std::uint32_t kFlagRollups = 1u << 2;
+// Bucketed blobs: one strategy blob per storage GROUP, indexed by group id,
+// with a bucket_map section and a root_reach section; no per-hand reach,
+// EV or rollup in the file. Readers expand to per-hand rows through the
+// map and derive reach from the root. An artifact without this bit is
+// byte-for-byte the pre-abstraction layout.
+inline constexpr std::uint32_t kFlagBucketed = 1u << 3;
 
 // Node reach below this weight is dropped from the sparse per-node arrays.
 inline constexpr float kSparseEps = 1e-6f;

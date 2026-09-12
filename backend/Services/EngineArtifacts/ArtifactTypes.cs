@@ -12,6 +12,12 @@ public sealed record ArtifactHeader(uint Version, uint Flags, ulong MetaOffset, 
     public bool StrategyU8 => (Flags & 1u) != 0;
     public bool EvF16 => (Flags & 2u) != 0;
     public bool HasRollups => (Flags & 4u) != 0;
+    /// <summary>
+    /// Bucketed blobs (hand abstraction on the sampled core): one strategy
+    /// blob per storage group, expanded to per-hand rows by the reader, with
+    /// reach derived from the root and no EV columns at all.
+    /// </summary>
+    public bool Bucketed => (Flags & 8u) != 0;
 }
 
 public sealed record ArtifactNodeRecord(
@@ -46,7 +52,14 @@ public sealed record ArtifactMetadata(JsonElement Root)
     public double ChipScale => Root.TryGetProperty("chip_scale", out var c) ? c.GetDouble() : 100.0;
     public long Pot => Root.TryGetProperty("pot", out var p) ? p.GetInt64() : 0;
     public ulong Iterations => Root.GetProperty("iterations").GetUInt64();
-    public double FinalNashConv => Root.GetProperty("final_nashconv").GetDouble();
+    /// <summary>
+    /// NaN when the writer stamped null: team solves and solves past three
+    /// seats have no exact best response, and a null is not a zero.
+    /// </summary>
+    public double FinalNashConv =>
+        Root.TryGetProperty("final_nashconv", out var n) && n.ValueKind == JsonValueKind.Number
+            ? n.GetDouble()
+            : double.NaN;
     public string HandUniverse => Root.TryGetProperty("hand_universe", out var u) ? u.GetString() ?? "" : "";
     public string ConfigHash => Root.GetProperty("config_hash").GetString() ?? "";
 }

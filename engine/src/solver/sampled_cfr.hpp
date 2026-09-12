@@ -115,6 +115,8 @@ class SampledCfrSolver final : public StrategySource {
   // 4-way solve is most of the wall clock. Same policy as CfrSolver.
   int split_budget() const override { return split_budget_; }
   const QreConfig& qre() const override { return qre_; }
+  const InfosetIndexer* bucket_indexer() const override { return &indexer_; }
+  void bucket_strategy(std::uint32_t group, std::vector<float>& out) const override;
 
   const InfosetLayout& layout() const { return layout_; }
   const InfosetIndexer& indexer() const { return indexer_; }

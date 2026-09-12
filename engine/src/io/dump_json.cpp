@@ -105,7 +105,7 @@ json node_data_to_json(const ArtifactReader& reader, const ArtifactNodeData& dat
     const int actions = data.num_actions;
     std::vector<double> aev_weight(169, 0.0);
     std::vector<std::vector<double>> aev_sum(169, std::vector<double>(static_cast<std::size_t>(actions), 0.0));
-    if (nlhe && data.actor < data.num_seats) {
+    if (nlhe && artifact_has_ev && data.actor < data.num_seats) {
       const ArtifactSeatData& actor_seat = data.seats[data.actor];
       for (std::size_t i = 0; i < actor_seat.idx.size(); ++i) {
         const int cls = combo_class_index(dicts[data.actor][actor_seat.idx[i]]);
@@ -125,7 +125,7 @@ json node_data_to_json(const ArtifactReader& reader, const ArtifactNodeData& dat
       r["weight"] = data.rollup_weight[cls];
       r["ev"] = data.rollup_ev[cls];
       r["freq"] = data.rollup_freq[cls];
-      if (nlhe) {
+      if (nlhe && artifact_has_ev) {
         json a = json::array();
         const double w = aev_weight[static_cast<std::size_t>(cls)];
         for (int k = 0; k < actions; ++k) {
