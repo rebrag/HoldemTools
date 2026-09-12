@@ -88,31 +88,6 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
                                std::to_string(kMaxActionsSampled) + " actions");
     }
   }
-  // The suit-symmetry quotient: storage rows are per CLASS when the game
-  // reports one and the config keeps it on (the default). Identity
-  // otherwise, with store_* equal to the hand layout, so that path is
-  // bit-for-bit the unquotiented solver.
-  {
-    std::vector<std::uint16_t> class_of;
-    int num_classes = 0;
-    deals.hand_classes(class_of, num_classes);
-    if (config_.symmetry && num_classes > 0) {
-      class_of_ = std::move(class_of);
-      num_classes_ = num_classes;
-    } else if (config_.symmetry && config_.symmetry_explicit && num_classes == 0) {
-      throw std::runtime_error(
-          "algorithm.sampled.symmetry was requested but this game reports no "
-          "suit-symmetry quotient");
-    }
-  }
-  if (num_classes_ == 0) {
-    int max_hands = 0;
-    for (int seat = 0; seat < game.num_seats(); ++seat) {
-      max_hands = std::max(max_hands, game.num_hands(seat));
-    }
-    class_of_.resize(static_cast<std::size_t>(max_hands));
-    for (int h = 0; h < max_hands; ++h) class_of_[static_cast<std::size_t>(h)] = static_cast<std::uint16_t>(h);
-  }
   if (agents_.has_team()) {
     // The team's infosets are (node, own hand, partner hand): rows are the
     // suit orbits of the ordered pair - the exact quotient, or nothing.
@@ -123,21 +98,18 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
     }
     universe_hands_ = game.num_hands(0);
   }
+  // The storage quotient lives in the indexer; the per-node offset and row
+  // arrays are copied out so the hot paths keep indexing flat vectors.
+  indexer_ = InfosetIndexer::plan(game, deals, config_, agents_.teammate_of, joint_classes_);
   store_offset_.assign(layout_.node_offset.size(), InfosetLayout::kNoOffset);
   store_hands_.assign(layout_.node_hands.size(), 0);
-  store_total_ = 0;
   for (const Node& node : game.tree().nodes) {
     if (node.kind != NodeKind::Decision) continue;
-    const std::size_t d = node.decision_index;
-    const bool team_actor = agents_.teammate_of[node.actor] >= 0;
-    const std::uint32_t rows =
-        team_actor ? static_cast<std::uint32_t>(joint_classes_)
-                   : (num_classes_ > 0 ? static_cast<std::uint32_t>(num_classes_)
-                                       : layout_.node_hands[d]);
-    store_offset_[d] = store_total_;
-    store_hands_[d] = rows;
-    store_total_ += static_cast<std::size_t>(layout_.node_actions[d]) * rows;
+    const std::uint32_t d = node.decision_index;
+    store_offset_[d] = indexer_.offset(d);
+    store_hands_[d] = indexer_.rows(d);
   }
+  store_total_ = indexer_.store_total;
   regrets_.assign(store_total_, 0.0f);
   strat_sum_.assign(store_total_, 0.0f);
   if (agents_.has_team()) {
@@ -459,7 +431,7 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
         if (jc == kNoJointRow) return;  // impossible deal
         hrow = jc;
       } else {
-        hrow = class_of_[hq];
+        hrow = indexer_.map(node.decision_index)[hq];
       }
       float pos_sum = 0.0f;
       for (std::uint16_t a = 0; a < actions; ++a) {
@@ -577,6 +549,7 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
   // quotient, a hand without it), broadcast to a per-hand sigma for reach
   // descent. On the identity path this computes the exact floats the
   // unquotiented code did - the broadcast is a copy.
+  const std::uint16_t* const row_of = indexer_.map(node.decision_index);
   std::vector<float>& class_sigma = lane.class_sigma[static_cast<std::size_t>(depth)];
   std::vector<float>& sigma = lane.sigma_stack[static_cast<std::size_t>(depth)];
   std::vector<float>& child_vals = lane.child_stack[static_cast<std::size_t>(depth)];
@@ -610,7 +583,7 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
   for (std::uint16_t a = 0; a < actions; ++a) {
     const float* crow = class_sigma.data() + static_cast<std::size_t>(a) * rows;
     float* srow = sigma.data() + static_cast<std::size_t>(a) * my_hands;
-    for (std::uint32_t h = 0; h < my_hands; ++h) srow[h] = crow[class_of_[h]];
+    for (std::uint32_t h = 0; h < my_hands; ++h) srow[h] = crow[row_of[h]];
   }
 
   for (std::uint16_t a = 0; a < actions; ++a) {
@@ -641,8 +614,8 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
     const float* srow = sigma.data() + srow_off;
     const float* vrow = child_vals.data() + srow_off;
     for (std::uint32_t h = 0; h < my_hands; ++h) {
-      rd[drow_off + class_of_[h]] += vrow[h] - out[h];
-      sd[drow_off + class_of_[h]] += hero_reach[h] * srow[h];
+      rd[drow_off + row_of[h]] += vrow[h] - out[h];
+      sd[drow_off + row_of[h]] += hero_reach[h] * srow[h];
     }
   }
 }
@@ -699,8 +672,9 @@ void SampledCfrSolver::average_strategy(NodeId id, std::vector<float>& out) cons
   // the quotient every member combo of a class reads the same storage row,
   // so members emit IDENTICAL rows by construction - the consumers cannot
   // tell a quotiented solve apart from a converged symmetric one.
+  const std::uint16_t* const row_of = indexer_.map(node.decision_index);
   for (std::uint32_t h = 0; h < hands; ++h) {
-    const std::uint16_t c = class_of_[h];
+    const std::uint16_t c = row_of[h];
     float sum = 0.0f;
     for (std::uint16_t a = 0; a < actions; ++a) {
       sum += strat_sum_[offset + static_cast<std::size_t>(a) * rows + c];
@@ -798,7 +772,7 @@ void SampledCfrSolver::pinned_sigma(NodeId id, int actor, const Deal& deal,
     }
     row = jc;
   } else {
-    row = class_of_[hq];
+    row = indexer_.map(node.decision_index)[hq];
   }
   float sum = 0.0f;
   for (std::uint16_t a = 0; a < actions; ++a) {

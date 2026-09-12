@@ -9,6 +9,7 @@
 
 #include "io/artifact_writer.hpp"
 #include "solver/cfr.hpp"
+#include "solver/infoset_indexer.hpp"
 #include "util/parallel.hpp"
 
 #if defined(_WIN32)
@@ -60,16 +61,12 @@ MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc,
   est.recalc_bytes = CfrSolver::recalc_state_bytes(game, recalc);
   if (sampled != nullptr && sampled->enabled) {
     // The sampled core: master regrets + strategy sums plus one private
-    // delta pair per lane, all f32 (it has no i16 mode). Rows are per suit
-    // CLASS when the symmetry quotient is on - the same arithmetic the
-    // solver's constructor performs, so this cannot drift from the
-    // allocation. No recalc caches - nothing is re-enumerated there.
-    const InfosetLayout layout = InfosetLayout::build(game);
-    std::size_t total = layout.total;
+    // delta pair per lane, all f32 (it has no i16 mode). Rows per node come
+    // from the same InfosetIndexer::plan the solver's constructor runs, so
+    // this cannot drift from the allocation. No recalc caches - nothing is
+    // re-enumerated there.
+    std::size_t total = InfosetLayout::build(game).total;
     if (const auto* deal_game = dynamic_cast<const DealGame*>(&game)) {
-      std::vector<std::uint16_t> class_of;
-      int num_classes = 0;
-      if (sampled->symmetry) deal_game->hand_classes(class_of, num_classes);
       // A hand-sharing team's decision nodes store one row per JOINT suit
       // orbit - dominant when present, so the estimate must count it.
       std::vector<int> teammate_of;
@@ -84,20 +81,8 @@ MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc,
               sampled->partition_team[0];
         }
       }
-      if (num_classes > 0 || joint_classes > 0) {
-        total = 0;
-        for (const Node& n : game.tree().nodes) {
-          if (n.kind != NodeKind::Decision) continue;
-          std::size_t rows = layout.node_hands[n.decision_index];
-          if (!teammate_of.empty() && teammate_of[n.actor] >= 0) {
-            rows = static_cast<std::size_t>(joint_classes);
-          } else if (num_classes > 0) {
-            rows = static_cast<std::size_t>(num_classes);
-          }
-          total +=
-              static_cast<std::size_t>(layout.node_actions[n.decision_index]) * rows;
-        }
-      }
+      total = InfosetIndexer::plan(game, *deal_game, *sampled, teammate_of, joint_classes)
+                  .store_total;
     }
     // Master + per-lane pairs: regrets/strategy always; a team adds the
     // conditioned-EV numerator/denominator pair (same size, same lanes).

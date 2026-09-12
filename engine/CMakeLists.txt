@@ -82,6 +82,7 @@ add_library(engine_core STATIC
   src/solver/best_response.cpp
   src/solver/depth_limit.cpp
   src/solver/sampled_cfr.cpp
+  src/solver/infoset_indexer.cpp
   src/solver/agents.cpp
   src/solver/memory.cpp
   src/io/local_store.cpp

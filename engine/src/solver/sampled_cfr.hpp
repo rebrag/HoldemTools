@@ -6,6 +6,7 @@
 #include "game/deal_game.hpp"
 #include "game/game.hpp"
 #include "solver/agents.hpp"
+#include "solver/infoset_indexer.hpp"
 #include "solver/strategy_source.hpp"
 #include "solver/updates.hpp"
 #include "util/parallel.hpp"
@@ -116,6 +117,7 @@ class SampledCfrSolver final : public StrategySource {
   const QreConfig& qre() const override { return qre_; }
 
   const InfosetLayout& layout() const { return layout_; }
+  const InfosetIndexer& indexer() const { return indexer_; }
   const Game& game() const { return game_; }
   // Read seams for the determinism test: bitwise equality across thread
   // counts is asserted on the raw arrays, never on derived quantities.
@@ -208,14 +210,14 @@ class SampledCfrSolver final : public StrategySource {
   SampledConfig config_;
   AgentMap agents_;
   InfosetLayout layout_;
-  // The storage quotient. `class_of_[hand]` is the storage row a hand reads
-  // and writes; identity (and store_* == the hand layout) when the game
-  // reports no symmetry, so the identity path is bit-for-bit the original.
-  std::vector<std::uint16_t> class_of_;
+  // The storage quotient (solver/infoset_indexer.hpp): `indexer_.map(d)[hand]`
+  // is the storage row a hand reads and writes at decision node d. The two
+  // per-node arrays below are copied out of it once, so the hot paths index
+  // flat vectors exactly as they did before the seam existed.
+  InfosetIndexer indexer_;
   std::vector<std::size_t> store_offset_;    // by decision_index
-  std::vector<std::uint32_t> store_hands_;   // by decision_index: classes or hands
+  std::vector<std::uint32_t> store_hands_;   // by decision_index: rows (buckets, classes or hands)
   std::size_t store_total_ = 0;
-  int num_classes_ = 0;  // 0 = identity
   // Team state. joint_class_[own * H + partner] -> joint storage row
   // (0xFFFFFFFF on overlapping pairs); sized only when a team exists.
   std::vector<std::uint32_t> joint_class_;
