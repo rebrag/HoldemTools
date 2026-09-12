@@ -32,6 +32,36 @@ int tree_depth(const PublicTree& tree) {
   return max_depth;
 }
 
+// v[i] *= scale over the pool in fixed chunks. Cells are independent, so the
+// bits cannot depend on the thread count or the chunk size; never fuse a
+// reduction into this loop. With canonicalize_zero the product -0.0f is
+// stored as +0.0f, written as a compare rather than `+ 0.0f` so an FMA
+// contraction cannot fold the fix into the multiply. The two forms agree
+// bitwise with the dense fold this replaced: an untouched cell used to be
+// (r * scale) + (+0.0f), which is exactly canon(r * scale), and a touched
+// cell (-0.0f) + delta equals (+0.0f) + delta for every delta, since a lane's
+// delta cell is a sum of terms starting at +0.0f and can never be -0.0f.
+void scale_chunked(ThreadPool& pool, std::vector<float>& v, float scale,
+                   bool canonicalize_zero) {
+  constexpr std::size_t kChunk = std::size_t{1} << 20;
+  const std::size_t n = v.size();
+  if (n == 0) return;
+  const int chunks = static_cast<int>((n + kChunk - 1) / kChunk);
+  float* const data = v.data();
+  pool.parallel_for(chunks, [&](int c) {
+    const std::size_t begin = static_cast<std::size_t>(c) * kChunk;
+    const std::size_t end = std::min(n, begin + kChunk);
+    if (canonicalize_zero) {
+      for (std::size_t i = begin; i < end; ++i) {
+        const float r = data[i] * scale;
+        data[i] = r == 0.0f ? 0.0f : r;
+      }
+    } else {
+      for (std::size_t i = begin; i < end; ++i) data[i] *= scale;
+    }
+  });
+}
+
 }  // namespace
 
 SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
@@ -151,10 +181,15 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
     if (b0 > 0) {
       const float scale =
           static_cast<float>(static_cast<double>(b0) / static_cast<double>(b1));
-      for (float& r : regrets_) r *= scale;
-      for (float& s : strat_sum_) s *= scale;
-      for (float& v : ev_sum_) v *= scale;
-      for (float& w : ev_w_) w *= scale;
+      // The signed arrays canonicalize zero: a negative denormal times a
+      // scale below one rounds to -0.0f, and the sparse fold below skips
+      // untouched cells, so nothing else would turn it back into the +0.0f
+      // the old dense fold produced by adding +0.0f to every cell. Bitwise
+      // neutral against that fold on every cell (see scale_chunked).
+      scale_chunked(*pool_, regrets_, scale, true);
+      scale_chunked(*pool_, strat_sum_, scale, false);
+      scale_chunked(*pool_, ev_sum_, scale, true);
+      scale_chunked(*pool_, ev_w_, scale, false);
     }
 
     // Lanes read the master (frozen for the whole batch - nothing below
