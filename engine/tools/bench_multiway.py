@@ -154,7 +154,8 @@ def in_range_rate(range_text: str, seats: int, board: str, trials: int = 40000) 
 
 
 def build_config(seats: int, range_text: str, iters: int, sampled: bool, seed: int,
-                 out_path: str, abstraction: dict | None = None, deal: str = "range") -> dict:
+                 out_path: str, abstraction: dict | None = None, deal: str = "range",
+                 batch: int = 4096, lanes: int = 4) -> dict:
     sizing = {"bets": [50, 700], "raises": [700], "max_raises": 1, "allin_threshold": 0.9}
     algorithm: dict = {"update": "dcfr"}
     if sampled:
@@ -163,7 +164,7 @@ def build_config(seats: int, range_text: str, iters: int, sampled: bool, seed: i
         # original), "range" deals each hero's opponents in proportion to
         # their ranges with the importance weight (the parser's default for
         # postflop since 2026-09-12).
-        algorithm["sampled"] = {"seed": seed, "batch": 4096, "lanes": 4, "deal": deal}
+        algorithm["sampled"] = {"seed": seed, "batch": batch, "lanes": lanes, "deal": deal}
         if abstraction:
             # Hand abstraction on the sampled core: storage rows per bucket,
             # pooling updates across similar hands - the thing that is
@@ -233,6 +234,12 @@ def main() -> int:
                     help="skip the 3-seat exploitability table")
     ap.add_argument("--deals", default="range",
                     help="comma list of deal modes to run as arms: uniform, range")
+    ap.add_argument("--batches", default="4096",
+                    help="comma list of batch sizes to run as arms; regrets freeze per batch, "
+                         "so deals / batch is the number of regret-matching steps")
+    ap.add_argument("--lanes", type=int, default=4)
+    ap.add_argument("--skip-spread", action="store_true", help="skip the seed-spread table")
+    ap.add_argument("--iters", default="", help="comma list of deal counts, e.g. 50000,200000")
     args = ap.parse_args()
     abstraction = None
     if args.abstraction:
@@ -249,12 +256,17 @@ def main() -> int:
     if args.widths:
         widths = [w.strip() for w in args.widths.split(",") if w.strip()]
     sampled_iters = [50_000, 200_000] if args.quick else [50_000, 200_000, 800_000]
+    if args.iters:
+        sampled_iters = [int(x) for x in args.iters.split(",") if x.strip()]
     deals = [d.strip() for d in args.deals.split(",") if d.strip()]
+    batches = [int(b) for b in args.batches.split(",") if b.strip()]
     arms = []
     for deal in deals:
-        arms.append((f"{deal}", None, deal))
-        if abstraction:
-            arms.append((f"{deal}+buckets", abstraction, deal))
+        for batch in batches:
+            tag = f"{deal} b{batch}" if len(batches) > 1 else deal
+            arms.append((tag, None, deal, batch))
+            if abstraction:
+                arms.append((f"{tag}+buckets", abstraction, deal, batch))
 
     print(f"board {BOARD}, pot 100, stacks 700 (SPR 7), b50 + shove, one raise\n")
 
@@ -280,29 +292,34 @@ def main() -> int:
             for w in widths:
                 ref = run(args.engine, build_config(3, RANGES[w], 2000, False, 1, out), tmp)
                 ref_expl = ref["curve"][-1][1] if ref["curve"] else float("nan")
-                for arm_name, arm, deal in arms:
+                for arm_name, arm, deal, batch in arms:
                     cells = []
                     for iters in sampled_iters:
                         got = run(args.engine,
-                                  build_config(3, RANGES[w], iters, True, 1, out, arm, deal), tmp)
+                                  build_config(3, RANGES[w], iters, True, 1, out, arm, deal,
+                                               batch, args.lanes), tmp)
                         expl = got["curve"][-1][1] if got["curve"] else float("nan")
                         cells.append(f"{100 * expl / pot:>10.3f}%")
                     print(f"  {w:<8} {arm_name:<16} {100 * ref_expl / pot:>10.4f}%" + "".join(cells))
             print("  vectorized = 2000 iterations of the exact core, the reference.\n")
 
         # ---- 2. seed spread, which works at any seat count -----------------
+        if args.skip_spread:
+            return 0
         print("== seed spread: worst per-seat root EV gap between two seeds, chips (% of pot) ==")
         seat_counts = [3, 4, 6] if args.quick else [3, 4, 6, 8]
         if args.seats:
             seat_counts = [int(x) for x in args.seats.split(",") if x.strip()]
         print("  range    arm             " + "".join(f"{s:>18}-way" for s in seat_counts))
         for w in widths:
-            for arm_name, arm, deal in arms:
+            for arm_name, arm, deal, batch in arms:
                 cells = []
                 for seats in seat_counts:
                     iters = sampled_iters[-1]
-                    a = run(args.engine, build_config(seats, RANGES[w], iters, True, 1, out, arm, deal), tmp)
-                    b = run(args.engine, build_config(seats, RANGES[w], iters, True, 999, out, arm, deal), tmp)
+                    a = run(args.engine, build_config(seats, RANGES[w], iters, True, 1, out, arm, deal,
+                                                      batch, args.lanes), tmp)
+                    b = run(args.engine, build_config(seats, RANGES[w], iters, True, 999, out, arm, deal,
+                                                      batch, args.lanes), tmp)
                     if not a["evs"] or not b["evs"]:
                         cells.append(f"{'n/a':>22}")
                         continue

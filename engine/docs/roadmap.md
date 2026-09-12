@@ -1217,6 +1217,39 @@ Bucketing addresses a different problem - storage - and this measurement is what
 **What landed, in one line each.**
 Storage rows per bucket on the sampled core, memory 4.6x down on the turn spot and the 55 GB flop tree at 6.1 GB of store; the abstraction's own cost 0.25% of pot at histogram 200/200; no per-deal convergence gain on 100% ranges and no rescue of tight-range multiway; a bucketed artifact format the whole read path expands transparently; and two neutral structural changes underneath (sparse lanes, canonicalized zero) pinned by absolute digests.
 
+### M8f - range-proportional dealing, and the batch lever. Landed 2026-09-12.
+
+The deal-rate fix the bench above pointed at, built the same day: `algorithm.sampled.deal: "range"` (`DealGame::sample_hero_deal`, the parser's default for postflop nlhe).
+Each hero's traversal gets its own deal with the OPPONENTS dealt in seat order in proportion to their ranges conditioned on the cards already out, the hero and the runout uniform from what is left, and the deal weighted by the product of the range masses the conditioning divided out - the importance weight the EV pass already used, so it is unbiased (the range-dealt 3-way solve lands 0.21 chips from the exact core; `tests/test_multiway_postflop.cpp`).
+The hero stays uniform because a range-proportional hero hand would bias the runout its vectorized traversal sees, which is why it is one deal per hero per iteration rather than one per iteration.
+Keyed on (seed, iter, hero), bitwise across threads; the in-test default stays uniform so the digests hold.
+
+**Two things the bench then taught, and the second is the larger.**
+
+The uniform deal was FAST on a tight range only because it did nothing: an out-of-range opponent hand aborts the hero's traversal at the first opponent node, so 98% of its deals cost almost nothing and a 6-way solve that took minutes under uniform dealing takes over an hour under range dealing at the same deal count, because every deal is now a full traversal.
+Compare by exploitability at equal deals, never by wall clock at equal deals, and budget 4+ seat range-dealt solves by deals that actually traverse.
+
+**`batch` is the number of regret-matching steps, and it was starving every sampled solve.**
+Regrets are frozen for a whole batch, so 800k deals at `batch 4096` are 195 CFR steps whatever the deal quality.
+Under uniform dealing on a tight range a small batch bought nothing (one in-range deal per batch); under range dealing it is the lever.
+3 seats, 15% range, `Js 8c Td 3h 7h` river, lanes 16, exact best response, exploitable per seat as % of pot:
+
+| deal | batch | 200k deals | 800k deals |
+|---|---|---|---|
+| uniform | 4096 | 1.808 | 0.932 |
+| uniform | 256 | 0.436 | 0.276 |
+| uniform | 64 | 0.475 | 0.187 |
+| range | 4096 | 1.634 | 0.719 |
+| range | 256 | 0.147 | 0.060 |
+| range | 64 | 0.059 | 0.022 |
+
+Batch alone is 5x (uniform, 4096 to 64); range dealing on top is another 8.5x; together 42x at equal deals, and range at batch 64 with 200k deals beats uniform at batch 4096 with 800k deals by 16x.
+The exact core is still 0.0013% in 2000 iterations on this spot and three seats should still run vectorized; the point is what the sampled core does at four and up, where there is no exact core.
+Every sampled result in M8c, M8e and the turn/flop gates above was taken at `batch 2048` or `4096` and is a lower bound on what the core does; the flop gate's 11.6% of pot after 1.75M deals was 855 regret-matching steps.
+
+The cost of a small batch is the per-batch discount sweep over the whole master (two arrays) and the fold: nothing on a river tree, about 0.6 s per batch on the 6 GB flop store, so a flop-sized solve wants a batch of a few hundred and a deferred or scaled discount is the follow-up that would take it lower.
+Lanes must not exceed the batch, and a lane runs `batch / lanes` deals per batch, so a 64-deal batch keeps sixteen lanes at four deals each.
+
 - **M10 - Bayesian unknown-collusion**: chance root over team type with probability p - now precisely the p-interpolation between M9's two awareness modes (p=0 is unaware, p=1 is aware); opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.
 
 Out of scope, permanently (do not build speculatively): TMECor / coordination-without-card-visibility, cloud SDKs inside the engine.
