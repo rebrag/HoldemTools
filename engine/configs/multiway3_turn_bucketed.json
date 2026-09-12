@@ -1,0 +1,86 @@
+// The turn of the Monker spot, where the exact vectorized core holds the
+// reference (drop algorithm.family and algorithm.sampled to solve it exact:
+// 250 iterations to 0.13% of pot). Bucketed on the sampled core it reaches
+// 2.67% of pot at 1M deals against 2.46% per hand, at 4.6x less memory.
+// tools/bucket_probe.cpp rates the abstraction alone against the exact solve.
+{
+  "schema": 1,
+  "game": "nlhe",
+  "pot": 100,
+  "chip_scale": 100,
+  "players": [
+    {
+      "seat": "OOP",
+      "stack": 400,
+      "range": "@file:ranges/full.txt"
+    },
+    {
+      "seat": "MID",
+      "stack": 400,
+      "range": "@file:ranges/full.txt"
+    },
+    {
+      "seat": "BTN",
+      "stack": 400,
+      "range": "@file:ranges/full.txt"
+    }
+  ],
+  "qre": {
+    "mode": "nash"
+  },
+  "memory_limit_gb": 28,
+  "threads": 0,
+  "board": "Ts 6h 9h 9c",
+  "bet_sizing": {
+    "turn": {
+      "bets": [
+        50,
+        400
+      ],
+      "raises": [
+        100,
+        400
+      ],
+      "allin_threshold": 0.9,
+      "max_raises": 3
+    },
+    "river": {
+      "bets": [
+        50,
+        100,
+        400
+      ],
+      "raises": [
+        100,
+        400
+      ],
+      "allin_threshold": 0.9,
+      "max_raises": 3
+    }
+  },
+  "algorithm": {
+    "update": "dcfr",
+    "family": "sampled",
+    "sampled": {
+      "seed": 7,
+      "batch": 2048,
+      "lanes": 16,
+      "abstraction": {
+        "method": "histogram",
+        "flop": 0,
+        "turn": 200,
+        "river": 200,
+        "board_isomorphism": true
+      }
+    }
+  },
+  "budget": {
+    "iterations": 1000000,
+    "checkpoint_every": 250000
+  },
+  "output": {
+    "path": "out/multiway3_turn_bucketed.hta",
+    "strategy_quantize_u8": false,
+    "ev_float32": true
+  }
+}

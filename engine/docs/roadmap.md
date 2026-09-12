@@ -1183,7 +1183,39 @@ Root EVs at one million deals are within 0.1 chips of the exact solve on every r
 **Read it straight.** On a 100%-range 3-way turn the buckets do not converge faster per deal - they sit 0.2% of pot behind the per-hand solve at every checkpoint, and bucket count and feature method are invisible at this budget because both are far above the abstraction's 0.25% floor.
 Sampling noise is the bottleneck here, exactly as the M8c entry said it would be on three seats, which should run vectorized anyway.
 What the buckets buy on this spot is 4.6x less memory and 18% more deals per second.
-The variance win they exist for is on tight ranges at four seats and up, where the per-hand solve deals every opponent in range about never - that measurement is `bench_multiway.py --abstraction` below - and the memory win is what makes the 3-way flop tree solvable at all.
+The variance win they were expected to bring on tight ranges at four seats and up did not materialize, and the reason is worth more than the number - see the bench below.
+The memory win is what makes the 3-way flop tree solvable at all.
+
+**The flop spot, solved** (`configs/multiway3_flop_bucketed.json`: histogram 200/200, runouts shared, `lanes 16, batch 2048`, 16 threads, `budget.max_seconds 14400`).
+It stopped on the time budget at 1,749,856 deals after 4 h 26 min, 110 deals per second with the exact 3-seat best response every 500k deals inside that clock, peak RSS 16.9 GB (commit 20.6 GB) against the estimator's 18.0 GB ceiling.
+
+| deals | exploitable per seat, % of pot | root EVs (best response) |
+|---|---|---|
+| 500k | 21.8 | 30.44 / 32.69 / 36.87 |
+| 1M | 14.8 | 30.36 / 32.64 / 37.00 |
+| 1.5M | 11.6 | 30.27 / 32.60 / 37.13 |
+
+Root EVs from the sampled pass at the stop: 30.26 / 32.38 / 37.35 (sum 100.00), against MonkerSolver's SB 29.99 / BB 32.55 / BTN 37.46 from its 2.45 billion iterations in 29 minutes on 29 threads.
+**It did not converge**: 11.6% of pot exploitable at 1.5M deals, descending, with no sign of the knee.
+The EVs sit within 0.3 chips of Monker's long before the strategy is anywhere near an equilibrium, which is the usual order and a reason not to grade a multiway solve on its EVs.
+The cost is per deal: three vectorized hero traversals over 1176 hands through the flop, one turn subtree and one river subtree, against Monker's single-sample updates, so 1.75M of our deals are not 1.75M of its iterations and the two are not comparable by count.
+The bucketed artifact is 1.50 GB (765M `u8` cells plus a 583 MB node table) against Monker's 3.49 GB file, exported in 16 s; `dump-json --fields rollup --runouts 1` reads it in one second and `engine_compare.py --ht-out --runouts 2` writes the 49 MB `/compare` payload from it in 12 s, both through the reader's expansion.
+
+**Tight ranges at 4+ seats, `tools/bench_multiway.py --abstraction river=100,method=histogram --widths 15% --seats 4,6,8`** (river tree, 800k deals per solve, worst per-seat root EV gap between seeds 1 and 999):
+
+| seats | in-range deal rate | per hand | histogram 100 river buckets |
+|---|---|---|---|
+| 4 | 0.21% | 1.56% of pot | 1.26% |
+| 6 | 0.00% | 36.6% | 30.0% |
+| 8 | 0.00% | 119% | 212% |
+
+**Buckets do not fix tight-range multiway, and the first column says why.**
+The rare event on a tight range is not the hero's hand, it is the OPPONENTS' dealt hands all landing in range; a deal where one does not weighs the hero's whole traversal by zero, and pooling zero updates across a bucket is still zero.
+That is the deal RATE, and the fix for it is the one the M8b groundwork already recorded and did not build: deal the opponents in proportion to their ranges with the importance weight the EV pass already uses.
+Bucketing addresses a different problem - storage - and this measurement is what keeps the two from being confused again.
+
+**What landed, in one line each.**
+Storage rows per bucket on the sampled core, memory 4.6x down on the turn spot and the 55 GB flop tree at 6.1 GB of store; the abstraction's own cost 0.25% of pot at histogram 200/200; no per-deal convergence gain on 100% ranges and no rescue of tight-range multiway; a bucketed artifact format the whole read path expands transparently; and two neutral structural changes underneath (sparse lanes, canonicalized zero) pinned by absolute digests.
 
 - **M10 - Bayesian unknown-collusion**: chance root over team type with probability p - now precisely the p-interpolation between M9's two awareness modes (p=0 is unaware, p=1 is aware); opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.
 
