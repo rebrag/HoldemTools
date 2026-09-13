@@ -1248,6 +1248,17 @@ The exact core is still 0.0013% in 2000 iterations on this spot and three seats 
 Every sampled result in M8c, M8e and the turn/flop gates above was taken at `batch 2048` or `4096` and is a lower bound on what the core does; the flop gate's 11.6% of pot after 1.75M deals was 855 regret-matching steps.
 
 The cost of a small batch is the per-batch discount sweep over the whole master (two arrays) and the fold: nothing on a river tree, about 0.6 s per batch on the 6 GB flop store, so a flop-sized solve wants a batch of a few hundred and a deferred or scaled discount is the follow-up that would take it lower.
+
+**Six and eight seats on tight ranges converge now.** Same river spot, 15% range, seed spread (worst per-seat root EV gap between seeds 1 and 999):
+
+| seats | uniform, batch 4096, 800k deals | range, batch 256, 200k deals |
+|---|---|---|
+| 4 | 1.55% of pot | 0.47% |
+| 6 | 36.6% | 0.28% |
+| 8 | 119% | 0.28% |
+
+The M8b groundwork's "six and up does not converge on tight ranges at all" was a statement about uniform dealing at batch 4096, and it is withdrawn.
+There is still no exact best response past three seats, so 0.28% is seed agreement rather than exploitability - necessary, not sufficient - and the deals are now real work (every one traverses), so a 4+ seat solve is budgeted by traversals, not by the old free rejections.
 Lanes must not exceed the batch, and a lane runs `batch / lanes` deals per batch, so a 64-deal batch keeps sixteen lanes at four deals each.
 
 - **M10 - Bayesian unknown-collusion**: chance root over team type with probability p - now precisely the p-interpolation between M9's two awareness modes (p=0 is unaware, p=1 is aware); opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.
