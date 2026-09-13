@@ -1177,6 +1177,9 @@ The bucketed SAMPLED solves themselves, exact best response at every checkpoint,
 | histogram 400/200 | 7.46 | 4.35 | 3.24 | 2.69 | | | | | 350 | 2.9 GB |
 | histogram 100/200 | 7.15 | 4.34 | 3.29 | 2.67 | | | | | 351 | 2.8 GB |
 | equity 400/200 | 7.06 | 4.40 | 3.29 | 2.66 | | | | | 349 | 2.9 GB |
+| histogram 200/200, **batch 128** (M8f) | 3.44 | 2.24 | 1.81 | 1.55 | | | | | 325 | 1.7 GB |
+
+The last row was run after M8f below: sixteen times the regret-matching steps of the `batch 2048` rows for 8% more wall time, 1.7x less exploitable at one million deals and below the per-hand `batch 2048` solve too. On 100% ranges the deal is already always in range, so what is left is the single-opponent sample per traversal, and that shrinks only with deals.
 
 Root EVs at one million deals are within 0.1 chips of the exact solve on every row (per hand 30.73 / 32.66 / 36.61; histogram 200/100 30.71 / 32.67 / 36.62).
 
