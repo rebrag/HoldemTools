@@ -126,6 +126,10 @@ double write_checkpoint(const std::string& path, const SampledCfrSolver& solver,
       put(os, static_cast<std::uint64_t>(id));
       put_floats(os, rows[id]);
     }
+    // Trailer: the bucket assignment (0 without hand abstraction). Appended
+    // after everything a pre-abstraction reader consumed, so an older file
+    // simply ends before it.
+    put(os, static_cast<std::uint64_t>(solver.bucket_map_hash()));
     os.flush();
     if (!os) throw std::runtime_error("checkpoint: write failed for " + tmp);
   }
@@ -221,6 +225,17 @@ bool read_checkpoint(const std::string& path, SampledCfrSolver& solver,
       err = "truncated checkpoint frozen rows";
       return false;
     }
+  }
+  // The bucket-map trailer. A file that ends here is a legacy checkpoint
+  // with no abstraction, accepted only when this solver has none either.
+  std::uint64_t bucket_hash = 0;
+  const bool has_trailer = get(is, bucket_hash);
+  if (!has_trailer) bucket_hash = 0;
+  if (bucket_hash != solver.bucket_map_hash()) {
+    err = has_trailer
+              ? "checkpoint was solved under a different hand abstraction (bucket map differs)"
+              : "checkpoint predates hand abstraction and this solve uses buckets";
+    return false;
   }
   solver.restore(iteration, std::move(regrets), std::move(strat_sum), std::move(ev_sum),
                  std::move(ev_w), std::move(frozen_seat), std::move(frozen_rows));

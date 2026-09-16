@@ -182,6 +182,13 @@ struct SolveConfig {
   bool strategy_quantize_u8 = true;
   bool ev_float32 = true;
   bool rollups_169 = true;
+  // output.export: "per_hand" (default) writes today's per-hand blobs with
+  // reach and EVs; "bucketed" writes one strategy blob per storage group
+  // plus the bucket map, and readers expand to per-hand rows and derive
+  // reach themselves. The second exists because a per-hand export of a
+  // 2.8M-decision-node flop tree is 130 GB of export pass and a 160 GB
+  // file; it requires algorithm.sampled.abstraction.
+  bool export_bucketed = false;
   int threads = 0;
 
   nlohmann::json raw;  // canonical parsed config (comments stripped)

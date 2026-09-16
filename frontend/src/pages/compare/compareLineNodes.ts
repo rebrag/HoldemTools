@@ -34,6 +34,8 @@ export interface CompareNodeRef {
   id: string;
   position: string;
   actions: string[];
+  /** Chips pooled at this node, straight off the payload. See HtcNodeMeta. */
+  pot?: number;
 }
 
 export const ROOT_ID = "r:0";
@@ -85,9 +87,11 @@ export const buildCompareLine = (
   nodeId: string,
   byId: Map<string, CompareNodeRef>,
   label: (segment: string, parentId: string) => string,
-  /** Pot at the root, in the page's display units. Card tiles carry the pot as
-   *  it stood when they were dealt, which needs this as the base. */
-  rootPot = 0
+  /** Pot at the root, in the page's display units. The fallback base for a
+   *  card tile's pot on payloads that carry no per-node pot. */
+  rootPot = 0,
+  /** Seats in the tree. Only reached on those older payloads; see below. */
+  seatCount = 2
 ): CompareLine => {
   const segments = nodeId.split(":");
   const lineNodes: PostflopSessionLineNode[] = [];
@@ -101,14 +105,21 @@ export const buildCompareLine = (
 
     if (isCardSegment(segment)) {
       dealtCards.push(segment);
+      /* A chance node has no directory row of its own, but the decision that
+       * follows the deal DOES, at this very id - and it sits on the same
+       * pot, since nothing has been bet between the two. So the payload's own
+       * number is available here without deriving anything.
+       *
+       * The fallback is for payloads written before per-node pots: one seat's
+       * share of the completed streets times the seats who matched it. Exact
+       * heads-up, an over-count in an N-seat tree where somebody folded -
+       * which is the whole reason the number is carried now. */
+      const dealt = byId.get(childId)?.pot;
       lineNodes.push({
         kind: "card",
         nodeId: childId,
         label: segment,
-        /* priorStreetCommitChips is one seat's share of the completed streets,
-         * and a street only completes matched - so both seats put that in.
-         * bNNN here is already in the page's display units, so no scaling. */
-        potMoney: rootPot + 2 * priorStreetCommitChips(childId),
+        potMoney: dealt ?? rootPot + seatCount * priorStreetCommitChips(childId),
       });
       prefix = childId;
       continue;

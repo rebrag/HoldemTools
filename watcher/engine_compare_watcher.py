@@ -629,6 +629,30 @@ def handle_publish(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
     log(f"  published -> {coords.get('stacks')}/{coords.get('nodeName')}/{coords.get('board')}")
 
 
+def artifact_identity(artifact: str) -> Dict[str, Any]:
+    """The lineage of a solve, read straight off the artifact metadata.
+
+    The .htc path's counterpart to result_identity: a compare-style payload
+    carries the solver summary but not the solve id, and re-dumping the whole
+    tree to recover three strings would be absurd. --meta-only is a few
+    hundred bytes."""
+    try:
+        out = subprocess.run([ENGINE_EXE, "dump-json", artifact, "--meta-only"],
+                             capture_output=True, text=True, check=True)
+        meta = json.loads(out.stdout)
+    except Exception as e:  # noqa: BLE001 - never fail the job over this
+        log(f"  identity: could not read the artifact metadata ({e}); reporting none")
+        return {}
+    out_id: Dict[str, Any] = {}
+    if isinstance(meta.get("solve_id"), str):
+        out_id["solveId"] = meta["solve_id"]
+    if isinstance(meta.get("solve_key"), str):
+        out_id["solveKey"] = meta["solve_key"]
+    if isinstance(meta.get("iterations"), int):
+        out_id["iterations"] = meta["iterations"]
+    return out_id
+
+
 def result_identity(dump_path: str) -> Dict[str, Any]:
     """The lineage a dumped result belongs to, for the terminal report:
     solveId / solveKey / iterations from the artifact's own metadata. Best
@@ -652,21 +676,17 @@ def result_identity(dump_path: str) -> Dict[str, Any]:
 
 def handle_htsolver_only(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
                          cancel: Cancellation, label: str = "pushfold") -> None:
-    """htsolver-only modes: multiway PREFLOP jam/fold (M8a) and multiway
-    POSTFLOP on a board (M8b).
+    """Multiway PREFLOP jam/fold (M8a): the /multiway push-fold charts.
 
-    Deliberately does NOT shell engine_compare.py. That harness exists to drive
-    PioSOLVER, which is heads-up postflop and cannot build either of these
-    trees - a 4-way preflop tree or an N-seat postflop one - so there is
-    nothing to compare against and no gate to run. The artifact is dumped to
-    JSON and uploaded as the htsolver payload, which
-    /api/enginecompare/{id}/result/ht already serves.
+    Uploads `dump-json --fields rollup` - the 169-class rollup IS the push/fold
+    chart /multiway renders, and the per-hand fields were ~98% of a payload it
+    ignored. Deliberately does NOT shell engine_compare.py: that harness's
+    extraction is per-hand detail keyed by Pio-style colon node ids, which is
+    what /compare's viewer reads and what /multiway's does not.
 
-    One handler for both because the PAYLOAD is the same: `rollup_169` per
-    decision node plus `metadata.ev_chips`, which is what the page renders and
-    what a MonkerSolver comparison reads. The only thing that differs is which
-    core the config selected, and the engine decides that from the seat count
-    rather than from anything here.
+    Multiway POSTFLOP (M8b) used to share this handler and no longer does -
+    see handle_multiway, which writes the .htc payload instead so that a
+    3-way solve renders in /compare's own viewer rather than in a second one.
     """
     job_id = job["id"]
     config = json.loads(job["config"])
@@ -702,6 +722,62 @@ def handle_htsolver_only(job: Dict[str, Any], run_dir: str, timings: Dict[str, A
     report(job_id, status=terminal_status(cancel), ht_blob_path=blob, timings=timings,
            identity=identity)
     log(f"  {label} -> {blob} ({timings['dump_bytes']} bytes before gzip)")
+
+
+def handle_multiway(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
+                    cancel: Cancellation) -> None:
+    """Multiway POSTFLOP (M8b): solve an N-seat tree and write the SAME .htc
+    per-hand payload a heads-up compare job writes.
+
+    The point of sharing the payload is that it makes the seat count invisible
+    to the viewer: /compare renders one line strip, one grid per loaded solver
+    and one per-hand breakdown, and it reads all of that out of the .htc
+    header and blocks. A second payload shape would mean a second viewer, and
+    a second viewer drifts.
+
+    Pio is still absent - it cannot build an N-seat postflop tree at all - so
+    this shells engine_compare.py with --ht-out ONLY. That is the same
+    extraction handle_compare uses with Pio disabled, not a parallel one.
+
+    Past three seats the artifact has no vectorized showdown and therefore no
+    per-hand EV; the extraction writes the EV columns as null rather than as
+    the zeros the blobs hold, and the viewer simply shows no EV. Strategy,
+    reach and the root EVs are unaffected.
+    """
+    job_id = job["id"]
+    config = json.loads(job["config"])
+    # Same flags as a compare run: unquantized strategy (the .htc applies its
+    # own fixed point) and no 169 rollups, which this payload does not read.
+    config["output"] = {"strategy_quantize_u8": False, "ev_float32": True,
+                        "rollups_169": False}
+    phase_start = time.perf_counter()
+    artifact = run_engine(config, run_dir, cancel)
+    timings["engine_solve_s"] = round(time.perf_counter() - phase_start, 3)
+
+    ht_out = os.path.join(run_dir, "multiway.ht.htc")
+    phase_start = time.perf_counter()
+    out = run_streamed(
+        [sys.executable, "-u", os.path.join(WATCHER_DIR, "engine_compare.py"),
+         "--artifact", artifact, "--engine-exe", ENGINE_EXE, "--ht-out", ht_out],
+        cwd=WATCHER_DIR, timeout=1800, prefix="cmp", cancel=cancel)
+    timings["compare_total_s"] = round(time.perf_counter() - phase_start, 3)
+    if not os.path.exists(ht_out):
+        raise RuntimeError(f"engine_compare failed (exit {out.returncode}): "
+                           f"{out.text[-1500:]}")
+    try:
+        child_timing = read_htc_header(ht_out).get("summary", {}).get("timing", {})
+        timings.update({k: v for k, v in child_timing.items() if v is not None})
+    except Exception as e:  # noqa: BLE001 - the result itself is already good
+        log(f"  timing harvest failed for {os.path.basename(ht_out)} (ignored): {e}")
+    timings["payload_bytes"] = os.path.getsize(ht_out)
+
+    report(job_id, status="Uploading")
+    phase_start = time.perf_counter()
+    blob = upload_result(job_id, ht_out, "ht")
+    timings["upload_s"] = round(time.perf_counter() - phase_start, 3)
+    report(job_id, status=terminal_status(cancel), ht_blob_path=blob, timings=timings,
+           identity=artifact_identity(artifact))
+    log(f"  multiway -> {blob} ({timings['payload_bytes']} bytes before gzip)")
 
 
 def main() -> int:
@@ -749,7 +825,7 @@ def main() -> int:
                     elif mode == "pushfold":
                         handle_htsolver_only(job, run_dir, timings, cancel, "pushfold")
                     elif mode == "multiway":
-                        handle_htsolver_only(job, run_dir, timings, cancel, "multiway")
+                        handle_multiway(job, run_dir, timings, cancel)
                     else:
                         handle_compare(job, run_dir, timings, cancel)
             except Cancelled as e:

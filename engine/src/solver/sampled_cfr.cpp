@@ -20,6 +20,7 @@ constexpr std::uint32_t kNoJointRow = std::numeric_limits<std::uint32_t>::max();
 // Small fixed bound on actions per node so the pinned-seat hot loop never
 // allocates; every current tree is far below it.
 constexpr int kMaxActionsSampled = 64;
+constexpr std::uint32_t kNoBlock = std::numeric_limits<std::uint32_t>::max();
 
 int tree_depth(const PublicTree& tree) {
   std::vector<int> depth(tree.size(), 0);
@@ -30,6 +31,36 @@ int tree_depth(const PublicTree& tree) {
     max_depth = std::max(max_depth, depth[i]);
   }
   return max_depth;
+}
+
+// v[i] *= scale over the pool in fixed chunks. Cells are independent, so the
+// bits cannot depend on the thread count or the chunk size; never fuse a
+// reduction into this loop. With canonicalize_zero the product -0.0f is
+// stored as +0.0f, written as a compare rather than `+ 0.0f` so an FMA
+// contraction cannot fold the fix into the multiply. The two forms agree
+// bitwise with the dense fold this replaced: an untouched cell used to be
+// (r * scale) + (+0.0f), which is exactly canon(r * scale), and a touched
+// cell (-0.0f) + delta equals (+0.0f) + delta for every delta, since a lane's
+// delta cell is a sum of terms starting at +0.0f and can never be -0.0f.
+void scale_chunked(ThreadPool& pool, std::vector<float>& v, float scale,
+                   bool canonicalize_zero) {
+  constexpr std::size_t kChunk = std::size_t{1} << 20;
+  const std::size_t n = v.size();
+  if (n == 0) return;
+  const int chunks = static_cast<int>((n + kChunk - 1) / kChunk);
+  float* const data = v.data();
+  pool.parallel_for(chunks, [&](int c) {
+    const std::size_t begin = static_cast<std::size_t>(c) * kChunk;
+    const std::size_t end = std::min(n, begin + kChunk);
+    if (canonicalize_zero) {
+      for (std::size_t i = begin; i < end; ++i) {
+        const float r = data[i] * scale;
+        data[i] = r == 0.0f ? 0.0f : r;
+      }
+    } else {
+      for (std::size_t i = begin; i < end; ++i) data[i] *= scale;
+    }
+  });
 }
 
 }  // namespace
@@ -58,31 +89,6 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
                                std::to_string(kMaxActionsSampled) + " actions");
     }
   }
-  // The suit-symmetry quotient: storage rows are per CLASS when the game
-  // reports one and the config keeps it on (the default). Identity
-  // otherwise, with store_* equal to the hand layout, so that path is
-  // bit-for-bit the unquotiented solver.
-  {
-    std::vector<std::uint16_t> class_of;
-    int num_classes = 0;
-    deals.hand_classes(class_of, num_classes);
-    if (config_.symmetry && num_classes > 0) {
-      class_of_ = std::move(class_of);
-      num_classes_ = num_classes;
-    } else if (config_.symmetry && config_.symmetry_explicit && num_classes == 0) {
-      throw std::runtime_error(
-          "algorithm.sampled.symmetry was requested but this game reports no "
-          "suit-symmetry quotient");
-    }
-  }
-  if (num_classes_ == 0) {
-    int max_hands = 0;
-    for (int seat = 0; seat < game.num_seats(); ++seat) {
-      max_hands = std::max(max_hands, game.num_hands(seat));
-    }
-    class_of_.resize(static_cast<std::size_t>(max_hands));
-    for (int h = 0; h < max_hands; ++h) class_of_[static_cast<std::size_t>(h)] = static_cast<std::uint16_t>(h);
-  }
   if (agents_.has_team()) {
     // The team's infosets are (node, own hand, partner hand): rows are the
     // suit orbits of the ordered pair - the exact quotient, or nothing.
@@ -93,21 +99,20 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
     }
     universe_hands_ = game.num_hands(0);
   }
+  // The storage quotient lives in the indexer; the per-node offset and row
+  // arrays are copied out so the hot paths keep indexing flat vectors.
+  indexer_ = InfosetIndexer::plan(game, deals, config_, agents_.teammate_of, joint_classes_);
   store_offset_.assign(layout_.node_offset.size(), InfosetLayout::kNoOffset);
   store_hands_.assign(layout_.node_hands.size(), 0);
-  store_total_ = 0;
+  store_cells_.assign(layout_.node_hands.size(), 0);
   for (const Node& node : game.tree().nodes) {
     if (node.kind != NodeKind::Decision) continue;
-    const std::size_t d = node.decision_index;
-    const bool team_actor = agents_.teammate_of[node.actor] >= 0;
-    const std::uint32_t rows =
-        team_actor ? static_cast<std::uint32_t>(joint_classes_)
-                   : (num_classes_ > 0 ? static_cast<std::uint32_t>(num_classes_)
-                                       : layout_.node_hands[d]);
-    store_offset_[d] = store_total_;
-    store_hands_[d] = rows;
-    store_total_ += static_cast<std::size_t>(layout_.node_actions[d]) * rows;
+    const std::uint32_t d = node.decision_index;
+    store_offset_[d] = indexer_.offset(d);
+    store_hands_[d] = indexer_.rows(d);
+    store_cells_[d] = static_cast<std::uint32_t>(node.num_children) * indexer_.rows(d);
   }
+  store_total_ = indexer_.store_total;
   regrets_.assign(store_total_, 0.0f);
   strat_sum_.assign(store_total_, 0.0f);
   if (agents_.has_team()) {
@@ -117,12 +122,7 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
   max_depth_ = tree_depth(game.tree());
   lanes_.resize(config_.lanes);
   for (Lane& lane : lanes_) {
-    lane.regret_delta.assign(store_total_, 0.0f);
-    lane.strat_delta.assign(store_total_, 0.0f);
-    if (agents_.has_team()) {
-      lane.ev_delta.assign(store_total_, 0.0f);
-      lane.evw_delta.assign(store_total_, 0.0f);
-    }
+    lane.block_of.assign(indexer_.num_groups, kNoBlock);
     lane.class_sigma.resize(static_cast<std::size_t>(max_depth_) + 2);
     lane.mate_stack.resize(static_cast<std::size_t>(max_depth_) + 2);
     lane.sigma_stack.resize(static_cast<std::size_t>(max_depth_) + 2);
@@ -132,6 +132,9 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
   }
   pool_ = std::make_unique<ThreadPool>(resolve_thread_count(threads));
   split_budget_ = pool_->threads() > 1 ? pool_->threads() * 4 : 1;
+  // Abstraction maps are clustered here, once, before any traversal reads
+  // them; a no-op in the other two modes.
+  indexer_.fit(deals, config_, *pool_);
 }
 
 void SampledCfrSolver::run(std::uint64_t iterations) {
@@ -151,20 +154,30 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
     if (b0 > 0) {
       const float scale =
           static_cast<float>(static_cast<double>(b0) / static_cast<double>(b1));
-      for (float& r : regrets_) r *= scale;
-      for (float& s : strat_sum_) s *= scale;
-      for (float& v : ev_sum_) v *= scale;
-      for (float& w : ev_w_) w *= scale;
+      // The signed arrays canonicalize zero: a negative denormal times a
+      // scale below one rounds to -0.0f, and the sparse fold below skips
+      // untouched cells, so nothing else would turn it back into the +0.0f
+      // the old dense fold produced by adding +0.0f to every cell. Bitwise
+      // neutral against that fold on every cell (see scale_chunked).
+      scale_chunked(*pool_, regrets_, scale, true);
+      scale_chunked(*pool_, strat_sum_, scale, false);
+      scale_chunked(*pool_, ev_sum_, scale, true);
+      scale_chunked(*pool_, ev_w_, scale, false);
     }
 
     // Lanes read the master (frozen for the whole batch - nothing below
     // writes it) and accumulate into private buffers, each in ascending t.
     pool_->parallel_for(lanes, [&](int l) {
       Lane& lane = lanes_[static_cast<std::size_t>(l)];
-      std::fill(lane.regret_delta.begin(), lane.regret_delta.end(), 0.0f);
-      std::fill(lane.strat_delta.begin(), lane.strat_delta.end(), 0.0f);
-      std::fill(lane.ev_delta.begin(), lane.ev_delta.end(), 0.0f);
-      std::fill(lane.evw_delta.begin(), lane.evw_delta.end(), 0.0f);
+      // Release last batch's blocks: O(touched), and the arenas keep their
+      // capacity so the next batch's blocks come back zeroed by resize
+      // without a fresh allocation.
+      for (std::uint32_t g : lane.touched) lane.block_of[g] = kNoBlock;
+      lane.touched.clear();
+      lane.regret_delta.clear();
+      lane.strat_delta.clear();
+      lane.ev_delta.clear();
+      lane.evw_delta.clear();
       for (std::uint64_t t = b0; t < b1; ++t) {
         if (static_cast<int>(t % static_cast<std::uint64_t>(lanes)) != l) continue;
         run_iteration(t, lane);
@@ -174,25 +187,92 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
     // The fold-back is SERIAL and in lane order - the float-addition
     // ordering that makes any thread-to-lane assignment produce the same
     // bits, mirroring the vectorized core's child-order fold.
+    // Only touched blocks are added; every other cell would receive an exact
+    // +0.0f, which is the identity on a master that never holds -0.0f. The
+    // order of groups within a lane is irrelevant to the bits (cells are
+    // independent); only the lane order per cell is, and that stays serial.
+    const bool team = agents_.has_team();
     for (int l = 0; l < lanes; ++l) {
       const Lane& lane = lanes_[static_cast<std::size_t>(l)];
-      for (std::size_t i = 0; i < store_total_; ++i) regrets_[i] += lane.regret_delta[i];
-      for (std::size_t i = 0; i < store_total_; ++i) strat_sum_[i] += lane.strat_delta[i];
-      for (std::size_t i = 0; i < ev_sum_.size(); ++i) ev_sum_[i] += lane.ev_delta[i];
-      for (std::size_t i = 0; i < ev_w_.size(); ++i) ev_w_[i] += lane.evw_delta[i];
+      for (std::uint32_t g : lane.touched) {
+        const std::size_t blk = lane.block_of[g];
+        const std::size_t base = indexer_.group_offset[g];
+        const std::size_t cells = group_cells(g);
+        const float* rd = lane.regret_delta.data() + blk;
+        const float* sd = lane.strat_delta.data() + blk;
+        for (std::size_t i = 0; i < cells; ++i) regrets_[base + i] += rd[i];
+        for (std::size_t i = 0; i < cells; ++i) strat_sum_[base + i] += sd[i];
+        if (team) {
+          const float* ed = lane.ev_delta.data() + blk;
+          const float* ewd = lane.evw_delta.data() + blk;
+          for (std::size_t i = 0; i < cells; ++i) ev_sum_[base + i] += ed[i];
+          for (std::size_t i = 0; i < cells; ++i) ev_w_[base + i] += ewd[i];
+        }
+      }
     }
     t_ = b1;
   }
 }
 
+std::size_t SampledCfrSolver::group_cells(std::uint32_t group) const {
+  // Every member of a group has the same actions x rows; the representative
+  // is the node whose decision index the group was formed from.
+  return store_cells_[indexer_.group_rep[group]];
+}
+
+std::size_t SampledCfrSolver::touch(Lane& lane, std::uint32_t decision_index) {
+  const std::uint32_t g = indexer_.group(decision_index);
+  std::uint32_t& blk = lane.block_of[g];
+  if (blk == kNoBlock) {
+    const std::size_t used = lane.regret_delta.size();
+    const std::size_t cells = store_cells_[decision_index];
+    if (used + cells > static_cast<std::size_t>(kNoBlock)) {
+      throw std::runtime_error("sampled core: a lane's delta arena exceeded 4G cells");
+    }
+    blk = static_cast<std::uint32_t>(used);
+    // resize on growth value-initializes: the new block arrives zeroed.
+    lane.regret_delta.resize(used + cells, 0.0f);
+    lane.strat_delta.resize(used + cells, 0.0f);
+    if (agents_.has_team()) {
+      lane.ev_delta.resize(used + cells, 0.0f);
+      lane.evw_delta.resize(used + cells, 0.0f);
+    }
+    lane.touched.push_back(g);
+  }
+  return blk;
+}
+
 void SampledCfrSolver::run_iteration(std::uint64_t t, Lane& lane) {
-  deals_.sample_deal(config_.seed, t, lane.deal);
-  deals_.deal_strengths(lane.deal, lane.strengths);
   const int seats = game_.num_seats();
+  // The shared uniform deal, drawn once per iteration. Under range dealing
+  // each hero gets its own deal below and this one is only the fallback for
+  // a game without the seam.
+  bool shared_dealt = false;
+  const auto deal_shared = [&]() {
+    if (shared_dealt) return;
+    deals_.sample_deal(config_.seed, t, lane.deal);
+    deals_.deal_strengths(lane.deal, lane.strengths);
+    shared_dealt = true;
+  };
+  if (!config_.range_deal) deal_shared();
   for (int hero = 0; hero < seats; ++hero) {
     // Frozen seats (unaware mode) do not train; their policy is read from
     // the frozen rows wherever they are pinned.
     if (frozen_seat_[static_cast<std::size_t>(hero)]) continue;
+    // Range dealing: the opponents in proportion to their ranges, weighted
+    // by the masses the conditioning divided out (deal_game.hpp). A weight
+    // of zero (a range with nothing left to deal) is an honest nothing.
+    double range_weight = 1.0;
+    bool range_dealt = false;
+    if (config_.range_deal) {
+      range_dealt = deals_.sample_hero_deal(config_.seed, t, hero, lane.deal, range_weight);
+      if (range_dealt) {
+        if (range_weight <= 0.0) continue;
+        deals_.deal_strengths(lane.deal, lane.strengths);
+      } else {
+        deal_shared();
+      }
+    }
     // Hero's universe restricted to the deal: every hand colliding with an
     // opponent's dealt cards or the board is zeroed. Hero's OWN dealt cards
     // do not restrict anything - see deal_game.hpp for why ignoring them is
@@ -221,11 +301,13 @@ void SampledCfrSolver::run_iteration(std::uint64_t t, Lane& lane) {
     // multiplies in at their decision nodes on the way down. A dealt combo
     // outside a seat's range zeroes the whole traversal's values (an
     // unbiased zero, not an error) but hero's strategy still accumulates.
-    double w = 1.0;
-    for (int q = 0; q < seats; ++q) {
-      if (q == hero) continue;
-      const std::uint16_t hq = lane.deal.hand[static_cast<std::size_t>(q)];
-      w *= hq == kNoHand ? 0.0 : static_cast<double>(game_.initial_range(q)[hq]);
+    double w = range_weight;
+    if (!range_dealt) {
+      for (int q = 0; q < seats; ++q) {
+        if (q == hero) continue;
+        const std::uint16_t hq = lane.deal.hand[static_cast<std::size_t>(q)];
+        w *= hq == kNoHand ? 0.0 : static_cast<double>(game_.initial_range(q)[hq]);
+      }
     }
     traverse(game_.tree().root(), hero, lane, w, lane.hero_root, nullptr, 0, 0,
              lane.value_stack[0]);
@@ -373,10 +455,11 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
       // sigma in only after its own descent. Strategy sum: weighted by the
       // hero's reach (the actor's PARTNER) and the actor's own earlier
       // sigma, so the stored mass is the conditioning's actual reach.
-      float* rd = lane.regret_delta.data() + offset;
-      float* sd = lane.strat_delta.data() + offset;
-      float* ed = lane.ev_delta.data() + offset;
-      float* ewd = lane.evw_delta.data() + offset;
+      const std::size_t blk = touch(lane, node.decision_index);
+      float* rd = lane.regret_delta.data() + blk;
+      float* sd = lane.strat_delta.data() + blk;
+      float* ed = lane.ev_delta.data() + blk;
+      float* ewd = lane.evw_delta.data() + blk;
       // Conditioned EVs: vrow already carries opp_w (the external prefix
       // reach), so accumulating hero_reach * vrow against a denominator of
       // hero_reach * opp_w averages to E[team chips | infoset, action].
@@ -424,7 +507,7 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
         if (jc == kNoJointRow) return;  // impossible deal
         hrow = jc;
       } else {
-        hrow = class_of_[hq];
+        hrow = indexer_.map(node.decision_index)[hq];
       }
       float pos_sum = 0.0f;
       for (std::uint16_t a = 0; a < actions; ++a) {
@@ -516,10 +599,11 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
     // see the traverse contract in the header. Conditioned EVs accumulate
     // with the same weight against an opp_w denominator (values carry the
     // external prefix reach), averaging to E[team chips | infoset, action].
-    float* rd = lane.regret_delta.data() + offset;
-    float* sd = lane.strat_delta.data() + offset;
-    float* ed = lane.ev_delta.data() + offset;
-    float* ewd = lane.evw_delta.data() + offset;
+    const std::size_t blk = touch(lane, node.decision_index);
+    float* rd = lane.regret_delta.data() + blk;
+    float* sd = lane.strat_delta.data() + blk;
+    float* ed = lane.ev_delta.data() + blk;
+    float* ewd = lane.evw_delta.data() + blk;
     const float wpre = static_cast<float>(opp_w);
     for (std::uint16_t a = 0; a < actions; ++a) {
       const std::size_t srow_off = static_cast<std::size_t>(a) * my_hands;
@@ -542,6 +626,7 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
   // quotient, a hand without it), broadcast to a per-hand sigma for reach
   // descent. On the identity path this computes the exact floats the
   // unquotiented code did - the broadcast is a copy.
+  const std::uint16_t* const row_of = indexer_.map(node.decision_index);
   std::vector<float>& class_sigma = lane.class_sigma[static_cast<std::size_t>(depth)];
   std::vector<float>& sigma = lane.sigma_stack[static_cast<std::size_t>(depth)];
   std::vector<float>& child_vals = lane.child_stack[static_cast<std::size_t>(depth)];
@@ -575,7 +660,7 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
   for (std::uint16_t a = 0; a < actions; ++a) {
     const float* crow = class_sigma.data() + static_cast<std::size_t>(a) * rows;
     float* srow = sigma.data() + static_cast<std::size_t>(a) * my_hands;
-    for (std::uint32_t h = 0; h < my_hands; ++h) srow[h] = crow[class_of_[h]];
+    for (std::uint32_t h = 0; h < my_hands; ++h) srow[h] = crow[row_of[h]];
   }
 
   for (std::uint16_t a = 0; a < actions; ++a) {
@@ -598,16 +683,17 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
   // of a class adds its sample into the shared row - that pooling IS the
   // variance reduction. Hand order is fixed, so the accumulation stays
   // deterministic; identity reduces to the original per-hand loop.
-  float* rd = lane.regret_delta.data() + offset;
-  float* sd = lane.strat_delta.data() + offset;
+  const std::size_t blk = touch(lane, node.decision_index);
+  float* rd = lane.regret_delta.data() + blk;
+  float* sd = lane.strat_delta.data() + blk;
   for (std::uint16_t a = 0; a < actions; ++a) {
     const std::size_t srow_off = static_cast<std::size_t>(a) * my_hands;
     const std::size_t drow_off = static_cast<std::size_t>(a) * rows;
     const float* srow = sigma.data() + srow_off;
     const float* vrow = child_vals.data() + srow_off;
     for (std::uint32_t h = 0; h < my_hands; ++h) {
-      rd[drow_off + class_of_[h]] += vrow[h] - out[h];
-      sd[drow_off + class_of_[h]] += hero_reach[h] * srow[h];
+      rd[drow_off + row_of[h]] += vrow[h] - out[h];
+      sd[drow_off + row_of[h]] += hero_reach[h] * srow[h];
     }
   }
 }
@@ -664,16 +750,53 @@ void SampledCfrSolver::average_strategy(NodeId id, std::vector<float>& out) cons
   // the quotient every member combo of a class reads the same storage row,
   // so members emit IDENTICAL rows by construction - the consumers cannot
   // tell a quotiented solve apart from a converged symmetric one.
+  const std::uint16_t* const row_of = indexer_.map(node.decision_index);
+  // Abstraction mode only: a hand this node's board blocks was never trained
+  // (its reach is zero everywhere) and maps to row 0 as a placeholder, so it
+  // exports uniform rather than another hand's row. Null in the other modes,
+  // which keeps them literally the old loop.
+  const std::uint8_t* const valid = indexer_.valid(node.decision_index);
   for (std::uint32_t h = 0; h < hands; ++h) {
-    const std::uint16_t c = class_of_[h];
+    float* row = out.data() + static_cast<std::size_t>(h) * actions;
+    if (valid != nullptr && !valid[h]) {
+      const float uniform = 1.0f / static_cast<float>(actions);
+      for (std::uint16_t a = 0; a < actions; ++a) row[a] = uniform;
+      continue;
+    }
+    const std::uint16_t c = row_of[h];
     float sum = 0.0f;
     for (std::uint16_t a = 0; a < actions; ++a) {
       sum += strat_sum_[offset + static_cast<std::size_t>(a) * rows + c];
     }
-    float* row = out.data() + static_cast<std::size_t>(h) * actions;
     if (sum > 0.0f) {
       for (std::uint16_t a = 0; a < actions; ++a) {
         row[a] = strat_sum_[offset + static_cast<std::size_t>(a) * rows + c] / sum;
+      }
+    } else {
+      const float uniform = 1.0f / static_cast<float>(actions);
+      for (std::uint16_t a = 0; a < actions; ++a) row[a] = uniform;
+    }
+  }
+}
+
+void SampledCfrSolver::bucket_strategy(std::uint32_t group, std::vector<float>& out) const {
+  // The average strategy of one storage group's rows, before any expansion
+  // to hands: what the bucketed export writes. Same normalization as
+  // average_strategy (uniform where nothing accumulated).
+  const std::uint32_t rep = indexer_.group_rep[group];
+  const std::size_t offset = indexer_.group_offset[group];
+  const std::uint32_t rows = store_hands_[rep];
+  const std::uint16_t actions = layout_.node_actions[rep];
+  out.assign(static_cast<std::size_t>(rows) * actions, 0.0f);
+  for (std::uint32_t r = 0; r < rows; ++r) {
+    float sum = 0.0f;
+    for (std::uint16_t a = 0; a < actions; ++a) {
+      sum += strat_sum_[offset + static_cast<std::size_t>(a) * rows + r];
+    }
+    float* row = out.data() + static_cast<std::size_t>(r) * actions;
+    if (sum > 0.0f) {
+      for (std::uint16_t a = 0; a < actions; ++a) {
+        row[a] = strat_sum_[offset + static_cast<std::size_t>(a) * rows + r] / sum;
       }
     } else {
       const float uniform = 1.0f / static_cast<float>(actions);
@@ -763,7 +886,7 @@ void SampledCfrSolver::pinned_sigma(NodeId id, int actor, const Deal& deal,
     }
     row = jc;
   } else {
-    row = class_of_[hq];
+    row = indexer_.map(node.decision_index)[hq];
   }
   float sum = 0.0f;
   for (std::uint16_t a = 0; a < actions; ++a) {

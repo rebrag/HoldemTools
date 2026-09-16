@@ -20,11 +20,28 @@ public sealed class EngineArtifactReader
     private readonly IArtifactByteSource _source;
     private readonly Dictionary<uint, (ulong Offset, ulong Length)> _index = new();
 
+    // Bucketed artifacts (Header.Bucketed): the bucket maps, per-group row
+    // counts, per-decision-node group/map, root reach per seat, and the
+    // dense decision index of every node. See engine/docs/artifact-format.md.
+    private ushort[] _maps = Array.Empty<ushort>();
+    private uint _mapHands;
+    private uint[] _groupRows = Array.Empty<uint>();
+    private uint[] _nodeGroup = Array.Empty<uint>();
+    private uint[] _nodeMap = Array.Empty<uint>();
+    private uint[] _decisionIndex = Array.Empty<uint>();
+    private float[][] _rootReach = Array.Empty<float[]>();
+    private readonly Dictionary<uint, float[]> _strategyCache = new();
+    private readonly Dictionary<uint, float[][]> _reachCache = new();
+    private const int CacheEntries = 4096;
+
     public ArtifactHeader Header { get; private set; } = null!;
     public ArtifactMetadata Metadata { get; private set; } = null!;
     public IReadOnlyList<ArtifactNodeRecord> Nodes { get; private set; } = null!;
     public IReadOnlyList<ushort[]> HandDicts { get; private set; } = null!;
-    public IReadOnlyCollection<uint> DecisionNodeIds => _index.Keys;
+    public IReadOnlyCollection<uint> DecisionNodeIds =>
+        Header.Bucketed
+            ? Nodes.Where(n => n.IsDecision).Select(n => n.NodeId).ToArray()
+            : _index.Keys;
 
     private EngineArtifactReader(IArtifactByteSource source) => _source = source;
 
@@ -89,7 +106,234 @@ public sealed class EngineArtifactReader
                 (BinaryPrimitives.ReadUInt64LittleEndian(indexBytes.AsSpan(i + 8)),
                  BinaryPrimitives.ReadUInt64LittleEndian(indexBytes.AsSpan(i + 16)));
         }
+
+        if (Header.Bucketed) await InitializeBucketedAsync(ct);
     }
+
+    private async Task InitializeBucketedAsync(CancellationToken ct)
+    {
+        _decisionIndex = new uint[Nodes.Count];
+        uint d = 0;
+        for (var i = 0; i < Nodes.Count; i++)
+            _decisionIndex[i] = Nodes[i].IsDecision ? d++ : uint.MaxValue;
+
+        var bm = Metadata.Root.GetProperty("sections").GetProperty("bucket_map");
+        var bytes = (await _source.ReadRangeAsync(bm.GetProperty("offset").GetInt64(),
+                                                  (int)bm.GetProperty("length").GetInt64(), ct)).ToArray();
+        var pos = 0;
+        uint U32() { var v = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(pos)); pos += 4; return v; }
+        ushort U16() { var v = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(pos)); pos += 2; return v; }
+        var numMaps = U32();
+        _mapHands = U32();
+        _maps = new ushort[numMaps * _mapHands];
+        for (var i = 0; i < _maps.Length; i++) _maps[i] = U16();
+        var numGroups = U32();
+        _groupRows = new uint[numGroups];
+        for (var g = 0; g < numGroups; g++) _groupRows[g] = U32();
+        var decisions = U32();
+        if (decisions != d) throw new InvalidDataException("Bucket map does not match the node table.");
+        _nodeGroup = new uint[decisions];
+        _nodeMap = new uint[decisions];
+        for (var i = 0; i < decisions; i++) { _nodeGroup[i] = U32(); _nodeMap[i] = U32(); }
+
+        var rr = Metadata.Root.GetProperty("sections").GetProperty("root_reach");
+        var rbytes = (await _source.ReadRangeAsync(rr.GetProperty("offset").GetInt64(),
+                                                   (int)rr.GetProperty("length").GetInt64(), ct)).ToArray();
+        var seats = BinaryPrimitives.ReadUInt32LittleEndian(rbytes);
+        var hands = BinaryPrimitives.ReadUInt32LittleEndian(rbytes.AsSpan(4));
+        _rootReach = new float[seats][];
+        var q = 8;
+        for (var s = 0; s < seats; s++)
+        {
+            _rootReach[s] = new float[hands];
+            for (var h = 0; h < hands; h++, q += 4)
+                _rootReach[s][h] = BinaryPrimitives.ReadSingleLittleEndian(rbytes.AsSpan(q));
+        }
+    }
+
+    /// <summary>
+    /// The expanded [hand][action] strategy of a decision node on a bucketed
+    /// artifact: the group's rows read through the node's bucket map.
+    /// </summary>
+    private async Task<float[]> DenseStrategyAsync(uint nodeId, CancellationToken ct)
+    {
+        if (_strategyCache.TryGetValue(nodeId, out var cached)) return cached;
+        if (_strategyCache.Count >= CacheEntries) _strategyCache.Clear();
+        var d = _decisionIndex[nodeId];
+        if (d == uint.MaxValue) throw new KeyNotFoundException($"Node {nodeId} is not a decision node.");
+        if (!_index.TryGetValue(_nodeGroup[d], out var range))
+            throw new InvalidDataException("Bucketed artifact: missing group blob.");
+        var blob = (await _source.ReadRangeAsync((long)range.Offset, (int)range.Length, ct)).ToArray();
+        var numActions = BinaryPrimitives.ReadUInt16LittleEndian(blob.AsSpan(2));
+        var rows = BinaryPrimitives.ReadUInt32LittleEndian(blob.AsSpan(8));
+        var pos = 12;
+        var rowStrategy = new float[rows * numActions];
+        for (var r = 0; r < rows; r++)
+        {
+            var sum = 0.0f;
+            for (var k = 0; k < numActions; k++)
+            {
+                float p;
+                if (Header.StrategyU8) { p = blob[pos] / 255.0f; pos += 1; }
+                else { p = BinaryPrimitives.ReadSingleLittleEndian(blob.AsSpan(pos)); pos += 4; }
+                rowStrategy[r * numActions + k] = p;
+                sum += p;
+            }
+            for (var k = 0; k < numActions; k++)
+                rowStrategy[r * numActions + k] = sum > 0 ? rowStrategy[r * numActions + k] / sum : 1.0f / numActions;
+        }
+        var mapOffset = (int)(_nodeMap[d] * _mapHands);
+        var dense = new float[_mapHands * numActions];
+        for (var h = 0; h < _mapHands; h++)
+            Array.Copy(rowStrategy, _maps[mapOffset + h] * numActions, dense, h * numActions, numActions);
+        _strategyCache[nodeId] = dense;
+        return dense;
+    }
+
+    /// <summary>
+    /// Every seat's reach at a node under the average strategy: the root
+    /// ranges times the actor's row at each decision ancestor, zeroed at each
+    /// chance edge for hands holding the dealt card. What the per-hand export
+    /// pass computes, derived here instead of stored.
+    /// </summary>
+    private async Task<float[][]> ReachAtAsync(uint nodeId, CancellationToken ct)
+    {
+        if (nodeId == 0) return _rootReach;
+        if (_reachCache.TryGetValue(nodeId, out var cached)) return cached;
+        var node = Nodes[(int)nodeId];
+        var parent = Nodes[(int)node.ParentId];
+        var parentReach = await ReachAtAsync(node.ParentId, ct);
+        var reach = parentReach.Select(r => (float[])r.Clone()).ToArray();
+        if (parent.IsChance)
+        {
+            var card = node.DealtCard;
+            var nlhe = Metadata.HandUniverse == "nlhe_combos_1326";
+            for (var s = 0; s < reach.Length; s++)
+            {
+                var dict = HandDicts[s];
+                for (var h = 0; h < reach[s].Length; h++)
+                {
+                    if (nlhe)
+                    {
+                        var (hi, lo) = ComboCards(dict[h]);
+                        if (hi == card || lo == card) reach[s][h] = 0.0f;
+                    }
+                    else if (dict[h] == card) reach[s][h] = 0.0f;
+                }
+            }
+        }
+        else if (parent.IsDecision)
+        {
+            var sigma = await DenseStrategyAsync(node.ParentId, ct);
+            var k = (int)(nodeId - parent.FirstChild);
+            int actions = parent.NumChildren;
+            var mine = reach[parent.Actor];
+            for (var h = 0; h < mine.Length; h++) mine[h] *= sigma[h * actions + k];
+        }
+        if (_reachCache.Count >= CacheEntries) _reachCache.Clear();
+        _reachCache[nodeId] = reach;
+        return reach;
+    }
+
+    /// <summary>
+    /// Canonical 1326 combo order: pairs (hi, lo) with hi > lo, sorted by hi
+    /// descending then lo descending (engine/docs/artifact-format.md).
+    /// </summary>
+    private static (int Hi, int Lo) ComboCards(int index)
+    {
+        var i = index;
+        for (var hi = 51; hi >= 1; hi--)
+        {
+            if (i < hi) return (hi, hi - 1 - i);
+            i -= hi;
+        }
+        throw new ArgumentOutOfRangeException(nameof(index));
+    }
+
+    private static int ComboClassIndex(int index)
+    {
+        var (hi, lo) = ComboCards(index);
+        var rankHi = hi / 4;
+        var rankLo = lo / 4;
+        var suited = hi % 4 == lo % 4;
+        // Grid rows/cols are A..2 descending: A = 0.
+        var a = 12 - Math.Max(rankHi, rankLo);
+        var b = 12 - Math.Min(rankHi, rankLo);
+        if (rankHi == rankLo) return a * 13 + a;
+        return suited ? a * 13 + b : b * 13 + a;
+    }
+
+    private async Task<ArtifactNodeData> ReadBucketedNodeAsync(uint nodeId, CancellationToken ct)
+    {
+        var node = Nodes[(int)nodeId];
+        if (!node.IsDecision)
+            throw new KeyNotFoundException($"Node {nodeId} has no blob (not a decision node?).");
+        var reach = await ReachAtAsync(nodeId, ct);
+        var dense = await DenseStrategyAsync(nodeId, ct);
+        var numSeats = (ushort)reach.Length;
+        var numActions = node.NumChildren;
+        var actor = node.Actor;
+        var seats = new ArtifactSeatData[numSeats];
+        for (var s = 0; s < numSeats; s++)
+        {
+            var idx = new List<uint>();
+            var r = new List<float>();
+            for (var h = 0; h < reach[s].Length; h++)
+            {
+                if (reach[s][h] > SparseEps) { idx.Add((uint)h); r.Add(reach[s][h]); }
+            }
+            seats[s] = new ArtifactSeatData(idx.ToArray(), r.ToArray(), new float[idx.Count]);
+        }
+        var actorIdx = seats[actor].Idx;
+        var strategy = new float[actorIdx.Length * numActions];
+        for (var i = 0; i < actorIdx.Length; i++)
+            Array.Copy(dense, (int)actorIdx[i] * numActions, strategy, i * numActions, numActions);
+        var actionEv = new float[strategy.Length];
+
+        float[]? rollupWeight = null;
+        float[]? rollupEv = null;
+        float[][]? rollupFreq = null;
+        if (Metadata.HandUniverse == "nlhe_combos_1326")
+        {
+            rollupWeight = new float[169];
+            rollupEv = new float[169];
+            rollupFreq = new float[169][];
+            var weight = new double[169];
+            var freqSum = new double[169, numActions];
+            var freqPlain = new double[169, numActions];
+            var plainCount = new int[169];
+            var dict = HandDicts[actor];
+            for (var h = 0; h < reach[actor].Length; h++)
+            {
+                var cls = ComboClassIndex(dict[h]);
+                double w = reach[actor][h];
+                plainCount[cls]++;
+                weight[cls] += w;
+                for (var k = 0; k < numActions; k++)
+                {
+                    double p = dense[h * numActions + k];
+                    freqSum[cls, k] += w * p;
+                    freqPlain[cls, k] += p;
+                }
+            }
+            for (var cls = 0; cls < 169; cls++)
+            {
+                rollupWeight[cls] = (float)weight[cls];
+                rollupFreq[cls] = new float[numActions];
+                for (var k = 0; k < numActions; k++)
+                {
+                    var freq = 0.0;
+                    if (weight[cls] > 0) freq = freqSum[cls, k] / weight[cls];
+                    else if (plainCount[cls] > 0) freq = freqPlain[cls, k] / plainCount[cls];
+                    rollupFreq[cls][k] = (float)(Math.Round(freq * 10000.0) / 10000.0);
+                }
+            }
+        }
+        return new ArtifactNodeData(numSeats, numActions, actor, seats, strategy, actionEv,
+                                    rollupWeight, rollupEv, rollupFreq);
+    }
+
+    private const float SparseEps = 1e-6f;
 
     private static ArtifactNodeRecord ParseNodeRecord(byte[] records, int start)
     {
@@ -113,6 +357,7 @@ public sealed class EngineArtifactReader
 
     public async Task<ArtifactNodeData> ReadNodeAsync(uint nodeId, CancellationToken ct = default)
     {
+        if (Header.Bucketed) return await ReadBucketedNodeAsync(nodeId, ct);
         if (!_index.TryGetValue(nodeId, out var range))
             throw new KeyNotFoundException($"Node {nodeId} has no blob (not a decision node?).");
         var blob = (await _source.ReadRangeAsync((long)range.Offset, (int)range.Length, ct)).ToArray();

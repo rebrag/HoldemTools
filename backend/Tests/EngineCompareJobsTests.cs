@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Security.Claims;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
@@ -330,6 +331,55 @@ public class EngineCompareJobsTests
         var claimed = claim.Value!.GetType();
         Assert.Equal(true, claimed.GetProperty("disablePio")!.GetValue(claim.Value));
         Assert.Equal(true, claimed.GetProperty("disableCompare")!.GetValue(claim.Value));
+    }
+
+    [Fact]
+    public async Task Job_labels_fit_the_Board_column()
+    {
+        // The in-memory provider does NOT enforce column lengths, so every
+        // other test here would pass with a label too long for SQL Server -
+        // which is exactly what shipped: "3-way 9c5dJc7s9h" is 16 characters
+        // into an nvarchar(12), and every multiway turn and river job died on
+        // insert with "String or binary data would be truncated" wrapped in a
+        // DbUpdateException. A multiway FLOP label is exactly 12 and squeaked
+        // through, which is why it looked intermittent.
+        //
+        // So this reads the limit out of the MODEL rather than hardcoding it,
+        // and checks the longest label each mode can produce against it.
+        using var db = NewDb();
+        var max = db.Model.FindEntityType(typeof(EngineCompareJob))!
+                    .FindProperty(nameof(EngineCompareJob.Board))!
+                    .GetMaxLength();
+        Assert.NotNull(max);
+
+        var ctl = UserController(db, "uid-1");
+        var longest = new List<(string mode, JsonObject config)>
+        {
+            // 9 seats and a 5-card board is the widest a multiway label gets.
+            ("multiway", MultiwayConfig(9, sampled: true)),
+            ("pushfold", SpotConfig()),
+            ("compare", SpotConfig()),
+        };
+        longest[1].config.Remove("board"); // pushfold takes no board
+        var pushfoldPlayers = new JsonArray();
+        for (var i = 0; i < 9; i++)
+        {
+            pushfoldPlayers.Add(new JsonObject
+            { ["seat"] = $"S{i}", ["stack"] = 200, ["range"] = "AA" });
+        }
+        longest[1].config["players"] = pushfoldPlayers;
+
+        foreach (var (mode, config) in longest)
+        {
+            var result = await ctl.Create(new EngineCompareController.CreateDto
+            { Config = config, Mode = mode });
+            var job = Assert.IsType<EngineCompareController.JobDto>(
+                Assert.IsType<OkObjectResult>(result.Result).Value);
+            Assert.NotNull(job.Board);
+            Assert.True(job.Board!.Length <= max,
+                $"{mode} label \"{job.Board}\" is {job.Board.Length} chars, " +
+                $"but Board is nvarchar({max}) - this would throw on insert.");
+        }
     }
 
     [Fact]

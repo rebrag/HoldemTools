@@ -6,6 +6,7 @@
 #include "game/deal_game.hpp"
 #include "game/game.hpp"
 #include "solver/agents.hpp"
+#include "solver/infoset_indexer.hpp"
 #include "solver/strategy_source.hpp"
 #include "solver/updates.hpp"
 #include "util/parallel.hpp"
@@ -114,8 +115,11 @@ class SampledCfrSolver final : public StrategySource {
   // 4-way solve is most of the wall clock. Same policy as CfrSolver.
   int split_budget() const override { return split_budget_; }
   const QreConfig& qre() const override { return qre_; }
+  const InfosetIndexer* bucket_indexer() const override { return &indexer_; }
+  void bucket_strategy(std::uint32_t group, std::vector<float>& out) const override;
 
   const InfosetLayout& layout() const { return layout_; }
+  const InfosetIndexer& indexer() const { return indexer_; }
   const Game& game() const { return game_; }
   // Read seams for the determinism test: bitwise equality across thread
   // counts is asserted on the raw arrays, never on derived quantities.
@@ -134,6 +138,12 @@ class SampledCfrSolver final : public StrategySource {
   // Layout fingerprint: a checkpoint written against a different tree,
   // universe, or team must be refused rather than silently reinterpreted.
   std::size_t store_total() const { return store_total_; }
+  // The bucket assignment, for the checkpoint trailer: two abstractions with
+  // equal bucket counts have equal store_total, so the layout check alone
+  // cannot tell them apart. 0 outside abstraction mode.
+  std::uint64_t bucket_map_hash() const {
+    return indexer_.mode == InfosetIndexer::Mode::Abstraction ? indexer_.fingerprint() : 0;
+  }
   int joint_classes() const { return joint_classes_; }
   int universe_hands() const { return universe_hands_; }
   // Restore state read from a checkpoint. Throws on any size mismatch -
@@ -153,11 +163,23 @@ class SampledCfrSolver final : public StrategySource {
   // Everything one lane touches while its iterations run: private delta
   // buffers plus per-depth scratch so the recursion allocates nothing.
   struct Lane {
+    // SPARSE deltas. A deal walks one runout, so a lane touches a small
+    // fraction of the store per batch; a dense copy per lane would cost
+    // (lanes + 1) x the store, which on a flop tree is the whole box. Each
+    // storage group touched this batch gets one zeroed block of
+    // actions x rows floats in every arena below, at the same block offset,
+    // allocated on first touch (touch()) and released by the reset that
+    // starts the next batch. Bitwise neutral against the dense copy: an
+    // untouched cell held +0.0f, and the master never holds -0.0f (run()
+    // canonicalizes it in the discount sweep), so skipping the add of that
+    // +0.0f changes no bit.
     std::vector<float> regret_delta, strat_delta;
     // Conditioned-EV accumulators, allocated only for team solves: value
     // numerators per (row, action) and reach denominators per row (stored
-    // in the action-0 block of a store_total_-sized array).
+    // in the action-0 part of the group's block).
     std::vector<float> ev_delta, evw_delta;
+    std::vector<std::uint32_t> block_of;  // per storage group: arena offset, kNoBlock if untouched
+    std::vector<std::uint32_t> touched;   // groups touched this batch, in first-touch order
     Deal deal;
     std::vector<std::uint32_t> strengths;
     std::vector<float> hero_root;                  // masked root reach
@@ -172,6 +194,12 @@ class SampledCfrSolver final : public StrategySource {
   };
 
   void run_iteration(std::uint64_t t, Lane& lane);
+  // The lane's delta block for decision node d, allocating (zeroed, in every
+  // arena) on the batch's first touch. Take pointers from it only AFTER a
+  // node's descent into its children: a child's first touch can grow the
+  // arenas and move them.
+  std::size_t touch(Lane& lane, std::uint32_t decision_index);
+  std::size_t group_cells(std::uint32_t group) const;
   // Counterfactual values for `hero`'s hands at `id` under the lane's deal,
   // scaled by the pinned opponents' reach `opp_w`. Writes into out (length =
   // hero hands).
@@ -208,14 +236,15 @@ class SampledCfrSolver final : public StrategySource {
   SampledConfig config_;
   AgentMap agents_;
   InfosetLayout layout_;
-  // The storage quotient. `class_of_[hand]` is the storage row a hand reads
-  // and writes; identity (and store_* == the hand layout) when the game
-  // reports no symmetry, so the identity path is bit-for-bit the original.
-  std::vector<std::uint16_t> class_of_;
+  // The storage quotient (solver/infoset_indexer.hpp): `indexer_.map(d)[hand]`
+  // is the storage row a hand reads and writes at decision node d. The two
+  // per-node arrays below are copied out of it once, so the hot paths index
+  // flat vectors exactly as they did before the seam existed.
+  InfosetIndexer indexer_;
   std::vector<std::size_t> store_offset_;    // by decision_index
-  std::vector<std::uint32_t> store_hands_;   // by decision_index: classes or hands
+  std::vector<std::uint32_t> store_hands_;   // by decision_index: rows (buckets, classes or hands)
+  std::vector<std::uint32_t> store_cells_;   // by decision_index: actions x rows
   std::size_t store_total_ = 0;
-  int num_classes_ = 0;  // 0 = identity
   // Team state. joint_class_[own * H + partner] -> joint storage row
   // (0xFFFFFFFF on overlapping pairs); sized only when a team exists.
   std::vector<std::uint32_t> joint_class_;

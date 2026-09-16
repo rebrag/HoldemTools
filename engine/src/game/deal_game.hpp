@@ -62,6 +62,24 @@ class DealGame {
     return false;
   }
 
+  // The training deal for ONE hero's traversal with the other seats dealt IN
+  // PROPORTION to their ranges: each opponent in seat order from its range
+  // conditioned on the cards already out, the hero's own two cards and the
+  // runout uniform from what is left, and `weight` the product of the
+  // range masses the conditioning divided out - the importance weight that
+  // makes the estimator exact for the uniform-deal measure. On a tight range
+  // a uniform deal lands every opponent in range about never (0.21% of deals
+  // at four seats on a 15% range, ~0 at six), and every miss weighs the
+  // hero's whole traversal by zero; this is the fix. The hero stays uniform
+  // because a range-proportional hero hand would bias the runout its
+  // vectorized traversal sees (the runout avoids the hero's own cards), and
+  // one deal per hero per iteration is what keeps that honest. Returns false
+  // when the game does not implement it (the solver then shares one uniform
+  // deal across the iteration's traversals, weighted by the range product).
+  virtual bool sample_hero_deal(std::uint64_t, std::uint64_t, int, Deal&, double&) const {
+    return false;
+  }
+
   // Per-iteration scratch: hand strengths for the WHOLE compact universe on
 
   // this deal's board, shared by all of the iteration's seat traversals.
@@ -128,6 +146,46 @@ class DealGame {
   virtual void deal_showdown_values(NodeId node, int seat, const Deal& deal,
                                     const std::vector<std::uint32_t>& strengths,
                                     std::vector<float>& out) const = 0;
+
+  // ---- Hand abstraction (solver/infoset_indexer.hpp consumes these) ----
+  // The game supplies per-public-state FEATURES and the indexer clusters
+  // them; nothing here knows what a bucket is. Universe-agnostic on purpose:
+  // PLO supplies its own strengths and equities and the indexer is unchanged.
+
+  // Whether hands can be bucketed per public state at all. False for the
+  // preflop game (no board in the tree; its lossless quotient is
+  // hand_classes) and the toys.
+  virtual bool abstraction_supported() const { return false; }
+  // Public-state key of a decision node: the board it holds. Two nodes with
+  // equal keys and equal betting lines are the same public state.
+  virtual std::uint64_t abstraction_key(NodeId) const { return 0; }
+  // Per-hand strength on a COMPLETED key, one entry per hand of the widest
+  // seat universe; 0 marks a hand the board blocks.
+  virtual void abstraction_strengths(std::uint64_t, std::vector<std::uint32_t>&) const {
+    throw std::runtime_error("this game has no hand abstraction");
+  }
+  // Per-hand equity against a uniform opponent from the universe over EVERY
+  // completion of a partial key: `per_hand` equities per hand, hand-major,
+  // in completion order. valid[h] = 0 marks a hand the key's board blocks;
+  // its equities are zero.
+  virtual void abstraction_equities(std::uint64_t, std::vector<float>&, int&,
+                                    std::vector<std::uint8_t>&) const {
+    throw std::runtime_error("this game has no hand abstraction");
+  }
+  // Symmetries for storage sharing: relabelings that fix the root public
+  // state and every seat's range. `abstraction_symmetric_key(i, key)` is the
+  // key's image under symmetry i, and a state with that image key reads the
+  // original state's rows through `abstraction_symmetric_map(i)`:
+  // image[h] = original[map[h]].
+  virtual int abstraction_symmetries() const { return 0; }
+  virtual std::uint64_t abstraction_symmetric_key(int, std::uint64_t key) const { return key; }
+  // The same relabeling applied to one public card, so the indexer can
+  // canonicalize a runout ORDER (turn X then river Y is a different public
+  // state from turn Y then river X even though the board sets agree).
+  virtual int abstraction_symmetric_card(int, int card) const { return card; }
+  virtual const std::vector<std::uint16_t>& abstraction_symmetric_map(int) const {
+    throw std::runtime_error("this game has no abstraction symmetries");
+  }
 };
 
 }  // namespace engine

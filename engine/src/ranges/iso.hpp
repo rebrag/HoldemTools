@@ -30,6 +30,9 @@ inline Card perm_card(const SuitPerm& p, Card c) {
 // The 23 non-identity suit permutations, in a fixed deterministic order.
 std::vector<SuitPerm> all_suit_perms();
 
+// The image of a card set under pi.
+std::uint64_t perm_mask(const SuitPerm& p, std::uint64_t mask);
+
 // Does pi map the card set in `mask` to itself?
 bool perm_fixes_mask(const SuitPerm& p, std::uint64_t mask);
 

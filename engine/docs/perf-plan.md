@@ -38,6 +38,10 @@ For htsolver specifically, bucketing is the worst available trade: it destroys t
 
 **The abstractions worth accepting are action abstraction (bet-size pruning) and depth-limiting. Keep the door shut on hands until PLO forces it open.**
 
+> **Qualified 2026-09-11.** That door stays shut on the VECTORIZED core, whose whole value is the exact per-combo gradient, and every sentence above is about that core.
+> On the SAMPLED core hand abstraction landed (M8e in `roadmap.md`), for a different reason than speed: a 3-way flop tree costs 55 GB of per-combo regrets and a 6-seat tight-range spot deals every opponent in range about never, and pooling updates across a bucket is what addresses both.
+> Measured, it is not a speed lever there either - at equal deals the bucketed solve is slightly behind the per-hand one on a 100%-range 3-way turn, and 18% faster per deal - it is a memory and variance lever.
+
 ## The jesolver evidence, because it is unusually good
 
 The [changelog](https://jesolver.com/download/free/changelog.txt) is a seven-year record of what actually moved, with percentages attached: compression modes (+55%), AVX2 (+25%), more SIMD (+15%), compiler update (+8%), prefetching, NUMA (+5-15% on big trees), auto-tuned params, AVX-512 (up to +25%), P-core/E-core awareness (+20%+).

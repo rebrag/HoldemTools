@@ -174,6 +174,96 @@ NlhePostflopGame::NlhePostflopGame(const SolveConfig& config) {
   iso_perm_.assign(tree_.size(), 0);
   if (config.isomorphism) build_isomorphism();
   build_evaluators(config.threads);
+  // Root symmetries for hand abstraction: every suit permutation that fixes
+  // the root board set-wise and leaves every seat's range invariant. Cheap
+  // (23 candidates) and only read by the InfosetIndexer.
+  for (const SuitPerm& p : all_suit_perms()) {
+    if (!perm_fixes_mask(p, board_mask_)) continue;
+    if (!ranges_invariant(p, universe_, ranges_)) continue;
+    root_syms_.push_back(p);
+    root_sym_maps_.push_back(perm_hand_map(p, universe_));
+  }
+}
+
+// ---- Hand abstraction features ----
+
+void NlhePostflopGame::abstraction_strengths(std::uint64_t key,
+                                             std::vector<std::uint32_t>& out) const {
+  const auto it = evaluators_.find(key);
+  if (it == evaluators_.end()) {
+    throw std::runtime_error("hand abstraction: no evaluator for a river board the tree "
+                             "holds a decision on");
+  }
+  out = it->second->strengths();
+}
+
+std::uint64_t NlhePostflopGame::abstraction_symmetric_key(int sym, std::uint64_t key) const {
+  return perm_mask(root_syms_[static_cast<std::size_t>(sym)], key);
+}
+
+void NlhePostflopGame::abstraction_equities(std::uint64_t key, std::vector<float>& out,
+                                            int& per_hand,
+                                            std::vector<std::uint8_t>& valid) const {
+  const int hands = universe_.size();
+  const int known = std::popcount(key);
+  const int missing = 5 - known;
+  if (missing < 1 || missing > 2) {
+    throw std::runtime_error("hand abstraction: equities are defined for flop and turn boards");
+  }
+  // Cards that can still come.
+  std::vector<Card> rest;
+  for (int c = 0; c < kNumCards; ++c) {
+    if ((key & (1ULL << c)) == 0) rest.push_back(static_cast<Card>(c));
+  }
+  // Every valid hand sees the same number of completions: the deck minus the
+  // board minus its own two cards, choose `missing`.
+  const int free_cards = static_cast<int>(rest.size()) - 2;
+  per_hand = missing == 1 ? free_cards : free_cards * (free_cards - 1) / 2;
+  valid.assign(static_cast<std::size_t>(hands), 1);
+  for (int h = 0; h < hands; ++h) {
+    if (universe_.masks[static_cast<std::size_t>(h)] & key) valid[static_cast<std::size_t>(h)] = 0;
+  }
+  out.assign(static_cast<std::size_t>(hands) * static_cast<std::size_t>(per_hand), 0.0f);
+  std::vector<int> fill(static_cast<std::size_t>(hands), 0);
+  // A uniform opponent over the universe; the evaluator only reads the
+  // hands its board leaves valid, and compat_reach removes the ones sharing
+  // a card with the hero.
+  const std::vector<float> uniform(static_cast<std::size_t>(hands), 1.0f);
+  std::vector<float> share(static_cast<std::size_t>(hands));
+  std::vector<float> compat(static_cast<std::size_t>(hands));
+  const auto visit = [&](std::uint64_t board) {
+    const auto it = evaluators_.find(board);
+    if (it == evaluators_.end()) {
+      throw std::runtime_error("hand abstraction: no evaluator for a completed board below a "
+                               "decision node - tree and abstraction disagree");
+    }
+    const RiverEvaluator& eval = *it->second;
+    // showdown_2p with pot 1 and no commitment: wins + half the ties.
+    eval.showdown_2p(uniform.data(), 1.0, 0.0, share.data());
+    eval.compat_reach(uniform.data(), compat.data());
+    for (int h = 0; h < hands; ++h) {
+      const std::size_t hi = static_cast<std::size_t>(h);
+      if (!valid[hi]) continue;
+      if (universe_.masks[hi] & board) continue;  // this completion collides with the hand
+      const float eq = compat[hi] > 0.0f ? share[hi] / compat[hi] : 0.0f;
+      out[hi * static_cast<std::size_t>(per_hand) + static_cast<std::size_t>(fill[hi]++)] = eq;
+    }
+  };
+  if (missing == 1) {
+    for (Card c : rest) visit(key | (1ULL << c));
+  } else {
+    for (std::size_t i = 0; i < rest.size(); ++i) {
+      for (std::size_t j = i + 1; j < rest.size(); ++j) {
+        visit(key | (1ULL << rest[i]) | (1ULL << rest[j]));
+      }
+    }
+  }
+  for (int h = 0; h < hands; ++h) {
+    const std::size_t hi = static_cast<std::size_t>(h);
+    if (valid[hi] && fill[hi] != per_hand) {
+      throw std::runtime_error("hand abstraction: completion count mismatch");
+    }
+  }
 }
 
 // Group each live chance node's children into suit-equivalence classes and
@@ -394,6 +484,20 @@ void NlhePostflopGame::sample_deal(std::uint64_t seed, std::uint64_t iter, Deal&
 
 bool NlhePostflopGame::sample_ev_deal(std::uint64_t seed, std::uint64_t iter, Deal& out,
                                       double& weight) const {
+  return deal_in_range(seed, iter, -1, out, weight);
+}
+
+bool NlhePostflopGame::sample_hero_deal(std::uint64_t seed, std::uint64_t iter, int hero,
+                                        Deal& out, double& weight) const {
+  // A distinct stream per hero: the same (seed, iter) must not hand two
+  // heroes correlated opponents, and nothing may key on a thread.
+  const std::uint64_t hero_seed =
+      seed ^ (0x9E3779B97F4A7C15ULL * static_cast<std::uint64_t>(hero + 1));
+  return deal_in_range(hero_seed, iter, hero, out, weight);
+}
+
+bool NlhePostflopGame::deal_in_range(std::uint64_t seed, std::uint64_t iter, int skip_seat,
+                                     Deal& out, double& weight) const {
   // One draw per selection step, counter-based like every draw in the
   // engine: (seed, iter, k) -> a unit in [0, 1), never a stateful RNG.
   const auto unit = [seed, iter](std::uint32_t k) {
@@ -427,6 +531,7 @@ bool NlhePostflopGame::sample_ev_deal(std::uint64_t seed, std::uint64_t iter, De
   double w = 1.0;
   std::uint32_t k = 0;
   for (int seat = 0; seat < num_seats_; ++seat) {
+    if (seat == skip_seat) continue;
     const std::size_t si = static_cast<std::size_t>(seat);
     // Mass of this seat's range disjoint from `used`, by inclusion-exclusion
     // over the dealt cards. A 2-card combo can hold at most two of them, so
@@ -468,18 +573,32 @@ bool NlhePostflopGame::sample_ev_deal(std::uint64_t seed, std::uint64_t iter, De
   }
   weight = w;
 
-  // The runout: uniform over what is left of the deck. A distinct seed
-  // stream from the hand draws (deal_cards keys on k from 0 too).
-  if (runout_count_ > 0) {
+  // The skipped seat's two cards and the runout: uniform over what is left
+  // of the deck, in that order, from a distinct seed stream (deal_cards keys
+  // on k from 0 too). The hero's cards are drawn even though its traversal
+  // ignores them, because the runout must avoid them exactly as it does
+  // under the uniform deal - that is the exchangeability argument.
+  const int extra = skip_seat >= 0 ? 2 : 0;
+  if (runout_count_ + extra > 0) {
     std::uint8_t remaining[kNumCards];
     int n = 0;
     for (int c = 0; c < kNumCards; ++c) {
       if ((used & (1ULL << c)) == 0) remaining[n++] = static_cast<std::uint8_t>(c);
     }
-    std::uint8_t drawn[5];
-    deal_cards(seed ^ 0xC2B2AE3D27D4EB4FULL, iter, n, runout_count_, drawn);
+    std::uint8_t drawn[7];
+    deal_cards(seed ^ 0xC2B2AE3D27D4EB4FULL, iter, n, runout_count_ + extra, drawn);
+    if (skip_seat >= 0) {
+      const Card a = remaining[drawn[0]];
+      const Card b = remaining[drawn[1]];
+      const std::size_t si = static_cast<std::size_t>(skip_seat);
+      out.hole[2 * si] = a;
+      out.hole[2 * si + 1] = b;
+      const int idx = universe_.compact_index(a, b);
+      out.hand[si] =
+          idx < 0 ? std::numeric_limits<std::uint16_t>::max() : static_cast<std::uint16_t>(idx);
+    }
     for (int b = 0; b < runout_count_; ++b) {
-      out.board[static_cast<std::size_t>(b)] = remaining[drawn[b]];
+      out.board[static_cast<std::size_t>(b)] = remaining[drawn[extra + b]];
     }
   }
   return true;

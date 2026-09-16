@@ -24,6 +24,7 @@ import {
   type StreetKey,
 } from "./treeConfigText";
 import { TREE_STREETS, type TreeSeat } from "@/components/treeBuildingView";
+import { parseRangeTokens, serializeRangeTokens } from "@/lib/solver/rangeTokens";
 
 /** Bumped only when an older envelope can no longer be read as-is. */
 const SCHEMA = 1;
@@ -35,6 +36,12 @@ interface SavedTreeEnvelope {
   /** serializeTreeConfigText output: ranges, board, pot, stacks, thresholds
    *  and all six sizing cards. */
   pio: string;
+  /** Starting ranges of the seats between OOP and the button, as the same
+   *  token strings `pio` carries for those two - PioViewer's format has room
+   *  for exactly two ranges, so the rest ride beside it. Absent on a tree
+   *  saved heads-up, and absent MEANS heads-up: the seat count is part of the
+   *  spot, so a loaded tree sets it rather than inheriting the builder's. */
+  midRanges?: string[];
   /* ---- the tree knobs PioViewer's format cannot carry ---- */
   maxRaises: string;
   preflopAggressor: BuilderState["preflopAggressor"];
@@ -71,6 +78,7 @@ export const serializeSavedTree = (b: BuilderState): string => {
   const envelope: SavedTreeEnvelope = {
     v: SCHEMA,
     pio: serializeTreeConfigText(b),
+    ...(b.midRanges.length > 0 ? { midRanges: b.midRanges.map(serializeRangeTokens) } : {}),
     maxRaises: b.maxRaises,
     preflopAggressor: b.preflopAggressor,
     noThreeBet: readFlags(b),
@@ -135,6 +143,7 @@ export const applySavedTree = (prev: BuilderState, stored: string): BuilderState
   return {
     ...prev,
     ...parsed.spot,
+    midRanges: (envelope.midRanges ?? []).map(parseRangeTokens),
     oop: withFlags("oop"),
     ip: withFlags("ip"),
     maxRaises: pick(envelope.maxRaises, DEFAULT_BUILDER.maxRaises),

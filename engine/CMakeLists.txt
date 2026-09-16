@@ -58,7 +58,12 @@ if(MSVC)
     target_compile_options(engine_flags INTERFACE /arch:AVX2)
   endif() # SSE2 is the MSVC x64 default
 else()
-  target_compile_options(engine_flags INTERFACE -Wall -Wextra -Werror)
+  # -ffp-contract=off: GCC and Clang contract a*b+c into a fused multiply-add
+  # by default once -march enables FMA (x86-64-v3 does), which rounds once
+  # where MSVC's /fp:precise rounds twice. Same source, different bits, and
+  # the sampled core's absolute digests caught it on the first CI run. Off
+  # keeps every platform on the same arithmetic.
+  target_compile_options(engine_flags INTERFACE -Wall -Wextra -Werror -ffp-contract=off)
   if(ENGINE_SIMD STREQUAL "AVX512")
     target_compile_options(engine_flags INTERFACE -march=x86-64-v4)
   elseif(ENGINE_SIMD STREQUAL "AVX2")
@@ -82,6 +87,7 @@ add_library(engine_core STATIC
   src/solver/best_response.cpp
   src/solver/depth_limit.cpp
   src/solver/sampled_cfr.cpp
+  src/solver/infoset_indexer.cpp
   src/solver/agents.cpp
   src/solver/memory.cpp
   src/io/local_store.cpp
@@ -117,6 +123,12 @@ target_link_libraries(terminal3_bench PRIVATE engine_core)
 add_executable(tree_hash tools/tree_hash.cpp)
 target_link_libraries(tree_hash PRIVATE engine_core)
 
+# bucket_probe answers "what does a hand abstraction cost by itself": an
+# exact solve projected onto a bucket map and rated by the exact best
+# response, swept over bucket counts and feature methods.
+add_executable(bucket_probe tools/bucket_probe.cpp)
+target_link_libraries(bucket_probe PRIVATE engine_core)
+
 # --- Tests ----------------------------------------------------------------
 enable_testing()
 add_executable(engine_tests
@@ -142,8 +154,9 @@ add_executable(engine_tests
   tests/test_sampled_preflop.cpp
   tests/test_sampled_postflop.cpp
   tests/test_multiway_postflop.cpp
-
   tests/test_team_preflop.cpp
+  tests/test_sampled_digest.cpp
+  tests/test_abstraction.cpp
 )
 target_link_libraries(engine_tests PRIVATE engine_core doctest::doctest)
 add_test(NAME engine_tests COMMAND engine_tests)

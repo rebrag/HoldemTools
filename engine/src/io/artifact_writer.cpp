@@ -434,13 +434,25 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
   // The 169-class rollup IS the push/fold chart, so it matters more preflop
   // than anywhere else.
   const bool nlhe = config.game == "nlhe" || config.game == "nlhe_preflop";
-  const bool rollups = config.rollups_169 && nlhe;
+  const bool bucketed = config.export_bucketed;
+  // A bucketed artifact carries no rollup block: the reader recomputes the
+  // rollup from the expanded rows and the derived reach (the spec's rule
+  // that rollups are derived data).
+  const bool rollups = config.rollups_169 && nlhe && !bucketed;
   const bool strategy_u8 = config.strategy_quantize_u8;
   const bool ev_f16 = !config.ev_float32;
+  const InfosetIndexer* indexer = bucketed ? source.bucket_indexer() : nullptr;
+  if (bucketed && (indexer == nullptr || indexer->mode != InfosetIndexer::Mode::Abstraction)) {
+    throw std::runtime_error("output.export \"bucketed\" needs a solver core storing rows per "
+                             "bucket (algorithm.sampled.abstraction)");
+  }
 
-  // Export pass under the average strategy.
-  ExportPass pass{game, source, std::vector<NodeExportData>(tree.num_decision_nodes)};
-  {
+  // Export pass under the average strategy - the per-hand export only. The
+  // bucketed export writes straight from the solver's rows and holds no
+  // per-node records at all, which is the whole reason it exists.
+  ExportPass pass{game, source, std::vector<NodeExportData>()};
+  if (!bucketed) {
+    pass.exports.resize(tree.num_decision_nodes);
     std::vector<std::vector<float>> reach(game.num_seats());
     for (int s = 0; s < game.num_seats(); ++s) reach[s] = game.initial_range(s);
     // Same fan-out budget the solver uses, so the export saturates the same
@@ -463,6 +475,7 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
   if (strategy_u8) flags |= fmt::kFlagStrategyU8;
   if (ev_f16) flags |= fmt::kFlagEvF16;
   if (rollups) flags |= fmt::kFlagRollups;
+  if (bucketed) flags |= fmt::kFlagBucketed;
 
   // Header placeholder; offsets patched at the end (why ArtifactStore has seek).
   std::vector<std::uint8_t> header(fmt::kHeaderSize, 0);
@@ -494,22 +507,104 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
                          {"count", dicts[s].size()}});
   }
 
-  // Node blobs (decision nodes only), collecting the index.
+  // Bucketed export: the bucket map and the root reach, then one blob per
+  // storage GROUP. Layout in docs/artifact-format.md.
+  json bucket_map_meta = nullptr;
+  json root_reach_meta = nullptr;
+  if (bucketed) {
+    const InfosetIndexer& ix = *indexer;
+    pad_to(store, 8);
+    const std::uint64_t off = store.tell();
+    std::vector<std::uint8_t> bytes;
+    fmt::put<std::uint32_t>(bytes, ix.num_maps);
+    fmt::put<std::uint32_t>(bytes, ix.num_hands);
+    for (std::uint16_t v : ix.map_storage) fmt::put<std::uint16_t>(bytes, v);
+    fmt::put<std::uint32_t>(bytes, ix.num_groups);
+    for (std::uint32_t g = 0; g < ix.num_groups; ++g) {
+      fmt::put<std::uint32_t>(bytes, ix.rows(ix.group_rep[g]));
+    }
+    fmt::put<std::uint32_t>(bytes, tree.num_decision_nodes);
+    for (std::uint32_t d = 0; d < tree.num_decision_nodes; ++d) {
+      fmt::put<std::uint32_t>(bytes, ix.group(d));
+      fmt::put<std::uint32_t>(bytes, ix.map_of[d]);
+    }
+    store.write(bytes.data(), bytes.size());
+    bucket_map_meta = {{"offset", off},
+                       {"length", store.tell() - off},
+                       {"maps", ix.num_maps},
+                       {"hands", ix.num_hands},
+                       {"groups", ix.num_groups},
+                       {"decision_count", tree.num_decision_nodes}};
+
+    pad_to(store, 8);
+    const std::uint64_t roff = store.tell();
+    std::vector<std::uint8_t> rbytes;
+    fmt::put<std::uint32_t>(rbytes, static_cast<std::uint32_t>(game.num_seats()));
+    fmt::put<std::uint32_t>(rbytes, ix.num_hands);
+    for (int s = 0; s < game.num_seats(); ++s) {
+      const std::vector<float>& range = game.initial_range(s);
+      for (std::uint32_t h = 0; h < ix.num_hands; ++h) {
+        fmt::put<float>(rbytes, h < range.size() ? range[h] : 0.0f);
+      }
+    }
+    store.write(rbytes.data(), rbytes.size());
+    root_reach_meta = {{"offset", roff},
+                       {"length", store.tell() - roff},
+                       {"seats", game.num_seats()},
+                       {"hands", ix.num_hands}};
+  }
+
+  // Node blobs, collecting the index: one per decision node (keyed by node
+  // id) in the per-hand export, one per storage group (keyed by group id)
+  // in the bucketed one.
   struct IndexEntry {
     std::uint32_t node_id;
     std::uint64_t offset;
     std::uint64_t length;
   };
   std::vector<IndexEntry> index;
-  for (NodeId id = 0; id < tree.size(); ++id) {
-    const Node& node = tree[id];
-    if (node.kind != NodeKind::Decision) continue;
-    pad_to(store, 64);
-    const std::uint64_t off = store.tell();
-    const auto blob = encode_node_blob(game, node, pass.exports[node.decision_index], dicts,
-                                       strategy_u8, ev_f16, rollups);
-    store.write(blob.data(), blob.size());
-    index.push_back({id, off, blob.size()});
+  if (bucketed) {
+    const InfosetIndexer& ix = *indexer;
+    std::vector<NodeId> node_of_decision(tree.num_decision_nodes);
+    for (NodeId id = 0; id < tree.size(); ++id) {
+      if (tree[id].kind == NodeKind::Decision) node_of_decision[tree[id].decision_index] = id;
+    }
+    std::vector<float> rows;
+    std::vector<std::uint8_t> blob;
+    for (std::uint32_t g = 0; g < ix.num_groups; ++g) {
+      const Node& rep = tree[node_of_decision[ix.group_rep[g]]];
+      const std::uint32_t nrows = ix.rows(ix.group_rep[g]);
+      source.bucket_strategy(g, rows);
+      blob.clear();
+      fmt::put<std::uint16_t>(blob, static_cast<std::uint16_t>(game.num_seats()));
+      fmt::put<std::uint16_t>(blob, rep.num_children);
+      fmt::put<std::uint16_t>(blob, rep.actor);
+      fmt::put<std::uint16_t>(blob, 1);  // bucketed blob marker
+      fmt::put<std::uint32_t>(blob, nrows);
+      for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (strategy_u8) {
+          fmt::put<std::uint8_t>(blob, static_cast<std::uint8_t>(std::lround(
+                                           std::clamp(rows[i], 0.0f, 1.0f) * 255.0f)));
+        } else {
+          fmt::put<float>(blob, rows[i]);
+        }
+      }
+      pad_to(store, 64);
+      const std::uint64_t off = store.tell();
+      store.write(blob.data(), blob.size());
+      index.push_back({g, off, blob.size()});
+    }
+  } else {
+    for (NodeId id = 0; id < tree.size(); ++id) {
+      const Node& node = tree[id];
+      if (node.kind != NodeKind::Decision) continue;
+      pad_to(store, 64);
+      const std::uint64_t off = store.tell();
+      const auto blob = encode_node_blob(game, node, pass.exports[node.decision_index], dicts,
+                                         strategy_u8, ev_f16, rollups);
+      store.write(blob.data(), blob.size());
+      index.push_back({id, off, blob.size()});
+    }
   }
 
   // Peak memory, sampled HERE and not by the caller. The export pass above is
@@ -676,6 +771,25 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
   // correlated equilibrium set); flagged here so downstream consumers can
   // surface it.
   meta["multiway_no_nash_guarantee"] = game.num_seats() > 2;
+  // Whether the per-hand `ev` / `action_ev` fields in the node blobs mean
+  // anything. Without a vectorized terminal there is no per-hand value to
+  // carry up, so the export leaves those columns at zero (see visit()) - and
+  // a zero that is indistinguishable from a real EV is worse than no number
+  // at all. Stated here so a reader can drop the columns rather than having
+  // to infer the rule from the seat count.
+  // A bucketed artifact carries no EV columns at all, whatever the seat
+  // count; the reader zero-fills them and this says so.
+  meta["per_hand_ev"] = game.vectorized_terminals() && !bucketed;
+  // Hand abstraction, when the sampled core solved per bucket. The blobs
+  // are still per hand (average_strategy expands through the bucket map),
+  // and hands sharing a bucket carry identical rows; this says which hands
+  // those were and how the buckets were formed. Absent = solved per hand.
+  {
+    const InfosetIndexer* ix = source.bucket_indexer();
+    meta["hand_abstraction"] = ix != nullptr && ix->mode == InfosetIndexer::Mode::Abstraction;
+  }
+  if (!stats.abstraction.empty()) meta["abstraction"] = stats.abstraction;
+  meta["export"] = config.export_bucketed ? "bucketed" : "per_hand";
   meta["wall_time_s"] = stats.wall_time_s;
   meta["setup_time_s"] = stats.setup_time_s;
   // The export pass and file write, which wall_time_s excludes by design.
@@ -754,6 +868,10 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
         {"record_size", fmt::kNodeRecordSize},
         {"count", tree.size()}}},
       {"hand_dicts", dict_meta}};
+  if (bucketed) {
+    meta["sections"]["bucket_map"] = bucket_map_meta;
+    meta["sections"]["root_reach"] = root_reach_meta;
+  }
 
   pad_to(store, 8);
   const std::uint64_t meta_off = store.tell();

@@ -96,6 +96,10 @@ struct SolveStats {
   // Sampled family: deals the root-EV pass actually walked (bounded by a
   // node-visit budget on big trees, so not always the 200k ceiling).
   std::uint64_t ev_deals = 0;
+  // Hand abstraction (sampled core, algorithm.sampled.abstraction): the
+  // config echoed back plus the storage it produced and the assignment's
+  // fingerprint. Empty when the solve was per hand.
+  nlohmann::json abstraction;
 };
 
 

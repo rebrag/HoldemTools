@@ -43,6 +43,15 @@ export type TreeSeatView = Record<TreeStreet, TreeStreetView>;
 export interface TreeBuildingView {
   oopRange: Record<string, number>;
   ipRange: Record<string, number>;
+  /**
+   * Starting ranges for the seats BETWEEN the first to act (oopRange) and
+   * the last to act (ipRange), in acting order - so a three-handed tree has
+   * one, and the seats read OOP / MID / BTN. Heads-up it is empty, and the
+   * two callers that only ever build heads-up trees (the solver's postflop
+   * session, the hand-history solve offer) leave it out altogether: they have
+   * no third seat to describe. The panel renders one range card per entry.
+   */
+  midRanges?: Record<string, number>[];
   /** Raw board text as typed; parse it, never store cards here. */
   board: string;
   /** DISPLAY money, as typed - never a number. The solver adapter multiplies
@@ -62,6 +71,27 @@ export interface TreeBuildingView {
   oop: TreeSeatView;
   ip: TreeSeatView;
 }
+
+/**
+ * Seat labels for an N-handed postflop tree, in acting order.
+ *
+ * The first to act is always OOP and the last is IP heads-up or BTN
+ * otherwise; the middle takes the positional names that sit nearest the
+ * button (MID, then HJ, CO as seats are added, LJ last), and past six
+ * numbered middles fill the gap. These are the seat names the engine config
+ * carries and the artifact's `metadata.seats` reports back, so the payload's
+ * line strip and the builder's range cards agree by construction.
+ */
+export const seatNamesFor = (seats: number): string[] => {
+  if (seats <= 2) return ["OOP", "IP"];
+  const middles = seats - 2;
+  const nearButton = ["LJ", "HJ", "CO"];
+  const mids: string[] = ["MID"];
+  const named = Math.min(middles - 1, nearButton.length);
+  for (let i = 0; i < middles - 1 - named; i++) mids.push(`MP${i + 2}`);
+  mids.push(...nearButton.slice(nearButton.length - named));
+  return ["OOP", ...mids, "BTN"];
+};
 
 export const emptyStreetView = (): TreeStreetView => ({
   bet: "",

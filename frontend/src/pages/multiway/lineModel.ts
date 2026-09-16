@@ -20,6 +20,7 @@ import { indexLineBySeat } from "@/pages/solver/seatNavigation";
 import { fmtBB } from "@/pages/solver/boardDisplay";
 import {
   actionLabels,
+  type ActionLabeller,
   CLASS_NAMES,
   walkLine,
   type DumpNode,
@@ -55,7 +56,8 @@ const childOf = (dump: PushFoldDump, node: DumpNode, choice: number): DumpNode |
 const isDecision = (node: DumpNode | null | undefined): node is DumpNode =>
   !!node && node.kind === "decision";
 
-const foldIndex = (node: DumpNode): number => actionLabels(node).indexOf("Fold");
+const foldIndex = (node: DumpNode, labelsFor: ActionLabeller): number =>
+  labelsFor(node).indexOf("Fold");
 
 /** Seat labels, made unique defensively: the tables key seats by label. */
 export const seatLabelsOf = (dump: PushFoldDump): string[] => {
@@ -97,13 +99,14 @@ export const actingOrder = (dump: PushFoldDump): number[] => {
 export const foldForward = (
   dump: PushFoldDump,
   start: DumpNode | undefined,
-  seat: number
+  seat: number,
+  labelsFor: ActionLabeller = actionLabels
 ): { path: number[]; node: DumpNode } | null => {
   const path: number[] = [];
   let node = start;
   while (isDecision(node)) {
     if (node.actor === seat) return { path, node };
-    const fold = foldIndex(node);
+    const fold = foldIndex(node, labelsFor);
     if (fold < 0) return null;
     path.push(fold);
     node = childOf(dump, node, fold);
@@ -117,21 +120,27 @@ export const foldForward = (
 export const pathToSeatDecision = (
   dump: PushFoldDump,
   path: number[],
-  seat: number
+  seat: number,
+  labelsFor: ActionLabeller = actionLabels
 ): number[] | null => {
-  const { steps, node } = walkLine(dump, path);
+  const { steps, node } = walkLine(dump, path, labelsFor);
   const i = steps.findIndex((s) => s.seat === seat);
   if (i >= 0) return path.slice(0, i);
-  const forward = foldForward(dump, node, seat);
+  const forward = foldForward(dump, node, seat, labelsFor);
   return forward ? [...path, ...forward.path] : null;
 };
 
 /** The node `seat` decides at along this line (see pathToSeatDecision). */
-export const nodeForSeat = (dump: PushFoldDump, path: number[], seat: number): DumpNode | null => {
-  const { steps, node } = walkLine(dump, path);
+export const nodeForSeat = (
+  dump: PushFoldDump,
+  path: number[],
+  seat: number,
+  labelsFor: ActionLabeller = actionLabels
+): DumpNode | null => {
+  const { steps, node } = walkLine(dump, path, labelsFor);
   const hit = steps.find((s) => s.seat === seat);
   if (hit) return hit.node;
-  return foldForward(dump, node, seat)?.node ?? null;
+  return foldForward(dump, node, seat, labelsFor)?.node ?? null;
 };
 
 /** `seat` takes `label`, wherever that seat's decision is relative to the
@@ -140,13 +149,14 @@ export const pathWithSeatAction = (
   dump: PushFoldDump,
   path: number[],
   seat: number,
-  label: string
+  label: string,
+  labelsFor: ActionLabeller = actionLabels
 ): number[] | null => {
-  const base = pathToSeatDecision(dump, path, seat);
+  const base = pathToSeatDecision(dump, path, seat, labelsFor);
   if (!base) return null;
-  const { node } = walkLine(dump, base);
+  const { node } = walkLine(dump, base, labelsFor);
   if (!isDecision(node)) return null;
-  const choice = actionLabels(node).indexOf(label);
+  const choice = labelsFor(node).indexOf(label);
   return choice < 0 ? null : [...base, choice];
 };
 
@@ -174,13 +184,14 @@ const baseJson = (dump: PushFoldDump, seat: number): JsonData => ({
 export const jsonDataFor = (
   dump: PushFoldDump,
   node: DumpNode | null,
-  seat: number
+  seat: number,
+  labelsFor: ActionLabeller = actionLabels
 ): JsonData => {
   const data = baseJson(dump, seat);
   if (!isDecision(node)) return data;
   const scale = chipScale(dump);
   const rollup = node.data?.rollup_169 ?? [];
-  actionLabels(node).forEach((label, i) => {
+  labelsFor(node).forEach((label, i) => {
     const hands: HandData = {};
     for (const entry of rollup) {
       // Per-action EV where the payload has it; the class EV is one number
@@ -257,8 +268,12 @@ export interface LineModel {
   scale: number;
 }
 
-export const buildLineModel = (dump: PushFoldDump, path: number[]): LineModel => {
-  const { steps, node } = walkLine(dump, path);
+export const buildLineModel = (
+  dump: PushFoldDump,
+  path: number[],
+  labelsFor: ActionLabeller = actionLabels
+): LineModel => {
+  const { steps, node } = walkLine(dump, path, labelsFor);
   const order = actingOrder(dump);
   const labels = seatLabelsOf(dump);
   const scale = chipScale(dump);
@@ -277,7 +292,7 @@ export const buildLineModel = (dump: PushFoldDump, path: number[]): LineModel =>
     plateMapping[label] = file;
     // A seat still to act shows the options of the node it would decide at
     // if everyone in front of it folded - so every card has something on it.
-    plateData[file] = jsonDataFor(dump, nodeForSeat(dump, path, seat), seat);
+    plateData[file] = jsonDataFor(dump, nodeForSeat(dump, path, seat, labelsFor), seat, labelsFor);
     playerBets[label] = (commit[seat] ?? 0) / scale;
     alivePlayers[label] = !folded.has(seat);
   });
@@ -313,18 +328,19 @@ export const lineHandlers = (
   dump: PushFoldDump,
   path: number[],
   setPath: (path: number[]) => void,
-  seatOf: Record<string, number>
+  seatOf: Record<string, number>,
+  labelsFor: ActionLabeller = actionLabels
 ): LineHandlers => ({
   onActionClick: (action, file) => {
     const seat = seatOfFile(file);
     if (seat == null) return;
-    const next = pathWithSeatAction(dump, path, seat, action);
+    const next = pathWithSeatAction(dump, path, seat, action, labelsFor);
     if (next) setPath(next);
   },
   onSkipToSeat: (pos) => {
     const seat = seatOf[pos];
     if (seat == null) return;
-    const next = pathToSeatDecision(dump, path, seat);
+    const next = pathToSeatDecision(dump, path, seat, labelsFor);
     if (next) setPath(next);
   },
   onRewindTo: (count) => setPath(rewindTo(path, count)),

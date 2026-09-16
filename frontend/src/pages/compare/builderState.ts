@@ -4,7 +4,8 @@
 // config. The state is deliberately shaped like PioViewer's tree-building
 // screen (see treeConfigText.ts) plus the few knobs that are ours alone:
 // solve accuracy, the iteration cap, and the pre-root aggressor.
-import type { TreeBuildingView } from "@/components/treeBuildingView";
+import { seatNamesFor, type TreeBuildingView } from "@/components/treeBuildingView";
+import { EXACT_SEAT_LIMIT } from "./multiwaySeats";
 import {
   cloneSeat,
   fullRangeWeights,
@@ -15,6 +16,9 @@ import {
 } from "./treeConfigText";
 
 export interface BuilderState extends TreeConfigText {
+  /** Required here, where the seat count is a real choice: the tree has
+   *  `2 + midRanges.length` players (see seatCount). */
+  midRanges: Record<string, number>[];
   /** Aggressor on the street BEFORE the root; gates OOP donk sizes there. */
   preflopAggressor: "none" | "ip" | "oop";
   maxRaises: string;
@@ -124,6 +128,7 @@ const street = (bet: string, raise: string, donk = ""): StreetBoxes => ({
 export const DEFAULT_BUILDER: BuilderState = {
   oopRange: fullRangeWeights(),
   ipRange: fullRangeWeights(),
+  midRanges: [],
   board: "9c 5d Jc 7s 9h",
   pot: "100",
   effectiveStacks: "400",
@@ -185,12 +190,30 @@ export const builderToView = (b: BuilderState): TreeBuildingView => b;
 export const applyViewToBuilder = (
   prev: BuilderState,
   v: TreeBuildingView
-): BuilderState => ({ ...prev, ...v });
+): BuilderState => ({ ...prev, ...v, midRanges: v.midRanges ?? prev.midRanges });
+
+/** Players in the tree being built. */
+export const seatCount = (b: BuilderState): number => 2 + b.midRanges.length;
+
+/**
+ * Set the player count, keeping every range already chosen. A seat added
+ * between the two existing ones starts as a copy of the button's range - the
+ * seat it is being split off from - so a 100% heads-up spot widens to a 100%
+ * three-way one, and a tightened button carries its range to the new seat
+ * rather than resetting to full. Removing seats drops from the button side.
+ */
+export const withSeatCount = (b: BuilderState, seats: number): BuilderState => {
+  const want = Math.max(0, seats - 2);
+  const mids = b.midRanges.slice(0, want);
+  while (mids.length < want) mids.push({ ...b.ipRange });
+  return { ...b, midRanges: mids };
+};
 
 export const cloneBuilder = (b: BuilderState): BuilderState => ({
   ...b,
   oopRange: { ...b.oopRange },
   ipRange: { ...b.ipRange },
+  midRanges: b.midRanges.map((r) => ({ ...r })),
   oop: cloneSeat(b.oop),
   ip: cloneSeat(b.ip),
 });
@@ -309,6 +332,12 @@ export const buildEngineConfig = (b: BuilderState): EngineConfigResult => {
   const iterations = Math.max(100, Number(b.maxIterations) || 20000);
 
   const qre = b.updateRule === "qre";
+  // Seats in acting order: OOP first, the middles, the button last. Heads-up
+  // that is exactly the old OOP / IP pair; the names come from one place so
+  // the payload's line strip and the builder's range cards cannot disagree.
+  const seats = seatCount(b);
+  const seatNames = seatNamesFor(seats);
+  const ranges = [b.oopRange, ...b.midRanges, b.ipRange];
   // The tree block both cores solve. Everything below `algorithm` is how it
   // is solved; this is what it is.
   const tree = {
@@ -317,13 +346,23 @@ export const buildEngineConfig = (b: BuilderState): EngineConfigResult => {
     board: board.join(" "),
     pot,
     chip_scale: 100,
-    players: [
-      { seat: "OOP", stack: stacks, range: engineRange(b.oopRange) },
-      { seat: "IP", stack: stacks, range: engineRange(b.ipRange) },
-    ],
+    players: ranges.map((range, i) => ({
+      seat: seatNames[i],
+      stack: stacks,
+      range: engineRange(range),
+    })),
     bet_sizing: betSizing,
     preflop_aggressor: b.preflopAggressor,
   };
+  // The seat count picks the core, and that is the engine's rule rather than
+  // a preference: past three seats the vectorized showdown does not exist
+  // (its inclusion-exclusion grows as 52^(N-2)), so the sampled core, which
+  // pins opponents at O(1) per hero hand, is the only one that can run it.
+  // Suit isomorphism is built and checked against a heads-up tree, and the
+  // engine refuses it past two seats rather than collapse what it cannot
+  // verify. The API re-checks both at queue time.
+  const multiway = seats > 2;
+  const sampledOnly = seats > EXACT_SEAT_LIMIT;
   // The sampled core has no QRE port (the engine refuses the pair), so a QRE
   // run never carries a second config even if the box was ticked earlier.
   const sampledConfig =
@@ -388,30 +427,43 @@ export const buildEngineConfig = (b: BuilderState): EngineConfigResult => {
       // holds full-enumeration values a sampled iteration never produces),
       // so sampling wins here rather than sending a config that will be
       // rejected after the job has already been queued.
-      algorithm: {
-        // QRE is `qre.mode`, not an update rule: it layers on top of one, and
-        // the engine's algorithm.update enum has no such value. dcfr stays the
-        // base rule underneath it.
-        update: qre ? "dcfr" : b.updateRule,
-        recalc: { enabled: b.sampling ? false : b.recalc },
-        ...(b.sampling
-          ? {
-              sampling: {
-                mode: "chance",
-                runouts: Math.max(1, Number(b.samplingRunouts) || 12),
-                anneal_full_at: Math.max(0, Number(b.samplingAnnealAt) || 2000),
-              },
-            }
-          : {}),
-      },
-      isomorphism: b.isomorphism,
+      algorithm: sampledOnly
+        ? {
+            // No update rule, recalc or chance sampling: the sampled core
+            // discounts linearly by iteration and the engine refuses all
+            // three on this family.
+            family: "sampled",
+            sampled: {
+              seed: Math.max(0, Math.floor(Number(b.sampledSeed) || 20260830)),
+              batch: Math.max(1, Math.floor(Number(b.sampledBatch) || 4096)),
+              lanes: Math.max(1, Math.min(256, Math.floor(Number(b.sampledLanes) || 4))),
+            },
+          }
+        : {
+            // QRE is `qre.mode`, not an update rule: it layers on top of one,
+            // and the engine's algorithm.update enum has no such value. dcfr
+            // stays the base rule underneath it.
+            update: qre ? "dcfr" : b.updateRule,
+            recalc: { enabled: b.sampling ? false : b.recalc },
+            ...(b.sampling
+              ? {
+                  sampling: {
+                    mode: "chance",
+                    runouts: Math.max(1, Number(b.samplingRunouts) || 12),
+                    anneal_full_at: Math.max(0, Number(b.samplingAnnealAt) || 2000),
+                  },
+                }
+              : {}),
+          },
+      isomorphism: multiway ? false : b.isomorphism,
       qre: qre
         ? {
             mode: "qre",
-            lambda: [
-              lambdaFor(b.qreLambdaOop, "OOP"),
-              lambdaFor(b.qreLambdaIp, "IP"),
-            ],
+            // One lambda per seat. The form has two: OOP's is the first
+            // seat's, and every seat behind it plays at the button's.
+            lambda: seatNames.map((_, i) =>
+              i === 0 ? lambdaFor(b.qreLambdaOop, "OOP") : lambdaFor(b.qreLambdaIp, "IP")
+            ),
             ...(b.qreAnneal
               ? {
                   anneal: {

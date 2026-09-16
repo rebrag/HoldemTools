@@ -1,0 +1,101 @@
+// The MonkerSolver comparison spot (docs/roadmap.md M8e): 3-way flop, 100%
+// ranges, 7.28M nodes. Per hand this is 55 GB of regrets and a 130 GB export
+// pass; with histogram 200/200 buckets and runout sharing it is a 6.1 GB
+// store, 17 GB peak with 16 sparse lanes, and a 1.5 GB bucketed artifact.
+// 110 deals/s on 16 threads; 11.6% of pot exploitable after 1.5M deals.
+{
+  "schema": 1,
+  "game": "nlhe",
+  "pot": 100,
+  "chip_scale": 100,
+  "players": [
+    {
+      "seat": "OOP",
+      "stack": 400,
+      "range": "@file:ranges/full.txt"
+    },
+    {
+      "seat": "MID",
+      "stack": 400,
+      "range": "@file:ranges/full.txt"
+    },
+    {
+      "seat": "BTN",
+      "stack": 400,
+      "range": "@file:ranges/full.txt"
+    }
+  ],
+  "qre": {
+    "mode": "nash"
+  },
+  "memory_limit_gb": 28,
+  "threads": 0,
+  "board": "Ts 6h 9h",
+  "bet_sizing": {
+    "flop": {
+      "bets": [
+        40,
+        400
+      ],
+      "raises": [
+        100,
+        400
+      ],
+      "allin_threshold": 0.9,
+      "max_raises": 3
+    },
+    "turn": {
+      "bets": [
+        50,
+        400
+      ],
+      "raises": [
+        100,
+        400
+      ],
+      "allin_threshold": 0.9,
+      "max_raises": 3
+    },
+    "river": {
+      "bets": [
+        50,
+        100,
+        400
+      ],
+      "raises": [
+        100,
+        400
+      ],
+      "allin_threshold": 0.9,
+      "max_raises": 3
+    }
+  },
+  "algorithm": {
+    "update": "dcfr",
+    "family": "sampled",
+    "sampled": {
+      "seed": 7,
+      "batch": 2048,
+      "lanes": 16,
+      "abstraction": {
+        "method": "histogram",
+        "flop": 0,
+        "turn": 200,
+        "river": 200,
+        "board_isomorphism": true
+      }
+    }
+  },
+  "budget": {
+    "iterations": 2000000,
+    "checkpoint_every": 500000,
+    "max_seconds": 14400
+  },
+  "output": {
+    "path": "out/multiway3_flop_bucketed.hta",
+    "export": "bucketed",
+    "checkpoint_path": "out/multiway3_flop_bucketed.htck",
+    "strategy_quantize_u8": true,
+    "ev_float32": true
+  }
+}

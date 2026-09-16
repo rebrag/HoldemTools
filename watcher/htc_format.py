@@ -121,11 +121,19 @@ class HtcWriter:
         return idx
 
     def add_node(self, node_id: str, position: str, actions: Sequence[str],
-                 hands: Sequence[Dict[str, Any]]) -> None:
+                 hands: Sequence[Dict[str, Any]],
+                 pot: Optional[float] = None) -> None:
         """One decision node's per-hand rows for this file's solver.
 
         Each hand is {hand, reach, freq[A], ev, action_ev[A]}; ev and any
         action_ev entry may be None.
+
+        `pot` is the chips POOLED at this node - the root pot plus every
+        completed street's commits, with the current street's live bets left
+        in front of the seats who made them. That is the reference a bet size
+        is a percentage of, and it is carried rather than re-derived from the
+        node id because the id names only the betting LEVEL, not who matched
+        it: past two seats a fold makes "level x seats" wrong.
         """
         n = len(hands)
         num_actions = len(actions)
@@ -178,6 +186,8 @@ class HtcWriter:
             "ev_wide": wide,
             "len": len(block),
         })
+        if pot is not None:
+            self._nodes[-1]["pot"] = round(float(pot), 4)
         self._blocks.append(block)
 
     def node_count(self) -> int:

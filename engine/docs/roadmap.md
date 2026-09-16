@@ -968,6 +968,41 @@ That is the right level of proof here: the existing tests check structure at a h
 
 `tests/test_tree_multiway.cpp` covers the rest at 3 and 4 seats: folds that continue the hand, folds that close it, round completion (every alive seat matched or all-in), pot conservation at every node, action wrapping back round after a raise, runout streets, and side pots whose `showdown_share` layers sum to exactly the pot across all 27 strength orderings.
 
+**Convergence on tight ranges, measured 2026-09-07 (`tools/bench_multiway.py`).**
+Conservation says nothing about this - it is a property of each dealt hand, so a completely unconverged solve still conserves perfectly - which is why it needed its own measurement.
+
+The M8c fear was that a dealt hand outside a seat's range weighs zero, so the effective sample size is the opponents' range fraction, and with N-1 opponents that is a PRODUCT.
+The mechanism is real and the numbers are stark (river SPR 7, fraction of deals where EVERY opponent is in range):
+
+| range | combos | 3 seats | 4 | 5 | 6 | 8 |
+|---|---|---|---|---|---|---|
+| 100% | 1326 | 100% | 100% | 100% | 100% | 100% |
+| 15% | 176 | 1.87% | 0.21% | 0.02% | 0.00% | 0.00% |
+| 6% | 76 | 0.40% | 0.02% | 0.00% | 0.00% | 0.00% |
+
+**But the fear was wrong about where it bites.** Narrow ranges are not the problem at a fixed seat count - at three seats they are if anything slightly EASIER, because the universe is smaller and there is less to learn:
+
+| range | vectorized (2000 iters) | sampled, 200k deals |
+|---|---|---|
+| 100% | 0.0028% of pot | ~3-14% (bumpy) |
+| 15% | 0.0013% | 1.81% |
+| 6% | 0.0016% | 1.57% |
+
+The problem is SEAT COUNT, and the seed spread shows the cliff exactly where the deal rate does (tight range, 200k deals, worst per-seat root EV gap between seeds 1 and 999):
+
+| seats | 3 | 4 | 6 | 8 |
+|---|---|---|---|---|
+| gap | **0.78% of pot** | **1.07%** | **13.41%** | **10.11%** |
+
+**The usable conclusion.**
+Three seats is production-ready and should always run VECTORIZED: exact, 0.0013% of pot in 2000 iterations (about 3 s), at any range width.
+Four seats is marginal - seeds agree to about 1% of pot at 200k deals, and there is no exploitability number to tell you when to stop.
+Six and up does not converge on tight ranges at all; 200k deals buys roughly eight usable ones.
+
+**One property to design around: sampled multiway exploitability is not monotone in iterations.** Measured at three seats, 100% ranges: 19.2% at 25k deals, 7.5% at 50k, 3.1% at 100k, **14.5% at 200k**, 4.0% at 400k, 1.4% at 800k. The trend is real and downward, but a single reading is not evidence of anything. Two causes, both already recorded: a stochastic gradient, and `multiway_no_nash_guarantee` - with 3+ players CFR converges to coarse correlated equilibria, so nashconv need not decrease. Quote a curve, never a point.
+
+The fix direction, not built: the training deal is uniform because dealing the HERO in proportion to its range biases the runout the vectorized hero sees. Dealing only the OPPONENTS proportionally, with the importance weight `sample_ev_deal` already uses, would restore the rate - but the runout also avoids the opponents' cards, so it needs the same correction and its variance under tiny acceptance is unmeasured. The recorded alternative (one deal per seat per iteration) fixes the hero bias but not the rate.
+
 **What M8b still needs, so this is not mistaken for the milestone.**
 The TREE is N-seat; the GAME is not.
 `NlhePostflopGame` still reports `num_seats() == 2`, evaluates terminals through `showdown_2p`, computes pairwise `compat_weights`, and hardcodes `52 - known - 4` in `chance_weight` (two seats' hole cards).
@@ -1093,10 +1128,146 @@ Unaware phase 1 is capped at half the budget so a team artifact can never be a b
 
 Still open under M9: teams of three or more seats and multiple teams (the joint quotient generalizes but the orbit space grows), general payoff-weight matrices (only summed-EV teams exist), and a team-aware best-response evaluator so team solves get a convergence number again.
 
+### M8e - hand abstraction on the sampled core. Landed 2026-09-11.
+
+The per-core rule below became code: `algorithm.sampled.abstraction.{flop,turn,river}` solves a postflop tree on the sampled core with storage rows per BUCKET, through the `InfosetIndexer` seam (`src/solver/infoset_indexer.*`).
+Strength quantiles on the river, seeded k-means over equity histograms (`method: "histogram"`, default `bins: 16`) or equity quantiles (`method: "equity"`) on earlier streets, per public board; suit-isomorphic runouts share one storage group (`board_isomorphism`).
+Deals, showdowns and chip conservation stay on real cards; only the storage is quotiented, and `average_strategy` expands through the map so every consumer sees per-hand rows.
+The vectorized core is untouched.
+
+**Two things had to change under it before the flop spot could fit at all**, both bitwise neutral and both pinned by the new absolute digests (`tests/test_sampled_digest.cpp`): the per-lane delta copies became SPARSE (one block per storage group a lane touched in a batch, instead of a full copy of the store per lane), and the discount sweep runs on the pool and canonicalizes zero.
+The sparse fold is neutral because an untouched cell contributed an exact `+0.0f`; the zero canonicalization exists because a negative denormal regret times a scale below one rounds to `-0.0f`, which the dense fold used to repair.
+
+**The flop spot, sized** (`Ts 6h 9h`, 3-way, 100% ranges, pot 100, stacks 400, two sizes per street plus raises and all-in; 7,282,835 nodes, 2,775,762 decision nodes, 1176-hand universe):
+
+| storage | cells | groups |
+|---|---|---|
+| per hand | 6.5 billion (55.0 GB regrets+strategy) | 2,775,762 |
+| histogram 300 turn / 100 river, runouts shared | 389 million | 1,688,936 |
+| histogram 300 / 100, no sharing | 637 million | 2,775,762 |
+| histogram 200 / 200, runouts shared | 765 million (6.1 GB) | 1,688,936 |
+
+Runout sharing is the predicted 1.64x (2352 ordered runouts, 1429 orbits under the c/d swap).
+The per-hand ARTIFACT export of that tree is 130 GB of export pass and a 160 GB file, and bucketing cannot touch it; the bucketed export (`output.export: "bucketed"`, flag bit 3, `docs/artifact-format.md`) writes one strategy blob per group and the readers expand it, which is what makes the spot writable at all.
+
+**The gate, on the Ts 6h 9h 9c 3-way turn** (same sizing, 62,947 nodes, 25,164 decision nodes, 1128 hands; three suits on the board, so no runout sharing is possible here).
+
+The exact vectorized reference: 250 iterations to 0.135 chips per seat exploitable (0.13% of pot), root EVs OOP 30.63 / MID 32.74 / BTN 36.63 against MonkerSolver's 30.53 / 32.83 / 36.65.
+
+The abstraction's OWN cost, by projecting that exact strategy onto the bucket map (reach-weighted, `tools/bucket_probe.cpp`) and rating the projection with the exact best response, chips per seat of a 100 pot:
+
+| turn \ river | 50 | 100 | 200 | 400 |
+|---|---|---|---|---|
+| equity 100 | 1.85 | 1.79 | 1.79 | 1.79 |
+| equity 400 | 0.79 | 0.63 | 0.59 | 0.58 |
+| equity 800 | 0.66 | 0.49 | 0.44 | 0.43 |
+| histogram 100 | 0.62 | 0.47 | 0.42 | 0.41 |
+| histogram 200 and up | 0.60 | 0.43 | 0.39 | 0.38 |
+
+The histogram method beats equity quantiles at every count (200 histogram turn buckets do what 800 equity buckets do), river buckets stop paying past 200, and 16-bin histograms cannot tell more than about 200 turn hands apart, which is why 200, 400 and 800 read the same.
+The floor is 0.25% of pot above exact at histogram 200/200.
+**Weighting the projection by range instead of reach reports 5% at near-per-hand counts** - deep in the tree most of a bucket's members never arrive and their placeholder rows outvote the hands that are there - and that number was the probe's own error, not the abstraction's.
+
+The bucketed SAMPLED solves themselves, exact best response at every checkpoint, exploitable per seat as % of pot, 16 threads, `lanes 16, batch 2048`:
+
+| solve | 250k | 500k | 750k | 1M | 1.25M | 1.5M | 1.75M | 2M | deals/s | peak RSS |
+|---|---|---|---|---|---|---|---|---|---|---|
+| per hand | 6.44 | 3.94 | 3.03 | 2.46 | 2.16 | 1.87 | 1.66 | 1.49 | 298 | 9.8 GB |
+| histogram 200/100 | 7.59 | 4.32 | 3.22 | 2.67 | | | | | 361 | 2.1 GB |
+| histogram 400/200 | 7.46 | 4.35 | 3.24 | 2.69 | | | | | 350 | 2.9 GB |
+| histogram 100/200 | 7.15 | 4.34 | 3.29 | 2.67 | | | | | 351 | 2.8 GB |
+| equity 400/200 | 7.06 | 4.40 | 3.29 | 2.66 | | | | | 349 | 2.9 GB |
+| histogram 200/200, **batch 128** (M8f) | 3.44 | 2.24 | 1.81 | 1.55 | | | | | 325 | 1.7 GB |
+
+The last row was run after M8f below: sixteen times the regret-matching steps of the `batch 2048` rows for 8% more wall time, 1.7x less exploitable at one million deals and below the per-hand `batch 2048` solve too. On 100% ranges the deal is already always in range, so what is left is the single-opponent sample per traversal, and that shrinks only with deals.
+
+Root EVs at one million deals are within 0.1 chips of the exact solve on every row (per hand 30.73 / 32.66 / 36.61; histogram 200/100 30.71 / 32.67 / 36.62).
+
+**Read it straight.** On a 100%-range 3-way turn the buckets do not converge faster per deal - they sit 0.2% of pot behind the per-hand solve at every checkpoint, and bucket count and feature method are invisible at this budget because both are far above the abstraction's 0.25% floor.
+Sampling noise is the bottleneck here, exactly as the M8c entry said it would be on three seats, which should run vectorized anyway.
+What the buckets buy on this spot is 4.6x less memory and 18% more deals per second.
+The variance win they were expected to bring on tight ranges at four seats and up did not materialize, and the reason is worth more than the number - see the bench below.
+The memory win is what makes the 3-way flop tree solvable at all.
+
+**The flop spot, solved** (`configs/multiway3_flop_bucketed.json`: histogram 200/200, runouts shared, `lanes 16, batch 2048`, 16 threads, `budget.max_seconds 14400`).
+It stopped on the time budget at 1,749,856 deals after 4 h 26 min, 110 deals per second with the exact 3-seat best response every 500k deals inside that clock, peak RSS 16.9 GB (commit 20.6 GB) against the estimator's 18.0 GB ceiling.
+
+| deals | exploitable per seat, % of pot | root EVs (best response) |
+|---|---|---|
+| 500k | 21.8 | 30.44 / 32.69 / 36.87 |
+| 1M | 14.8 | 30.36 / 32.64 / 37.00 |
+| 1.5M | 11.6 | 30.27 / 32.60 / 37.13 |
+
+Root EVs from the sampled pass at the stop: 30.26 / 32.38 / 37.35 (sum 100.00), against MonkerSolver's SB 29.99 / BB 32.55 / BTN 37.46 from its 2.45 billion iterations in 29 minutes on 29 threads.
+**It did not converge**: 11.6% of pot exploitable at 1.5M deals, descending, with no sign of the knee.
+The EVs sit within 0.3 chips of Monker's long before the strategy is anywhere near an equilibrium, which is the usual order and a reason not to grade a multiway solve on its EVs.
+The cost is per deal: three vectorized hero traversals over 1176 hands through the flop, one turn subtree and one river subtree, against Monker's single-sample updates, so 1.75M of our deals are not 1.75M of its iterations and the two are not comparable by count.
+The bucketed artifact is 1.50 GB (765M `u8` cells plus a 583 MB node table) against Monker's 3.49 GB file, exported in 16 s; `dump-json --fields rollup --runouts 1` reads it in one second and `engine_compare.py --ht-out --runouts 2` writes the 49 MB `/compare` payload from it in 12 s, both through the reader's expansion.
+
+**Tight ranges at 4+ seats, `tools/bench_multiway.py --abstraction river=100,method=histogram --widths 15% --seats 4,6,8`** (river tree, 800k deals per solve, worst per-seat root EV gap between seeds 1 and 999):
+
+| seats | in-range deal rate | per hand | histogram 100 river buckets |
+|---|---|---|---|
+| 4 | 0.21% | 1.56% of pot | 1.26% |
+| 6 | 0.00% | 36.6% | 30.0% |
+| 8 | 0.00% | 119% | 212% |
+
+**Buckets do not fix tight-range multiway, and the first column says why.**
+The rare event on a tight range is not the hero's hand, it is the OPPONENTS' dealt hands all landing in range; a deal where one does not weighs the hero's whole traversal by zero, and pooling zero updates across a bucket is still zero.
+That is the deal RATE, and the fix for it is the one the M8b groundwork already recorded and did not build: deal the opponents in proportion to their ranges with the importance weight the EV pass already uses.
+Bucketing addresses a different problem - storage - and this measurement is what keeps the two from being confused again.
+
+**What landed, in one line each.**
+Storage rows per bucket on the sampled core, memory 4.6x down on the turn spot and the 55 GB flop tree at 6.1 GB of store; the abstraction's own cost 0.25% of pot at histogram 200/200; no per-deal convergence gain on 100% ranges and no rescue of tight-range multiway; a bucketed artifact format the whole read path expands transparently; and two neutral structural changes underneath (sparse lanes, canonicalized zero) pinned by absolute digests.
+
+### M8f - range-proportional dealing, and the batch lever. Landed 2026-09-12.
+
+The deal-rate fix the bench above pointed at, built the same day: `algorithm.sampled.deal: "range"` (`DealGame::sample_hero_deal`, the parser's default for postflop nlhe).
+Each hero's traversal gets its own deal with the OPPONENTS dealt in seat order in proportion to their ranges conditioned on the cards already out, the hero and the runout uniform from what is left, and the deal weighted by the product of the range masses the conditioning divided out - the importance weight the EV pass already used, so it is unbiased (the range-dealt 3-way solve lands 0.21 chips from the exact core; `tests/test_multiway_postflop.cpp`).
+The hero stays uniform because a range-proportional hero hand would bias the runout its vectorized traversal sees, which is why it is one deal per hero per iteration rather than one per iteration.
+Keyed on (seed, iter, hero), bitwise across threads; the in-test default stays uniform so the digests hold.
+
+**Two things the bench then taught, and the second is the larger.**
+
+The uniform deal was FAST on a tight range only because it did nothing: an out-of-range opponent hand aborts the hero's traversal at the first opponent node, so 98% of its deals cost almost nothing and a 6-way solve that took minutes under uniform dealing takes over an hour under range dealing at the same deal count, because every deal is now a full traversal.
+Compare by exploitability at equal deals, never by wall clock at equal deals, and budget 4+ seat range-dealt solves by deals that actually traverse.
+
+**`batch` is the number of regret-matching steps, and it was starving every sampled solve.**
+Regrets are frozen for a whole batch, so 800k deals at `batch 4096` are 195 CFR steps whatever the deal quality.
+Under uniform dealing on a tight range a small batch bought nothing (one in-range deal per batch); under range dealing it is the lever.
+3 seats, 15% range, `Js 8c Td 3h 7h` river, lanes 16, exact best response, exploitable per seat as % of pot:
+
+| deal | batch | 200k deals | 800k deals |
+|---|---|---|---|
+| uniform | 4096 | 1.808 | 0.932 |
+| uniform | 256 | 0.436 | 0.276 |
+| uniform | 64 | 0.475 | 0.187 |
+| range | 4096 | 1.634 | 0.719 |
+| range | 256 | 0.147 | 0.060 |
+| range | 64 | 0.059 | 0.022 |
+
+Batch alone is 5x (uniform, 4096 to 64); range dealing on top is another 8.5x; together 42x at equal deals, and range at batch 64 with 200k deals beats uniform at batch 4096 with 800k deals by 16x.
+The exact core is still 0.0013% in 2000 iterations on this spot and three seats should still run vectorized; the point is what the sampled core does at four and up, where there is no exact core.
+Every sampled result in M8c, M8e and the turn/flop gates above was taken at `batch 2048` or `4096` and is a lower bound on what the core does; the flop gate's 11.6% of pot after 1.75M deals was 855 regret-matching steps.
+
+The cost of a small batch is the per-batch discount sweep over the whole master (two arrays) and the fold: nothing on a river tree, about 0.6 s per batch on the 6 GB flop store, so a flop-sized solve wants a batch of a few hundred and a deferred or scaled discount is the follow-up that would take it lower.
+
+**Six and eight seats on tight ranges converge now.** Same river spot, 15% range, seed spread (worst per-seat root EV gap between seeds 1 and 999):
+
+| seats | uniform, batch 4096, 800k deals | range, batch 256, 200k deals |
+|---|---|---|
+| 4 | 1.55% of pot | 0.47% |
+| 6 | 36.6% | 0.28% |
+| 8 | 119% | 0.28% |
+
+The M8b groundwork's "six and up does not converge on tight ranges at all" was a statement about uniform dealing at batch 4096, and it is withdrawn.
+There is still no exact best response past three seats, so 0.28% is seed agreement rather than exploitability - necessary, not sufficient - and the deals are now real work (every one traverses), so a 4+ seat solve is budgeted by traversals, not by the old free rejections.
+Lanes must not exceed the batch, and a lane runs `batch / lanes` deals per batch, so a 64-deal batch keeps sixteen lanes at four deals each.
+
 - **M10 - Bayesian unknown-collusion**: chance root over team type with probability p - now precisely the p-interpolation between M9's two awareness modes (p=0 is unaware, p=1 is aware); opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.
 
 Out of scope, permanently (do not build speculatively): TMECor / coordination-without-card-visibility, cloud SDKs inside the engine.
-Hand abstraction/bucketing became a PER-CORE rule with M8c: still permanently out of the vectorized core, in scope for the sampled core as the route to multiway postflop and PLO (the `InfosetIndexer` seam is where it lands).
+Hand abstraction/bucketing became a PER-CORE rule with M8c and LANDED on the sampled core as M8e: still permanently out of the vectorized core, in scope for the sampled core as the route to multiway postflop and PLO (the `InfosetIndexer` seam is where it lives).
 
 **"GPU" moved off that list and needs splitting, because the depth-limiting direction above touches it.** The boundary that still holds is the *engine binary*: `engine.exe` stays a headless CPU-only CLI with no cloud SDK, and a value network it consults would be a local file it reads, with inference on the CPU. What is no longer forbidden is a **separate, offline training tool** that produces that file - training a value network is the one part of the Ruse approach that plausibly wants a GPU, and it is not part of the solver. Keep them apart: if a GPU dependency ever appears inside `engine.exe`, that is the line being crossed, not training hardware.
 
@@ -1106,4 +1277,4 @@ Hand abstraction stays out for the same reason it always was, and note that this
 
 - Correctness before speed, speed before scale. Every solver change re-passes Kuhn/Leduc CI and a Pio cross-check on at least one spot.
 - The artifact format is a versioned contract; changes move the spec, both readers, and the fixture in one commit.
-- The 16GB dev box is the memory budget; the estimator must not drift from reality.
+- The 32 GB dev box is the memory budget (it was 16 GB when this was written); the estimator must not drift from reality.

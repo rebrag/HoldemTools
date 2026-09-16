@@ -2,8 +2,11 @@
 #include <cstdint>
 #include <vector>
 
+#include <stdexcept>
+
 #include "game/public_tree.hpp"
 #include "solver/cfr.hpp"
+#include "solver/infoset_indexer.hpp"
 #include "solver/updates.hpp"
 #include "util/parallel.hpp"
 
@@ -40,6 +43,15 @@ class StrategySource {
 
   // The regularization in force (disabled default when the core has none).
   virtual const QreConfig& qre() const = 0;
+
+  // The bucketed export's seams. A core that stores rows per bucket exposes
+  // its indexer and the per-row average strategy of one storage group
+  // (row-major [row][action], rows summing to 1); everything else answers
+  // null and the writer refuses output.export "bucketed".
+  virtual const InfosetIndexer* bucket_indexer() const { return nullptr; }
+  virtual void bucket_strategy(std::uint32_t, std::vector<float>&) const {
+    throw std::runtime_error("this solver core has no bucketed strategy rows");
+  }
 };
 
 // Adapter over the vectorized core. Holds a reference only - the solver must

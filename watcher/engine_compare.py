@@ -60,7 +60,7 @@ import os
 import subprocess
 import sys
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from htc_format import HtcWriter  # noqa: E402
@@ -417,13 +417,47 @@ def decision_nodes(dump: dict):
             yield key, node
 
 
-def extract_ht_nodes(dump: dict, colon_ids: Dict[str, str], writer: HtcWriter) -> int:
+def pooled_pots(dump: dict, root_pot: float) -> Dict[str, float]:
+    """Chips POOLED at each node: the root pot plus every COMPLETED street's
+    commits, with the current street's live bets still in front of their
+    seats. This is the reference a bet size is quoted against, and what the
+    grids' colour ramp is calibrated on.
+
+    Derived by walking up to the node that opened this street - the root, or
+    the chance node that dealt the card - and summing ITS commit vector.
+    Everything committed since is by definition on the street in progress.
+
+    The alternative, re-deriving it from the colon id, works only heads-up:
+    the bNNN segments name the betting LEVEL, and turning a level into a pot
+    needs to know how many seats matched it, which a 3-way tree's folds make
+    unanswerable from the id alone."""
+    nodes = dump["nodes"]
+    pots: Dict[str, float] = {}
+    for key in sorted(nodes.keys(), key=int):
+        node = nodes[key]
+        parent_id = node["parent_id"]
+        if parent_id is None or node["action_kind"] == "deal":
+            # A street opens here: whatever is committed now is pooled.
+            pots[key] = root_pot + float(sum(node["commit"]))
+        else:
+            pots[key] = pots[str(parent_id)]
+    return pots
+
+
+def extract_ht_nodes(dump: dict, colon_ids: Dict[str, str], writer: HtcWriter,
+                     seat_labels: Sequence[str], root_pot: float) -> int:
     """htsolver's per-hand rows, straight out of the engine dump.
 
     No Pio anywhere in here - that is the whole point. The artifact is
     already sparse on reach > 1e-6 (artifact_writer applies the same rule),
     so the reach guard below is the only filter, and it is a belt-and-braces
-    re-application rather than a second opinion."""
+    re-application rather than a second opinion.
+
+    Seat-count agnostic: the position is the artifact's own seat label, so a
+    3-way postflop tree writes OOP/MID/BTN where a heads-up one writes
+    OOP/IP, and /compare's line strip names the actor correctly without
+    knowing which kind of solve it is looking at."""
+    pots = pooled_pots(dump, root_pot)
     count = 0
     for key, node in decision_nodes(dump):
         data = node["data"]
@@ -438,12 +472,17 @@ def extract_ht_nodes(dump: dict, colon_ids: Dict[str, str], writer: HtcWriter) -
                 "hand": hand["hand"],
                 "reach": reach,
                 "freq": hand["strategy"],
+                # Absent past three seats: without a vectorized showdown the
+                # artifact has no per-hand value, and says so rather than
+                # shipping the zeros its blobs carry (engine per_hand_ev).
                 "ev": _finite(hand.get("ev")),
                 "action_ev": [_finite(v) for v in hand.get("action_ev", [])],
             })
         if not rows:
             continue
-        writer.add_node(colon_ids[key], "OOP" if actor == 0 else "IP", labels, rows)
+        position = (seat_labels[actor] if actor < len(seat_labels)
+                    else f"P{actor}")
+        writer.add_node(colon_ids[key], position, labels, rows, pot=pots[key])
         count += 1
     return count
 
@@ -695,7 +734,9 @@ def main() -> int:
 
     pot = float(meta["pot"])
     print(f"spot: board={meta['board']!r} pot={pot} config={meta['config_hash'][:10]}")
-    print(f"engine: iters={meta['iterations']} nashconv={meta['final_nashconv']:.4f} "
+    nashconv = meta.get("final_nashconv")
+    print(f"engine: iters={meta['iterations']} "
+          f"nashconv={'n/a (no exact best response)' if nashconv is None else f'{nashconv:.4f}'} "
           f"ev={meta['ev_chips']}")
 
     colon_ids = engine_colon_ids(dump["nodes"])
@@ -710,6 +751,9 @@ def main() -> int:
         # the wrong shade too.
         "effective_stack": meta.get("effective_stack"),
         "config_hash": meta["config_hash"],
+        # The seat labels, in seat order. /compare reads the COUNT off this
+        # (a 3-way solve has no "IP") and names each seat's root EV with it.
+        "seats": meta.get("seats"),
         # The spot's identity independent of how it was solved, so the two
         # cores' payloads (different config_hash) merge on /compare. Absent
         # when the artifact predates the embedded config.
@@ -722,7 +766,8 @@ def main() -> int:
     if args.ht_out:
         phase_start = time.perf_counter()
         ht_writer = HtcWriter(args.solver)
-        ht_nodes = extract_ht_nodes(dump, colon_ids, ht_writer)
+        ht_nodes = extract_ht_nodes(dump, colon_ids, ht_writer,
+                                    meta.get("seats") or [], pot)
         harness_timing["ht_extract_s"] = time.perf_counter() - phase_start
         if ht_nodes == 0:
             print("FAIL: the engine dump has no decision nodes with reachable hands")
@@ -735,9 +780,9 @@ def main() -> int:
             # way, and /compare reads one shape for both payloads.
             "ht": {
                 "iterations": meta["iterations"],
-                "nashconv": meta["final_nashconv"],
-                "exploitable_chips": meta.get("final_exploitable_chips",
-                                              meta["final_nashconv"] / 2.0),
+                "nashconv": nashconv,
+                "exploitable_chips": meta.get("final_exploitable_chips") or (
+                    None if nashconv is None else nashconv / 2.0),
                 "exploitable_pct_pot": meta.get("final_exploitable_pct_pot"),
                 "ev": meta["ev_chips"],
                 # Which core solved it, whether it ended early and why, the

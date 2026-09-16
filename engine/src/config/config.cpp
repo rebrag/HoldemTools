@@ -351,6 +351,48 @@ SolveConfig load_config(const std::string& path_text) {
     if (config.sampled.lanes < 1 || config.sampled.lanes > 256) {
       fail("algorithm.sampled.lanes must be in [1, 256]");
     }
+    if (s.contains("deal")) {
+      const std::string deal = s.at("deal").get<std::string>();
+      if (deal == "uniform") config.sampled.range_deal = false;
+      else if (deal == "range") config.sampled.range_deal = true;
+      else fail("algorithm.sampled.deal must be uniform | range, got '" + deal + "'");
+      config.sampled.range_deal_explicit = true;
+    }
+    if (s.contains("abstraction")) {
+      const json& a = s.at("abstraction");
+      AbstractionConfig& ab = config.sampled.abstraction;
+      ab.enabled = true;
+      ab.method = a.value("method", ab.method);
+      ab.flop = a.value("flop", ab.flop);
+      ab.turn = a.value("turn", ab.turn);
+      ab.river = a.value("river", ab.river);
+      ab.bins = a.value("bins", ab.bins);
+      ab.seed = a.value("seed", ab.seed);
+      ab.board_isomorphism = a.value("board_isomorphism", ab.board_isomorphism);
+      if (ab.method != "equity" && ab.method != "histogram") {
+        fail("algorithm.sampled.abstraction.method must be equity | histogram, got '" +
+             ab.method + "'");
+      }
+      for (int b : {ab.flop, ab.turn, ab.river}) {
+        if (b < 0 || b > 65535) {
+          fail("algorithm.sampled.abstraction.{flop,turn,river} must be in [0, 65535] "
+               "(0 = per-hand rows on that street)");
+        }
+      }
+      if (ab.flop == 0 && ab.turn == 0 && ab.river == 0) {
+        fail("algorithm.sampled.abstraction sets no buckets on any street; remove the "
+             "block or set flop/turn/river");
+      }
+      if (ab.bins < 2 || ab.bins > 256) {
+        fail("algorithm.sampled.abstraction.bins must be in [2, 256]");
+      }
+      if (config.game != "nlhe") {
+        // Buckets are per public board. A preflop tree has none (its
+        // lossless quotient is algorithm.sampled.symmetry) and the toys have
+        // nothing to abstract.
+        fail("algorithm.sampled.abstraction applies to postflop \"nlhe\" trees only");
+      }
+    }
   }
   // Which core can run this many seats. The vectorized showdown sweep is O(H)
   // at two seats and O(52*H) at three; past that its inclusion-exclusion grows
@@ -396,6 +438,14 @@ SolveConfig load_config(const std::string& path_text) {
       fail("isomorphism is not supported on multiway postflop trees yet; set it false");
     }
     config.isomorphism = false;
+  }
+  if (config.sampled.enabled && config.game == "nlhe" && !config.sampled.range_deal_explicit) {
+    // Postflop defaults to range-proportional opponent dealing: on a tight
+    // range the uniform deal lands every opponent in range about never, and
+    // each miss weighs the hero's whole traversal by zero. Unbiased (an
+    // importance weight, the same one the EV pass uses) and bit-different,
+    // so it is a config key rather than a silent change.
+    config.sampled.range_deal = true;
   }
   if (config.sampled.enabled) {
     // The sampled core deals concrete cards, so it needs a DealGame: the
@@ -567,6 +617,24 @@ SolveConfig load_config(const std::string& path_text) {
     config.strategy_quantize_u8 = output.value("strategy_quantize_u8", true);
     config.ev_float32 = output.value("ev_float32", true);
     config.rollups_169 = output.value("rollups_169", true);
+    const std::string export_mode = output.value("export", "per_hand");
+    if (export_mode == "per_hand") {
+      config.export_bucketed = false;
+    } else if (export_mode == "bucketed") {
+      config.export_bucketed = true;
+    } else {
+      fail("output.export must be per_hand | bucketed, got '" + export_mode + "'");
+    }
+  }
+  if (config.export_bucketed && !config.sampled.abstraction.enabled) {
+    fail("output.export \"bucketed\" writes one strategy blob per bucket group, so it "
+         "needs algorithm.sampled.abstraction; a per-hand solve exports per_hand");
+  }
+  if (config.sampled.abstraction.enabled && !config.sampled.partition_team.empty()) {
+    // A team actor's rows are the joint suit orbits of the (own, partner)
+    // pair, a preflop quotient; buckets are per board. Neither knows how to
+    // read the other's rows.
+    fail("algorithm.sampled.abstraction is not supported with a hand-sharing team");
   }
   if ((!config.checkpoint_path.empty() || !config.checkpoint_dir.empty()) &&
       !config.sampled.enabled) {
