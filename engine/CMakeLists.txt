@@ -58,7 +58,12 @@ if(MSVC)
     target_compile_options(engine_flags INTERFACE /arch:AVX2)
   endif() # SSE2 is the MSVC x64 default
 else()
-  target_compile_options(engine_flags INTERFACE -Wall -Wextra -Werror)
+  # -ffp-contract=off: GCC and Clang contract a*b+c into a fused multiply-add
+  # by default once -march enables FMA (x86-64-v3 does), which rounds once
+  # where MSVC's /fp:precise rounds twice. Same source, different bits, and
+  # the sampled core's absolute digests caught it on the first CI run. Off
+  # keeps every platform on the same arithmetic.
+  target_compile_options(engine_flags INTERFACE -Wall -Wextra -Werror -ffp-contract=off)
   if(ENGINE_SIMD STREQUAL "AVX512")
     target_compile_options(engine_flags INTERFACE -march=x86-64-v4)
   elseif(ENGINE_SIMD STREQUAL "AVX2")

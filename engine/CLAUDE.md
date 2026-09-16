@@ -23,6 +23,8 @@ Two environment gaps have bitten already, both invisible locally:
 - **MSVC's headers include far more than libstdc++'s.** A missing `<cstdint>`/`<bit>` builds fine here and fails the GCC job. Include what you use; do not rely on transitive includes. The quickest check before pushing is a transitive include audit (resolve project `#include "..."` recursively, then look for `std::` symbols whose header appears nowhere in the graph) - it caught a second break that would otherwise have failed the *next* CI run.
 - **The runner's MSVC and CMake are newer than the local ones.** A newer MSVC emits warnings the local one does not (C5285 on doctest specializing `std::tuple`), and CMake 4.x turns `cmake_minimum_required(VERSION < 3.5)` from a warning into an error. Hence `CMAKE_POLICY_VERSION_MINIMUM` and `FetchContent_Declare(... SYSTEM)` + `/external:W0`: **dependency headers are never held to our warning settings** - `/W4 /WX` is for our code only.
 
+- **GCC and Clang contract `a*b+c` into a fused multiply-add by default once `-march` enables FMA** (`x86-64-v3` does), which rounds once where MSVC's `/fp:precise` rounds twice - same source, different bits. The sampled core's absolute digests (`tests/test_sampled_digest.cpp`) caught it on their first CI run; `-ffp-contract=off` is in the GCC/Clang flags for that reason, and the digest literals are MSVC's (a mismatch elsewhere is a WARN until a GCC run prints matching bits).
+
 There is no Linux toolchain on this machine, so the GCC job is only ever verified by CI. Push to a branch and let the PR run it.
 
 ## Compiler and portability constraints
