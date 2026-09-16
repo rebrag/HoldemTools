@@ -1,12 +1,12 @@
 // scripts/precompute-worker-entry.ts
-// Node worker_threads entry for the Taiwanese precompute. Bundled by
-// precompute-taiwanese.mjs with esbuild, then spawned once per thread; each
-// message is one slice of a policy-iteration round, answered with the solved
-// entries and stats. Mirrors the browser worker's "solve-batch" op, driving
-// the same core in src/lib/taiwaneseSolver.
+// Node worker_threads entry for the Taiwanese precompute and check scripts.
+// Bundled by scripts/taiwanese-lib.mjs with esbuild, then spawned once per
+// thread; each message is one slice of a best-response pass, answered with
+// the solved entries and stats. Mirrors the browser worker's "solve-batch"
+// op, driving the same core in src/lib/taiwaneseSolver.
 import { parentPort } from "node:worker_threads";
-import { runBatch, seedLCG } from "../src/lib/taiwaneseSolver";
-import type { LibraryEntry } from "../src/pages/private/protocol";
+import { runBatch, seedLCG, type Mixing } from "../src/lib/taiwaneseSolver";
+import type { LibraryEntry, PolicyAtom } from "../src/pages/private/protocol";
 
 interface BatchMsg {
   hands: string[][];
@@ -16,7 +16,8 @@ interface BatchMsg {
   samples: number;
   seed: number;
   library: LibraryEntry[] | null;
-  prevIdx: number[] | null;
+  prevPolicy: PolicyAtom[][] | null;
+  mixing: Mixing;
 }
 
 if (!parentPort) throw new Error("must run as a worker thread");
@@ -32,8 +33,8 @@ port.on("message", (msg: BatchMsg) => {
     royalties: msg.royalties,
     samples: msg.samples,
     library: msg.library,
-    prevIdx: msg.prevIdx,
-    mixing: "mixed", // smoothed policy iteration, as in the browser build
+    prevPolicy: msg.prevPolicy,
+    mixing: msg.mixing,
     onHand: (done) => {
       if (done - lastReport >= 5) {
         lastReport = done;

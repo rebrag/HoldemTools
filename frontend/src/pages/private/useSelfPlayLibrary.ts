@@ -3,7 +3,7 @@
 //   1. session cache;
 //   2. a precomputed file under /taiwanese-libs/ (built overnight by
 //      `npm run precompute:taiwanese`, far larger than a live build);
-//   3. an in-browser build over a worker pool (policy iteration, as in the
+//   3. an in-browser build over a worker pool (fictitious play, as in the
 //      Node script but sized for interactive waiting).
 //
 // House rules settle every pair of players separately, so a hand's EV is
@@ -13,13 +13,15 @@
 // representative N and reused (documented approximation), while in-browser
 // builds use the requested N.
 import { useEffect, useRef, useState } from "react";
-import { decodeLibrary, summarizeRound } from "@/lib/taiwaneseSolver";
+import { decodeLibrary, mergeRound, summarizeRound } from "@/lib/taiwaneseSolver";
 import type {
   BatchHandStat,
   LibraryEntry,
   LibraryFile,
+  LibraryFileV1,
   LibraryLevelStats,
   OpponentLibrary,
+  PolicyAtom,
   TaiwaneseOut,
 } from "./protocol";
 
@@ -42,11 +44,14 @@ export function cachedLibrary(
 
 // In-browser build sizing (the precomputed files dwarf this; see
 // scripts/precompute-taiwanese.mjs). ENTRIES is the opponent-hand pool
-// (accuracy ceiling), LEVELS the policy-iteration rounds, INNER_SAMPLES the
-// scenarios per hand per round.
+// (accuracy ceiling), LEVELS the fictitious-play rounds, INNER_SAMPLES the
+// scenarios per hand per round, CALIBRATION_HANDS the slice of the pool the
+// final measuring pass best-responds with (it builds nothing; it prices the
+// finished policy so the page can state its exploitability).
 const ENTRIES = 1500;
 const INNER_SAMPLES = 300;
 const LEVELS = 3;
+const CALIBRATION_HANDS = 300;
 
 /** Exposed so the page can state the opponent pool size it is quoting. */
 export const LIBRARY_ENTRIES = ENTRIES;
@@ -98,7 +103,7 @@ export function useSelfPlayLibrary() {
       try {
         const res = await fetch(`/taiwanese-libs/${fileKey}.json`);
         if (res.ok) {
-          const file = (await res.json()) as LibraryFile;
+          const file = (await res.json()) as LibraryFile | LibraryFileV1;
           const lib = decodeLibrary(file);
           cache.set(memKey, lib);
           return lib;
@@ -138,18 +143,21 @@ export function useSelfPlayLibrary() {
       hands.push(a.slice(0, 7));
     }
 
-    // Round-robin so every worker gets a comparable slice.
-    const chunks: number[][] = Array.from({ length: nWorkers }, () => []);
-    hands.forEach((_, i) => chunks[i % nWorkers].push(i));
+    const chunk = (idxs: number[]) => {
+      // Round-robin so every worker gets a comparable slice.
+      const out: number[][] = Array.from({ length: nWorkers }, () => []);
+      idxs.forEach((v, i) => out[i % nWorkers].push(v));
+      return out;
+    };
 
-    const totalHands = ENTRIES * LEVELS;
+    const totalHands = ENTRIES * LEVELS + CALIBRATION_HANDS;
     let doneHands = 0;
 
     const runChunk = (
       w: Worker,
       idxs: number[],
       library: LibraryEntry[] | undefined,
-      prevIdx: number[] | undefined
+      prevPolicy: PolicyAtom[][] | undefined
     ): Promise<{ entries: LibraryEntry[]; stats: BatchHandStat[] } | null> =>
       new Promise((resolve) => {
         let lastReported = 0;
@@ -183,41 +191,62 @@ export function useSelfPlayLibrary() {
             samples: INNER_SAMPLES,
             seed: (Math.floor(Math.random() * 0x7fffffff) ^ Date.now()) >>> 0,
             library,
-            prevIdx: prevIdx ? idxs.map((i) => prevIdx[i]) : undefined,
-            mixing: "mixed",
+            prevPolicy: prevPolicy ? idxs.map((i) => prevPolicy[i]) : undefined,
+            mixing: "pure",
             reportEvery: 5,
           },
         });
       });
 
+    /** One best-response pass of `idxs` against `policy`, results in hand order. */
+    const pass = async (
+      idxs: number[],
+      policy: LibraryEntry[] | undefined
+    ): Promise<{ entries: LibraryEntry[]; stats: BatchHandStat[] } | null> => {
+      const chunks = chunk(idxs);
+      const prevPolicy = policy?.map((e) => e.policy);
+      const results = await Promise.all(
+        chunks.map((c, k) => runChunk(pool[k], c, policy, prevPolicy))
+      );
+      if (cancelledRef.current || results.some((r) => r === null)) return null;
+      const entries = new Array<LibraryEntry>(idxs.length);
+      const stats = new Array<BatchHandStat>(idxs.length);
+      const pos = new Map(idxs.map((v, i) => [v, i]));
+      chunks.forEach((c, k) => {
+        const r = results[k]!;
+        c.forEach((handIdx, j) => {
+          entries[pos.get(handIdx)!] = r.entries[j];
+          stats[pos.get(handIdx)!] = r.stats[j];
+        });
+      });
+      return { entries, stats };
+    };
+
+    const all = hands.map((_, i) => i);
     let policy: LibraryEntry[] | undefined;
-    let prevIdx: number[] | undefined;
     const stats: LibraryLevelStats[] = [];
 
+    // Fictitious play: each round best-responds to the average of the
+    // rounds before it, then folds in (mergeRound). Round k's pass measures
+    // the policy after k - 1 rounds; the final pass measures the shipped one.
     for (let level = 1; level <= LEVELS; level++) {
-      const results = await Promise.all(
-        chunks.map((idxs, k) => runChunk(pool[k], idxs, policy, prevIdx))
-      );
-      if (cancelledRef.current || results.some((r) => r === null)) {
+      const r = await pass(all, policy);
+      if (!r) {
         stopAll();
         setBuilding(false);
         return null;
       }
-      const nextPolicy = new Array<LibraryEntry>(ENTRIES);
-      const nextIdx = new Array<number>(ENTRIES);
-      const orderedStats = new Array<BatchHandStat>(ENTRIES);
-      chunks.forEach((idxs, k) => {
-        const r = results[k]!;
-        idxs.forEach((handIdx, j) => {
-          nextPolicy[handIdx] = r.entries[j];
-          nextIdx[handIdx] = r.stats[j].bestIdx;
-          orderedStats[handIdx] = r.stats[j];
-        });
-      });
-      stats.push(summarizeRound(level, orderedStats, prevIdx ?? null));
-      policy = nextPolicy;
-      prevIdx = nextIdx;
+      stats.push(summarizeRound(level - 1, r.stats));
+      policy = r.entries.map((solved, i) => mergeRound(policy?.[i] ?? null, solved, level));
     }
+    const slice = [...all].sort(() => Math.random() - 0.5).slice(0, CALIBRATION_HANDS);
+    const cal = await pass(slice, policy);
+    if (!cal) {
+      stopAll();
+      setBuilding(false);
+      return null;
+    }
+    stats.push(summarizeRound(LEVELS, cal.stats));
 
     stopAll();
     setBuilding(false);

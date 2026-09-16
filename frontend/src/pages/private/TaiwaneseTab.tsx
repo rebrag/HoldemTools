@@ -23,6 +23,8 @@ const SAMPLE_PRESETS = [
 
 const fmtEv = (ev: number) => `${ev >= 0 ? "+" : ""}${ev.toFixed(2)} pts`;
 const fmtErr = (se?: number) => (se == null ? "" : ` ±${se.toFixed(2)}`);
+const fmtPct = (pct?: number) => (pct == null ? "not measured" : `${pct.toFixed(0)}%`);
+const fmtPts = (pts?: number) => (pts == null ? "not measured" : `${pts.toFixed(2)} pts/deal`);
 
 const TaiwaneseTab: React.FC = () => {
   const [cards, setCards] = useState<string[]>([]);
@@ -96,6 +98,12 @@ const TaiwaneseTab: React.FC = () => {
   const busy = running || lib.building;
   const solvedLibrary = solvedModel === "selfplay" ? cachedLibrary(opponents, boards, royalties) : null;
   const libStats = solvedLibrary?.stats ?? null;
+  // The shipped policy's own measurement, when the build ran its final pass
+  // (an old v1 file never measured its final policy, so the last row there
+  // describes an earlier round and is not it).
+  const lastStats = libStats && libStats.length > 0 ? libStats[libStats.length - 1] : null;
+  const finalStats = lastStats && lastStats.selfPositivePct != null ? lastStats : null;
+  const libRounds = lastStats ? (finalStats ? lastStats.level : lastStats.level + 1) : 0;
 
   return (
     <div className="space-y-4">
@@ -305,7 +313,7 @@ const TaiwaneseTab: React.FC = () => {
                   <p className="mt-1.5 text-xs text-emerald-100/60 max-w-lg">
                     {mixing === "mixed"
                       ? "Opponents sample among their near-best splits, weighted by how little EV each gives up - closer to a real table."
-                      : "Every opponent always finds their exact best split."}
+                      : "Opponents set as the converged self-play policy does, mixing between settings it found equally good."}
                   </p>
                 </div>
               )}
@@ -353,26 +361,31 @@ const TaiwaneseTab: React.FC = () => {
           {libStats && libStats.length > 0 && (
             <div className="mt-2">
               <p className="font-mono text-xs text-emerald-100/60">
-                Opponent policy: {libStats.length} rounds of best response over an
-                opponent pool of{" "}
+                Opponent policy: self-play over an opponent pool of{" "}
                 {(solvedLibrary?.entries.length ?? LIBRARY_ENTRIES).toLocaleString("en-US")}{" "}
-                hands. Each round's gain is what re-optimizing bought over the round before
-                it, so a gain heading to zero means the policy has stopped improving.
+                hands, {libRounds} rounds. "Exploitable by" is what a random hand's best split
+                averages against that policy: 0 is a perfect equilibrium, and any positive amount
+                is how hot the EVs below run on average.{" "}
+                {finalStats
+                  ? "The last row is the policy you solved against."
+                  : `The policy you solved against, after round ${libRounds}, was not measured; the rows describe the rounds before it.`}
               </p>
               <table className="mt-1.5 text-xs font-mono border-collapse">
                 <thead>
                   <tr className="text-emerald-100/40">
-                    <th className="text-left font-medium pr-4 py-0.5">Round</th>
-                    <th className="text-right font-medium px-3 py-0.5">Gain over previous</th>
+                    <th className="text-left font-medium pr-4 py-0.5">Policy</th>
+                    <th className="text-right font-medium px-3 py-0.5">Exploitable by</th>
                     <th className="text-right font-medium pl-3 py-0.5">Same split</th>
                   </tr>
                 </thead>
                 <tbody>
                   {libStats.map((s) => (
                     <tr key={s.level} className="text-emerald-100/70">
-                      <td className="pr-4 py-0.5">{s.level}</td>
+                      <td className="pr-4 py-0.5">
+                        {s.level === 0 ? "rule of thumb (start)" : `after round ${s.level}`}
+                      </td>
                       <td className="text-right px-3 py-0.5 tabular-nums">
-                        {Math.max(0, s.prevPolicyEvLoss).toFixed(2)} pts/deal
+                        {fmtPts(s.exploitability)}
                       </td>
                       <td className="text-right pl-3 py-0.5 tabular-nums">
                         {s.agreePrevPct.toFixed(0)}%
@@ -381,6 +394,14 @@ const TaiwaneseTab: React.FC = () => {
                   ))}
                 </tbody>
               </table>
+              {finalStats && (
+                <p className="mt-1.5 font-mono text-xs text-emerald-100/50">
+                  Against this policy, {fmtPct(finalStats.bestPositivePct)} of random hands have a
+                  +EV best split, and in self-play {fmtPct(finalStats.selfPositivePct)} of hands set
+                  at their best are +EV: strong material is rare and wins big, so the median hand
+                  is a small loser and a #1 split below zero is normal.
+                </p>
+              )}
               {solvedLibrary && solvedLibrary.opponents !== result.opponents && (
                 <p className="mt-1.5 font-mono text-xs text-emerald-100/50">
                   {result.royalties
@@ -430,9 +451,11 @@ const TaiwaneseTab: React.FC = () => {
             </div>
           )}
           <p className="mt-4 text-xs text-emerald-100/50">
-            Any card may be set in any row. Opponent model: each opponent is dealt 7 random
-            cards and sets them with a fixed heuristic (best Omaha material to the bottom).
-            Points follow the scoring shown below.
+            Any card may be set in any row. Each opponent is dealt 7 random cards and{" "}
+            {solvedModel === "selfplay"
+              ? "sets them as the self-play policy above does"
+              : "sets them with a fixed rule of thumb (best Omaha material to the bottom)"}
+            . Points follow the scoring behind the info button.
           </p>
         </div>
       )}

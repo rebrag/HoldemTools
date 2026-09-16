@@ -74,8 +74,8 @@ function runSolveBatch(p: SolveBatchParams) {
     royalties: p.royalties,
     samples: p.samples,
     library: p.library ?? null,
-    prevIdx: p.prevIdx ?? null,
-    mixing: p.mixing ?? "mixed",
+    prevPolicy: p.prevPolicy ?? null,
+    mixing: p.mixing ?? "pure",
     onHand: (done) => {
       if (done % p.reportEvery === 0) post({ type: "progress", done, total: p.hands.length });
     },
