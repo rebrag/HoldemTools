@@ -67,8 +67,10 @@ export interface TaiwaneseParams {
   /** When present, simulated opponents draw their hand AND split from this
    *  self-play library instead of playing the heuristic. */
   library?: LibraryEntry[];
-  /** Opponent play style over library alternatives: "pure" = always the best
-   *  split, "mixed" = human-like sampling weighted by EV gap. */
+  /** Opponent play style: "pure" = each hand's averaged self-play policy
+   *  (the equilibrium approximation, which mixes where settings tie),
+   *  "mixed" = human-like sampling over the latest best response's
+   *  near-best splits, weighted by EV gap. */
   mixing?: "pure" | "mixed";
 }
 
@@ -83,39 +85,84 @@ export interface AltSplit {
   gap: number;
 }
 
-/** One self-play opponent: a sampled hand with its best splits. Pure play
- *  uses alts[0]; mixed (human-like) play samples over alts by gap. */
+/** One setting of a hand's averaged self-play policy, with the probability
+ *  it is played. A library's policy is fictitious play over the build rounds:
+ *  the linearly weighted average of each round's best response. */
+export interface PolicyAtom {
+  idx: number;
+  top: string[];
+  middle: string[];
+  bottom: string[];
+  /** Play probability; a hand's atoms sum to 1. */
+  weight: number;
+}
+
+/** One self-play opponent: a sampled hand, its averaged policy, and the
+ *  best splits of its latest best response. "pure" play samples `policy`
+ *  (the equilibrium approximation); "mixed" (human-like) play samples over
+ *  `alts` by gap. */
 export interface LibraryEntry {
   cards: string[];
   alts: AltSplit[];
+  policy: PolicyAtom[];
 }
 
 /** Compact on-disk form of a precomputed library (see taiwaneseSolver.ts
- *  encodeLibrary/decodeLibrary): cards joined, alts as [idx, centiGap]. */
+ *  encodeLibrary/decodeLibrary): cards joined, alts as [idx, centiGap],
+ *  policy as [idx, permille]. */
 export interface LibraryFile {
-  v: 1;
+  v: 2;
   opponents: number;
   boards: 1 | 2;
   royalties: boolean;
   stats: LibraryLevelStats[];
+  entries: { c: string; a: [number, number][]; p: [number, number][] }[];
+}
+
+/** The pre-fictitious-play file layout (libraries built before 2026-09-15):
+ *  no policy, and its stats row k measured the round k-1 argmax policy under
+ *  "mixed" play. Still decodable so an old file on disk keeps working. */
+export interface LibraryFileV1 {
+  v: 1;
+  opponents: number;
+  boards: 1 | 2;
+  royalties: boolean;
+  stats: { level: number; agreePrevPct: number; prevPolicyEvLoss: number }[];
   entries: { c: string; a: [number, number][] }[];
 }
 
+/**
+ * What one best-response pass measured about the opponent policy it faced.
+ * `level` is how many build rounds that policy had absorbed: 0 is the fixed
+ * heuristic the first round responds to, and the last row (level = rounds)
+ * is the shipped policy, measured by a final pass that changes nothing.
+ * Every number is a mean over the pass's hands, each solved under common
+ * random numbers, so the paired `exploitability` is precise even where the
+ * per-hand EVs are noisy.
+ */
 export interface LibraryLevelStats {
   level: number;
-  /** % of library hands whose best split matched the previous round's policy
-   *  (round 1 compares against the heuristic). Noisy: near-tied splits flip
-   *  freely, so read prevPolicyEvLoss for convergence instead. */
+  /** Mean points/deal a fresh best response gains over the policy's own
+   *  setting of the same hand. The policy played against itself averages
+   *  exactly zero, so this is its exploitability: 0 is an equilibrium, and
+   *  any positive amount is how hot the advisor's EVs run on average
+   *  against it. Undefined only for the unmeasured final policy of an old
+   *  v1 file. */
+  exploitability?: number;
+  /** Mean points/deal of the hands' own policy settings against the
+   *  policy. Zero in expectation (the policy against itself), so this is a
+   *  sanity check on the measurement, not a property of the policy. */
+  selfMeanEv?: number;
+  /** % of hands whose own policy setting is +EV against the policy: the
+   *  symmetric baseline share, which is below 50% because strong material
+   *  is rare and wins big. */
+  selfPositivePct?: number;
+  /** % of hands whose fresh best split is +EV against the policy: what the
+   *  advisor's #1 split shows for random hands. */
+  bestPositivePct?: number;
+  /** % of hands whose best response is the policy's most-played setting.
+   *  Noisy: near-tied splits flip freely, so read exploitability instead. */
   agreePrevPct: number;
-  /** Mean EV gain (points/deal) of the best-response split over the
-   *  heuristic split, under that round's opponents. */
-  evGainVsHeuristic: number;
-  /** Mean points/deal that re-optimizing gains over the PREVIOUS round's
-   *  choice, under this round's opponents (round 1: over the heuristic).
-   *  This is the convergence metric: near zero = the previous policy is
-   *  already a best response to itself. Upper bound - argmax noise inflates
-   *  it. */
-  prevPolicyEvLoss: number;
 }
 
 export interface OpponentLibrary {
@@ -141,9 +188,11 @@ export interface SolveBatchParams {
   samples: number;
   seed: number;
   library?: LibraryEntry[];
-  /** Previous round's chosen split index per hand; absent = the heuristic. */
-  prevIdx?: number[];
-  /** Opponent play style during the round (mixed = smoothed iteration). */
+  /** Each hand's current averaged policy, to price against the same
+   *  scenarios as its best response; absent = the heuristic. */
+  prevPolicy?: PolicyAtom[][];
+  /** Opponent play style during the round: "pure" plays the averaged
+   *  policy (fictitious play), "mixed" the softened latest best response. */
   mixing?: "pure" | "mixed";
   /** Progress cadence, in hands. */
   reportEvery: number;
@@ -152,10 +201,13 @@ export interface SolveBatchParams {
 export interface BatchHandStat {
   /** Index into the canonical split enumeration. */
   bestIdx: number;
-  /** Points per deal, all under the same scenarios (common random numbers). */
+  /** Points per deal, both under the same scenarios (common random numbers). */
   bestEv: number;
+  /** EV of the hand's current policy (its atoms' EVs weighted by play
+   *  probability), or of the heuristic split when there is no policy yet. */
   prevEv: number;
-  heuristicEv: number;
+  /** The policy's most-played setting (the heuristic split without one). */
+  prevIdx: number;
 }
 
 export type TaiwaneseIn =

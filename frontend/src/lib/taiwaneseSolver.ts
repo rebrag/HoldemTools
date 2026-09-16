@@ -25,8 +25,10 @@ import type {
   BatchHandStat,
   LibraryEntry,
   LibraryFile,
+  LibraryFileV1,
   LibraryLevelStats,
   OpponentLibrary,
+  PolicyAtom,
 } from "../pages/private/protocol";
 
 /* ---------- cards and phe codes ---------- */
@@ -123,10 +125,21 @@ export const TOP_K = 10;
  */
 export const MIX_TEMPERATURE = 0.3;
 
-/** Sample one of an entry's stored alternatives per the play style. */
-export function pickAlt(entry: LibraryEntry, mixing: Mixing): AltSplit {
+/** A hand's setting for one scenario, per the play style: "pure" samples
+ *  its averaged self-play policy, "mixed" softens its latest best response. */
+export function pickAlt(entry: LibraryEntry, mixing: Mixing): AltSplit | PolicyAtom {
+  if (mixing === "pure") {
+    const policy = entry.policy;
+    if (policy.length === 1) return policy[0];
+    let r = rand();
+    for (const a of policy) {
+      r -= a.weight;
+      if (r <= 0) return a;
+    }
+    return policy[policy.length - 1];
+  }
   const alts = entry.alts;
-  if (mixing === "pure" || alts.length === 1) return alts[0];
+  if (alts.length === 1) return alts[0];
   let total = 0;
   for (const a of alts) total += Math.exp(-a.gap / MIX_TEMPERATURE);
   let r = rand() * total;
@@ -146,6 +159,44 @@ export function altsFromEv(hand: string[], ev: Float64Array, samples: number): A
     ...splitCards(SPLITS[idx], hand),
     gap: (best - ev[idx]) / samples,
   }));
+}
+
+/** The policy's most-played setting. */
+export function policyMode(policy: PolicyAtom[]): PolicyAtom {
+  let best = policy[0];
+  for (const a of policy) if (a.weight > best.weight) best = a;
+  return best;
+}
+
+/**
+ * Fictitious play: fold round `round`'s best response into the hand's
+ * averaged policy with linear round weights (round k enters with mass k on
+ * top of the 1 + 2 + ... + (k - 1) already there). Linear weighting fades
+ * the early rounds' responses to weak fields without a burn-in rule: the
+ * first round is 1/15 of a five-round average. Averaging is what makes the
+ * iteration converge; replacing the policy with each round's best response
+ * can cycle, and measurably stalled ~0.2 pts/deal short of equilibrium.
+ */
+export function mergeRound(prev: LibraryEntry | null, solved: LibraryEntry, round: number): LibraryEntry {
+  const chosen = solved.alts[0];
+  const prevMass = (round * (round - 1)) / 2;
+  const total = prevMass + round;
+  const policy: PolicyAtom[] = [];
+  let merged = false;
+  for (const a of prev?.policy ?? []) {
+    const weight = (a.weight * prevMass) / total;
+    if (a.idx === chosen.idx) {
+      policy.push({ ...a, weight: weight + round / total });
+      merged = true;
+    } else {
+      policy.push({ ...a, weight });
+    }
+  }
+  if (!merged) {
+    policy.push({ idx: chosen.idx, top: chosen.top, middle: chosen.middle, bottom: chosen.bottom, weight: round / total });
+  }
+  policy.sort((a, b) => b.weight - a.weight);
+  return { cards: solved.cards, alts: solved.alts, policy };
 }
 
 /* ---------- the solve core ---------- */
@@ -294,13 +345,19 @@ export interface BatchConfig {
   royalties: boolean;
   samples: number;
   library: LibraryEntry[] | null;
-  /** Previous round's chosen split index per hand; absent = the heuristic. */
-  prevIdx: number[] | null;
-  /** Opponents' play style during the build; mixed = smoothed iteration. */
+  /** Each hand's current averaged policy; absent = the heuristic. */
+  prevPolicy: PolicyAtom[][] | null;
+  /** Opponents' play style during the round. */
   mixing: Mixing;
   onHand?: (done: number) => void;
 }
 
+/**
+ * Best-respond every hand to the field, and price each hand's current
+ * policy on the same scenarios. Used both to build a round (the entries are
+ * folded in with mergeRound) and to measure a finished policy (the entries
+ * are discarded and only the stats matter).
+ */
 export function runBatch(cfg: BatchConfig): { entries: LibraryEntry[]; stats: BatchHandStat[] } {
   const entries: LibraryEntry[] = [];
   const stats: BatchHandStat[] = [];
@@ -316,15 +373,24 @@ export function runBatch(cfg: BatchConfig): { entries: LibraryEntry[]; stats: Ba
       mixing: cfg.mixing,
     });
     const alts = altsFromEv(hand, ev, cfg.samples);
-    entries.push({ cards: hand, alts });
+    entries.push({ cards: hand, alts, policy: [] });
 
-    const hIdx = splitIndexOf(heuristicSplit(hand));
-    const prevI = cfg.prevIdx ? cfg.prevIdx[e] : hIdx;
+    let prevEv: number;
+    let prevIdx: number;
+    const policy = cfg.prevPolicy?.[e];
+    if (policy && policy.length > 0) {
+      prevEv = 0;
+      for (const a of policy) prevEv += (a.weight * ev[a.idx]) / cfg.samples;
+      prevIdx = policyMode(policy).idx;
+    } else {
+      prevIdx = splitIndexOf(heuristicSplit(hand));
+      prevEv = ev[prevIdx] / cfg.samples;
+    }
     stats.push({
       bestIdx: alts[0].idx,
       bestEv: ev[alts[0].idx] / cfg.samples,
-      prevEv: ev[prevI] / cfg.samples,
-      heuristicEv: ev[hIdx] / cfg.samples,
+      prevEv,
+      prevIdx,
     });
     cfg.onHand?.(e + 1);
   }
@@ -333,10 +399,11 @@ export function runBatch(cfg: BatchConfig): { entries: LibraryEntry[]; stats: Ba
 
 /* ---------- compact library files (precompute output) ---------- */
 
-/** cards joined ("AhKd..."), alts as [splitIdx, gap in centipoints]. */
+/** cards joined ("AhKd..."), alts as [splitIdx, gap in centipoints], policy
+ *  as [splitIdx, play probability in permille]. */
 export function encodeLibrary(lib: OpponentLibrary): LibraryFile {
   return {
-    v: 1,
+    v: 2,
     opponents: lib.opponents,
     boards: lib.boards,
     royalties: lib.royalties,
@@ -344,50 +411,77 @@ export function encodeLibrary(lib: OpponentLibrary): LibraryFile {
     entries: lib.entries.map((e) => ({
       c: e.cards.join(""),
       a: e.alts.map((a) => [a.idx, Math.round(a.gap * 100)]),
+      p: e.policy.map((a) => [a.idx, Math.round(a.weight * 1000)]),
     })),
   };
 }
 
-export function decodeLibrary(file: LibraryFile): OpponentLibrary {
+const cardsOf = (joined: string): string[] => {
+  const cards: string[] = [];
+  for (let i = 0; i < joined.length; i += 2) cards.push(joined.slice(i, i + 2));
+  return cards;
+};
+
+export function decodeLibrary(file: LibraryFile | LibraryFileV1): OpponentLibrary {
   const entries: LibraryEntry[] = file.entries.map((e) => {
-    const cards: string[] = [];
-    for (let i = 0; i < e.c.length; i += 2) cards.push(e.c.slice(i, i + 2));
-    return {
-      cards,
-      alts: e.a.map(([idx, centiGap]) => ({
-        idx,
-        ...splitCards(SPLITS[idx], cards),
-        gap: centiGap / 100,
-      })),
-    };
+    const cards = cardsOf(e.c);
+    const alts = e.a.map(([idx, centiGap]) => ({
+      idx,
+      ...splitCards(SPLITS[idx], cards),
+      gap: centiGap / 100,
+    }));
+    let policy: PolicyAtom[];
+    if ("p" in e) {
+      const total = e.p.reduce((sum, [, w]) => sum + w, 0) || 1;
+      policy = e.p.map(([idx, permille]) => ({ idx, ...splitCards(SPLITS[idx], cards), weight: permille / total }));
+    } else {
+      // v1 stored only the final best response; play it as a pure policy.
+      policy = [{ idx: alts[0].idx, top: alts[0].top, middle: alts[0].middle, bottom: alts[0].bottom, weight: 1 }];
+    }
+    return { cards, alts, policy };
   });
+  // A v1 row k measured the round k-1 argmax policy (its prevPolicyEvLoss is
+  // the same paired best-response gain), under mixed play; the final policy
+  // was never measured, so no row claims to describe it.
+  const stats: LibraryLevelStats[] =
+    file.v === 2
+      ? file.stats
+      : file.stats.map((s) => ({
+          level: s.level - 1,
+          exploitability: s.prevPolicyEvLoss,
+          agreePrevPct: s.agreePrevPct,
+        }));
   return {
     entries,
-    stats: file.stats,
+    stats,
     opponents: file.opponents,
     boards: file.boards,
     royalties: file.royalties,
   };
 }
 
-/** Aggregate per-hand stats into one round's summary line. */
-export function summarizeRound(
-  level: number,
-  stats: BatchHandStat[],
-  prevIdx: number[] | null
-): LibraryLevelStats {
+/** Aggregate one best-response pass into the stats row of the policy it
+ *  faced: `level` is how many rounds that policy had absorbed. */
+export function summarizeRound(level: number, stats: BatchHandStat[]): LibraryLevelStats {
   let agree = 0;
-  let gainSum = 0;
-  let lossSum = 0;
-  stats.forEach((s, i) => {
-    if (prevIdx ? prevIdx[i] === s.bestIdx : s.bestEv === s.heuristicEv) agree++;
-    gainSum += s.bestEv - s.heuristicEv;
-    lossSum += s.bestEv - s.prevEv;
-  });
+  let gain = 0;
+  let selfSum = 0;
+  let selfPos = 0;
+  let bestPos = 0;
+  for (const s of stats) {
+    if (s.prevIdx === s.bestIdx) agree++;
+    gain += s.bestEv - s.prevEv;
+    selfSum += s.prevEv;
+    if (s.prevEv > 0) selfPos++;
+    if (s.bestEv > 0) bestPos++;
+  }
+  const n = stats.length;
   return {
     level,
-    agreePrevPct: (agree / stats.length) * 100,
-    evGainVsHeuristic: gainSum / stats.length,
-    prevPolicyEvLoss: lossSum / stats.length,
+    exploitability: gain / n,
+    selfMeanEv: selfSum / n,
+    selfPositivePct: (selfPos / n) * 100,
+    bestPositivePct: (bestPos / n) * 100,
+    agreePrevPct: (agree / n) * 100,
   };
 }
