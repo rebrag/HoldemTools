@@ -33,36 +33,6 @@ int tree_depth(const PublicTree& tree) {
   return max_depth;
 }
 
-// v[i] *= scale over the pool in fixed chunks. Cells are independent, so the
-// bits cannot depend on the thread count or the chunk size; never fuse a
-// reduction into this loop. With canonicalize_zero the product -0.0f is
-// stored as +0.0f, written as a compare rather than `+ 0.0f` so an FMA
-// contraction cannot fold the fix into the multiply. The two forms agree
-// bitwise with the dense fold this replaced: an untouched cell used to be
-// (r * scale) + (+0.0f), which is exactly canon(r * scale), and a touched
-// cell (-0.0f) + delta equals (+0.0f) + delta for every delta, since a lane's
-// delta cell is a sum of terms starting at +0.0f and can never be -0.0f.
-void scale_chunked(ThreadPool& pool, std::vector<float>& v, float scale,
-                   bool canonicalize_zero) {
-  constexpr std::size_t kChunk = std::size_t{1} << 20;
-  const std::size_t n = v.size();
-  if (n == 0) return;
-  const int chunks = static_cast<int>((n + kChunk - 1) / kChunk);
-  float* const data = v.data();
-  pool.parallel_for(chunks, [&](int c) {
-    const std::size_t begin = static_cast<std::size_t>(c) * kChunk;
-    const std::size_t end = std::min(n, begin + kChunk);
-    if (canonicalize_zero) {
-      for (std::size_t i = begin; i < end; ++i) {
-        const float r = data[i] * scale;
-        data[i] = r == 0.0f ? 0.0f : r;
-      }
-    } else {
-      for (std::size_t i = begin; i < end; ++i) data[i] *= scale;
-    }
-  });
-}
-
 }  // namespace
 
 SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
@@ -170,27 +140,15 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
     const std::uint64_t b0 = t_;
     const std::uint64_t b1 = std::min<std::uint64_t>(end, b0 + config_.batch);
 
-    // Linear discount, keyed to ABSOLUTE iteration count: scaling by b0/b1
-    // before folding [b0, b1) telescopes so a batch ending at iteration b
-    // carries weight b/T at the end - the same weighting whatever run()
-    // segmentation or checkpoint cadence produced the batches. (Keying on a
-    // batch COUNTER was measured to make the result depend on
-    // checkpoint_every, because checkpoints truncate batches.) Serial, so
-    // bit-exact.
-    if (b0 > 0) {
-      const float scale =
-          static_cast<float>(static_cast<double>(b0) / static_cast<double>(b1));
-      // The signed arrays canonicalize zero: a negative denormal times a
-      // scale below one rounds to -0.0f, and the sparse fold below skips
-      // untouched cells, so nothing else would turn it back into the +0.0f
-      // the old dense fold produced by adding +0.0f to every cell. Bitwise
-      // neutral against that fold on every cell (see scale_chunked).
-      // One sweep per interleaved array: the strategy-sum and denominator
-      // halves are non-negative, so canonicalizing their zero changes no
-      // bit and the pair is exactly the old per-array sweep.
-      scale_chunked(*pool_, store_, scale, true);
-      scale_chunked(*pool_, ev_store_, scale, true);
-    }
+    // Linear discount, keyed to ABSOLUTE iteration count and applied at fold
+    // time: this batch's deltas fold in multiplied by float(b1), so a batch
+    // ending at iteration b carries weight b/T relative to the whole - the
+    // same weighting whatever run() segmentation or checkpoint cadence
+    // produced the batches. (Keying on a batch COUNTER was measured to make
+    // the result depend on checkpoint_every, because checkpoints truncate
+    // batches.) Through double, so the conversion is one correctly rounded
+    // step on every compiler.
+    const float weight = static_cast<float>(static_cast<double>(b1));
 
     // Lanes read the master (frozen for the whole batch - nothing below
     // writes it) and accumulate into private buffers, each in ascending t.
@@ -220,7 +178,9 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
     // count. First each lane splits its touched list by shard (parallel
     // over lanes, order-preserving), then each shard walks the lanes.
     // Only touched blocks are added; every other cell would receive an exact
-    // +0.0f, which is the identity on a master that never holds -0.0f.
+    // +0.0f, which is the identity because the master never holds -0.0f: it
+    // starts at +0.0f, nothing ever multiplies it, and under round-to-nearest
+    // a sum that starts at +0.0f cannot produce -0.0f.
     const bool team = agents_.has_team();
     pool_->parallel_for(lanes, [&](int l) {
       Lane& lane = lanes_[static_cast<std::size_t>(l)];
@@ -235,10 +195,10 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
           const std::size_t base = 2 * indexer_.group_offset[g];
           const std::size_t floats = 2 * group_cells(g);
           const float* d = lane.delta.data() + blk;
-          for (std::size_t i = 0; i < floats; ++i) store_[base + i] += d[i];
+          for (std::size_t i = 0; i < floats; ++i) store_[base + i] += weight * d[i];
           if (team) {
             const float* ed = lane.ev_delta.data() + blk;
-            for (std::size_t i = 0; i < floats; ++i) ev_store_[base + i] += ed[i];
+            for (std::size_t i = 0; i < floats; ++i) ev_store_[base + i] += weight * ed[i];
           }
         }
       }

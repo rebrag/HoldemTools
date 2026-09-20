@@ -161,12 +161,19 @@ void check_digest(const std::string& what, std::uint64_t got, std::uint64_t expe
 #endif
 }
 
-// Recorded 2026-09-11 from the pre-InfosetIndexer binary (commit 2061b08).
-constexpr std::uint64_t kKuhn = 0x09a89c5edbbcbbc5ULL;
-constexpr std::uint64_t kLeduc = 0xc2792da760ede651ULL;
-constexpr std::uint64_t kHuPushfold = 0x0dad108de1603b03ULL;
-constexpr std::uint64_t kTeamUnaware = 0x9ca7e12ca755c943ULL;
-constexpr std::uint64_t kFlop = 0x06e155db2b48e277ULL;
+// Recorded 2026-09-11 from the pre-InfosetIndexer binary (commit 2061b08),
+// and RE-RECORDED 2026-09-20 when the master moved to its raw iteration-
+// weighted form (no per-batch discount sweep; each batch's deltas fold in
+// times the batch's end iteration, see SampledCfrSolver's header). The
+// row-major interleaved store that landed just before it left every literal
+// untouched - the canonical accessors below emit the old order, so that
+// change was provably a permutation - and this one moves them because the
+// arithmetic changed: R = sum b1 * delta instead of the telescoped product.
+constexpr std::uint64_t kKuhn = 0xb4f484ffec6c58b6ULL;
+constexpr std::uint64_t kLeduc = 0x5f476945c84f7057ULL;
+constexpr std::uint64_t kHuPushfold = 0x8bb9c98340f39586ULL;
+constexpr std::uint64_t kTeamUnaware = 0x92855f2946e744deULL;
+constexpr std::uint64_t kFlop = 0xcd513ade07d95f3aULL;
 
 }  // namespace
 

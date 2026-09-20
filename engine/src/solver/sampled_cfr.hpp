@@ -49,10 +49,18 @@ namespace engine {
 // produces identical bits.
 //
 // Discounting is linear in the ITERATION count (LCFR at batch
-// granularity): before batch [b0, b1) folds in, the master arrays scale by
-// b0/b1, which telescopes to weight b/T for a batch ending at iteration b -
-// bounded magnitude, insensitive to how run() calls segment the batches,
-// and the standard cure for MCCFR's early-noise hangover.
+// granularity): a batch ending at iteration b carries weight b/T at the
+// end, the standard cure for MCCFR's early-noise hangover. It is applied at
+// FOLD time and never to the master: batch [b0, b1)'s deltas fold in
+// multiplied by float(b1), so the master holds R = sum_b b1 * delta_b and
+// the discounted r_T = R / T is never materialized. Every consumer is
+// homogeneous of degree 0 in the store (regret matching, the average
+// strategy, the EV walk, the team rollups all normalize per row or take
+// ratios within a cell pair - tests/test_sampled_store.cpp pins it), so
+// the scale is invisible, and R is a pure function of the batch
+// boundaries, so slicing and checkpoint invariance hold unchanged. What it
+// replaces was a whole-master multiply per batch: 0.6 s on a 6 GB flop
+// store, which forbade the small batches the sampled core wants.
 class SampledCfrSolver final : public StrategySource {
  public:
   // `game` and `deals` must be the same object wearing both interfaces.
@@ -188,10 +196,10 @@ class SampledCfrSolver final : public StrategySource {
     // storage group touched this batch gets one zeroed block of
     // actions x rows floats in every arena below, at the same block offset,
     // allocated on first touch (touch()) and released by the reset that
-    // starts the next batch. Bitwise neutral against the dense copy: an
-    // untouched cell held +0.0f, and the master never holds -0.0f (run()
-    // canonicalizes it in the discount sweep), so skipping the add of that
-    // +0.0f changes no bit.
+    // starts the next batch. Bitwise neutral against a dense copy: an
+    // untouched cell held +0.0f, and the master never holds -0.0f (nothing
+    // multiplies it and a sum from +0.0f cannot round to -0.0f), so skipping
+    // the add of that +0.0f changes no bit.
     // Same interleaved row-major layout as the master: a block holds
     // 2 x actions x rows floats, {regret, strategy sum} per cell.
     std::vector<float> delta;

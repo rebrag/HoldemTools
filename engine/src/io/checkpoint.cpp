@@ -248,6 +248,18 @@ bool read_checkpoint(const std::string& path, SampledCfrSolver& solver,
     return false;
   }
   if (v1) {
+    // A version-1 file holds the DISCOUNTED arrays (the master used to be
+    // rescaled by b0/b1 every batch); the store now holds them times the
+    // iteration count. One rounding per cell: an equivalent state, not a
+    // bit-continuous one, which is why the note is printed.
+    const float scale = static_cast<float>(static_cast<double>(iteration));
+    for (std::vector<float>* v : {&regrets, &strat_sum, &ev_sum, &ev_w}) {
+      for (float& x : *v) x *= scale;
+    }
+    std::fprintf(stderr,
+                 "note: %s is a version-1 checkpoint; converted to the current store "
+                 "(equivalent solve, not bit-continuous with a run that never stopped)\n",
+                 path.c_str());
     solver.restore_canonical(iteration, regrets, strat_sum, ev_sum, ev_w,
                              std::move(frozen_seat), std::move(frozen_rows));
   } else {
