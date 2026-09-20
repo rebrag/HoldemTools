@@ -121,18 +121,31 @@ class SampledCfrSolver final : public StrategySource {
   const InfosetLayout& layout() const { return layout_; }
   const InfosetIndexer& indexer() const { return indexer_; }
   const Game& game() const { return game_; }
-  // Read seams for the determinism test: bitwise equality across thread
-  // counts is asserted on the raw arrays, never on derived quantities.
-  const std::vector<float>& regrets() const { return regrets_; }
-  const std::vector<float>& strategy_sums() const { return strat_sum_; }
+  // Read seams for the determinism tests and the checkpoint: bitwise
+  // equality across thread counts is asserted on these, never on derived
+  // quantities. They are CANONICAL COPIES, not references: the store itself
+  // is row-major with regret and strategy sum interleaved per cell (see
+  // store()), while these emit the action-major-per-group order the solver
+  // had before that layout landed, so the absolute digests in
+  // tests/test_sampled_digest.cpp read the same bits through any layout.
+  std::vector<float> regrets() const { return canonical(store_, 0); }
+  std::vector<float> strategy_sums() const { return canonical(store_, 1); }
 
   // ---- Checkpoint seam (io/checkpoint.cpp) ----
   // The solver's ENTIRE mutable state is these arrays plus the iteration
   // counter, which is what makes resume exact: the deal stream is
   // sample_deal(seed, t) and the discount scales by absolute iteration, so
   // continuing at t reproduces the bits an uninterrupted run would have had.
-  const std::vector<float>& ev_sums() const { return ev_sum_; }
-  const std::vector<float>& ev_weights() const { return ev_w_; }
+  std::vector<float> ev_sums() const { return canonical(ev_store_, 0); }
+  std::vector<float> ev_weights() const { return canonical(ev_store_, 1); }
+  // The store as laid out in memory, for the checkpoint: per group, per
+  // storage row, per action, the pair {regret, strategy sum}; ev_store()
+  // holds {conditioned EV numerator, reach denominator} the same way and is
+  // empty without a team. Row-major because a pinned actor's regret matching
+  // reads one row's actions, and interleaved because the lane fold writes
+  // both halves of a cell at once - one cache line per row for either.
+  const std::vector<float>& store() const { return store_; }
+  const std::vector<float>& ev_store() const { return ev_store_; }
   const std::vector<bool>& frozen_seats() const { return frozen_seat_; }
   const std::vector<std::vector<float>>& frozen_rows() const { return frozen_rows_; }
   // Layout fingerprint: a checkpoint written against a different tree,
@@ -149,10 +162,16 @@ class SampledCfrSolver final : public StrategySource {
   // Restore state read from a checkpoint. Throws on any size mismatch -
   // there is no partial restore, because a half-restored solver would keep
   // running and produce a plausible wrong answer.
-  void restore(std::uint64_t iteration, std::vector<float> regrets,
-               std::vector<float> strat_sum, std::vector<float> ev_sum,
-               std::vector<float> ev_w, std::vector<bool> frozen_seat,
+  void restore(std::uint64_t iteration, std::vector<float> store,
+               std::vector<float> ev_store, std::vector<bool> frozen_seat,
                std::vector<std::vector<float>> frozen_rows);
+  // The same restore from the four CANONICAL arrays (the order regrets() and
+  // friends emit, and the order a version-1 checkpoint holds).
+  void restore_canonical(std::uint64_t iteration, const std::vector<float>& regrets,
+                         const std::vector<float>& strat_sum,
+                         const std::vector<float>& ev_sum, const std::vector<float>& ev_w,
+                         std::vector<bool> frozen_seat,
+                         std::vector<std::vector<float>> frozen_rows);
   // Back to a freshly constructed solver, keeping the frozen rows (which
   // belong to the environment, not to this solver's training). Used when a
   // team's regrets are invalidated because the baseline underneath them
@@ -173,11 +192,13 @@ class SampledCfrSolver final : public StrategySource {
     // untouched cell held +0.0f, and the master never holds -0.0f (run()
     // canonicalizes it in the discount sweep), so skipping the add of that
     // +0.0f changes no bit.
-    std::vector<float> regret_delta, strat_delta;
+    // Same interleaved row-major layout as the master: a block holds
+    // 2 x actions x rows floats, {regret, strategy sum} per cell.
+    std::vector<float> delta;
     // Conditioned-EV accumulators, allocated only for team solves: value
-    // numerators per (row, action) and reach denominators per row (stored
-    // in the action-0 part of the group's block).
-    std::vector<float> ev_delta, evw_delta;
+    // numerators per cell and, in the cell's second half at action 0, the
+    // row's reach denominator.
+    std::vector<float> ev_delta;
     std::vector<std::uint32_t> block_of;  // per storage group: arena offset, kNoBlock if untouched
     std::vector<std::uint32_t> touched;   // groups touched this batch, in first-touch order
     // `touched` split by fold shard after the join, so shard s can walk this
@@ -259,16 +280,25 @@ class SampledCfrSolver final : public StrategySource {
   // the seats in frozen_seat_; empty vectors elsewhere.
   std::vector<std::vector<float>> frozen_rows_;
   std::vector<bool> frozen_seat_;
-  std::vector<float> regrets_;
-  std::vector<float> strat_sum_;
-  // Conditioned EVs for team nodes, allocated only when a team exists:
-  // ev_sum_[offset + a*rows + row] accumulates reach-weighted TEAM values
-  // per action, ev_w_[offset + row] (the action-0 block) the matching
+  // The master store: store_[2*cell + kRegret] and store_[2*cell + kStrat]
+  // with cell = offset + row*actions + a (see cell_index). Conditioned EVs
+  // for team nodes live in ev_store_ the same way, allocated only when a
+  // team exists: ev_store_[2*cell + kRegret] accumulates reach-weighted
+  // TEAM values per action, ev_store_[2*cell(row, 0) + kStrat] the row's
   // reach mass, both under the same linear discount as the strategy sums.
-  // ev_sum_/ev_w_ is the reach-weighted average team EV of taking that
-  // action from that (own, partner) infoset - what team_rollup ships.
-  std::vector<float> ev_sum_;
-  std::vector<float> ev_w_;
+  // Their ratio is the reach-weighted average team EV of taking that action
+  // from that (own, partner) infoset - what team_rollup ships.
+  static constexpr std::size_t kRegret = 0;
+  static constexpr std::size_t kStrat = 1;
+  std::vector<float> store_;
+  std::vector<float> ev_store_;
+  std::vector<std::uint16_t> store_actions_;  // by decision_index
+  // One canonical (action-major per group) half of an interleaved array.
+  std::vector<float> canonical(const std::vector<float>& interleaved, std::size_t half) const;
+  static std::size_t cell_index(std::size_t offset, std::uint16_t actions, std::size_t row,
+                                std::size_t a) {
+    return offset + row * actions + a;
+  }
   std::vector<Lane> lanes_;
   // The fold runs in parallel over contiguous GROUP ranges (fold shards),
   // balanced on cells. Shard s adds lanes 0..L-1 in lane order for every

@@ -105,20 +105,18 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
   store_offset_.assign(layout_.node_offset.size(), InfosetLayout::kNoOffset);
   store_hands_.assign(layout_.node_hands.size(), 0);
   store_cells_.assign(layout_.node_hands.size(), 0);
+  store_actions_.assign(layout_.node_hands.size(), 0);
   for (const Node& node : game.tree().nodes) {
     if (node.kind != NodeKind::Decision) continue;
     const std::uint32_t d = node.decision_index;
     store_offset_[d] = indexer_.offset(d);
     store_hands_[d] = indexer_.rows(d);
     store_cells_[d] = static_cast<std::uint32_t>(node.num_children) * indexer_.rows(d);
+    store_actions_[d] = node.num_children;
   }
   store_total_ = indexer_.store_total;
-  regrets_.assign(store_total_, 0.0f);
-  strat_sum_.assign(store_total_, 0.0f);
-  if (agents_.has_team()) {
-    ev_sum_.assign(store_total_, 0.0f);
-    ev_w_.assign(store_total_, 0.0f);
-  }
+  store_.assign(2 * store_total_, 0.0f);
+  if (agents_.has_team()) ev_store_.assign(2 * store_total_, 0.0f);
   max_depth_ = tree_depth(game.tree());
   lanes_.resize(config_.lanes);
   for (Lane& lane : lanes_) {
@@ -187,10 +185,11 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
       // untouched cells, so nothing else would turn it back into the +0.0f
       // the old dense fold produced by adding +0.0f to every cell. Bitwise
       // neutral against that fold on every cell (see scale_chunked).
-      scale_chunked(*pool_, regrets_, scale, true);
-      scale_chunked(*pool_, strat_sum_, scale, false);
-      scale_chunked(*pool_, ev_sum_, scale, true);
-      scale_chunked(*pool_, ev_w_, scale, false);
+      // One sweep per interleaved array: the strategy-sum and denominator
+      // halves are non-negative, so canonicalizing their zero changes no
+      // bit and the pair is exactly the old per-array sweep.
+      scale_chunked(*pool_, store_, scale, true);
+      scale_chunked(*pool_, ev_store_, scale, true);
     }
 
     // Lanes read the master (frozen for the whole batch - nothing below
@@ -202,10 +201,8 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
       // without a fresh allocation.
       for (std::uint32_t g : lane.touched) lane.block_of[g] = kNoBlock;
       lane.touched.clear();
-      lane.regret_delta.clear();
-      lane.strat_delta.clear();
+      lane.delta.clear();
       lane.ev_delta.clear();
-      lane.evw_delta.clear();
       // Iteration t belongs to lane t % lanes: start at the first such t in
       // the batch and step by the lane count.
       const std::uint64_t L = static_cast<std::uint64_t>(lanes);
@@ -235,17 +232,13 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
         const Lane& lane = lanes_[static_cast<std::size_t>(l)];
         for (std::uint32_t g : lane.shard_touched[static_cast<std::size_t>(s)]) {
           const std::size_t blk = lane.block_of[g];
-          const std::size_t base = indexer_.group_offset[g];
-          const std::size_t cells = group_cells(g);
-          const float* rd = lane.regret_delta.data() + blk;
-          const float* sd = lane.strat_delta.data() + blk;
-          for (std::size_t i = 0; i < cells; ++i) regrets_[base + i] += rd[i];
-          for (std::size_t i = 0; i < cells; ++i) strat_sum_[base + i] += sd[i];
+          const std::size_t base = 2 * indexer_.group_offset[g];
+          const std::size_t floats = 2 * group_cells(g);
+          const float* d = lane.delta.data() + blk;
+          for (std::size_t i = 0; i < floats; ++i) store_[base + i] += d[i];
           if (team) {
             const float* ed = lane.ev_delta.data() + blk;
-            const float* ewd = lane.evw_delta.data() + blk;
-            for (std::size_t i = 0; i < cells; ++i) ev_sum_[base + i] += ed[i];
-            for (std::size_t i = 0; i < cells; ++i) ev_w_[base + i] += ewd[i];
+            for (std::size_t i = 0; i < floats; ++i) ev_store_[base + i] += ed[i];
           }
         }
       }
@@ -264,19 +257,15 @@ std::size_t SampledCfrSolver::touch(Lane& lane, std::uint32_t decision_index) {
   const std::uint32_t g = indexer_.group(decision_index);
   std::uint32_t& blk = lane.block_of[g];
   if (blk == kNoBlock) {
-    const std::size_t used = lane.regret_delta.size();
-    const std::size_t cells = store_cells_[decision_index];
-    if (used + cells > static_cast<std::size_t>(kNoBlock)) {
-      throw std::runtime_error("sampled core: a lane's delta arena exceeded 4G cells");
+    const std::size_t used = lane.delta.size();
+    const std::size_t floats = 2 * static_cast<std::size_t>(store_cells_[decision_index]);
+    if (used + floats > static_cast<std::size_t>(kNoBlock)) {
+      throw std::runtime_error("sampled core: a lane's delta arena exceeded 4G floats");
     }
     blk = static_cast<std::uint32_t>(used);
     // resize on growth value-initializes: the new block arrives zeroed.
-    lane.regret_delta.resize(used + cells, 0.0f);
-    lane.strat_delta.resize(used + cells, 0.0f);
-    if (agents_.has_team()) {
-      lane.ev_delta.resize(used + cells, 0.0f);
-      lane.evw_delta.resize(used + cells, 0.0f);
-    }
+    lane.delta.resize(used + floats, 0.0f);
+    if (agents_.has_team()) lane.ev_delta.resize(used + floats, 0.0f);
     lane.touched.push_back(g);
   }
   return blk;
@@ -416,6 +405,7 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
   const std::uint16_t actions = node.num_children;
   const std::size_t offset = store_offset_[node.decision_index];
   const std::uint32_t rows = store_hands_[node.decision_index];
+  const float* const master = store_.data();
 
   if (actor != hero) {
     out.assign(my_hands, 0.0f);
@@ -436,10 +426,10 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
           static_cast<std::size_t>(hq) * static_cast<std::size_t>(universe_hands_);
       for (std::uint32_t h = 0; h < my_hands; ++h) {
         const std::uint32_t jc = joint_class_[mbase + h];
-        const std::size_t r0 = offset + (jc == kNoJointRow ? 0 : jc);
+        const std::size_t r0 = cell_index(offset, actions, jc == kNoJointRow ? 0 : jc, 0);
         float pos_sum = 0.0f;
         for (std::uint16_t a = 0; a < actions; ++a) {
-          const float r = regrets_[r0 + static_cast<std::size_t>(a) * rows];
+          const float r = master[2 * (r0 + a) + kRegret];
           const float pr = r > 0.0f ? r : 0.0f;
           sig[static_cast<std::size_t>(a) * my_hands + h] = pr;
           pos_sum += pr;
@@ -496,17 +486,14 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
       // hero's reach (the actor's PARTNER) and the actor's own earlier
       // sigma, so the stored mass is the conditioning's actual reach.
       const std::size_t blk = touch(lane, node.decision_index);
-      float* rd = lane.regret_delta.data() + blk;
-      float* sd = lane.strat_delta.data() + blk;
+      float* d = lane.delta.data() + blk;
       float* ed = lane.ev_delta.data() + blk;
-      float* ewd = lane.evw_delta.data() + blk;
       // Conditioned EVs: vrow already carries opp_w (the external prefix
       // reach), so accumulating hero_reach * vrow against a denominator of
       // hero_reach * opp_w averages to E[team chips | infoset, action].
       const float wpre = static_cast<float>(opp_w);
       for (std::uint16_t a = 0; a < actions; ++a) {
         const std::size_t srow_off = static_cast<std::size_t>(a) * my_hands;
-        const std::size_t drow_off = static_cast<std::size_t>(a) * rows;
         const float* srow = sig.data() + srow_off;
         const float* vrow = child_vals.data() + srow_off;
         for (std::uint32_t h = 0; h < my_hands; ++h) {
@@ -514,10 +501,11 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
           if (jc == kNoJointRow) continue;
           const float own = mate_reach != nullptr ? mate_reach[h] : 1.0f;
           const float w = hero_reach[h] * own;
-          rd[drow_off + jc] += hero_reach[h] * (vrow[h] - out[h]);
-          sd[drow_off + jc] += w * srow[h];
-          ed[drow_off + jc] += w * vrow[h];
-          if (a == 0) ewd[jc] += w * wpre;
+          const std::size_t c = 2 * (static_cast<std::size_t>(jc) * actions + a);
+          d[c + kRegret] += hero_reach[h] * (vrow[h] - out[h]);
+          d[c + kStrat] += w * srow[h];
+          ed[c + kRegret] += w * vrow[h];
+          if (a == 0) ed[c + kStrat] += w * wpre;
         }
       }
       return;
@@ -550,8 +538,9 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
         hrow = indexer_.map(node.decision_index)[hq];
       }
       float pos_sum = 0.0f;
+      const std::size_t r0 = cell_index(offset, actions, hrow, 0);
       for (std::uint16_t a = 0; a < actions; ++a) {
-        const float r = regrets_[offset + static_cast<std::size_t>(a) * rows + hrow];
+        const float r = master[2 * (r0 + a) + kRegret];
         sigma[a] = r > 0.0f ? r : 0.0f;
         pos_sum += sigma[a];
       }
@@ -601,10 +590,10 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
     child_vals.resize(cells);
     child_reach.resize(my_hands);
     for (std::uint32_t h = 0; h < my_hands; ++h) {
-      const std::size_t r0 = offset + team_rows[h];
+      const std::size_t r0 = cell_index(offset, actions, team_rows[h], 0);
       float pos_sum = 0.0f;
       for (std::uint16_t a = 0; a < actions; ++a) {
-        const float r = regrets_[r0 + static_cast<std::size_t>(a) * rows];
+        const float r = master[2 * (r0 + a) + kRegret];
         const float pr = r > 0.0f ? r : 0.0f;
         sigma[static_cast<std::size_t>(a) * my_hands + h] = pr;
         pos_sum += pr;
@@ -640,23 +629,21 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
     // with the same weight against an opp_w denominator (values carry the
     // external prefix reach), averaging to E[team chips | infoset, action].
     const std::size_t blk = touch(lane, node.decision_index);
-    float* rd = lane.regret_delta.data() + blk;
-    float* sd = lane.strat_delta.data() + blk;
+    float* d = lane.delta.data() + blk;
     float* ed = lane.ev_delta.data() + blk;
-    float* ewd = lane.evw_delta.data() + blk;
     const float wpre = static_cast<float>(opp_w);
     for (std::uint16_t a = 0; a < actions; ++a) {
       const std::size_t srow_off = static_cast<std::size_t>(a) * my_hands;
-      const std::size_t drow_off = static_cast<std::size_t>(a) * rows;
       const float* srow = sigma.data() + srow_off;
       const float* vrow = child_vals.data() + srow_off;
       for (std::uint32_t h = 0; h < my_hands; ++h) {
         const float mr = mate_reach != nullptr ? mate_reach[h] : 1.0f;
         const float w = hero_reach[h] * mr;
-        rd[drow_off + team_rows[h]] += vrow[h] - out[h];
-        sd[drow_off + team_rows[h]] += w * srow[h];
-        ed[drow_off + team_rows[h]] += w * vrow[h];
-        if (a == 0) ewd[team_rows[h]] += w * wpre;
+        const std::size_t c = 2 * (static_cast<std::size_t>(team_rows[h]) * actions + a);
+        d[c + kRegret] += vrow[h] - out[h];
+        d[c + kStrat] += w * srow[h];
+        ed[c + kRegret] += w * vrow[h];
+        if (a == 0) ed[c + kStrat] += w * wpre;
       }
     }
     return;
@@ -680,8 +667,9 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
 
   for (std::uint32_t c = 0; c < rows; ++c) {
     float pos_sum = 0.0f;
+    const std::size_t r0 = cell_index(offset, actions, c, 0);
     for (std::uint16_t a = 0; a < actions; ++a) {
-      const float r = regrets_[offset + static_cast<std::size_t>(a) * rows + c];
+      const float r = master[2 * (r0 + a) + kRegret];
       const float p = r > 0.0f ? r : 0.0f;
       class_sigma[static_cast<std::size_t>(a) * rows + c] = p;
       pos_sum += p;
@@ -724,16 +712,15 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
   // variance reduction. Hand order is fixed, so the accumulation stays
   // deterministic; identity reduces to the original per-hand loop.
   const std::size_t blk = touch(lane, node.decision_index);
-  float* rd = lane.regret_delta.data() + blk;
-  float* sd = lane.strat_delta.data() + blk;
+  float* d = lane.delta.data() + blk;
   for (std::uint16_t a = 0; a < actions; ++a) {
     const std::size_t srow_off = static_cast<std::size_t>(a) * my_hands;
-    const std::size_t drow_off = static_cast<std::size_t>(a) * rows;
     const float* srow = sigma.data() + srow_off;
     const float* vrow = child_vals.data() + srow_off;
     for (std::uint32_t h = 0; h < my_hands; ++h) {
-      rd[drow_off + row_of[h]] += vrow[h] - out[h];
-      sd[drow_off + row_of[h]] += hero_reach[h] * srow[h];
+      const std::size_t c = 2 * (static_cast<std::size_t>(row_of[h]) * actions + a);
+      d[c + kRegret] += vrow[h] - out[h];
+      d[c + kStrat] += hero_reach[h] * srow[h];
     }
   }
 }
@@ -741,7 +728,6 @@ void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,
 void SampledCfrSolver::average_strategy(NodeId id, std::vector<float>& out) const {
   const Node& node = game_.tree()[id];
   const std::size_t offset = store_offset_[node.decision_index];
-  const std::uint32_t rows = store_hands_[node.decision_index];
   const std::uint32_t hands = layout_.node_hands[node.decision_index];
   const std::uint16_t actions = layout_.node_actions[node.decision_index];
   out.assign(static_cast<std::size_t>(hands) * actions, 0.0f);
@@ -770,8 +756,9 @@ void SampledCfrSolver::average_strategy(NodeId id, std::vector<float>& out) cons
       for (std::size_t m = 0; m < H; ++m) {
         const std::uint32_t jc = joint_class_[base + m];
         if (jc == kNoJointRow) continue;
+        const std::size_t r0 = cell_index(offset, actions, jc, 0);
         for (std::uint16_t a = 0; a < actions; ++a) {
-          const float v = strat_sum_[offset + static_cast<std::size_t>(a) * rows + jc];
+          const float v = store_[2 * (r0 + a) + kStrat];
           sums[a] += v;
           total += v;
         }
@@ -803,14 +790,12 @@ void SampledCfrSolver::average_strategy(NodeId id, std::vector<float>& out) cons
       for (std::uint16_t a = 0; a < actions; ++a) row[a] = uniform;
       continue;
     }
-    const std::uint16_t c = row_of[h];
+    const std::size_t r0 = cell_index(offset, actions, row_of[h], 0);
     float sum = 0.0f;
-    for (std::uint16_t a = 0; a < actions; ++a) {
-      sum += strat_sum_[offset + static_cast<std::size_t>(a) * rows + c];
-    }
+    for (std::uint16_t a = 0; a < actions; ++a) sum += store_[2 * (r0 + a) + kStrat];
     if (sum > 0.0f) {
       for (std::uint16_t a = 0; a < actions; ++a) {
-        row[a] = strat_sum_[offset + static_cast<std::size_t>(a) * rows + c] / sum;
+        row[a] = store_[2 * (r0 + a) + kStrat] / sum;
       }
     } else {
       const float uniform = 1.0f / static_cast<float>(actions);
@@ -829,14 +814,13 @@ void SampledCfrSolver::bucket_strategy(std::uint32_t group, std::vector<float>& 
   const std::uint16_t actions = layout_.node_actions[rep];
   out.assign(static_cast<std::size_t>(rows) * actions, 0.0f);
   for (std::uint32_t r = 0; r < rows; ++r) {
+    const std::size_t r0 = cell_index(offset, actions, r, 0);
     float sum = 0.0f;
-    for (std::uint16_t a = 0; a < actions; ++a) {
-      sum += strat_sum_[offset + static_cast<std::size_t>(a) * rows + r];
-    }
+    for (std::uint16_t a = 0; a < actions; ++a) sum += store_[2 * (r0 + a) + kStrat];
     float* row = out.data() + static_cast<std::size_t>(r) * actions;
     if (sum > 0.0f) {
       for (std::uint16_t a = 0; a < actions; ++a) {
-        row[a] = strat_sum_[offset + static_cast<std::size_t>(a) * rows + r] / sum;
+        row[a] = store_[2 * (r0 + a) + kStrat] / sum;
       }
     } else {
       const float uniform = 1.0f / static_cast<float>(actions);
@@ -845,14 +829,76 @@ void SampledCfrSolver::bucket_strategy(std::uint32_t group, std::vector<float>& 
   }
 }
 
-void SampledCfrSolver::restore(std::uint64_t iteration, std::vector<float> regrets,
-                               std::vector<float> strat_sum, std::vector<float> ev_sum,
-                               std::vector<float> ev_w, std::vector<bool> frozen_seat,
-                               std::vector<std::vector<float>> frozen_rows) {
+std::vector<float> SampledCfrSolver::canonical(const std::vector<float>& interleaved,
+                                               std::size_t half) const {
+  // Action-major within each group, groups in store order: the layout the
+  // solver had before the interleaved row-major store. A pure permutation.
+  std::vector<float> out;
+  if (interleaved.empty()) return out;
+  out.resize(store_total_);
+  for (std::uint32_t g = 0; g < indexer_.num_groups; ++g) {
+    const std::uint32_t rep = indexer_.group_rep[g];
+    const std::size_t offset = indexer_.group_offset[g];
+    const std::uint32_t rows = store_hands_[rep];
+    const std::uint16_t actions = store_actions_[rep];
+    for (std::uint16_t a = 0; a < actions; ++a) {
+      for (std::uint32_t r = 0; r < rows; ++r) {
+        out[offset + static_cast<std::size_t>(a) * rows + r] =
+            interleaved[2 * cell_index(offset, actions, r, a) + half];
+      }
+    }
+  }
+  return out;
+}
+
+void SampledCfrSolver::restore_canonical(std::uint64_t iteration,
+                                         const std::vector<float>& regrets,
+                                         const std::vector<float>& strat_sum,
+                                         const std::vector<float>& ev_sum,
+                                         const std::vector<float>& ev_w,
+                                         std::vector<bool> frozen_seat,
+                                         std::vector<std::vector<float>> frozen_rows) {
   if (regrets.size() != store_total_ || strat_sum.size() != store_total_) {
     throw std::runtime_error("checkpoint: solver state size does not match this tree");
   }
-  if (ev_sum.size() != ev_sum_.size() || ev_w.size() != ev_w_.size()) {
+  const bool team_state = !ev_sum.empty() || !ev_w.empty();
+  if (team_state != agents_.has_team() || ev_sum.size() != ev_w.size() ||
+      (team_state && ev_sum.size() != store_total_)) {
+    throw std::runtime_error("checkpoint: conditioned-EV state does not match this solve "
+                             "(team present in one and not the other)");
+  }
+  std::vector<float> st(2 * store_total_, 0.0f);
+  std::vector<float> ev;
+  if (team_state) ev.assign(2 * store_total_, 0.0f);
+  for (std::uint32_t g = 0; g < indexer_.num_groups; ++g) {
+    const std::uint32_t rep = indexer_.group_rep[g];
+    const std::size_t offset = indexer_.group_offset[g];
+    const std::uint32_t rows = store_hands_[rep];
+    const std::uint16_t actions = store_actions_[rep];
+    for (std::uint16_t a = 0; a < actions; ++a) {
+      for (std::uint32_t r = 0; r < rows; ++r) {
+        const std::size_t old = offset + static_cast<std::size_t>(a) * rows + r;
+        const std::size_t c = 2 * cell_index(offset, actions, r, a);
+        st[c + kRegret] = regrets[old];
+        st[c + kStrat] = strat_sum[old];
+        if (team_state) {
+          ev[c + kRegret] = ev_sum[old];
+          ev[c + kStrat] = ev_w[old];
+        }
+      }
+    }
+  }
+  restore(iteration, std::move(st), std::move(ev), std::move(frozen_seat),
+          std::move(frozen_rows));
+}
+
+void SampledCfrSolver::restore(std::uint64_t iteration, std::vector<float> store,
+                               std::vector<float> ev_store, std::vector<bool> frozen_seat,
+                               std::vector<std::vector<float>> frozen_rows) {
+  if (store.size() != store_.size()) {
+    throw std::runtime_error("checkpoint: solver state size does not match this tree");
+  }
+  if (ev_store.size() != ev_store_.size()) {
     throw std::runtime_error("checkpoint: conditioned-EV state does not match this solve "
                              "(team present in one and not the other)");
   }
@@ -863,10 +909,8 @@ void SampledCfrSolver::restore(std::uint64_t iteration, std::vector<float> regre
   if (!frozen_rows.empty() && frozen_rows.size() != game_.tree().size()) {
     throw std::runtime_error("checkpoint: frozen-row table does not match the tree");
   }
-  regrets_ = std::move(regrets);
-  strat_sum_ = std::move(strat_sum);
-  ev_sum_ = std::move(ev_sum);
-  ev_w_ = std::move(ev_w);
+  store_ = std::move(store);
+  ev_store_ = std::move(ev_store);
   if (!frozen_seat.empty()) frozen_seat_ = std::move(frozen_seat);
   if (!frozen_rows.empty()) frozen_rows_ = std::move(frozen_rows);
   // The iteration counter is state, not bookkeeping: run() derives both the
@@ -875,10 +919,8 @@ void SampledCfrSolver::restore(std::uint64_t iteration, std::vector<float> regre
 }
 
 void SampledCfrSolver::reset() {
-  std::fill(regrets_.begin(), regrets_.end(), 0.0f);
-  std::fill(strat_sum_.begin(), strat_sum_.end(), 0.0f);
-  std::fill(ev_sum_.begin(), ev_sum_.end(), 0.0f);
-  std::fill(ev_w_.begin(), ev_w_.end(), 0.0f);
+  std::fill(store_.begin(), store_.end(), 0.0f);
+  std::fill(ev_store_.begin(), ev_store_.end(), 0.0f);
   t_ = 0;
 }
 
@@ -913,7 +955,6 @@ void SampledCfrSolver::pinned_sigma(NodeId id, int actor, const Deal& deal,
     return;
   }
   const std::size_t offset = store_offset_[node.decision_index];
-  const std::uint32_t rows = store_hands_[node.decision_index];
   std::size_t row;
   const int amate = agents_.teammate_of[actor];
   if (amate >= 0) {
@@ -929,8 +970,9 @@ void SampledCfrSolver::pinned_sigma(NodeId id, int actor, const Deal& deal,
     row = indexer_.map(node.decision_index)[hq];
   }
   float sum = 0.0f;
+  const std::size_t r0 = cell_index(offset, actions, row, 0);
   for (std::uint16_t a = 0; a < actions; ++a) {
-    out[a] = strat_sum_[offset + static_cast<std::size_t>(a) * rows + row];
+    out[a] = store_[2 * (r0 + a) + kStrat];
     sum += out[a];
   }
   if (sum > 0.0f) {
@@ -1035,7 +1077,6 @@ nlohmann::json SampledCfrSolver::team_rollup_json() const {
     const int mate = agents_.teammate_of[node.actor];
     if (mate < 0) continue;
     const std::size_t offset = store_offset_[node.decision_index];
-    const std::uint32_t rows = store_hands_[node.decision_index];
     const std::uint16_t actions = layout_.node_actions[node.decision_index];
     std::vector<double> freq(cells * actions, 0.0);
     std::vector<double> weight(cells, 0.0);
@@ -1048,16 +1089,16 @@ nlohmann::json SampledCfrSolver::team_rollup_json() const {
         const std::uint32_t jc = joint_class_[base + m];
         if (jc == kNoJointRow) continue;
         const std::size_t cell = static_cast<std::size_t>(cls[m]) * ncls + oc;
+        const std::size_t r0 = cell_index(offset, actions, jc, 0);
         double wsum = 0.0;
         for (std::uint16_t a = 0; a < actions; ++a) {
-          const double v = strat_sum_[offset + static_cast<std::size_t>(a) * rows + jc];
+          const double v = store_[2 * (r0 + a) + kStrat];
           freq[cell * actions + a] += v;
           wsum += v;
-          evnum[cell * actions + a] +=
-              ev_sum_[offset + static_cast<std::size_t>(a) * rows + jc];
+          evnum[cell * actions + a] += ev_store_[2 * (r0 + a) + kRegret];
         }
         weight[cell] += wsum;
-        evden[cell] += ev_w_[offset + jc];
+        evden[cell] += ev_store_[2 * r0 + kStrat];
       }
     }
     // Emit the first actions-1 frequencies (the last is 1 minus the rest),
@@ -1201,8 +1242,7 @@ nlohmann::json SampledCfrSolver::team_joint_json() const {
     const int mate = agents_.teammate_of[node.actor];
     if (mate < 0) continue;
     const std::size_t offset = store_offset_[node.decision_index];
-    const std::size_t rows = store_hands_[node.decision_index];
-    if (rows != J) continue;
+    if (static_cast<std::size_t>(store_hands_[node.decision_index]) != J) continue;
     const std::uint16_t actions = layout_.node_actions[node.decision_index];
     const std::size_t free_actions =
         actions > 1 ? static_cast<std::size_t>(actions) - 1 : 1;
@@ -1211,9 +1251,8 @@ nlohmann::json SampledCfrSolver::team_joint_json() const {
     double mass_max = 0.0;
     for (std::size_t jc = 0; jc < J; ++jc) {
       double w = 0.0;
-      for (std::uint16_t a = 0; a < actions; ++a) {
-        w += strat_sum_[offset + static_cast<std::size_t>(a) * rows + jc];
-      }
+      const std::size_t r0 = cell_index(offset, actions, jc, 0);
+      for (std::uint16_t a = 0; a < actions; ++a) w += store_[2 * (r0 + a) + kStrat];
       mass[jc] = w;
       if (w > mass_max) mass_max = w;
     }
@@ -1224,8 +1263,9 @@ nlohmann::json SampledCfrSolver::team_joint_json() const {
     weight_bytes.reserve(J * 2);
     for (std::size_t jc = 0; jc < J; ++jc) {
       const double w = mass[jc];
+      const std::size_t r0 = cell_index(offset, actions, jc, 0);
       for (std::size_t a = 0; a < free_actions; ++a) {
-        const double v = w > 0.0 ? strat_sum_[offset + a * rows + jc] / w : 1.0 / actions;
+        const double v = w > 0.0 ? store_[2 * (r0 + a) + kStrat] / w : 1.0 / actions;
         push_u16(freq_bytes, quantize_u16(v));
       }
       push_u16(weight_bytes, quantize_u16(mass_max > 0.0 ? w / mass_max : 0.0));
@@ -1236,10 +1276,11 @@ nlohmann::json SampledCfrSolver::team_joint_json() const {
     // accumulated reach.
     double ev_abs_max = 0.0;
     for (std::size_t jc = 0; jc < J; ++jc) {
-      const double den = ev_w_[offset + jc];
+      const std::size_t r0 = cell_index(offset, actions, jc, 0);
+      const double den = ev_store_[2 * r0 + kStrat];
       if (den <= 0.0) continue;
       for (std::uint16_t a = 0; a < actions; ++a) {
-        const double v = ev_sum_[offset + static_cast<std::size_t>(a) * rows + jc] / den;
+        const double v = ev_store_[2 * (r0 + a) + kRegret] / den;
         if (std::isfinite(v)) ev_abs_max = std::max(ev_abs_max, std::abs(v));
       }
     }
@@ -1247,13 +1288,14 @@ nlohmann::json SampledCfrSolver::team_joint_json() const {
     std::vector<std::uint8_t> ev_bytes;
     ev_bytes.reserve(J * static_cast<std::size_t>(actions) * 2);
     for (std::size_t jc = 0; jc < J; ++jc) {
-      const double den = ev_w_[offset + jc];
+      const std::size_t r0 = cell_index(offset, actions, jc, 0);
+      const double den = ev_store_[2 * r0 + kStrat];
       for (std::uint16_t a = 0; a < actions; ++a) {
         if (den <= 0.0) {
           push_i16(ev_bytes, -32768);
           continue;
         }
-        const double v = ev_sum_[offset + static_cast<std::size_t>(a) * rows + jc] / den;
+        const double v = ev_store_[2 * (r0 + a) + kRegret] / den;
         if (!std::isfinite(v)) {
           push_i16(ev_bytes, -32768);
           continue;

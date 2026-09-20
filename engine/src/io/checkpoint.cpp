@@ -14,7 +14,12 @@
 namespace engine {
 namespace {
 
-constexpr char kMagic[8] = {'H', 'T', 'C', 'K', 'P', 'T', '0', '1'};
+// Version 2 stores the solver's interleaved row-major store as laid out in
+// memory (SampledCfrSolver::store); version 1 stored four action-major
+// arrays. A v1 file is still read - converted through restore_canonical -
+// because a checkpoint can represent hours of iterations.
+constexpr char kMagic[8] = {'H', 'T', 'C', 'K', 'P', 'T', '0', '2'};
+constexpr char kMagicV1[8] = {'H', 'T', 'C', 'K', 'P', 'T', '0', '1'};
 
 template <typename T>
 void put(std::ostream& os, const T& v) {
@@ -105,10 +110,8 @@ double write_checkpoint(const std::string& path, const SampledCfrSolver& solver,
                static_cast<std::streamsize>(base_ev_n * sizeof(double)));
     }
 
-    put_floats(os, solver.regrets());
-    put_floats(os, solver.strategy_sums());
-    put_floats(os, solver.ev_sums());
-    put_floats(os, solver.ev_weights());
+    put_floats(os, solver.store());
+    put_floats(os, solver.ev_store());
 
     // Frozen seats (unaware phase 2). Stored so a resumed run never re-runs
     // phase 1 - which would be both wasteful and, if its budget changed,
@@ -150,7 +153,8 @@ bool read_checkpoint(const std::string& path, SampledCfrSolver& solver,
   }
   char magic[sizeof(kMagic)] = {};
   is.read(magic, sizeof(magic));
-  if (!is || std::memcmp(magic, kMagic, sizeof(kMagic)) != 0) {
+  const bool v1 = is && std::memcmp(magic, kMagicV1, sizeof(kMagicV1)) == 0;
+  if (!is || (!v1 && std::memcmp(magic, kMagic, sizeof(kMagic)) != 0)) {
     err = "not a checkpoint file (or written by a different format version)";
     return false;
   }
@@ -189,9 +193,15 @@ bool read_checkpoint(const std::string& path, SampledCfrSolver& solver,
     is.read(reinterpret_cast<char*>(baseline_ev.data()),
             static_cast<std::streamsize>(base_ev_n * sizeof(double)));
   }
-  std::vector<float> regrets, strat_sum, ev_sum, ev_w;
-  if (!get_floats(is, regrets) || !get_floats(is, strat_sum) || !get_floats(is, ev_sum) ||
-      !get_floats(is, ev_w)) {
+  std::vector<float> regrets, strat_sum, ev_sum, ev_w;  // v1: four canonical arrays
+  std::vector<float> store, ev_store;                    // v2: the interleaved store
+  if (v1) {
+    if (!get_floats(is, regrets) || !get_floats(is, strat_sum) || !get_floats(is, ev_sum) ||
+        !get_floats(is, ev_w)) {
+      err = "truncated checkpoint state";
+      return false;
+    }
+  } else if (!get_floats(is, store) || !get_floats(is, ev_store)) {
     err = "truncated checkpoint state";
     return false;
   }
@@ -237,8 +247,13 @@ bool read_checkpoint(const std::string& path, SampledCfrSolver& solver,
               : "checkpoint predates hand abstraction and this solve uses buckets";
     return false;
   }
-  solver.restore(iteration, std::move(regrets), std::move(strat_sum), std::move(ev_sum),
-                 std::move(ev_w), std::move(frozen_seat), std::move(frozen_rows));
+  if (v1) {
+    solver.restore_canonical(iteration, regrets, strat_sum, ev_sum, ev_w,
+                             std::move(frozen_seat), std::move(frozen_rows));
+  } else {
+    solver.restore(iteration, std::move(store), std::move(ev_store), std::move(frozen_seat),
+                   std::move(frozen_rows));
+  }
   extras.baseline_iterations = baseline_iters;
   extras.baseline_ev_chips = std::move(baseline_ev);
   return true;
