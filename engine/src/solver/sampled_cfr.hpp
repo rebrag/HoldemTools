@@ -180,6 +180,11 @@ class SampledCfrSolver final : public StrategySource {
     std::vector<float> ev_delta, evw_delta;
     std::vector<std::uint32_t> block_of;  // per storage group: arena offset, kNoBlock if untouched
     std::vector<std::uint32_t> touched;   // groups touched this batch, in first-touch order
+    // `touched` split by fold shard after the join, so shard s can walk this
+    // lane's groups without scanning the whole list. Order within a shard is
+    // first-touch order; it does not matter for the bits (cells of different
+    // groups are independent) and is kept only so the walk is reproducible.
+    std::vector<std::vector<std::uint32_t>> shard_touched;
     Deal deal;
     std::vector<std::uint32_t> strengths;
     std::vector<float> hero_root;                  // masked root reach
@@ -265,6 +270,12 @@ class SampledCfrSolver final : public StrategySource {
   std::vector<float> ev_sum_;
   std::vector<float> ev_w_;
   std::vector<Lane> lanes_;
+  // The fold runs in parallel over contiguous GROUP ranges (fold shards),
+  // balanced on cells. Shard s adds lanes 0..L-1 in lane order for every
+  // group in its range, so per cell the addition order is exactly the
+  // serial fold's, whatever the shard count or the thread assignment.
+  std::vector<std::uint32_t> group_shard_;  // per storage group
+  int fold_shards_ = 1;
   std::unique_ptr<ThreadPool> pool_;
   QreConfig qre_{};  // never enabled here; StrategySource contract only
   std::uint64_t t_ = 0;

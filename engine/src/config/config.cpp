@@ -339,6 +339,10 @@ SolveConfig load_config(const std::string& path_text) {
     config.sampled.seed = s.value("seed", config.sampled.seed);
     config.sampled.batch = s.value("batch", config.sampled.batch);
     config.sampled.lanes = s.value("lanes", config.sampled.lanes);
+    config.sampled.fold_shards = s.value("fold_shards", config.sampled.fold_shards);
+    if (config.sampled.fold_shards > 65536) {
+      fail("algorithm.sampled.fold_shards must be in [0, 65536] (0 = automatic)");
+    }
     if (s.contains("symmetry")) {
       config.sampled.symmetry = s.at("symmetry").get<bool>();
       // Recorded so the solver can refuse an EXPLICIT request on a game
@@ -698,6 +702,12 @@ nlohmann::json solve_identity(const SolveConfig& config) {
   j.erase("solve");
   j.erase("threads");
   j.erase("memory_limit_gb");
+  // Fold sharding is a thread-count-like throughput knob: it cannot change a
+  // single bit of the result, so it must not fork a lineage either.
+  if (j.contains("algorithm") && j.at("algorithm").is_object() &&
+      j.at("algorithm").contains("sampled") && j.at("algorithm").at("sampled").is_object()) {
+    j.at("algorithm").at("sampled").erase("fold_shards");
+  }
   if (j.contains("agents") && j.at("agents").is_object()) {
     j.at("agents").erase("baseline_iterations");
   }

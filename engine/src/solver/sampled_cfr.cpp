@@ -132,6 +132,34 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
   }
   pool_ = std::make_unique<ThreadPool>(resolve_thread_count(threads));
   split_budget_ = pool_->threads() > 1 ? pool_->threads() * 4 : 1;
+  // Fold shards: contiguous group ranges with roughly equal cell counts.
+  // Groups are numbered in store order, so a range of groups is a range of
+  // cells and no cell can belong to two shards.
+  {
+    const std::uint32_t groups = indexer_.num_groups;
+    std::uint32_t want = config_.fold_shards > 0
+                             ? config_.fold_shards
+                             : static_cast<std::uint32_t>(std::max(1, pool_->threads() * 4));
+    fold_shards_ = static_cast<int>(std::max<std::uint32_t>(1, std::min(want, std::max<std::uint32_t>(1, groups))));
+    group_shard_.assign(groups, 0);
+    const double per_shard =
+        static_cast<double>(store_total_) / static_cast<double>(fold_shards_);
+    std::size_t cells_so_far = 0;
+    std::uint32_t shard = 0;
+    for (std::uint32_t g = 0; g < groups; ++g) {
+      // A group goes to the shard its first cell falls in; the last shard
+      // absorbs any rounding.
+      while (shard + 1 < static_cast<std::uint32_t>(fold_shards_) &&
+             static_cast<double>(cells_so_far) >= per_shard * static_cast<double>(shard + 1)) {
+        ++shard;
+      }
+      group_shard_[g] = shard;
+      cells_so_far += group_cells(g);
+    }
+  }
+  for (Lane& lane : lanes_) {
+    lane.shard_touched.resize(static_cast<std::size_t>(fold_shards_));
+  }
   // Abstraction maps are clustered here, once, before any traversal reads
   // them; a no-op in the other two modes.
   indexer_.fit(deals, config_, *pool_);
@@ -178,38 +206,50 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
       lane.strat_delta.clear();
       lane.ev_delta.clear();
       lane.evw_delta.clear();
-      for (std::uint64_t t = b0; t < b1; ++t) {
-        if (static_cast<int>(t % static_cast<std::uint64_t>(lanes)) != l) continue;
-        run_iteration(t, lane);
-      }
+      // Iteration t belongs to lane t % lanes: start at the first such t in
+      // the batch and step by the lane count.
+      const std::uint64_t L = static_cast<std::uint64_t>(lanes);
+      const std::uint64_t first =
+          b0 + ((static_cast<std::uint64_t>(l) + L - (b0 % L)) % L);
+      for (std::uint64_t t = first; t < b1; t += L) run_iteration(t, lane);
     });
 
-    // The fold-back is SERIAL and in lane order - the float-addition
-    // ordering that makes any thread-to-lane assignment produce the same
-    // bits, mirroring the vectorized core's child-order fold.
+    // The fold-back is in LANE ORDER per cell - the float-addition ordering
+    // that makes any thread-to-lane assignment produce the same bits,
+    // mirroring the vectorized core's child-order fold. It is parallel over
+    // fold SHARDS (contiguous group ranges): a cell belongs to exactly one
+    // shard, and inside a shard the lanes are applied serially, so the
+    // per-cell order is exactly the old serial fold's whatever the shard
+    // count. First each lane splits its touched list by shard (parallel
+    // over lanes, order-preserving), then each shard walks the lanes.
     // Only touched blocks are added; every other cell would receive an exact
-    // +0.0f, which is the identity on a master that never holds -0.0f. The
-    // order of groups within a lane is irrelevant to the bits (cells are
-    // independent); only the lane order per cell is, and that stays serial.
+    // +0.0f, which is the identity on a master that never holds -0.0f.
     const bool team = agents_.has_team();
-    for (int l = 0; l < lanes; ++l) {
-      const Lane& lane = lanes_[static_cast<std::size_t>(l)];
-      for (std::uint32_t g : lane.touched) {
-        const std::size_t blk = lane.block_of[g];
-        const std::size_t base = indexer_.group_offset[g];
-        const std::size_t cells = group_cells(g);
-        const float* rd = lane.regret_delta.data() + blk;
-        const float* sd = lane.strat_delta.data() + blk;
-        for (std::size_t i = 0; i < cells; ++i) regrets_[base + i] += rd[i];
-        for (std::size_t i = 0; i < cells; ++i) strat_sum_[base + i] += sd[i];
-        if (team) {
-          const float* ed = lane.ev_delta.data() + blk;
-          const float* ewd = lane.evw_delta.data() + blk;
-          for (std::size_t i = 0; i < cells; ++i) ev_sum_[base + i] += ed[i];
-          for (std::size_t i = 0; i < cells; ++i) ev_w_[base + i] += ewd[i];
+    pool_->parallel_for(lanes, [&](int l) {
+      Lane& lane = lanes_[static_cast<std::size_t>(l)];
+      for (auto& v : lane.shard_touched) v.clear();
+      for (std::uint32_t g : lane.touched) lane.shard_touched[group_shard_[g]].push_back(g);
+    });
+    pool_->parallel_for(fold_shards_, [&](int s) {
+      for (int l = 0; l < lanes; ++l) {
+        const Lane& lane = lanes_[static_cast<std::size_t>(l)];
+        for (std::uint32_t g : lane.shard_touched[static_cast<std::size_t>(s)]) {
+          const std::size_t blk = lane.block_of[g];
+          const std::size_t base = indexer_.group_offset[g];
+          const std::size_t cells = group_cells(g);
+          const float* rd = lane.regret_delta.data() + blk;
+          const float* sd = lane.strat_delta.data() + blk;
+          for (std::size_t i = 0; i < cells; ++i) regrets_[base + i] += rd[i];
+          for (std::size_t i = 0; i < cells; ++i) strat_sum_[base + i] += sd[i];
+          if (team) {
+            const float* ed = lane.ev_delta.data() + blk;
+            const float* ewd = lane.evw_delta.data() + blk;
+            for (std::size_t i = 0; i < cells; ++i) ev_sum_[base + i] += ed[i];
+            for (std::size_t i = 0; i < cells; ++i) ev_w_[base + i] += ewd[i];
+          }
         }
       }
-    }
+    });
     t_ = b1;
   }
 }

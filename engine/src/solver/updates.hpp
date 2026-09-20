@@ -189,6 +189,12 @@ struct SampledConfig {
   std::uint64_t seed = 20260830;
   std::uint32_t batch = 512;
   std::uint32_t lanes = 16;
+  // Contiguous group ranges the lane fold is split into, each folded by one
+  // pool thread with the lanes applied in lane order. Any value produces the
+  // same bits (cells never straddle a shard, and per cell the addition order
+  // is still lane order), so this is a throughput knob only: 0 = one per
+  // pool thread times four. Excluded from the solve key like `threads`.
+  std::uint32_t fold_shards = 0;
   AbstractionConfig abstraction;
   // Deal the OPPONENTS of each hero traversal in proportion to their ranges
   // (DealGame::sample_hero_deal), one deal per hero per iteration, weighted

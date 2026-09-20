@@ -157,6 +157,7 @@ add_executable(engine_tests
   tests/test_team_preflop.cpp
   tests/test_sampled_digest.cpp
   tests/test_abstraction.cpp
+  tests/test_sampled_store.cpp
 )
 target_link_libraries(engine_tests PRIVATE engine_core doctest::doctest)
 add_test(NAME engine_tests COMMAND engine_tests)
