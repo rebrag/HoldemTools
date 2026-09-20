@@ -51,18 +51,41 @@ double elapsed_s() {
 // How much iterating to do between deadline checks. Small enough that the
 // budget is honored closely, large enough that the check costs nothing.
 // For the sampled core it is rounded to a whole number of BATCHES: a batch
-// boundary is where the discount and the lane fold happen, so slicing on
-// one keeps the run bitwise identical to an unsliced solve.
-constexpr std::uint64_t kSliceTargetIters = 250000;
+// boundary is where the lane fold happens, so slicing on one keeps the run
+// bitwise identical to an unsliced solve (the slice LENGTH is free to vary;
+// only its alignment matters).
+//
+// The length is paced by the measured rate rather than fixed: the same
+// binary runs a flop tree at ~130 deals/s and a pinned-hero preflop tree at
+// six figures, and a fixed 250k-iteration slice is half an hour on the
+// first - a 31 s time budget was checked once every 31 minutes. The first
+// slice is one batch; every later one targets kSliceTargetSeconds of work
+// from the previous slice's rate, capped at kSliceMaxIters.
+constexpr double kSliceTargetSeconds = 2.0;
+constexpr std::uint64_t kSliceMaxIters = 1000000;
 
-std::uint64_t deadline_slice(std::uint64_t remaining, std::uint64_t batch) {
-  std::uint64_t slice = kSliceTargetIters;
-  if (batch > 0) {
-    const std::uint64_t batches = std::max<std::uint64_t>(1, kSliceTargetIters / batch);
-    slice = batches * batch;
+class SlicePacer {
+ public:
+  explicit SlicePacer(std::uint64_t batch) : batch_(std::max<std::uint64_t>(1, batch)) {}
+  std::uint64_t next(std::uint64_t remaining) const {
+    std::uint64_t want = batch_;
+    if (rate_ > 0.0) {
+      const double iters = rate_ * kSliceTargetSeconds;
+      want = iters >= static_cast<double>(kSliceMaxIters)
+                 ? kSliceMaxIters
+                 : std::max<std::uint64_t>(batch_, static_cast<std::uint64_t>(iters));
+    }
+    const std::uint64_t batches = std::max<std::uint64_t>(1, want / batch_);
+    return std::min(batches * batch_, remaining);
   }
-  return std::min(slice, remaining);
-}
+  void observe(std::uint64_t iters, double seconds) {
+    if (seconds > 0.0 && iters > 0) rate_ = static_cast<double>(iters) / seconds;
+  }
+
+ private:
+  std::uint64_t batch_;
+  double rate_ = 0.0;
+};
 
 // Nodes one deal of the sampled EV pass visits: every action at decision
 // nodes, ONE child at chance nodes (the dealt card). What the pass costs per
@@ -308,12 +331,15 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
     // the clock nor a cancel can be looked at from inside it.
     const bool base_sliced = base_deadline > 0.0 || !config.stop_file.empty();
     const std::uint64_t base_before = baseline->iteration();
+    SlicePacer base_pacer(config.sampled.batch);
     while (baseline->iteration() < base_target) {
       const std::uint64_t remaining = base_target - baseline->iteration();
-      const std::uint64_t slice = base_sliced
-                                      ? deadline_slice(remaining, config.sampled.batch)
-                                      : remaining;
+      const std::uint64_t slice = base_sliced ? base_pacer.next(remaining) : remaining;
+      const auto slice_start = std::chrono::steady_clock::now();
       baseline->run(slice);
+      base_pacer.observe(slice, std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                                              slice_start)
+                                    .count());
       if (stop_requested(config.stop_file)) {
         std::cout << "phase 1 cancelled after " << baseline->iteration() << " iterations\n";
         stats.stopped_reason = "cancelled";
@@ -396,6 +422,7 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   const bool timed = config.max_seconds > 0.0;
   // Same reason as phase 1: a slice is the only place a cancel can be seen.
   const bool sliced = timed || !config.stop_file.empty();
+  SlicePacer pacer(config.sampled.batch);
   bool out_of_time = false;
   while (!cancelled && done < config.iterations) {
     const std::uint64_t step =
@@ -405,12 +432,13 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
     // the step or a 60M-iteration solve would never look at the clock.
     std::uint64_t ran = 0;
     while (ran < step) {
-      const std::uint64_t slice =
-          sliced ? deadline_slice(step - ran, config.sampled.batch) : step - ran;
+      const std::uint64_t slice = sliced ? pacer.next(step - ran) : step - ran;
       const auto run_start = std::chrono::steady_clock::now();
       solver.run(slice);
-      solve_s += std::chrono::duration<double>(std::chrono::steady_clock::now() - run_start)
-                     .count();
+      const double slice_s =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - run_start).count();
+      solve_s += slice_s;
+      pacer.observe(slice, slice_s);
       ran += slice;
 
       if (stop_requested(config.stop_file)) {
@@ -554,7 +582,7 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
     // Resuming is bit-for-bit only from a BATCH boundary, because a batch is
     // where the discount and the lane fold happen; stopping inside one splits
     // a fold and the continuation differs in the last bits. Time-budget stops
-    // always land on a boundary (deadline_slice rounds to whole batches), so
+    // always land on a boundary (SlicePacer rounds to whole batches), so
     // this only fires on a hand-picked budget.iterations - and only when this
     // run actually stopped somewhere: a run that merely re-exported a finished
     // solve (0 iterations) did not stop inside anything.

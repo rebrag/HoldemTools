@@ -222,7 +222,7 @@ TEST_CASE("run() slicing on batch boundaries is bitwise identical") {
   // unconstrained one would be a single call. That is only safe because a
   // slice ends on a batch boundary - where the discount and the lane fold
   // already happen - so the sliced run must produce the same bits. If this
-  // ever fails, deadline_slice() in main.cpp has stopped rounding to whole
+  // ever fails, SlicePacer in main.cpp has stopped rounding to whole
   // batches and time-capped solves silently became a different solve.
   const SolveConfig config = sampled_pushfold_config(3, 200);
   NlhePreflopGame game(config);
