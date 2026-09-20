@@ -127,6 +127,7 @@ class SampledCfrSolver final : public StrategySource {
   void bucket_strategy(std::uint32_t group, std::vector<float>& out) const override;
 
   const InfosetLayout& layout() const { return layout_; }
+  std::size_t max_log_entries() const { return max_log_entries_; }
   const InfosetIndexer& indexer() const { return indexer_; }
   const Game& game() const { return game_; }
   // Read seams for the determinism tests and the checkpoint: bitwise
@@ -187,6 +188,11 @@ class SampledCfrSolver final : public StrategySource {
   void reset();
 
  private:
+  struct LogEntry {
+    std::uint32_t cell;  // store cell (offset + row*actions + a)
+    float regret;
+    float strat;
+  };
   // Everything one lane touches while its iterations run: private delta
   // buffers plus per-depth scratch so the recursion allocates nothing.
   struct Lane {
@@ -207,6 +213,15 @@ class SampledCfrSolver final : public StrategySource {
     // numerators per cell and, in the cell's second half at action 0, the
     // row's reach denominator.
     std::vector<float> ev_delta;
+    // PINNED hero: no blocks at all. A traversal touches a few hundred
+    // cells scattered over the whole store, so a lane keeps one sequential
+    // log of {cell, regret delta, strategy delta} entries in append order
+    // (a zero-miss store per entry), and the fold partitions it by cell
+    // range once, stably, so shard s applies this lane's entries for its
+    // range in append order.
+    std::vector<LogEntry> log;
+    std::vector<LogEntry> sorted;           // the log partitioned by shard
+    std::vector<std::size_t> shard_begin;   // S + 1 offsets into `sorted`
     std::vector<std::uint32_t> block_of;  // per storage group: arena offset, kNoBlock if untouched
     std::vector<std::uint32_t> touched;   // groups touched this batch, in first-touch order
     // `touched` split by fold shard after the join, so shard s can walk this
@@ -228,6 +243,28 @@ class SampledCfrSolver final : public StrategySource {
   };
 
   void run_iteration(std::uint64_t t, Lane& lane);
+  // The pinned-hero iteration: one deal for every seat (in proportion to
+  // their ranges under range dealing), then one scalar walk per training
+  // seat. Returns the deal's importance weight through the log entries.
+  void run_iteration_pinned(std::uint64_t t, Lane& lane);
+  // The scalar walk. `opp_w` is the weight the values carry: the deal's
+  // importance weight times, under chance sampling, the other seats'
+  // strategy along the path (under external sampling their actions are
+  // sampled and the weight stays the deal's). Regrets accumulate at the
+  // hero's nodes; the AVERAGE STRATEGY accumulates at the other seats'
+  // nodes, weighted by opp_w times their strategy - standard external-
+  // sampling MCCFR, and the same rule under chance sampling so that both
+  // schemes share one estimator. That weight is the actor's own reach
+  // times, at three or more seats, the remaining seats' reach (Pluribus's
+  // approximation; exact heads-up). Accumulating at the hero's own nodes
+  // instead was measured to freeze the average below any opponent action
+  // whose probability reached zero (Leduc stuck at 5% of pot). Returns the
+  // hero's value.
+  double traverse_pinned(NodeId id, int hero, Lane& lane, std::uint64_t t, double opp_w,
+                         int chance_depth);
+  // Fold the lanes' logs into the master, parallel over cell-range shards,
+  // lanes in lane order and entries in append order inside each.
+  void fold_logs(float weight);
   // The lane's delta block for decision node d, allocating (zeroed, in every
   // arena) on the batch's first touch. Take pointers from it only AFTER a
   // node's descent into its children: a child's first touch can grow the
@@ -314,6 +351,12 @@ class SampledCfrSolver final : public StrategySource {
   // serial fold's, whatever the shard count or the thread assignment.
   std::vector<std::uint32_t> group_shard_;  // per storage group
   int fold_shards_ = 1;
+  std::size_t shard_cells_ = 1;  // pinned mode: cells per fold shard
+  bool pinned_ = false;
+  bool external_ = false;
+  // The largest log one lane held at a fold, over the run: what the memory
+  // estimator's pinned-lane term must bound (tests/test_sampled_pinned.cpp).
+  std::size_t max_log_entries_ = 0;
   std::unique_ptr<ThreadPool> pool_;
   QreConfig qre_{};  // never enabled here; StrategySource contract only
   std::uint64_t t_ = 0;

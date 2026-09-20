@@ -153,7 +153,11 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
 
 
   std::cout << "sampled core: seed " << config.sampled.seed << ", batch "
-            << config.sampled.batch << ", lanes " << config.sampled.lanes << "\n";
+            << config.sampled.batch << ", lanes " << config.sampled.lanes << ", hero "
+            << (config.sampled.hero == HeroMode::Pinned ? "pinned" : "vectorized")
+            << ", update "
+            << (config.sampled.update == UpdateScheme::External ? "external" : "chance")
+            << "\n";
 
   SolveStats stats;
   if (team) {
@@ -421,7 +425,13 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   const double pot = static_cast<double>(config.pot);
   const bool timed = config.max_seconds > 0.0;
   // Same reason as phase 1: a slice is the only place a cancel can be seen.
-  const bool sliced = timed || !config.stop_file.empty();
+  // Solver-time marks at which a measurement is taken regardless of the
+  // iteration cadence (budget.measure_at_seconds): the step ends early at a
+  // mark, the best response runs, and the loop resumes. Marks already
+  // behind the clock are skipped, never replayed.
+  std::vector<double> marks = config.measure_at_seconds;
+  std::size_t next_mark = 0;
+  const bool sliced = timed || !config.stop_file.empty() || !marks.empty();
   SlicePacer pacer(config.sampled.batch);
   bool out_of_time = false;
   while (!cancelled && done < config.iterations) {
@@ -441,6 +451,10 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
       pacer.observe(slice, slice_s);
       ran += slice;
 
+      if (next_mark < marks.size() && solve_s >= marks[next_mark]) {
+        while (next_mark < marks.size() && solve_s >= marks[next_mark]) ++next_mark;
+        break;
+      }
       if (stop_requested(config.stop_file)) {
         cancelled = true;
         break;
@@ -522,6 +536,7 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   // still its initial 0.0 - which reads as "exact" rather than as "unknown".
   // The same hazard the re-export branch above exists to avoid.
   stats.nashconv_valid = !team && br_available;
+  stats.target_exploitable_pct = config.target_exploitable_pct;
   if (out_of_time) stats.stopped_reason = "time_budget";
   // A cancel outranks the time budget in the label: both stopped the solve
   // early, but only one of them is something the user did.
@@ -828,6 +843,7 @@ int run_solve(const SolveConfig& config, bool dry_run) {
   stats.iterations = solver.iteration();
 
   stats.nashconv = nashconv;
+  stats.target_exploitable_pct = config.target_exploitable_pct;
   if (out_of_time) stats.stopped_reason = "time_budget";
   if (cancelled) stats.stopped_reason = "cancelled";
   stats.ev_chips = br.ev;

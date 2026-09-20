@@ -2,6 +2,7 @@
 
 #include "cards/combos.hpp"
 #include "io/base64.hpp"
+#include "solver/sample.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -128,6 +129,20 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
   for (Lane& lane : lanes_) {
     lane.shard_touched.resize(static_cast<std::size_t>(fold_shards_));
   }
+  pinned_ = config_.hero == HeroMode::Pinned;
+  external_ = config_.update == UpdateScheme::External;
+  if (pinned_ && agents_.has_team()) {
+    throw std::runtime_error("the pinned hero does not support hand-sharing teams");
+  }
+  if (pinned_ && store_total_ > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+    throw std::runtime_error("sampled core: the store exceeds 4G cells, past the pinned log's index");
+  }
+  shard_cells_ = (store_total_ + static_cast<std::size_t>(fold_shards_) - 1) /
+                 static_cast<std::size_t>(fold_shards_);
+  if (shard_cells_ == 0) shard_cells_ = 1;
+  for (Lane& lane : lanes_) {
+    lane.shard_begin.assign(static_cast<std::size_t>(fold_shards_) + 1, 0);
+  }
   // Abstraction maps are clustered here, once, before any traversal reads
   // them; a no-op in the other two modes.
   indexer_.fit(deals, config_, *pool_);
@@ -161,13 +176,23 @@ void SampledCfrSolver::run(std::uint64_t iterations) {
       lane.touched.clear();
       lane.delta.clear();
       lane.ev_delta.clear();
+      lane.log.clear();
       // Iteration t belongs to lane t % lanes: start at the first such t in
       // the batch and step by the lane count.
       const std::uint64_t L = static_cast<std::uint64_t>(lanes);
       const std::uint64_t first =
           b0 + ((static_cast<std::uint64_t>(l) + L - (b0 % L)) % L);
-      for (std::uint64_t t = first; t < b1; t += L) run_iteration(t, lane);
+      if (pinned_) {
+        for (std::uint64_t t = first; t < b1; t += L) run_iteration_pinned(t, lane);
+      } else {
+        for (std::uint64_t t = first; t < b1; t += L) run_iteration(t, lane);
+      }
     });
+    if (pinned_) {
+      fold_logs(weight);
+      t_ = b1;
+      continue;
+    }
 
     // The fold-back is in LANE ORDER per cell - the float-addition ordering
     // that makes any thread-to-lane assignment produce the same bits,
@@ -301,6 +326,198 @@ void SampledCfrSolver::run_iteration(std::uint64_t t, Lane& lane) {
     traverse(game_.tree().root(), hero, lane, w, lane.hero_root, nullptr, 0, 0,
              lane.value_stack[0]);
   }
+}
+
+void SampledCfrSolver::run_iteration_pinned(std::uint64_t t, Lane& lane) {
+  const int seats = game_.num_seats();
+  // Every seat is dealt, the hero included: its hand IS its state. Under
+  // range dealing all seats come in proportion to their ranges (the EV
+  // pass's deal, with its importance weight); under the uniform deal the
+  // weight is the product of every seat's range weight for its hand.
+  double w = 1.0;
+  bool proportional = false;
+  if (config_.range_deal) {
+    proportional = deals_.sample_ev_deal(config_.seed, t, lane.deal, w);
+  }
+  if (!proportional) {
+    deals_.sample_deal(config_.seed, t, lane.deal);
+    w = 1.0;
+    for (int q = 0; q < seats; ++q) {
+      const std::uint16_t hq = lane.deal.hand[static_cast<std::size_t>(q)];
+      w *= hq == kNoHand ? 0.0 : static_cast<double>(game_.initial_range(q)[hq]);
+    }
+  }
+  if (w <= 0.0) return;
+  deals_.deal_strengths(lane.deal, lane.strengths);
+  for (int hero = 0; hero < seats; ++hero) {
+    if (frozen_seat_[static_cast<std::size_t>(hero)]) continue;
+    // Values carry the chance measure of the whole deal: under the
+    // proportional deal every hand is already drawn by its range, so `w`
+    // (the conditioning masses) completes the measure; under the uniform
+    // deal `w` holds every seat's range weight explicitly.
+    traverse_pinned(game_.tree().root(), hero, lane, t, w, 0);
+  }
+}
+
+double SampledCfrSolver::traverse_pinned(NodeId id, int hero, Lane& lane, std::uint64_t t,
+                                         double opp_w, int chance_depth) {
+  const PublicTree& tree = game_.tree();
+  const Node& node = tree[id];
+  if (node.kind == NodeKind::Terminal) {
+    if (node.terminal_kind == TerminalKind::Fold) {
+      const double share = node.fold_winner == hero ? static_cast<double>(node.pot) : 0.0;
+      return opp_w * (share - static_cast<double>(node.commit[hero]));
+    }
+    return opp_w * deals_.deal_showdown_seat(id, hero, lane.deal, lane.strengths);
+  }
+  if (node.kind == NodeKind::Chance) {
+    const int card = lane.deal.board[static_cast<std::size_t>(chance_depth)];
+    for (int c = 0; c < node.num_children; ++c) {
+      const NodeId child = node.first_child + static_cast<NodeId>(c);
+      if (tree[child].dealt_card == card) {
+        return traverse_pinned(child, hero, lane, t, opp_w, chance_depth + 1);
+      }
+    }
+    throw std::runtime_error("sampled traversal: no chance child matches the dealt card");
+  }
+
+  const int actor = node.actor;
+  const std::uint16_t actions = node.num_children;
+  const std::uint32_t d = node.decision_index;
+  const std::uint16_t hq = lane.deal.hand[static_cast<std::size_t>(actor)];
+  if (hq == kNoHand) return 0.0;  // outside the universe: the deal weighs nothing anyway
+
+  // The actor's current strategy from its ROW: frozen rows for a frozen
+  // seat, otherwise regret matching on the storage row of its dealt hand -
+  // a bucket under hand abstraction, the suit class under the preflop
+  // quotient, the hand itself without either.
+  std::array<float, kMaxActionsSampled> sigma{};
+  std::size_t r0 = 0;
+  if (frozen_seat_[static_cast<std::size_t>(actor)] &&
+      !frozen_rows_[static_cast<std::size_t>(id)].empty()) {
+    const std::vector<float>& fr = frozen_rows_[static_cast<std::size_t>(id)];
+    for (std::uint16_t a = 0; a < actions; ++a) {
+      sigma[a] = fr[static_cast<std::size_t>(hq) * actions + a];
+    }
+  } else {
+    const std::size_t row = indexer_.map(d)[hq];
+    r0 = cell_index(store_offset_[d], actions, row, 0);
+    const float* const master = store_.data();
+    float pos_sum = 0.0f;
+    for (std::uint16_t a = 0; a < actions; ++a) {
+      const float r = master[2 * (r0 + a) + kRegret];
+      sigma[a] = r > 0.0f ? r : 0.0f;
+      pos_sum += sigma[a];
+    }
+    if (pos_sum > 0.0f) {
+      for (std::uint16_t a = 0; a < actions; ++a) sigma[a] /= pos_sum;
+    } else {
+      const float uniform = 1.0f / static_cast<float>(actions);
+      for (std::uint16_t a = 0; a < actions; ++a) sigma[a] = uniform;
+    }
+  }
+
+  if (actor != hero) {
+    // The AVERAGE STRATEGY accumulates here, at the other seat's node during
+    // the hero's walk, weighted by opp_w times the actor's strategy. Under
+    // external sampling this node is reached in proportion to the sampled
+    // actions along the path (the actor's own among them) and opp_w is the
+    // deal's weight; under chance sampling every path is walked and opp_w
+    // carries the other seats' strategy explicitly. Either way the weight
+    // is the actor's own reach under the deal's measure (times the remaining
+    // seats' reach past two players). Accumulating at the hero's OWN nodes
+    // instead reaches them in proportion to the opponents' strategy and never
+    // below an opponent action of probability zero, which freezes the
+    // average there at whatever early iterations left - measured as Leduc
+    // stuck at 5% of pot. A frozen seat's rows are read-only.
+    if (!frozen_seat_[static_cast<std::size_t>(actor)]) {
+      const float sw = static_cast<float>(opp_w);
+      for (std::uint16_t a = 0; a < actions; ++a) {
+        lane.log.push_back({static_cast<std::uint32_t>(r0 + a), 0.0f, sw * sigma[a]});
+      }
+    }
+    if (external_) {
+      // One action, drawn from the actor's strategy by a counter-based draw
+      // keyed on the node and the iteration (never the seat or a thread), so
+      // every hero's walk of this deal sees the same opponent choices. The
+      // sampling probability cancels the strategy weight: opp_w is unchanged.
+      const double u =
+          static_cast<double>(sample_draw(static_cast<std::uint64_t>(id), t, 0) >> 11) *
+          0x1.0p-53;
+      double acc = 0.0;
+      std::uint16_t pick = static_cast<std::uint16_t>(actions - 1);
+      for (std::uint16_t a = 0; a < actions; ++a) {
+        acc += static_cast<double>(sigma[a]);
+        if (u < acc) {
+          pick = a;
+          break;
+        }
+      }
+      return traverse_pinned(node.first_child + pick, hero, lane, t, opp_w, chance_depth);
+    }
+    // Chance sampling: enumerate, weighted by the actor's strategy. An action
+    // with probability zero contributes nothing anywhere below it - values,
+    // regrets and (weighted by opp_w) averages alike - so it is pruned.
+    double v = 0.0;
+    for (std::uint16_t a = 0; a < actions; ++a) {
+      if (sigma[a] == 0.0f) continue;
+      v += traverse_pinned(node.first_child + a, hero, lane, t,
+                           opp_w * static_cast<double>(sigma[a]), chance_depth);
+    }
+    return v;
+  }
+
+  // The hero: enumerate its own actions and regret on its row. Its average
+  // strategy is accumulated during the other seats' walks (above). A frozen
+  // hero never traverses, so r0 is the regret-matched row here.
+  std::array<double, kMaxActionsSampled> vals{};
+  double v = 0.0;
+  for (std::uint16_t a = 0; a < actions; ++a) {
+    vals[a] = traverse_pinned(node.first_child + a, hero, lane, t, opp_w, chance_depth);
+    v += static_cast<double>(sigma[a]) * vals[a];
+  }
+  for (std::uint16_t a = 0; a < actions; ++a) {
+    lane.log.push_back({static_cast<std::uint32_t>(r0 + a), static_cast<float>(vals[a] - v), 0.0f});
+  }
+  return v;
+}
+
+void SampledCfrSolver::fold_logs(float weight) {
+  const int lanes = static_cast<int>(config_.lanes);
+  const int shards = fold_shards_;
+  // Per lane: a stable counting partition of the log by shard (cell range).
+  // Stable, so inside a shard this lane's entries keep their append order.
+  pool_->parallel_for(lanes, [&](int l) {
+    Lane& lane = lanes_[static_cast<std::size_t>(l)];
+    std::vector<std::size_t>& begin = lane.shard_begin;
+    std::fill(begin.begin(), begin.end(), 0);
+    for (const LogEntry& e : lane.log) ++begin[static_cast<std::size_t>(e.cell / shard_cells_) + 1];
+    for (int s = 0; s < shards; ++s) {
+      begin[static_cast<std::size_t>(s) + 1] += begin[static_cast<std::size_t>(s)];
+    }
+    lane.sorted.resize(lane.log.size());
+    std::vector<std::size_t> next(begin.begin(), begin.end() - 1);
+    for (const LogEntry& e : lane.log) {
+      lane.sorted[next[static_cast<std::size_t>(e.cell / shard_cells_)]++] = e;
+    }
+  });
+  for (const Lane& lane : lanes_) max_log_entries_ = std::max(max_log_entries_, lane.log.size());
+  // Per shard: lanes in lane order, entries in append order. A cell belongs
+  // to exactly one shard, so the per-cell addition order is (lane, append)
+  // whatever the shard count or which thread took which shard.
+  float* const master = store_.data();
+  pool_->parallel_for(shards, [&](int s) {
+    for (int l = 0; l < lanes; ++l) {
+      const Lane& lane = lanes_[static_cast<std::size_t>(l)];
+      const std::size_t from = lane.shard_begin[static_cast<std::size_t>(s)];
+      const std::size_t to = lane.shard_begin[static_cast<std::size_t>(s) + 1];
+      for (std::size_t i = from; i < to; ++i) {
+        const LogEntry& e = lane.sorted[i];
+        master[2 * static_cast<std::size_t>(e.cell) + kRegret] += weight * e.regret;
+        master[2 * static_cast<std::size_t>(e.cell) + kStrat] += weight * e.strat;
+      }
+    }
+  });
 }
 
 void SampledCfrSolver::traverse(NodeId id, int hero, Lane& lane, double opp_w,

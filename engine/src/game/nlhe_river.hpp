@@ -185,6 +185,8 @@ class NlhePostflopGame final : public Game, public DealGame {
   void deal_showdown_pinned(NodeId node, const Deal& deal,
                             const std::vector<std::uint32_t>& strengths, int num_seats,
                             std::vector<double>& out) const override;
+  double deal_showdown_seat(NodeId node, int seat, const Deal& deal,
+                            const std::vector<std::uint32_t>& strengths) const override;
   // No hand_classes: the board sits in every infoset, so there is no suit
   // quotient. No team support: hand sharing is a preflop (M9) feature.
 

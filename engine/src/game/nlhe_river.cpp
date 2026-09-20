@@ -663,6 +663,17 @@ void NlhePostflopGame::deal_showdown_values(NodeId id, int seat, const Deal& dea
   }
 }
 
+double NlhePostflopGame::deal_showdown_seat(NodeId id, int seat, const Deal& deal,
+                                            const std::vector<std::uint32_t>& strengths) const {
+  const Node& node = tree_[id];
+  std::array<std::uint32_t, kMaxSeats> str{};
+  for (int s = 0; s < num_seats_; ++s) {
+    str[static_cast<std::size_t>(s)] = strengths[deal.hand[static_cast<std::size_t>(s)]];
+  }
+  return -static_cast<double>(node.commit[static_cast<std::size_t>(seat)]) +
+         showdown_share(seat, num_seats_, node.commit, root_pot_, node.folded_mask, str.data());
+}
+
 void NlhePostflopGame::deal_showdown_pinned(NodeId id, const Deal& deal,
                                             const std::vector<std::uint32_t>& strengths,
                                             int num_seats, std::vector<double>& out) const {

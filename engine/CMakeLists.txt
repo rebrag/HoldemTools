@@ -158,6 +158,7 @@ add_executable(engine_tests
   tests/test_sampled_digest.cpp
   tests/test_abstraction.cpp
   tests/test_sampled_store.cpp
+  tests/test_sampled_pinned.cpp
 )
 target_link_libraries(engine_tests PRIVATE engine_core doctest::doctest)
 add_test(NAME engine_tests COMMAND engine_tests)

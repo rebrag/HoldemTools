@@ -340,6 +340,18 @@ SolveConfig load_config(const std::string& path_text) {
     config.sampled.batch = s.value("batch", config.sampled.batch);
     config.sampled.lanes = s.value("lanes", config.sampled.lanes);
     config.sampled.fold_shards = s.value("fold_shards", config.sampled.fold_shards);
+    if (s.contains("hero")) {
+      const std::string hero = s.at("hero").get<std::string>();
+      if (hero == "vectorized") config.sampled.hero = HeroMode::Vectorized;
+      else if (hero == "pinned") config.sampled.hero = HeroMode::Pinned;
+      else fail("algorithm.sampled.hero must be vectorized | pinned, got '" + hero + "'");
+    }
+    if (s.contains("update")) {
+      const std::string update = s.at("update").get<std::string>();
+      if (update == "chance") config.sampled.update = UpdateScheme::Chance;
+      else if (update == "external") config.sampled.update = UpdateScheme::External;
+      else fail("algorithm.sampled.update must be chance | external, got '" + update + "'");
+    }
     if (config.sampled.fold_shards > 65536) {
       fail("algorithm.sampled.fold_shards must be in [0, 65536] (0 = automatic)");
     }
@@ -597,6 +609,25 @@ SolveConfig load_config(const std::string& path_text) {
     config.target_exploitable_pct =
         budget.value("target_exploitable_pct", config.target_exploitable_pct);
     config.checkpoint_every = budget.value("checkpoint_every", config.checkpoint_every);
+    if (budget.contains("measure_at_seconds")) {
+      config.measure_at_seconds = budget.at("measure_at_seconds").get<std::vector<double>>();
+      double last = 0.0;
+      for (double m : config.measure_at_seconds) {
+        if (m <= last) fail("budget.measure_at_seconds must be positive and ascending");
+        last = m;
+      }
+      if (!config.sampled.enabled) {
+        fail("budget.measure_at_seconds applies to the sampled core (the vectorized loop "
+             "measures every checkpoint_every iterations)");
+      }
+    }
+    if (config.sampled.hero == HeroMode::Pinned && !budget.contains("checkpoint_every")) {
+      // checkpoint_every is the best-response cadence, and a pinned-hero
+      // solve runs six figures of deals a second: the 1000-iteration
+      // default would measure a flop tree's exploitability every few
+      // milliseconds. Measure at the end, or at the marks above.
+      config.checkpoint_every = config.iterations;
+    }
     config.max_seconds = budget.value("max_seconds", config.max_seconds);
     config.stop_file = budget.value("stop_file", config.stop_file);
     if (config.iterations == 0) fail("budget.iterations must be positive");
@@ -633,6 +664,12 @@ SolveConfig load_config(const std::string& path_text) {
   if (config.export_bucketed && !config.sampled.abstraction.enabled) {
     fail("output.export \"bucketed\" writes one strategy blob per bucket group, so it "
          "needs algorithm.sampled.abstraction; a per-hand solve exports per_hand");
+  }
+  if (config.sampled.hero == HeroMode::Pinned && !config.sampled.partition_team.empty()) {
+    // A team hero's partner reads a per-hand VECTOR of the hero's hands (the
+    // two-sided update); a pinned hero has one hand. Teams stay vectorized.
+    fail("algorithm.sampled.hero \"pinned\" is not supported with a hand-sharing team; "
+         "team solves run the vectorized hero");
   }
   if (config.sampled.abstraction.enabled && !config.sampled.partition_team.empty()) {
     // A team actor's rows are the joint suit orbits of the (own, partner)

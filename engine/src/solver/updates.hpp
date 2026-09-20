@@ -184,9 +184,35 @@ struct AbstractionConfig {
   bool board_isomorphism = true;
 };
 
+// How the traversing seat walks the tree on the sampled core.
+//   Vectorized  the hero carries a value per hand of its whole compact
+//               universe (its dealt cards ignored, hands colliding with the
+//               deal zeroed): one deal trains every hero hand at once, at
+//               the cost of a per-hand vector at every node and a universe-
+//               wide showdown at every terminal.
+//   Pinned      the hero is dealt a hand like every other seat and the walk
+//               is SCALAR: at each node it reads and writes the storage row
+//               of its dealt hand (a bucket under hand abstraction). This is
+//               MonkerSolver's shape - single-sample MCCFR in the abstract
+//               game - and the reason it exists: a deal costs microseconds
+//               instead of milliseconds, so bucket rows pool samples from
+//               hundreds of thousands of deals a second.
+enum class HeroMode : std::uint8_t { Vectorized, Pinned };
+
+// What the OTHER seats do at their decision nodes during a hero's walk.
+//   Chance    every action is enumerated, weighted by the actor's current
+//             strategy (chance-sampled CFR: only the cards are sampled).
+//   External  one action is sampled from the actor's current strategy
+//             (external-sampling MCCFR); the hero still enumerates its own.
+//             The sampled action's probability cancels against its own
+//             sampling weight, so the walk carries no opponent reach.
+enum class UpdateScheme : std::uint8_t { Chance, External };
+
 struct SampledConfig {
   bool enabled = false;
   std::uint64_t seed = 20260830;
+  HeroMode hero = HeroMode::Vectorized;
+  UpdateScheme update = UpdateScheme::Chance;
   std::uint32_t batch = 512;
   std::uint32_t lanes = 16;
   // Contiguous group ranges the lane fold is split into, each folded by one
