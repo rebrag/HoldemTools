@@ -789,6 +789,14 @@ def main() -> int:
                 # target it was chasing, and the per-checkpoint trace - what
                 # a convergence-speed comparison between the cores is made of.
                 "solver_family": meta.get("solver_family", "vectorized"),
+                # The sampled core's shape (hero vectorized|pinned, update
+                # chance|external, deal, batch, lanes) and its hand
+                # abstraction, straight from the artifact, so /compare can
+                # label which core actually solved this and the metadata
+                # can say what "solved" meant (metadata.solved).
+                "sampled_core": meta.get("sampled"),
+                "abstraction": meta.get("abstraction"),
+                "solved": meta.get("solved"),
                 "stopped_reason": meta.get("stopped_reason"),
                 "target_exploitable_pct": budget.get("target_exploitable_pct"),
                 "convergence": meta.get("convergence"),

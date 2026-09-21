@@ -5,7 +5,7 @@
 // screen (see treeConfigText.ts) plus the few knobs that are ours alone:
 // solve accuracy, the iteration cap, and the pre-root aggressor.
 import { seatNamesFor, type TreeBuildingView } from "@/components/treeBuildingView";
-import { EXACT_SEAT_LIMIT } from "./multiwaySeats";
+import { MEMORY_LIMIT_GB } from "@/lib/engineLimits";
 import {
   cloneSeat,
   fullRangeWeights,
@@ -114,6 +114,23 @@ export interface BuilderState extends TreeConfigText {
    *  turn tree. Few lanes, big batches. */
   sampledLanes: string;
   sampledSeed: string;
+  /** 3+ seats: wall-clock budget in minutes for the solve (`budget.max_seconds`).
+   *  The API plans the core, abstraction and batch for it (`engine plan`). */
+  timeBudgetMinutes: string;
+  /** 3+ seats: show and SEND the explicit sampled-core knobs below instead of
+   *  letting the planner choose (`algorithm.family: "auto"`). */
+  advancedSolver: boolean;
+  /** `algorithm.sampled.hero`: "pinned" walks one dealt hand per seat (the
+   *  Monker-shaped scalar walk, six-figure deals per second); "vectorized"
+   *  carries every hand of the universe and is the cross-check. */
+  sampledHero: "pinned" | "vectorized";
+  /** `algorithm.sampled.update`: "external" samples the other seats' actions,
+   *  "chance" enumerates them. */
+  sampledUpdate: "external" | "chance";
+  /** Hand abstraction for the sampled core: the Monker preset (30 strength
+   *  quantiles x 4 second-moment tiers on flop and turn, 30 on the river),
+   *  the histogram k-means 200/200 of M8e, or per-hand rows. */
+  sampledAbstraction: "monker" | "histogram" | "none";
 }
 
 
@@ -171,9 +188,17 @@ export const DEFAULT_BUILDER: BuilderState = {
   // tree does ~60k sampled iterations/s on 16 threads.
   sampledMaxIterations: "2000000",
   sampledCheckEvery: "50000",
-  sampledBatch: "4096",
+  // Batch is the number of regret-matching steps a solve gets (regrets are
+  // frozen for a batch), and since 2026-09-20 the sampled core pays no
+  // per-batch sweep, so small batches are free: 256 is the M8f lever.
+  sampledBatch: "256",
   sampledLanes: "4",
   sampledSeed: "20260830",
+  timeBudgetMinutes: "10",
+  advancedSolver: false,
+  sampledHero: "pinned",
+  sampledUpdate: "external",
+  sampledAbstraction: "monker",
 };
 
 
@@ -362,7 +387,6 @@ export const buildEngineConfig = (b: BuilderState): EngineConfigResult => {
   // engine refuses it past two seats rather than collapse what it cannot
   // verify. The API re-checks both at queue time.
   const multiway = seats > 2;
-  const sampledOnly = seats > EXACT_SEAT_LIMIT;
   // The sampled core has no QRE port (the engine refuses the pair), so a QRE
   // run never carries a second config even if the box was ticked earlier.
   const sampledConfig =
@@ -390,10 +414,32 @@ export const buildEngineConfig = (b: BuilderState): EngineConfigResult => {
             target_exploitable_pct: accuracyPct,
             checkpoint_every: Math.max(100, Math.floor(Number(b.sampledCheckEvery) || 50000)),
           },
-          memory_limit_gb: 12,
+          memory_limit_gb: MEMORY_LIMIT_GB,
           threads: 0,
         }
       : undefined;
+  // 3+ seats: the planner picks the core. `engine plan` at queue time sizes
+  // the tree, estimates every core's memory and rate, and writes the
+  // recommendation (core, hero, update, abstraction, batch, iterations)
+  // into this config for the wall-clock budget below; the "advanced"
+  // disclosure sends the knobs explicitly instead.
+  const planned = multiway && !b.advancedSolver;
+  const timeBudgetSeconds = Math.max(60, Math.round((Number(b.timeBudgetMinutes) || 10) * 60));
+  const explicitSampled = {
+    family: "sampled",
+    sampled: {
+      seed: Math.max(0, Math.floor(Number(b.sampledSeed) || 20260830)),
+      batch: Math.max(1, Math.floor(Number(b.sampledBatch) || 256)),
+      lanes: Math.max(1, Math.min(256, Math.floor(Number(b.sampledLanes) || 4))),
+      hero: b.sampledHero,
+      update: b.sampledUpdate,
+      ...(b.sampledAbstraction === "monker"
+        ? { abstraction: { preset: "monker" } }
+        : b.sampledAbstraction === "histogram"
+          ? { abstraction: { method: "histogram", turn: 200, river: 200 } }
+          : {}),
+    },
+  };
   // The engine's lambda is in 1/chips; the form's is per pot. Divide once,
 
   // here, so the number the user typed keeps its meaning on any tree.
@@ -427,19 +473,21 @@ export const buildEngineConfig = (b: BuilderState): EngineConfigResult => {
       // holds full-enumeration values a sampled iteration never produces),
       // so sampling wins here rather than sending a config that will be
       // rejected after the job has already been queued.
-      algorithm: sampledOnly
+      // Heads-up is the vectorized core as ever. Three seats and up either
+      // ask the planner (family "auto") or send the sampled core's knobs as
+      // typed; the exact 3-seat core is what the planner picks when the
+      // budget covers it, and past three seats it does not exist.
+      algorithm: planned
         ? {
-            // No update rule, recalc or chance sampling: the sampled core
-            // discounts linearly by iteration and the engine refuses all
-            // three on this family.
-            family: "sampled",
-            sampled: {
-              seed: Math.max(0, Math.floor(Number(b.sampledSeed) || 20260830)),
-              batch: Math.max(1, Math.floor(Number(b.sampledBatch) || 4096)),
-              lanes: Math.max(1, Math.min(256, Math.floor(Number(b.sampledLanes) || 4))),
-            },
+            // The API replaces this with `engine plan`'s recommendation; the
+            // seed rides along so a re-run of the same spot is the same deal
+            // stream.
+            family: "auto",
+            sampled: { seed: Math.max(0, Math.floor(Number(b.sampledSeed) || 20260830)) },
           }
-        : {
+        : multiway
+          ? explicitSampled
+          : {
             // QRE is `qre.mode`, not an update rule: it layers on top of one,
             // and the engine's algorithm.update enum has no such value. dcfr
             // stays the base rule underneath it.
@@ -477,6 +525,9 @@ export const buildEngineConfig = (b: BuilderState): EngineConfigResult => {
       budget: {
         iterations,
         target_exploitable_pct: accuracyPct,
+        // 3+ seats: the wall-clock budget the planner sizes the solve for and
+        // the engine stops at (writing what it reached).
+        ...(multiway ? { max_seconds: timeBudgetSeconds } : {}),
         // The accuracy stop can only fire AT a checkpoint, so this is the
         // resolution of the solve: expected overshoot is checkpoint_every / 2
         // iterations of pure waste. But a checkpoint is a best-response pass
@@ -490,7 +541,7 @@ export const buildEngineConfig = (b: BuilderState): EngineConfigResult => {
         // tree needing 265 iterations ran 500 and cost 1.44x - measured.
         checkpoint_every: 25,
       },
-      memory_limit_gb: 12,
+      memory_limit_gb: MEMORY_LIMIT_GB,
       // 0 = one worker per hardware thread on the machine that runs the
       // solve. Results are bitwise identical at any thread count.
       threads: 0,

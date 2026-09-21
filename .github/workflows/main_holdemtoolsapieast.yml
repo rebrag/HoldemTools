@@ -19,6 +19,11 @@ on:
       - main
     paths:
       - 'backend/**'
+      # The API ships engine.exe for `engine plan` (queue-time planning of a
+      # solve's core, memory and rate), so an engine change is an API change.
+      - 'engine/src/**'
+      - 'engine/CMakeLists.txt'
+      - 'engine/build.ps1'
       - '.github/workflows/main_holdemtoolsapieast.yml'
   workflow_dispatch:
 
@@ -41,6 +46,22 @@ jobs:
       # is excluded from the deployment package.
       - name: dotnet publish
         run: dotnet publish backend/GTOLiteAPI.csproj -c Release -o "${{env.DOTNET_ROOT}}/myapp"
+
+      # htsolver rides along for `engine plan`: the controller runs it at
+      # queue time to size a solve (tree, memory, predicted rate) and to pick
+      # the core for a request that asked for algorithm.family "auto". The
+      # same wrapper the engine CI uses on this runner (MSVC + CMake + Ninja,
+      # bootstrapped by build.ps1); no test run here, engine-ci.yml owns that.
+      # The controller looks for the binary at Engine:ExePath, then beside
+      # itself at engine/engine.exe, which is where this puts it.
+      - name: Build htsolver
+        shell: pwsh
+        run: engine/build.ps1
+      - name: Ship engine.exe with the API
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "${{env.DOTNET_ROOT}}/myapp/engine" | Out-Null
+          Copy-Item engine/build/engine.exe "${{env.DOTNET_ROOT}}/myapp/engine/engine.exe"
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4

@@ -10,6 +10,7 @@
 // PioViewer's format anyway. The two builders share the engine's JSON config
 // and nothing else.
 import type { PushFoldDump } from "./pushfoldResult";
+import { MEMORY_LIMIT_GB } from "@/lib/engineLimits";
 
 /** Seat labels clockwise from the small blind, per table size. Heads-up is
  *  the usual exception: the button IS the small blind. */
@@ -113,6 +114,9 @@ export interface MultiwayView {
    *  whose batch moved - and the thing you change to continue a solve is
    *  exactly the budget the derivation reads. */
   batch: string;
+  /** Wall-clock budget in minutes (`budget.max_seconds`); empty = none. The
+   *  engine stops at it and keeps what it reached, checkpoint included. */
+  timeBudgetMinutes: string;
 }
 
 /** The short-term target spot: 4-way, blinds 1/2, 20 chips (10bb) each. */
@@ -141,6 +145,7 @@ export const DEFAULT_VIEW: MultiwayView = {
   // vectorized 2-3 seat solves stop on the accuracy target long before it.
   maxIterations: "200000",
   batch: "",
+  timeBudgetMinutes: "",
 };
 
 /** Grow or shrink the per-seat arrays when the player count changes, keeping
@@ -196,6 +201,9 @@ export const validate = (view: MultiwayView): string[] => {
   }
   if (view.batch.trim() !== "" && !(num(view.batch) >= 1)) {
     issues.push("Batch must be at least 1.");
+  }
+  if (view.timeBudgetMinutes.trim() !== "" && !(num(view.timeBudgetMinutes) >= 1)) {
+    issues.push("Time budget must be at least one minute (or empty for none).");
   }
   if (view.solveId.trim() !== "" && !/^[A-Za-z0-9._-]{1,64}$/.test(view.solveId.trim())) {
     issues.push("Solve ID may only use letters, digits, '-', '_' and '.', up to 64 characters.");
@@ -440,8 +448,11 @@ export const buildMultiwayConfig = (view: MultiwayView): Record<string, unknown>
       // boards), and targets cannot stop a 4+ seat sampled solve anyway,
       // so mid-solve checkpoints would only multiply the measuring cost.
       checkpoint_every: isSampledCore(view) ? num(view.maxIterations) : 25,
+      ...(num(view.timeBudgetMinutes) > 0
+        ? { max_seconds: Math.round(num(view.timeBudgetMinutes) * 60) }
+        : {}),
     },
-    memory_limit_gb: 12,
+    memory_limit_gb: MEMORY_LIMIT_GB,
     threads: 0,
     output: { rollups_169: true },
   };

@@ -1,9 +1,13 @@
 // Controllers/EngineCompareController.cs
 using System;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Security.Claims;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Azure.Storage.Blobs;
 using Microsoft.AspNetCore.Authorization;
@@ -77,6 +81,10 @@ namespace PokerRangeAPI2.Controllers
             /// <summary>The job also solves the tree on htsolver's sampled core.</summary>
             public bool RunSampledCore { get; set; }
 
+            /// <summary>What `engine plan` said at queue time (tree size, per-core
+            /// memory and rate, the recommendation); null when nothing planned.</summary>
+            public JsonNode? Plan { get; set; }
+
             /// <summary>Which payloads this job has, so the page knows what to fetch.</summary>
             public bool HasHtResult { get; set; }
             public bool HasPioResult { get; set; }
@@ -120,6 +128,7 @@ namespace PokerRangeAPI2.Controllers
                 CompletedAtUtc = job.CompletedAtUtc,
                 CancelRequestedAtUtc = job.CancelRequestedAtUtc,
                 Timings = ParseTimings(job.TimingsJson),
+                Plan = ParseTimings(job.PlanJson),
                 SolveId = job.SolveId,
                 SolveKey = job.SolveKey,
                 Iterations = job.Iterations,
@@ -181,6 +190,43 @@ namespace PokerRangeAPI2.Controllers
                 request.DisableCrossCheck = true;
             }
 
+            // Queue-time planning: `engine plan` sizes the tree, estimates each
+            // core's memory and rate, and picks the core for a request that
+            // asked for algorithm.family "auto" (the 3+ seat /compare path).
+            // Publish jobs are river spots on the vectorized core and skip it.
+            string? planJson = null;
+            if (request.Mode != EngineCompareJobMode.Publish)
+            {
+                var (plan, planError) = await RunPlanAsync(request.Config, HttpContext.RequestAborted);
+                if (planError != null) return BadRequest(planError);
+                if (plan != null)
+                {
+                    planJson = plan.ToJsonString();
+                    if (planJson.Length > 16000)
+                    {
+                        // Keep what the page reads; the per-core detail is the bulk.
+                        var trimmed = new JsonObject
+                        {
+                            ["seats"] = plan["seats"]?.DeepClone(),
+                            ["nodes"] = plan["nodes"]?.DeepClone(),
+                            ["recommendation"] = plan["recommendation"]?.DeepClone(),
+                        };
+                        planJson = trimmed.ToJsonString();
+                    }
+                }
+                var family = request.Config["algorithm"]?["family"]?.GetValue<string>();
+                if (family == "auto")
+                {
+                    if (plan == null)
+                    {
+                        return BadRequest("algorithm.family \"auto\" needs the planner (engine.exe) on " +
+                                          "this API instance; set Engine:ExePath, or choose a core explicitly.");
+                    }
+                    var mergeError = MergePlan(request.Config, plan);
+                    if (mergeError != null) return BadRequest(mergeError);
+                }
+            }
+
             var configJson = request.Config.ToJsonString();
             if (configJson.Length > MaxConfigBytes)
                 return BadRequest($"config too large (max {MaxConfigBytes} bytes)");
@@ -221,6 +267,9 @@ namespace PokerRangeAPI2.Controllers
                 // fails now rather than on the watcher's machine. The
                 // vectorized showdown sweep has no O(H) form past three
                 // seats; the sampled core pins opponents and has no such wall.
+                // When the planner ran, the merged config already names a
+                // core the engine supports (or was refused above); this is
+                // the fallback rule for an instance without the binary.
                 var family = request.Config["algorithm"]?["family"]?.GetValue<string>();
                 if (seats > 3 && family != "sampled")
                 {
@@ -276,6 +325,7 @@ namespace PokerRangeAPI2.Controllers
                 DisableCompare = request.DisableCompare,
                 DisableCrossCheck = request.DisableCrossCheck,
                 SampledConfigJson = sampledConfigJson,
+                PlanJson = planJson,
                 Status = EngineCompareJobStatus.Queued,
 
                 CreatedAtUtc = DateTimeOffset.UtcNow,
@@ -283,6 +333,150 @@ namespace PokerRangeAPI2.Controllers
             _db.EngineCompareJobs.Add(job);
             await _db.SaveChangesAsync();
             return Ok(JobDto.From(job));
+        }
+
+        // At most a couple of planners at once: each builds the job's public
+        // tree (a gigabyte for the largest 3-way flop) for a few seconds.
+        private static readonly SemaphoreSlim PlanGate = new(2, 2);
+
+        /// <summary>Where htsolver is on this instance: Engine:ExePath, then the
+        /// copy the deploy workflow ships beside the API, then a dev checkout's
+        /// build. Null when none exists - planning is then unavailable and the
+        /// seat-count rule is the only queue-time check.</summary>
+        private string? EngineExePath()
+        {
+            var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+            var candidates = new[]
+            {
+                _config["Engine:ExePath"],
+                Path.Combine(AppContext.BaseDirectory, "engine", "engine.exe"),
+                Path.Combine(repoRoot, "engine", "build", "engine.exe"),
+            };
+            return candidates.FirstOrDefault(p => !string.IsNullOrWhiteSpace(p) && System.IO.File.Exists(p));
+        }
+
+        /// <summary>Run `engine plan` on the request's config. Returns (plan, null)
+        /// on success, (null, null) when no binary is available, and (null, error)
+        /// when the engine refused the config - that message is the user's, it
+        /// is what `engine solve` would have printed twenty minutes later.</summary>
+        private async Task<(JsonNode? plan, string? error)> RunPlanAsync(JsonObject config, CancellationToken ct)
+        {
+            var exe = EngineExePath();
+            if (exe == null) return (null, null);
+            var budgetSeconds = config["budget"]?["max_seconds"]?.GetValue<double>() ?? 0.0;
+            var targetPct = config["budget"]?["target_exploitable_pct"]?.GetValue<double>() ?? 0.0;
+            var dir = Path.Combine(Path.GetTempPath(), "htsolver_plan_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                var path = Path.Combine(dir, "config.json");
+                await System.IO.File.WriteAllTextAsync(path, config.ToJsonString(), ct);
+                var psi = new ProcessStartInfo(exe)
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WorkingDirectory = dir,
+                };
+                psi.ArgumentList.Add("plan");
+                psi.ArgumentList.Add(path);
+                if (budgetSeconds > 0)
+                {
+                    psi.ArgumentList.Add("--time-budget-seconds");
+                    psi.ArgumentList.Add(budgetSeconds.ToString(CultureInfo.InvariantCulture));
+                }
+                if (targetPct > 0)
+                {
+                    psi.ArgumentList.Add("--target-pct");
+                    psi.ArgumentList.Add(targetPct.ToString(CultureInfo.InvariantCulture));
+                }
+                await PlanGate.WaitAsync(ct);
+                try
+                {
+                    using var proc = Process.Start(psi)
+                        ?? throw new InvalidOperationException("could not start the engine");
+                    var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+                    var stderrTask = proc.StandardError.ReadToEndAsync();
+                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+                    using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
+                    try
+                    {
+                        await proc.WaitForExitAsync(linked.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        try { proc.Kill(entireProcessTree: true); } catch { /* already gone */ }
+                        return (null, "planning this tree timed out on the API; it is too large to queue");
+                    }
+                    var stdout = await stdoutTask;
+                    var stderr = await stderrTask;
+                    if (proc.ExitCode != 0)
+                    {
+                        var message = (stderr + "\n" + stdout).Trim();
+                        var line = message.Split('\n').Select(l => l.Trim())
+                            .FirstOrDefault(l => l.StartsWith("error:", StringComparison.Ordinal)) ?? message;
+                        return (null, "the engine refused this config: " + line.Replace("error: ", ""));
+                    }
+                    try { return (JsonNode.Parse(stdout), null); }
+                    catch (System.Text.Json.JsonException)
+                    {
+                        return (null, "the planner returned something that is not JSON");
+                    }
+                }
+                finally { PlanGate.Release(); }
+            }
+            finally
+            {
+                try { Directory.Delete(dir, recursive: true); } catch { /* temp */ }
+            }
+        }
+
+        /// <summary>Replace algorithm.family "auto" with the plan's recommendation,
+        /// and the budget's iteration cadence with the plan's. The budget's target
+        /// and max_seconds stay the caller's. Returns an error message when the
+        /// plan has no usable recommendation.</summary>
+        private static string? MergePlan(JsonObject config, JsonNode plan)
+        {
+            var rec = plan["recommendation"] as JsonObject;
+            if (rec == null) return "the planner produced no recommendation for this config";
+            var family = rec["family"]?.GetValue<string>();
+            var existingSeed = config["algorithm"]?["sampled"]?["seed"]?.DeepClone();
+            if (family == "vectorized")
+            {
+                config["algorithm"] = new JsonObject { ["update"] = "dcfr" };
+            }
+            else if (family == "sampled")
+            {
+                var sampled = new JsonObject
+                {
+                    ["hero"] = rec["hero"]?.DeepClone() ?? "pinned",
+                    ["update"] = rec["update"]?.DeepClone() ?? "external",
+                    ["batch"] = rec["batch"]?.DeepClone(),
+                    ["lanes"] = rec["lanes"]?.DeepClone(),
+                };
+                if (existingSeed != null) sampled["seed"] = existingSeed;
+                if (rec["abstraction"] is JsonObject abstraction) sampled["abstraction"] = abstraction.DeepClone();
+                config["algorithm"] = new JsonObject { ["family"] = "sampled", ["sampled"] = sampled };
+                // Bucketed solves export per bucket group: the per-hand export of a
+                // 3-way flop tree is a 160 GB file.
+                if (rec["abstraction"] is JsonObject)
+                {
+                    var output = config["output"] as JsonObject ?? new JsonObject();
+                    output["export"] = "bucketed";
+                    config["output"] = output;
+                }
+            }
+            else
+            {
+                return "the planner recommended an unknown core: " + family;
+            }
+            var budget = config["budget"] as JsonObject ?? new JsonObject();
+            if (rec["iterations"] != null) budget["iterations"] = rec["iterations"]!.DeepClone();
+            if (rec["checkpoint_every"] != null) budget["checkpoint_every"] = rec["checkpoint_every"]!.DeepClone();
+            if (rec["measure_at_seconds"] is JsonArray marks) budget["measure_at_seconds"] = marks.DeepClone();
+            config["budget"] = budget;
+            return null;
         }
 
         // GET api/enginecompare?mode=pushfold - the caller's recent jobs,

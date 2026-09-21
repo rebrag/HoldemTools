@@ -378,6 +378,11 @@ const MultiwayTreeBuilder = ({
                   ? "One dealt hand per iteration, so this is the real convergence knob here."
                   : "",
               ],
+              [
+                "timeBudgetMinutes",
+                "Time budget (min)",
+                "Wall clock for the whole solve, empty for none: the engine stops at it and keeps what it reached, checkpoint included, instead of being killed later.",
+              ],
             ] as const
           ).map(([key, text, why]) => (
             <label key={key} className="flex flex-col gap-1">
