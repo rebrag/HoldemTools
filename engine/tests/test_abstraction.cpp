@@ -485,7 +485,7 @@ TEST_CASE("abstraction: hands symmetric under the board's pointwise stabilizer s
   REQUIRE(game.abstraction_symmetries() == 1);
   const std::vector<std::uint16_t>& relabel = game.abstraction_symmetric_map(0);
   ThreadPool pool(4);
-  for (const std::string& method : {"equity", "histogram", "moments"}) {
+  for (const std::string method : {"equity", "histogram", "moments"}) {
     SampledConfig sc = sampled_cfg(7, 5, method);
     sc.abstraction.tiers = method == "moments" ? 2 : 1;
     InfosetIndexer ix = InfosetIndexer::plan(game, game, sc, {}, 0);
