@@ -144,7 +144,9 @@ def report(job_id: str, status: Optional[str] = None, error: Optional[str] = Non
            ht_blob_path: Optional[str] = None, pio_blob_path: Optional[str] = None,
            sampled_blob_path: Optional[str] = None,
            timings: Optional[Dict[str, Any]] = None,
-           identity: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+           identity: Optional[Dict[str, Any]] = None,
+           plan: Optional[Dict[str, Any]] = None,
+           merged_config: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
 
     """PATCH one job. Returns the API's response body, or None if the call
     itself failed.
@@ -172,6 +174,12 @@ def report(job_id: str, status: Optional[str] = None, error: Optional[str] = Non
 
     if timings:
         body["timings"] = timings
+    if plan is not None:
+        # What `engine plan` chose here, for a job the API could not plan on
+        # its own host, and the config that actually ran.
+        body["plan"] = plan
+    if merged_config is not None:
+        body["mergedConfig"] = merged_config
     if identity:
         # The result's lineage (solveId, solveKey, iterations), straight from
         # the artifact's metadata. The API uses it to keep ONE result per
@@ -396,6 +404,121 @@ def solver_family(config: Dict[str, Any]) -> str:
     return family if isinstance(family, str) and family else "vectorized"
 
 
+DEFAULT_PLAN_ITERATIONS = 2 ** 31
+
+
+def default_recommendation(config: Dict[str, Any]) -> Dict[str, Any]:
+    """The core to run when `engine plan` itself cannot: the same rule its
+    recommendation encodes, minus the rate prediction. Postflop 3+ seats
+    is the pinned hero with external sampling under the monker preset (the
+    M8g product path); preflop is the vectorized hero (the path the Monker
+    4-way band was measured on). Iterations are left huge and the time
+    budget does the stopping; one best-response mark at half the budget so
+    a 3-seat solve still measures itself once."""
+    postflop = config.get("game") == "nlhe"
+    seats = len(config.get("players") or [])
+    budget = float((config.get("budget") or {}).get("max_seconds") or 0)
+    rec: Dict[str, Any] = {
+        "family": "sampled",
+        "hero": "pinned" if postflop else "vectorized",
+        "update": "external" if postflop else "chance",
+        "abstraction": {"preset": "monker"} if postflop else None,
+        "batch": 4096,
+        "lanes": 16,
+        "iterations": DEFAULT_PLAN_ITERATIONS,
+        "checkpoint_every": DEFAULT_PLAN_ITERATIONS,
+        "reason": "engine plan could not run here; the seat-count rule",
+    }
+    if postflop and seats <= 3 and budget >= 120:
+        rec["measure_at_seconds"] = [budget * 0.5]
+    return rec
+
+
+def merge_plan(config: Dict[str, Any], plan: Dict[str, Any]) -> None:
+    """Replace algorithm.family "auto" with the plan's recommendation and the
+    budget's iteration cadence with the plan's; the budget's target and
+    max_seconds stay the job's. The Python twin of EnginePlanner.MergePlan
+    in the API, for the jobs the API could not plan on its host."""
+    rec = plan.get("recommendation") or {}
+    family = rec.get("family")
+    if family not in ("vectorized", "sampled"):
+        raise RuntimeError(f"the planner recommended an unknown core: {family!r}")
+    seed = ((config.get("algorithm") or {}).get("sampled") or {}).get("seed")
+    if family == "vectorized":
+        config["algorithm"] = {"update": "dcfr"}
+    else:
+        sampled: Dict[str, Any] = {
+            "hero": rec.get("hero", "pinned"),
+            "update": rec.get("update", "external"),
+            "batch": rec.get("batch"),
+            "lanes": rec.get("lanes"),
+        }
+        if seed is not None:
+            sampled["seed"] = seed
+        if isinstance(rec.get("abstraction"), dict):
+            sampled["abstraction"] = dict(rec["abstraction"])
+            # A bucketed solve exports per bucket group: the per-hand export
+            # of a 3-way flop tree is a 160 GB file.
+            config["output"] = {**(config.get("output") or {}), "export": "bucketed"}
+        config["algorithm"] = {"family": "sampled", "sampled": sampled}
+    budget = dict(config.get("budget") or {})
+    for key in ("iterations", "checkpoint_every", "measure_at_seconds"):
+        if rec.get(key) is not None:
+            budget[key] = rec[key]
+    config["budget"] = budget
+
+
+def plan_engine_config(config: Dict[str, Any], run_dir: str) -> Optional[Dict[str, Any]]:
+    """Run `engine plan` on a job's config here, where the memory is. Returns
+    the plan, or None when the engine could not plan (the caller falls back
+    to default_recommendation). A refusal (exit 1, a config error) raises:
+    that is the message the user should see."""
+    os.makedirs(run_dir, exist_ok=True)
+    path = os.path.join(run_dir, "plan_config.json")
+    with open(path, "w", encoding="utf8") as f:
+        json.dump(config, f)
+    budget = (config.get("budget") or {}).get("max_seconds") or 0
+    cmd = [ENGINE_EXE, "plan", path]
+    if budget:
+        cmd += ["--time-budget-seconds", str(budget)]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log(f"  engine plan did not run ({e}); using the seat-count rule")
+        return None
+    if proc.returncode == 3:
+        log("  engine plan ran out of memory here; using the seat-count rule")
+        return None
+    if proc.returncode != 0:
+        text = (proc.stderr + "\n" + proc.stdout).strip()
+        line = next((l.strip() for l in text.splitlines() if l.strip().startswith("error:")), text)
+        raise RuntimeError("the engine refused this config: " + line.replace("error: ", "", 1))
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        log("  engine plan printed something that is not JSON; using the seat-count rule")
+        return None
+
+
+def plan_if_auto(config: Dict[str, Any], job_id: str, run_dir: str) -> Optional[Dict[str, Any]]:
+    """A job whose algorithm.family is "auto" was queued by an API that could
+    not plan it on its own host. Plan it here, merge the recommendation into
+    the config in place, and report the plan and the merged config so the
+    row shows what actually ran. Returns the plan (or the fallback
+    recommendation wrapped as one); None when nothing needed planning."""
+    if solver_family(config) != "auto":
+        return None
+    plan = plan_engine_config(config, run_dir)
+    if plan is None:
+        plan = {"recommendation": default_recommendation(config), "fallback": True}
+    merge_plan(config, plan)
+    rec = plan.get("recommendation") or {}
+    log(f"  planned: {rec.get('family')} {rec.get('hero', '')} {rec.get('update', '')} "
+        f"batch {rec.get('batch')} ({rec.get('reason', '')})")
+    report(job_id, plan=plan, merged_config=config)
+    return plan
+
+
 def prepare_engine_config(config: Dict[str, Any], run_dir: str, *,
                           checkpoint_dir: str = CHECKPOINT_DIR) -> str:
     """Fill in the watcher-owned parts of a job's engine config; returns the
@@ -499,6 +622,7 @@ def handle_compare(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
                   cancel: Cancellation) -> None:
     job_id = job["id"]
     config = json.loads(job["config"])
+    plan_if_auto(config, job_id, run_dir)
     # Validation-friendly flags: quantization must not pollute the diff.
     config["output"] = {"strategy_quantize_u8": False, "ev_float32": True, "rollups_169": False}
     phase_start = time.perf_counter()
@@ -605,6 +729,7 @@ def handle_publish(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
                   cancel: Cancellation) -> None:
     job_id = job["id"]
     config = json.loads(job["config"])
+    plan_if_auto(config, job_id, run_dir)
     # Viewer-quality flags: quantized strategy + 169 rollups.
     config["output"] = {"strategy_quantize_u8": True, "ev_float32": True, "rollups_169": True}
     phase_start = time.perf_counter()
@@ -690,6 +815,7 @@ def handle_htsolver_only(job: Dict[str, Any], run_dir: str, timings: Dict[str, A
     """
     job_id = job["id"]
     config = json.loads(job["config"])
+    plan_if_auto(config, job_id, run_dir)
     # Viewer-quality flags. rollups_169 is the important one here: the 169-class
     # rollup IS the push/fold chart the frontend renders.
     config["output"] = {"strategy_quantize_u8": True, "ev_float32": True, "rollups_169": True}
@@ -746,6 +872,7 @@ def handle_multiway(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
     """
     job_id = job["id"]
     config = json.loads(job["config"])
+    plan_if_auto(config, job_id, run_dir)
     # Same flags as a compare run: unquantized strategy (the .htc applies its
     # own fixed point) and no 169 rollups, which this payload does not read.
     # `export` is the job's (the API sets "bucketed" for a planned bucketed

@@ -113,6 +113,10 @@ builder.Services.AddSingleton<PokerRangeAPI2.Services.IPlayerPhotoStore,
 // No-op unless Engine:LocalSolutionsDir is configured; never set it on a
 // deployed instance. See Services/EngineArtifacts/EngineLocalSolutions.cs.
 builder.Services.AddSingleton<PokerRangeAPI2.Services.EngineArtifacts.EngineLocalSolutions>();
+// Queue-time planning with `engine plan` (Services/EnginePlanner.cs). Finds
+// the binary once at startup: Engine:ExePath, the copy shipped beside the API,
+// or a dev checkout's build; without one, planning is left to the watcher.
+builder.Services.AddSingleton<PokerRangeAPI2.Services.EnginePlanner>();
 
 // === EF Core: AppDbContext ===
 builder.Services.AddDbContext<AppDbContext>(options =>

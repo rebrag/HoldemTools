@@ -90,7 +90,13 @@ public class EnginePlannerTests
     public async Task PlanAsync_runs_the_real_engine_when_a_dev_checkout_has_built_it()
     {
         var exe = EnginePlanner.FindExe(null);
-        if (exe == null) return;  // no binary: nothing to prove on this machine
+        if (exe == null)
+        {
+            // CI's backend job has no engine build; a dev checkout does, and
+            // there this test is the one that proves the process wiring.
+            Console.Error.WriteLine("EnginePlannerTests: no engine/build/engine.exe found, live test skipped");
+            return;
+        }
         var planner = new EnginePlanner(exe);
         Assert.True(planner.Available);
 

@@ -26,7 +26,8 @@ os.environ.setdefault("HOLDEMTOOLS_API_BASE", "http://localhost:1")
 os.environ.setdefault("WATCHER_API_KEY", "unused")
 
 import engine_compare_watcher as w  # noqa: E402
-from engine_compare_watcher import prepare_engine_config, solver_family  # noqa: E402
+from engine_compare_watcher import (default_recommendation, merge_plan,  # noqa: E402
+                                    prepare_engine_config, solver_family)
 
 failures = 0
 RUN_DIR = "C:\\tmp\\htsolver_job_x" if os.name == "nt" else "/tmp/htsolver_job_x"
@@ -164,6 +165,65 @@ def test_paths_and_budget() -> None:
     check("path" in cfg["output"] and "stop_file" in cfg["budget"],
           "a job with no output or budget block gets both created")
 
+
+
+def _auto_config(seats: int = 3, board: str = "Ts 6h 9h") -> dict:
+    return {
+        "schema": 1, "game": "nlhe", "board": board, "pot": 100, "chip_scale": 100,
+        "players": [{"seat": f"S{i}", "stack": 400, "range": "AA"} for i in range(seats)],
+        "algorithm": {"family": "auto", "sampled": {"seed": 42}},
+        "budget": {"iterations": 20000, "target_exploitable_pct": 0.02, "max_seconds": 600},
+        "memory_limit_gb": 12, "threads": 0,
+    }
+
+
+def test_merge_plan_sampled() -> None:
+    cfg = _auto_config()
+    plan = {"recommendation": {
+        "family": "sampled", "hero": "pinned", "update": "external",
+        "abstraction": {"preset": "monker"}, "batch": 4096, "lanes": 16,
+        "iterations": 5_000_000, "checkpoint_every": 5_000_000, "measure_at_seconds": [300.0]}}
+    merge_plan(cfg, plan)
+    assert cfg["algorithm"]["family"] == "sampled"
+    sampled = cfg["algorithm"]["sampled"]
+    assert sampled["hero"] == "pinned" and sampled["update"] == "external"
+    assert sampled["seed"] == 42, "the job's seed rides along"
+    assert sampled["abstraction"] == {"preset": "monker"}
+    assert cfg["output"]["export"] == "bucketed", "a bucketed solve exports per group"
+    assert cfg["budget"]["iterations"] == 5_000_000
+    assert cfg["budget"]["measure_at_seconds"] == [300.0]
+    assert cfg["budget"]["max_seconds"] == 600 and cfg["budget"]["target_exploitable_pct"] == 0.02
+    assert solver_family(cfg) == "sampled"
+
+
+def test_merge_plan_vectorized_and_bad() -> None:
+    cfg = _auto_config()
+    merge_plan(cfg, {"recommendation": {"family": "vectorized", "iterations": 300, "checkpoint_every": 25}})
+    assert cfg["algorithm"] == {"update": "dcfr"}
+    assert "output" not in cfg
+    assert cfg["budget"]["iterations"] == 300
+    try:
+        merge_plan(_auto_config(), {"recommendation": {"family": "quantum"}})
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("an unknown core must be refused")
+
+
+def test_default_recommendation() -> None:
+    rec = default_recommendation(_auto_config())
+    assert rec["family"] == "sampled" and rec["hero"] == "pinned" and rec["update"] == "external"
+    assert rec["abstraction"] == {"preset": "monker"}
+    assert rec["measure_at_seconds"] == [300.0], "one mark at half the budget for a 3-seat solve"
+    four = default_recommendation(_auto_config(seats=4))
+    assert "measure_at_seconds" not in four, "no exact best response past three seats"
+    cfg = _auto_config()
+    merge_plan(cfg, {"recommendation": rec})
+    prepare_engine_config(cfg, RUN_DIR, checkpoint_dir=CKPT)
+    assert cfg["output"]["export"] == "bucketed" and cfg["output"]["checkpoint_dir"]
+    preflop = {"game": "nlhe_preflop", "players": [{}] * 4, "algorithm": {"family": "auto"},
+               "budget": {"max_seconds": 600}}
+    assert default_recommendation(preflop)["hero"] == "vectorized"
 
 if __name__ == "__main__":
     test_solver_family()

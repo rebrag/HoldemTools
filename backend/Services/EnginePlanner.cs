@@ -38,14 +38,18 @@ namespace PokerRangeAPI2.Services
         /// unavailable and the seat-count rule is the only queue-time check.</summary>
         public static string? FindExe(string? configured)
         {
-            var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-            var candidates = new[]
+            if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured)) return configured;
+            var shipped = Path.Combine(AppContext.BaseDirectory, "engine", "engine.exe");
+            if (File.Exists(shipped)) return shipped;
+            // A dev checkout: walk up from bin/<config>/net8.0 (the API's, or
+            // the test project's one level deeper) to the monorepo root.
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            for (var i = 0; i < 7 && dir != null; ++i, dir = dir.Parent)
             {
-                configured,
-                Path.Combine(AppContext.BaseDirectory, "engine", "engine.exe"),
-                Path.Combine(repoRoot, "engine", "build", "engine.exe"),
-            };
-            return candidates.FirstOrDefault(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p));
+                var candidate = Path.Combine(dir.FullName, "engine", "build", "engine.exe");
+                if (File.Exists(candidate)) return candidate;
+            }
+            return null;
         }
 
         /// <summary>Run `engine plan` on a config. Returns (plan, null) on success,
@@ -98,11 +102,19 @@ namespace PokerRangeAPI2.Services
                     }
                     catch (OperationCanceledException)
                     {
+                        // Too slow for this host, not wrong: the watcher plans on claim.
                         try { proc.Kill(entireProcessTree: true); } catch { /* already gone */ }
-                        return (null, "planning this tree timed out on the API; it is too large to queue");
+                        return (null, null);
                     }
                     var stdout = await stdoutTask;
                     var stderr = await stderrTask;
+                    if (proc.ExitCode == 3)
+                    {
+                        // Out of memory building the tree on THIS host (a 3-way
+                        // flop tree is a gigabyte; the App Service plan is not).
+                        // Not the user's problem: the watcher plans on claim.
+                        return (null, null);
+                    }
                     if (proc.ExitCode != 0)
                     {
                         var message = (stderr + "\n" + stdout).Trim();

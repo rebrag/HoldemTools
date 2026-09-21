@@ -210,5 +210,8 @@ The plan itself is kept on the job (`PlanJson`, served as `plan` in the job DTO)
 A config the engine refuses fails the request with the engine's own message instead of failing on the watcher twenty minutes later.
 
 The binary is looked up at `Engine:ExePath`, then at `engine/engine.exe` beside the API (where the deploy workflow puts it, built by `engine/build.ps1` on the runner), then at a dev checkout's `engine/build/engine.exe`.
-Without one, `"auto"` is refused and the seat-count rule is the only queue-time check.
-Planning builds the job's public tree: the largest 3-way flop trees take about a gigabyte and ten seconds, so the App Service plan needs the headroom, and at most two plans run at once.
+Planning on the API is best-effort.
+It builds the job's public tree, and the largest 3-way flop trees take about a gigabyte, which the Standard B1 App Service does not have: the engine then exits 3 (out of memory, distinct from a config refusal's exit 1), the API leaves `algorithm.family: "auto"` in the stored config, and the watcher, which has the memory, plans on claim, merges the recommendation, and reports the plan and the merged config back (`PATCH /api/enginecompare/{id}` with `plan` and `mergedConfig`).
+The same happens when the binary is missing or the plan times out.
+A config the engine refuses still fails the request with the engine's message.
+At most two plans run at once on the API.

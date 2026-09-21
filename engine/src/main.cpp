@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <new>
 #include <stdexcept>
 
 #include "cli/args.hpp"
@@ -539,7 +540,10 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
   // response at all (br_available), so `nashconv` was never measured and is
   // still its initial 0.0 - which reads as "exact" rather than as "unknown".
   // The same hazard the re-export branch above exists to avoid.
-  stats.nashconv_valid = !team && br_available;
+  // A time-budget stop breaks out before the step's best response, so a
+  // run with no marks and no completed step never measured anything; the
+  // initial 0.0 must not be stamped as "exact". Null it out like a team's.
+  stats.nashconv_valid = !team && br_available && !stats.convergence.empty();
   stats.target_exploitable_pct = config.target_exploitable_pct;
   if (out_of_time) stats.stopped_reason = "time_budget";
   // A cancel outranks the time budget in the label: both stopped the solve
@@ -922,6 +926,13 @@ int main(int argc, char** argv) {
       return 0;
     }
     const SolveConfig config = load_config(args.input_path);
+    if (config.family_auto && args.subcommand != "plan") {
+      std::cerr << "error: algorithm.family \"auto\" asks `engine plan` to pick the core; run "
+                   "`engine plan " << args.input_path
+                << "` and solve the recommended config (the API and the watcher do this "
+                   "for a queued job)\n";
+      return 1;
+    }
     if (args.subcommand == "plan") {
       // The tree and the showdown tables, nothing else: what every core
       // would need to even start. Printed as JSON for the API's queue-time
@@ -938,6 +949,13 @@ int main(int argc, char** argv) {
       return 0;
     }
     return run_solve(config, args.subcommand == "dry-run");
+  } catch (const std::bad_alloc& e) {
+    // Not a config error: the tree (or the store) did not fit on THIS
+    // machine. Its own exit code so a caller that only wanted a plan can
+    // tell "refused" from "could not run here" - the API plans best-effort
+    // on a small host and hands the job to the watcher when this happens.
+    std::cerr << "out of memory: " << e.what() << "\n";
+    return 3;
   } catch (const std::exception& e) {
     std::cerr << "error: " << e.what() << "\n";
     return 1;
