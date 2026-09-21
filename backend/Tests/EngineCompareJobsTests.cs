@@ -33,7 +33,7 @@ public class EngineCompareJobsTests
     {
         var claims = new List<Claim> { new("user_id", uid), new("sub", uid) };
         if (email != null) claims.Add(new Claim("email", email));
-        var controller = new EngineCompareController(db, Config())
+        var controller = new EngineCompareController(db, Config(), new PokerRangeAPI2.Services.EnginePlanner((string?)null))
         {
             ControllerContext = new ControllerContext
             {

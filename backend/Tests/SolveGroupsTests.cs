@@ -38,7 +38,7 @@ public class SolveGroupsTests
         new(db) { ControllerContext = ContextFor(uid) };
 
     private static EngineCompareController Jobs(AppDbContext db, string uid) =>
-        new(db, Config()) { ControllerContext = ContextFor(uid) };
+        new(db, Config(), new PokerRangeAPI2.Services.EnginePlanner((string?)null)) { ControllerContext = ContextFor(uid) };
 
     /// <summary>The config multiwayView.ts buildMultiwayConfig writes for a
     /// 4-way 10bb spot, with an optional hand-sharing team.</summary>

@@ -219,7 +219,8 @@ nlohmann::json make_plan(const SolveConfig& config, const Game& game, const Plan
   constexpr double kExactIterationsToTarget = 300.0;
   const bool exact_in_budget =
       request.time_budget_s <= 0.0 || exact_rate * request.time_budget_s >= kExactIterationsToTarget;
-  bool use_exact = game.vectorized_terminals() && exact_fits && !team && !config.sampled.enabled &&
+  const bool core_open = !config.sampled.enabled || config.family_auto;
+  bool use_exact = game.vectorized_terminals() && exact_fits && !team && core_open &&
                    (seats <= 2 || exact_in_budget);
   if (!postflop && seats <= 3 && !team) use_exact = true;  // the preflop factorized estimator is exact there
   if (use_exact) {

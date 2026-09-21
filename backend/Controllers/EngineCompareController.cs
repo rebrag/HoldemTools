@@ -33,11 +33,11 @@ namespace PokerRangeAPI2.Controllers
         private readonly IConfiguration _config;
         private readonly EnginePlanner _planner;
 
-        public EngineCompareController(AppDbContext db, IConfiguration config)
+        public EngineCompareController(AppDbContext db, IConfiguration config, EnginePlanner planner)
         {
             _db = db;
             _config = config;
-            _planner = new EnginePlanner(config);
+            _planner = planner;
         }
 
         public class CreateDto
@@ -188,10 +188,14 @@ namespace PokerRangeAPI2.Controllers
                 request.DisableCrossCheck = true;
             }
 
-            // Queue-time planning: `engine plan` sizes the tree, estimates each
-            // core's memory and rate, and picks the core for a request that
-            // asked for algorithm.family "auto" (the 3+ seat /compare path).
-            // Publish jobs are river spots on the vectorized core and skip it.
+            // Queue-time planning, BEST-EFFORT: `engine plan` sizes the tree,
+            // estimates each core's memory and rate, and picks the core for a
+            // request that asked for algorithm.family "auto" (the 3+ seat
+            // /compare path). A config the engine refuses fails here with the
+            // engine's message. A tree this host cannot build (a 3-way flop is a
+            // gigabyte; a B1 App Service is not) leaves "auto" in the config and
+            // the watcher, which has the memory, plans on claim and reports the
+            // plan and the merged config back. Publish jobs skip it.
             string? planJson = null;
             if (request.Mode != EngineCompareJobMode.Publish)
             {
@@ -199,13 +203,8 @@ namespace PokerRangeAPI2.Controllers
                 if (planError != null) return BadRequest(planError);
                 if (plan != null) planJson = EnginePlanner.Store(plan, 16000);
                 var family = request.Config["algorithm"]?["family"]?.GetValue<string>();
-                if (family == "auto")
+                if (family == "auto" && plan != null)
                 {
-                    if (plan == null)
-                    {
-                        return BadRequest("algorithm.family \"auto\" needs the planner (engine.exe) on " +
-                                          "this API instance; set Engine:ExePath, or choose a core explicitly.");
-                    }
                     var mergeError = EnginePlanner.MergePlan(request.Config, plan);
                     if (mergeError != null) return BadRequest(mergeError);
                 }
@@ -255,7 +254,7 @@ namespace PokerRangeAPI2.Controllers
                 // core the engine supports (or was refused above); this is
                 // the fallback rule for an instance without the binary.
                 var family = request.Config["algorithm"]?["family"]?.GetValue<string>();
-                if (seats > 3 && family != "sampled")
+                if (seats > 3 && family != "sampled" && family != "auto")
                 {
                     return BadRequest(
                         $"multiway postflop past 3 players needs algorithm.family \"sampled\" " +

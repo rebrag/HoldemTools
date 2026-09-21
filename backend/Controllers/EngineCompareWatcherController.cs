@@ -50,6 +50,13 @@ namespace PokerRangeAPI2.Controllers
 
         public class ReportRequestDto
         {
+            /// <summary>What `engine plan` said on the watcher, for a job the API
+            /// could not plan itself (a tree too large for its host).</summary>
+            public JsonNode? Plan { get; set; }
+            /// <summary>The config the watcher actually solved, with the plan's
+            /// recommendation merged in place of algorithm.family "auto".</summary>
+            public JsonNode? MergedConfig { get; set; }
+
             public string WatcherId { get; set; } = "";
             public string? Status { get; set; }
             public string? Error { get; set; }
@@ -155,6 +162,12 @@ namespace PokerRangeAPI2.Controllers
             if (req.SolveId != null) job.SolveId = Truncate(req.SolveId, 64);
             if (req.SolveKey != null) job.SolveKey = Truncate(req.SolveKey, 64);
             if (req.Iterations != null) job.Iterations = req.Iterations;
+            if (req.Plan != null) job.PlanJson = PokerRangeAPI2.Services.EnginePlanner.Store(req.Plan, 16000);
+            if (req.MergedConfig != null)
+            {
+                var merged = req.MergedConfig.ToJsonString();
+                if (merged.Length <= 32 * 1024) job.ConfigJson = merged;
+            }
 
             await _db.SaveChangesAsync();
 

@@ -325,8 +325,11 @@ SolveConfig load_config(const std::string& path_text) {
       config.sampled.enabled = false;
     } else if (family == "sampled") {
       config.sampled.enabled = true;
+    } else if (family == "auto") {
+      config.sampled.enabled = true;
+      config.family_auto = true;
     } else {
-      fail("algorithm.family must be vectorized | sampled, got '" + family + "'");
+      fail("algorithm.family must be vectorized | sampled | auto, got '" + family + "'");
     }
   }
   if (j.contains("algorithm") && j.at("algorithm").contains("sampled")) {

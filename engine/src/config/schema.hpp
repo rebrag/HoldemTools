@@ -80,6 +80,11 @@ struct SolveConfig {
   PreflopConfig preflop;  // game == "nlhe_preflop" only
 
   UpdateConfig update;   // algorithm.update / dcfr params
+  // algorithm.family "auto": the caller wants `engine plan` to pick the
+  // core. Parsed as the sampled family (so a sampled block beside it is
+  // legal and the seat-count rules pass), planned by `plan` over every
+  // core, and refused by `solve` and `dry-run`, which need a decision.
+  bool family_auto = false;
   RecalcConfig recalc;   // algorithm.recalc - chance-child revisit schedule
   SamplingConfig sampling;  // algorithm.sampling - chance-node subsampling
   SampledConfig sampled;    // algorithm.family "sampled" - the deal-sampling core
