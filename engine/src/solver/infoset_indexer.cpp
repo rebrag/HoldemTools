@@ -50,6 +50,44 @@ std::uint32_t buckets_for(const AbstractionConfig& ab, Street street) {
   }
 }
 
+// Second-feature tiers on this street: "moments" on flop and turn only.
+std::uint32_t tiers_for(const AbstractionConfig& ab, Street street) {
+  if (ab.method != "moments" || street == Street::River) return 1;
+  return static_cast<std::uint32_t>(std::max(1, ab.tiers));
+}
+
+// The board's pointwise stabilizer applied to every hand: rep[h] is the
+// smallest hand index in h's orbit under the root symmetries that fix each
+// runout card of `key` (the low 52 bits are the board set; runout cards are
+// those not on the root board, which every root symmetry fixes set-wise).
+// Identity when there is no such symmetry.
+void canonical_hands(const DealGame& deals, std::uint64_t key, std::size_t hands,
+                     std::vector<std::uint32_t>& rep) {
+  rep.resize(hands);
+  for (std::size_t h = 0; h < hands; ++h) rep[h] = static_cast<std::uint32_t>(h);
+  const int syms = deals.abstraction_symmetries();
+  if (syms <= 0) return;
+  const std::uint64_t mask = key & ((std::uint64_t{1} << 52) - 1);
+  for (int s = 0; s < syms; ++s) {
+    // Fixes the board set-wise AND every card of it individually.
+    if (deals.abstraction_symmetric_key(s, mask) != mask) continue;
+    bool pointwise = true;
+    for (int c = 0; c < 52 && pointwise; ++c) {
+      if ((mask & (std::uint64_t{1} << c)) != 0 && deals.abstraction_symmetric_card(s, c) != c) {
+        pointwise = false;
+      }
+    }
+    if (!pointwise) continue;
+    const std::vector<std::uint16_t>& relabel = deals.abstraction_symmetric_map(s);
+    for (std::size_t h = 0; h < hands; ++h) {
+      rep[h] = std::min(rep[h], static_cast<std::uint32_t>(relabel[h]));
+    }
+  }
+  // Orbits are closed under the group, so one pass over its elements
+  // reaches every member; a second pass through the reps settles chains.
+  for (std::size_t h = 0; h < hands; ++h) rep[h] = rep[rep[h]];
+}
+
 // Equal-count buckets over the valid hands sorted by `score` (ties by hand
 // index), keeping every tie group whole: a group takes the bucket of its
 // first member's position. Invalid hands map to row 0. Produces at most
@@ -356,11 +394,12 @@ InfosetIndexer InfosetIndexer::plan(const Game& game, const DealGame& deals,
   // map index. Maps are per BOARD, shared by every node on that board.
   std::unordered_map<std::uint64_t, std::uint32_t> canonical_map;
   std::map<std::pair<std::uint64_t, int>, std::uint32_t> composed_map;
-  const auto canonical_map_index = [&](std::uint64_t key, Street street, std::uint32_t buckets) {
+  const auto canonical_map_index = [&](std::uint64_t key, Street street, std::uint32_t buckets,
+                                       std::uint32_t tiers) {
     auto it = canonical_map.find(key);
     if (it != canonical_map.end()) return it->second;
     const std::uint32_t index = ix.num_maps++;
-    ix.board_maps.push_back(BoardMap{key, street, buckets, index});
+    ix.board_maps.push_back(BoardMap{key, street, buckets, tiers, index});
     canonical_map.emplace(key, index);
     return index;
   };
@@ -401,7 +440,11 @@ InfosetIndexer InfosetIndexer::plan(const Game& game, const DealGame& deals,
     }
     const std::uint32_t d = node.decision_index;
     const std::uint32_t hands = static_cast<std::uint32_t>(game.num_hands(node.actor));
-    const std::uint32_t buckets = std::min(buckets_for(ab, node.street), hands);
+    const std::uint32_t tiers = tiers_for(ab, node.street);
+    // Strength buckets, capped so buckets x tiers never exceeds the hands.
+    std::uint32_t buckets = std::min(buckets_for(ab, node.street), hands);
+    if (buckets > 0 && tiers > 1) buckets = std::max<std::uint32_t>(1, std::min(buckets, hands / tiers));
+    const std::uint32_t rows = buckets * tiers;
     if (buckets == 0) {
       // Per-hand rows on this street: a group of its own, the identity map.
       const std::uint32_t g = ix.num_groups++;
@@ -424,7 +467,7 @@ InfosetIndexer InfosetIndexer::plan(const Game& game, const DealGame& deals,
         g = ix.num_groups++;
         groups.emplace(lk, g);
         ix.group_rep.push_back(d);
-        group_cells.push_back(static_cast<std::uint32_t>(node.num_children) * buckets);
+        group_cells.push_back(static_cast<std::uint32_t>(node.num_children) * rows);
         group_line.push_back({static_cast<std::uint32_t>(line_arena.size()),
                               static_cast<std::uint32_t>(line.size())});
         line_arena.insert(line_arena.end(), line.begin(), line.end());
@@ -437,18 +480,18 @@ InfosetIndexer InfosetIndexer::plan(const Game& game, const DealGame& deals,
         if (!same_line) {
           throw std::runtime_error("hand abstraction: betting-line hash collision");
         }
-        if (group_cells[g] != static_cast<std::uint32_t>(node.num_children) * buckets) {
+        if (group_cells[g] != static_cast<std::uint32_t>(node.num_children) * rows) {
           throw std::runtime_error(
               "hand abstraction: symmetric public states differ in shape - tree builder bug");
         }
       }
       ix.group_of[d] = g;
-      ix.rows_of[d] = buckets;
+      ix.rows_of[d] = rows;
       // The MAP is a property of the board set alone (strengths and
       // equities do not depend on the order), keyed by the canonical
       // runout's set; the relabeling is the one that identifies the two
       // ordered public states, so a member's rows read consistently.
-      const std::uint32_t cmap = canonical_map_index(canonical_mask, node.street, buckets);
+      const std::uint32_t cmap = canonical_map_index(canonical_mask, node.street, buckets, tiers);
       if (info.symmetry < 0) {
         ix.map_of[d] = cmap;
       } else {
@@ -503,39 +546,81 @@ void InfosetIndexer::fit(const DealGame& deals, const SampledConfig& config, Thr
     std::uint16_t* out = map_storage.data() + static_cast<std::size_t>(bm.map_index) * H;
     std::uint8_t* valid_out = valid_storage.data() + static_cast<std::size_t>(bm.map_index) * H;
     std::vector<std::uint8_t> valid(H, 1);
+    // Hands that are images of each other under the board's pointwise
+    // stabilizer read the representative's features, so they cannot land
+    // on different sides of a quantile boundary through rounding.
+    std::vector<std::uint32_t> rep;
+    canonical_hands(deals, bm.key, H, rep);
     if (bm.street == Street::River) {
       std::vector<std::uint32_t> strength;
       deals.abstraction_strengths(bm.key, strength);
       std::vector<double> score(H, 0.0);
       for (std::size_t h = 0; h < H; ++h) {
-        valid[h] = strength[h] != 0 ? 1 : 0;
-        score[h] = static_cast<double>(strength[h]);
+        valid[h] = strength[rep[h]] != 0 ? 1 : 0;
+        score[h] = static_cast<double>(strength[rep[h]]);
       }
       bucket_by_score(score, valid, bm.buckets, out);
     } else {
       std::vector<float> equity;
       int per_hand = 0;
       deals.abstraction_equities(bm.key, equity, per_hand, valid);
+      for (std::size_t h = 0; h < H; ++h) valid[h] = valid[rep[h]];
       std::vector<double> mean(H, 0.0);
+      std::vector<double> second(H, 0.0);
       for (std::size_t h = 0; h < H; ++h) {
-        if (!valid[h]) continue;
+        if (!valid[h] || rep[h] != h) continue;
         double sum = 0.0;
+        double sum2 = 0.0;
         const float* row = equity.data() + h * static_cast<std::size_t>(per_hand);
-        for (int j = 0; j < per_hand; ++j) sum += static_cast<double>(row[j]);
+        for (int j = 0; j < per_hand; ++j) {
+          const double e = static_cast<double>(row[j]);
+          sum += e;
+          sum2 += e * e;
+        }
         mean[h] = sum / static_cast<double>(per_hand);
+        second[h] = sum2 / static_cast<double>(per_hand);
       }
-      if (ab.method == "histogram") {
+      for (std::size_t h = 0; h < H; ++h) {
+        if (rep[h] == h) continue;
+        mean[h] = mean[rep[h]];
+        second[h] = second[rep[h]];
+      }
+      if (ab.method == "moments") {
+        // Strength quantiles of E[HS], crossed with GLOBAL quantiles of the
+        // spread E[HS^2] - E[HS]^2 over the board's hands: bucket =
+        // tiers * strength + tier. Global rather than conditional tiers is
+        // what the decoded Monker tables show (69-117 of 120 flop buckets
+        // occupied on a board, never all of them).
+        std::vector<double> spread(H, 0.0);
+        for (std::size_t h = 0; h < H; ++h) {
+          if (valid[h]) spread[h] = second[h] - mean[h] * mean[h];
+        }
+        std::vector<std::uint16_t> strength_bucket(H, 0);
+        std::vector<std::uint16_t> tier(H, 0);
+        bucket_by_score(mean, valid, bm.buckets, strength_bucket.data());
+        bucket_by_score(spread, valid, bm.tiers, tier.data());
+        for (std::size_t h = 0; h < H; ++h) {
+          out[h] = valid[h] ? static_cast<std::uint16_t>(strength_bucket[h] * bm.tiers + tier[h])
+                            : 0;
+        }
+      } else if (ab.method == "histogram") {
         const std::size_t bins = static_cast<std::size_t>(ab.bins);
         std::vector<double> hist(H * bins, 0.0);
         const double inv = 1.0 / static_cast<double>(per_hand);
         for (std::size_t h = 0; h < H; ++h) {
-          if (!valid[h]) continue;
+          if (!valid[h] || rep[h] != h) continue;
           const float* row = equity.data() + h * static_cast<std::size_t>(per_hand);
           for (int j = 0; j < per_hand; ++j) {
             std::size_t b = static_cast<std::size_t>(static_cast<double>(row[j]) * static_cast<double>(bins));
             if (b >= bins) b = bins - 1;
             hist[h * bins + b] += inv;
           }
+        }
+        for (std::size_t h = 0; h < H; ++h) {
+          if (rep[h] == h) continue;
+          std::copy(hist.begin() + static_cast<std::ptrdiff_t>(rep[h] * bins),
+                    hist.begin() + static_cast<std::ptrdiff_t>((rep[h] + 1) * bins),
+                    hist.begin() + static_cast<std::ptrdiff_t>(h * bins));
         }
         bucket_kmeans(hist, ab.bins, mean, valid, bm.buckets, ab.seed ^ bm.key, out);
       } else {

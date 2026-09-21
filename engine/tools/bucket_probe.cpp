@@ -73,8 +73,8 @@ std::vector<std::string> parse_words(const std::string& text) {
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::cerr << "usage: bucket_probe <config.json> [--artifact solve.hta] [--turn a,b] "
-                 "[--river a,b] [--flop a,b] [--methods equity,histogram] [--bins N] "
-                 "[--no-board-iso] [--json out.json]\n";
+                 "[--river a,b] [--flop a,b] [--methods equity,histogram,moments] [--bins N] "
+                 "[--tiers N] [--preset monker] [--no-board-iso] [--json out.json]\n";
     return 2;
   }
   std::string config_path = argv[1];
@@ -84,6 +84,7 @@ int main(int argc, char** argv) {
   std::vector<int> flop_counts = {0};
   std::vector<std::string> methods = {"equity", "histogram"};
   int bins = 16;
+  int tiers = 4;  // "moments" only
   bool board_iso = true;
   std::string json_out;
   for (int i = 2; i < argc; ++i) {
@@ -98,6 +99,18 @@ int main(int argc, char** argv) {
     else if (arg == "--flop") flop_counts = parse_ints(next());
     else if (arg == "--methods") methods = parse_words(next());
     else if (arg == "--bins") bins = std::stoi(next());
+    else if (arg == "--tiers") tiers = std::stoi(next());
+    else if (arg == "--preset") {
+      // The monker preset as one grid point: moments, 30 x 4 on flop and
+      // turn, 30 on the river.
+      const std::string preset = next();
+      if (preset != "monker") throw std::runtime_error("unknown preset " + preset);
+      methods = {"moments"};
+      flop_counts = {30};
+      turn_counts = {30};
+      river_counts = {30};
+      tiers = 4;
+    }
     else if (arg == "--no-board-iso") board_iso = false;
     else if (arg == "--json") json_out = next();
     else {
@@ -193,6 +206,7 @@ int main(int argc, char** argv) {
           sc.abstraction.turn = turn;
           sc.abstraction.river = river;
           sc.abstraction.bins = bins;
+          sc.abstraction.tiers = method == "moments" ? tiers : 1;
           sc.abstraction.board_isomorphism = board_iso;
           const auto t0 = std::chrono::steady_clock::now();
           InfosetIndexer ix = InfosetIndexer::plan(game, game, sc, {}, 0);
@@ -207,7 +221,8 @@ int main(int argc, char** argv) {
           const double secs =
               std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
           std::cout << method << std::string(11 - method.size(), ' ') << flop << "     " << turn
-                    << "    " << river << "     " << ix.store_total << "   " << ix.num_groups
+                    << (method == "moments" ? "x" + std::to_string(tiers) : "") << "    " << river
+                    << "     " << ix.store_total << "   " << ix.num_groups
                     << "   " << per_seat << "   " << per_seat / pot * 100.0 << "   "
                     << per_seat - reference.nashconv() / game.num_seats() << "   ";
           for (double v : br.ev) std::cout << v << " ";
@@ -216,6 +231,7 @@ int main(int argc, char** argv) {
                              {"flop", flop},
                              {"turn", turn},
                              {"river", river},
+                             {"tiers", method == "moments" ? tiers : 1},
                              {"storage_rows", ix.store_total},
                              {"storage_groups", ix.num_groups},
                              {"nashconv", br.nashconv()},

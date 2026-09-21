@@ -416,3 +416,97 @@ TEST_CASE("abstraction: the bucketed export reads back as the per-hand export") 
   }
   CHECK(rows_checked > 0);
 }
+
+TEST_CASE("abstraction: the moments method, tiers and the monker preset") {
+  const SolveConfig config = turn3_config();
+  NlhePostflopGame game(config);
+  SampledConfig sc = sampled_cfg(6, 5, "moments");
+  sc.abstraction.tiers = 3;
+  InfosetIndexer ix = InfosetIndexer::plan(game, game, sc, {}, 0);
+  ThreadPool pool(4);
+  ix.fit(game, sc, pool);
+  const PublicTree& tree = game.tree();
+  bool saw_turn = false;
+  for (const Node& node : tree.nodes) {
+    if (node.kind != NodeKind::Decision) continue;
+    const std::uint32_t d = node.decision_index;
+    if (node.street == Street::Turn) {
+      saw_turn = true;
+      CHECK(ix.rows(d) == 6 * 3);
+      // bucket = tiers * strength + tier: every valid hand lands inside the
+      // grid, and the strength part is monotone in mean equity by
+      // construction (bucket_by_score keeps tie groups whole).
+      const std::uint16_t* map = ix.map(d);
+      const std::uint8_t* valid = ix.valid(d);
+      for (std::uint32_t h = 0; h < ix.num_hands; ++h) {
+        if (valid[h]) CHECK(map[h] < 18);
+      }
+    } else if (node.street == Street::River) {
+      CHECK(ix.rows(d) == 5);
+    }
+  }
+  CHECK(saw_turn);
+
+  // The preset is a bundle of the same keys, and explicit keys beside it win.
+  const std::string base = R"({
+    "schema": 1, "game": "nlhe", "board": "9c 5d Jc 7s 2h", "pot": 90, "chip_scale": 100,
+    "players": [{"seat": "OOP", "stack": 200, "range": "AA,KK"},
+                {"seat": "MID", "stack": 200, "range": "AA,KK"},
+                {"seat": "BTN", "stack": 200, "range": "AA,KK"}],
+    "bet_sizing": {"river": {"bets": [50], "raises": [100], "max_raises": 1}},
+    "algorithm": {"family": "sampled", "sampled": {"abstraction": ABS}},
+    "budget": {"iterations": 100},
+    "output": {"path": "out/x.hta"}
+  })";
+  const auto make = [&](const std::string& name, const std::string& abs) {
+    std::string body = base;
+    body.replace(body.find("ABS"), 3, abs);
+    return temp_file(name + ".json", body).string();
+  };
+  const SolveConfig preset = load_config(make("preset", R"({"preset": "monker"})"));
+  CHECK(preset.sampled.abstraction.method == "moments");
+  CHECK(preset.sampled.abstraction.flop == 30);
+  CHECK(preset.sampled.abstraction.turn == 30);
+  CHECK(preset.sampled.abstraction.river == 30);
+  CHECK(preset.sampled.abstraction.tiers == 4);
+  CHECK(preset.sampled.abstraction.preset == "monker");
+  CHECK(load_config(make("override", R"({"preset": "monker", "turn": 12})")).sampled.abstraction.turn == 12);
+  CHECK_THROWS(load_config(make("tiers", R"({"method": "histogram", "turn": 8, "tiers": 2})")));
+  CHECK_THROWS(load_config(make("badpreset", R"({"preset": "pio"})")));
+}
+
+TEST_CASE("abstraction: hands symmetric under the board's pointwise stabilizer share a row") {
+  // The fixture's root symmetry is c<->d. On a runout card that is neither a
+  // club nor a diamond the stabilizer is the whole group, and every hand
+  // must share its row with its c<->d image; on a club or diamond runout
+  // the stabilizer is trivial and nothing is asserted.
+  const SolveConfig config = turn3_config();
+  NlhePostflopGame game(config);
+  REQUIRE(game.abstraction_symmetries() == 1);
+  const std::vector<std::uint16_t>& relabel = game.abstraction_symmetric_map(0);
+  ThreadPool pool(4);
+  for (const std::string& method : {"equity", "histogram", "moments"}) {
+    SampledConfig sc = sampled_cfg(7, 5, method);
+    sc.abstraction.tiers = method == "moments" ? 2 : 1;
+    InfosetIndexer ix = InfosetIndexer::plan(game, game, sc, {}, 0);
+    ix.fit(game, sc, pool);
+    std::size_t checked = 0;
+    for (const InfosetIndexer::BoardMap& bm : ix.board_maps) {
+      const std::uint64_t mask = bm.key & ((std::uint64_t{1} << 52) - 1);
+      if (game.abstraction_symmetric_key(0, mask) != mask) continue;
+      bool pointwise = true;
+      for (int c = 0; c < 52; ++c) {
+        if (((mask >> c) & 1) != 0 && game.abstraction_symmetric_card(0, c) != c) pointwise = false;
+      }
+      if (!pointwise) continue;
+      const std::uint16_t* map =
+          ix.map_storage.data() + static_cast<std::size_t>(bm.map_index) * ix.num_hands;
+      for (std::uint32_t h = 0; h < ix.num_hands; ++h) {
+        CHECK(map[h] == map[relabel[h]]);
+        ++checked;
+      }
+    }
+    MESSAGE(method << ": " << checked << " (hand, image) pairs share a row");
+    CHECK(checked > 0);
+  }
+}

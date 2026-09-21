@@ -378,16 +378,34 @@ SolveConfig load_config(const std::string& path_text) {
       const json& a = s.at("abstraction");
       AbstractionConfig& ab = config.sampled.abstraction;
       ab.enabled = true;
+      // The preset fills the defaults first; explicit keys beside it win.
+      ab.preset = a.value("preset", ab.preset);
+      if (ab.preset == "monker") {
+        ab.method = "moments";
+        ab.flop = 30;
+        ab.turn = 30;
+        ab.river = 30;
+        ab.tiers = 4;
+      } else if (!ab.preset.empty()) {
+        fail("algorithm.sampled.abstraction.preset must be \"monker\", got '" + ab.preset + "'");
+      }
       ab.method = a.value("method", ab.method);
+      ab.tiers = a.value("tiers", ab.tiers);
       ab.flop = a.value("flop", ab.flop);
       ab.turn = a.value("turn", ab.turn);
       ab.river = a.value("river", ab.river);
       ab.bins = a.value("bins", ab.bins);
       ab.seed = a.value("seed", ab.seed);
       ab.board_isomorphism = a.value("board_isomorphism", ab.board_isomorphism);
-      if (ab.method != "equity" && ab.method != "histogram") {
-        fail("algorithm.sampled.abstraction.method must be equity | histogram, got '" +
+      if (ab.method != "equity" && ab.method != "histogram" && ab.method != "moments") {
+        fail("algorithm.sampled.abstraction.method must be equity | histogram | moments, got '" +
              ab.method + "'");
+      }
+      if (ab.tiers < 1 || ab.tiers > 64) {
+        fail("algorithm.sampled.abstraction.tiers must be in [1, 64]");
+      }
+      if (ab.tiers > 1 && ab.method != "moments") {
+        fail("algorithm.sampled.abstraction.tiers applies to method \"moments\" only");
       }
       for (int b : {ab.flop, ab.turn, ab.river}) {
         if (b < 0 || b > 65535) {

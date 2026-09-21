@@ -48,6 +48,19 @@ namespace engine {
 // composed with the symmetry's hand relabeling; maps are built once per
 // canonical board and permuted, never re-clustered.
 //
+// Hands are CANONICALIZED per board before they are featurized, under the
+// board's pointwise stabilizer: the root symmetries (suit relabelings that
+// fix the root board set-wise and every seat's range) that also fix every
+// runout card of this board. Two hands that are images of each other under
+// such a relabeling are strategically identical at every node on the board
+// - same history, same future - so giving them identical features (and
+// hence one row, since every method keeps tie groups whole) is a lossless
+// relabeling, not an approximation. It composes with the runout sharing
+// above and makes the equal-feature case exact rather than up to a rounding
+// that could straddle a quantile boundary. MonkerSolver canonicalizes more
+// broadly (relative to the board alone, 78-643 keys per board), which
+// merges hands whose FLOP histories differ; that is lossy and is not copied.
+//
 // Plain data, no virtuals. `plan` sizes everything without clustering (the
 // memory estimator and the solver constructor both call it, so they cannot
 // drift); `fit` fills the abstraction maps.
@@ -81,7 +94,8 @@ struct InfosetIndexer {
   struct BoardMap {
     std::uint64_t key = 0;
     Street street = Street::River;
-    std::uint32_t buckets = 0;
+    std::uint32_t buckets = 0;  // strength buckets
+    std::uint32_t tiers = 1;    // second-feature tiers ("moments" on flop/turn); rows = buckets x tiers
     std::uint32_t map_index = 0;
   };
   struct ComposedMap {

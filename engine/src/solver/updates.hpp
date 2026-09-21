@@ -170,13 +170,28 @@ struct AbstractionConfig {
   // "equity": quantiles of mean equity against a uniform opponent over every
   // completion of the board (deterministic, seedless). "histogram": seeded
   // k-means over a `bins`-bin histogram of those equities, which can tell a
-  // draw from a made hand of the same mean equity.
+  // draw from a made hand of the same mean equity. "moments": MonkerSolver's
+  // pair - E[HS] (the same mean equity) in `flop`/`turn` strength quantiles,
+  // crossed with `tiers` global quantiles of the second moment's spread
+  // E[HS^2] - E[HS]^2 (a draw against a made hand of equal mean), bucket =
+  // tiers * strength + tier. The river is strength quantiles under every
+  // method (no runout left to have a spread over).
   std::string method = "equity";
-  // Buckets per street; 0 keeps per-hand rows on that street.
+  // Buckets per street (strength quantiles under "moments"); 0 keeps
+  // per-hand rows on that street.
   int flop = 0;
   int turn = 0;
   int river = 0;
   int bins = 16;
+  // "moments" only: second-feature tiers per strength bucket on flop and
+  // turn. Rows on those streets are buckets x tiers.
+  int tiers = 1;
+  // A named bundle of the above: "monker" = moments, 30 strength quantiles on
+  // every street, 4 tiers (30 x 4 on flop and turn, 30 on the river - the
+  // decoded holdem*_30_4.ser / holdemriver_30.ser layout, see
+  // tools/monker_ser.py). Explicit keys beside it override. Recorded so the
+  // metadata says which preset a solve ran.
+  std::string preset;
   std::uint64_t seed = 1;
   // Share one set of storage rows between runouts that are suit
   // permutations of each other under a permutation that fixes the root
