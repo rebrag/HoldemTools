@@ -25,6 +25,7 @@
 #include "solver/infoset_indexer.hpp"
 #include "solver/sampled_cfr.hpp"
 #include "solver/memory.hpp"
+#include "solver/plan.hpp"
 #include "util/parallel.hpp"
 #include "util/stop_signal.hpp"
 
@@ -181,6 +182,9 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
                          {"turn", ab.turn},
                          {"river", ab.river},
                          {"bins", ab.bins},
+                         {"tiers", ab.tiers},
+                         {"preset", ab.preset.empty() ? nlohmann::json(nullptr)
+                                                      : nlohmann::json(ab.preset)},
                          {"seed", ab.seed},
                          {"board_isomorphism", ab.board_isomorphism},
                          {"storage_rows", ix.store_total},
@@ -918,6 +922,21 @@ int main(int argc, char** argv) {
       return 0;
     }
     const SolveConfig config = load_config(args.input_path);
+    if (args.subcommand == "plan") {
+      // The tree and the showdown tables, nothing else: what every core
+      // would need to even start. Printed as JSON for the API's queue-time
+      // check and the frontends' budget controls.
+      const auto start = std::chrono::steady_clock::now();
+      std::unique_ptr<Game> game = make_game(config);
+      const double setup_s =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+      PlanRequest request;
+      request.time_budget_s = args.time_budget_s;
+      request.target_pct = args.target_pct;
+      request.threads = args.threads;
+      std::cout << make_plan(config, *game, request, setup_s).dump(2) << "\n";
+      return 0;
+    }
     return run_solve(config, args.subcommand == "dry-run");
   } catch (const std::exception& e) {
     std::cerr << "error: " << e.what() << "\n";

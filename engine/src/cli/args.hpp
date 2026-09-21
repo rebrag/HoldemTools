@@ -9,8 +9,11 @@
 namespace engine {
 
 struct CliArgs {
-  std::string subcommand;                 // solve | dry-run | dump-json | version
-  std::string input_path;                 // config (solve/dry-run) or artifact (dump-json)
+  std::string subcommand;                 // solve | dry-run | plan | dump-json | version
+  std::string input_path;                 // config (solve/dry-run/plan) or artifact (dump-json)
+  double time_budget_s = 0.0;             // plan --time-budget-seconds
+  double target_pct = 0.0;                // plan --target-pct
+  int threads = 0;                        // plan --threads (0 = the config's)
   std::optional<std::uint32_t> node;      // dump-json --node
   std::optional<int> runouts;             // dump-json --runouts (sampled chance fan-out)
   bool meta_only = false;                 // dump-json --meta-only

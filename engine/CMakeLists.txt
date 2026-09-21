@@ -90,6 +90,7 @@ add_library(engine_core STATIC
   src/solver/infoset_indexer.cpp
   src/solver/agents.cpp
   src/solver/memory.cpp
+  src/solver/plan.cpp
   src/io/local_store.cpp
   src/io/artifact_writer.cpp
   src/io/checkpoint.cpp
