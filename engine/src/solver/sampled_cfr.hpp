@@ -49,10 +49,18 @@ namespace engine {
 // produces identical bits.
 //
 // Discounting is linear in the ITERATION count (LCFR at batch
-// granularity): before batch [b0, b1) folds in, the master arrays scale by
-// b0/b1, which telescopes to weight b/T for a batch ending at iteration b -
-// bounded magnitude, insensitive to how run() calls segment the batches,
-// and the standard cure for MCCFR's early-noise hangover.
+// granularity): a batch ending at iteration b carries weight b/T at the
+// end, the standard cure for MCCFR's early-noise hangover. It is applied at
+// FOLD time and never to the master: batch [b0, b1)'s deltas fold in
+// multiplied by float(b1), so the master holds R = sum_b b1 * delta_b and
+// the discounted r_T = R / T is never materialized. Every consumer is
+// homogeneous of degree 0 in the store (regret matching, the average
+// strategy, the EV walk, the team rollups all normalize per row or take
+// ratios within a cell pair - tests/test_sampled_store.cpp pins it), so
+// the scale is invisible, and R is a pure function of the batch
+// boundaries, so slicing and checkpoint invariance hold unchanged. What it
+// replaces was a whole-master multiply per batch: 0.6 s on a 6 GB flop
+// store, which forbade the small batches the sampled core wants.
 class SampledCfrSolver final : public StrategySource {
  public:
   // `game` and `deals` must be the same object wearing both interfaces.
@@ -119,20 +127,34 @@ class SampledCfrSolver final : public StrategySource {
   void bucket_strategy(std::uint32_t group, std::vector<float>& out) const override;
 
   const InfosetLayout& layout() const { return layout_; }
+  std::size_t max_log_entries() const { return max_log_entries_; }
   const InfosetIndexer& indexer() const { return indexer_; }
   const Game& game() const { return game_; }
-  // Read seams for the determinism test: bitwise equality across thread
-  // counts is asserted on the raw arrays, never on derived quantities.
-  const std::vector<float>& regrets() const { return regrets_; }
-  const std::vector<float>& strategy_sums() const { return strat_sum_; }
+  // Read seams for the determinism tests and the checkpoint: bitwise
+  // equality across thread counts is asserted on these, never on derived
+  // quantities. They are CANONICAL COPIES, not references: the store itself
+  // is row-major with regret and strategy sum interleaved per cell (see
+  // store()), while these emit the action-major-per-group order the solver
+  // had before that layout landed, so the absolute digests in
+  // tests/test_sampled_digest.cpp read the same bits through any layout.
+  std::vector<float> regrets() const { return canonical(store_, 0); }
+  std::vector<float> strategy_sums() const { return canonical(store_, 1); }
 
   // ---- Checkpoint seam (io/checkpoint.cpp) ----
   // The solver's ENTIRE mutable state is these arrays plus the iteration
   // counter, which is what makes resume exact: the deal stream is
   // sample_deal(seed, t) and the discount scales by absolute iteration, so
   // continuing at t reproduces the bits an uninterrupted run would have had.
-  const std::vector<float>& ev_sums() const { return ev_sum_; }
-  const std::vector<float>& ev_weights() const { return ev_w_; }
+  std::vector<float> ev_sums() const { return canonical(ev_store_, 0); }
+  std::vector<float> ev_weights() const { return canonical(ev_store_, 1); }
+  // The store as laid out in memory, for the checkpoint: per group, per
+  // storage row, per action, the pair {regret, strategy sum}; ev_store()
+  // holds {conditioned EV numerator, reach denominator} the same way and is
+  // empty without a team. Row-major because a pinned actor's regret matching
+  // reads one row's actions, and interleaved because the lane fold writes
+  // both halves of a cell at once - one cache line per row for either.
+  const std::vector<float>& store() const { return store_; }
+  const std::vector<float>& ev_store() const { return ev_store_; }
   const std::vector<bool>& frozen_seats() const { return frozen_seat_; }
   const std::vector<std::vector<float>>& frozen_rows() const { return frozen_rows_; }
   // Layout fingerprint: a checkpoint written against a different tree,
@@ -149,10 +171,16 @@ class SampledCfrSolver final : public StrategySource {
   // Restore state read from a checkpoint. Throws on any size mismatch -
   // there is no partial restore, because a half-restored solver would keep
   // running and produce a plausible wrong answer.
-  void restore(std::uint64_t iteration, std::vector<float> regrets,
-               std::vector<float> strat_sum, std::vector<float> ev_sum,
-               std::vector<float> ev_w, std::vector<bool> frozen_seat,
+  void restore(std::uint64_t iteration, std::vector<float> store,
+               std::vector<float> ev_store, std::vector<bool> frozen_seat,
                std::vector<std::vector<float>> frozen_rows);
+  // The same restore from the four CANONICAL arrays (the order regrets() and
+  // friends emit, and the order a version-1 checkpoint holds).
+  void restore_canonical(std::uint64_t iteration, const std::vector<float>& regrets,
+                         const std::vector<float>& strat_sum,
+                         const std::vector<float>& ev_sum, const std::vector<float>& ev_w,
+                         std::vector<bool> frozen_seat,
+                         std::vector<std::vector<float>> frozen_rows);
   // Back to a freshly constructed solver, keeping the frozen rows (which
   // belong to the environment, not to this solver's training). Used when a
   // team's regrets are invalidated because the baseline underneath them
@@ -160,6 +188,11 @@ class SampledCfrSolver final : public StrategySource {
   void reset();
 
  private:
+  struct LogEntry {
+    std::uint32_t cell;  // store cell (offset + row*actions + a)
+    float regret;
+    float strat;
+  };
   // Everything one lane touches while its iterations run: private delta
   // buffers plus per-depth scratch so the recursion allocates nothing.
   struct Lane {
@@ -169,17 +202,33 @@ class SampledCfrSolver final : public StrategySource {
     // storage group touched this batch gets one zeroed block of
     // actions x rows floats in every arena below, at the same block offset,
     // allocated on first touch (touch()) and released by the reset that
-    // starts the next batch. Bitwise neutral against the dense copy: an
-    // untouched cell held +0.0f, and the master never holds -0.0f (run()
-    // canonicalizes it in the discount sweep), so skipping the add of that
-    // +0.0f changes no bit.
-    std::vector<float> regret_delta, strat_delta;
+    // starts the next batch. Bitwise neutral against a dense copy: an
+    // untouched cell held +0.0f, and the master never holds -0.0f (nothing
+    // multiplies it and a sum from +0.0f cannot round to -0.0f), so skipping
+    // the add of that +0.0f changes no bit.
+    // Same interleaved row-major layout as the master: a block holds
+    // 2 x actions x rows floats, {regret, strategy sum} per cell.
+    std::vector<float> delta;
     // Conditioned-EV accumulators, allocated only for team solves: value
-    // numerators per (row, action) and reach denominators per row (stored
-    // in the action-0 part of the group's block).
-    std::vector<float> ev_delta, evw_delta;
+    // numerators per cell and, in the cell's second half at action 0, the
+    // row's reach denominator.
+    std::vector<float> ev_delta;
+    // PINNED hero: no blocks at all. A traversal touches a few hundred
+    // cells scattered over the whole store, so a lane keeps one sequential
+    // log of {cell, regret delta, strategy delta} entries in append order
+    // (a zero-miss store per entry), and the fold partitions it by cell
+    // range once, stably, so shard s applies this lane's entries for its
+    // range in append order.
+    std::vector<LogEntry> log;
+    std::vector<LogEntry> sorted;           // the log partitioned by shard
+    std::vector<std::size_t> shard_begin;   // S + 1 offsets into `sorted`
     std::vector<std::uint32_t> block_of;  // per storage group: arena offset, kNoBlock if untouched
     std::vector<std::uint32_t> touched;   // groups touched this batch, in first-touch order
+    // `touched` split by fold shard after the join, so shard s can walk this
+    // lane's groups without scanning the whole list. Order within a shard is
+    // first-touch order; it does not matter for the bits (cells of different
+    // groups are independent) and is kept only so the walk is reproducible.
+    std::vector<std::vector<std::uint32_t>> shard_touched;
     Deal deal;
     std::vector<std::uint32_t> strengths;
     std::vector<float> hero_root;                  // masked root reach
@@ -194,6 +243,28 @@ class SampledCfrSolver final : public StrategySource {
   };
 
   void run_iteration(std::uint64_t t, Lane& lane);
+  // The pinned-hero iteration: one deal for every seat (in proportion to
+  // their ranges under range dealing), then one scalar walk per training
+  // seat. Returns the deal's importance weight through the log entries.
+  void run_iteration_pinned(std::uint64_t t, Lane& lane);
+  // The scalar walk. `opp_w` is the weight the values carry: the deal's
+  // importance weight times, under chance sampling, the other seats'
+  // strategy along the path (under external sampling their actions are
+  // sampled and the weight stays the deal's). Regrets accumulate at the
+  // hero's nodes; the AVERAGE STRATEGY accumulates at the other seats'
+  // nodes, weighted by opp_w times their strategy - standard external-
+  // sampling MCCFR, and the same rule under chance sampling so that both
+  // schemes share one estimator. That weight is the actor's own reach
+  // times, at three or more seats, the remaining seats' reach (Pluribus's
+  // approximation; exact heads-up). Accumulating at the hero's own nodes
+  // instead was measured to freeze the average below any opponent action
+  // whose probability reached zero (Leduc stuck at 5% of pot). Returns the
+  // hero's value.
+  double traverse_pinned(NodeId id, int hero, Lane& lane, std::uint64_t t, double opp_w,
+                         int chance_depth);
+  // Fold the lanes' logs into the master, parallel over cell-range shards,
+  // lanes in lane order and entries in append order inside each.
+  void fold_logs(float weight);
   // The lane's delta block for decision node d, allocating (zeroed, in every
   // arena) on the batch's first touch. Take pointers from it only AFTER a
   // node's descent into its children: a child's first touch can grow the
@@ -254,17 +325,38 @@ class SampledCfrSolver final : public StrategySource {
   // the seats in frozen_seat_; empty vectors elsewhere.
   std::vector<std::vector<float>> frozen_rows_;
   std::vector<bool> frozen_seat_;
-  std::vector<float> regrets_;
-  std::vector<float> strat_sum_;
-  // Conditioned EVs for team nodes, allocated only when a team exists:
-  // ev_sum_[offset + a*rows + row] accumulates reach-weighted TEAM values
-  // per action, ev_w_[offset + row] (the action-0 block) the matching
+  // The master store: store_[2*cell + kRegret] and store_[2*cell + kStrat]
+  // with cell = offset + row*actions + a (see cell_index). Conditioned EVs
+  // for team nodes live in ev_store_ the same way, allocated only when a
+  // team exists: ev_store_[2*cell + kRegret] accumulates reach-weighted
+  // TEAM values per action, ev_store_[2*cell(row, 0) + kStrat] the row's
   // reach mass, both under the same linear discount as the strategy sums.
-  // ev_sum_/ev_w_ is the reach-weighted average team EV of taking that
-  // action from that (own, partner) infoset - what team_rollup ships.
-  std::vector<float> ev_sum_;
-  std::vector<float> ev_w_;
+  // Their ratio is the reach-weighted average team EV of taking that action
+  // from that (own, partner) infoset - what team_rollup ships.
+  static constexpr std::size_t kRegret = 0;
+  static constexpr std::size_t kStrat = 1;
+  std::vector<float> store_;
+  std::vector<float> ev_store_;
+  std::vector<std::uint16_t> store_actions_;  // by decision_index
+  // One canonical (action-major per group) half of an interleaved array.
+  std::vector<float> canonical(const std::vector<float>& interleaved, std::size_t half) const;
+  static std::size_t cell_index(std::size_t offset, std::uint16_t actions, std::size_t row,
+                                std::size_t a) {
+    return offset + row * actions + a;
+  }
   std::vector<Lane> lanes_;
+  // The fold runs in parallel over contiguous GROUP ranges (fold shards),
+  // balanced on cells. Shard s adds lanes 0..L-1 in lane order for every
+  // group in its range, so per cell the addition order is exactly the
+  // serial fold's, whatever the shard count or the thread assignment.
+  std::vector<std::uint32_t> group_shard_;  // per storage group
+  int fold_shards_ = 1;
+  std::size_t shard_cells_ = 1;  // pinned mode: cells per fold shard
+  bool pinned_ = false;
+  bool external_ = false;
+  // The largest log one lane held at a fold, over the run: what the memory
+  // estimator's pinned-lane term must bound (tests/test_sampled_pinned.cpp).
+  std::size_t max_log_entries_ = 0;
   std::unique_ptr<ThreadPool> pool_;
   QreConfig qre_{};  // never enabled here; StrategySource contract only
   std::uint64_t t_ = 0;

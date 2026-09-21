@@ -138,6 +138,18 @@ class DealGame {
     }
   }
 
+  // ONE seat's chips at a SHOWDOWN terminal with every seat pinned to the
+  // deal - the pinned hero's terminal. The default derives it from the
+  // per-hand vector (the toys); hot games override with a single scalar
+  // evaluation, because this runs once per showdown per deal at six-figure
+  // deal rates and the vector is the whole universe.
+  virtual double deal_showdown_seat(NodeId node, int seat, const Deal& deal,
+                                    const std::vector<std::uint32_t>& strengths) const {
+    std::vector<float> per_hand;
+    deal_showdown_values(node, seat, deal, strengths, per_hand);
+    return static_cast<double>(per_hand[deal.hand[static_cast<std::size_t>(seat)]]);
+  }
+
   // Per-hero-hand chips at a SHOWDOWN terminal on this concrete deal:
   // out[h] = share(h against the other seats' dealt hands) - commit[seat],
   // side pots and ties exact. Entries for hands colliding with the deal are

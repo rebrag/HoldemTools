@@ -170,13 +170,28 @@ struct AbstractionConfig {
   // "equity": quantiles of mean equity against a uniform opponent over every
   // completion of the board (deterministic, seedless). "histogram": seeded
   // k-means over a `bins`-bin histogram of those equities, which can tell a
-  // draw from a made hand of the same mean equity.
+  // draw from a made hand of the same mean equity. "moments": MonkerSolver's
+  // pair - E[HS] (the same mean equity) in `flop`/`turn` strength quantiles,
+  // crossed with `tiers` global quantiles of the second moment's spread
+  // E[HS^2] - E[HS]^2 (a draw against a made hand of equal mean), bucket =
+  // tiers * strength + tier. The river is strength quantiles under every
+  // method (no runout left to have a spread over).
   std::string method = "equity";
-  // Buckets per street; 0 keeps per-hand rows on that street.
+  // Buckets per street (strength quantiles under "moments"); 0 keeps
+  // per-hand rows on that street.
   int flop = 0;
   int turn = 0;
   int river = 0;
   int bins = 16;
+  // "moments" only: second-feature tiers per strength bucket on flop and
+  // turn. Rows on those streets are buckets x tiers.
+  int tiers = 1;
+  // A named bundle of the above: "monker" = moments, 30 strength quantiles on
+  // every street, 4 tiers (30 x 4 on flop and turn, 30 on the river - the
+  // decoded holdem*_30_4.ser / holdemriver_30.ser layout, see
+  // tools/monker_ser.py). Explicit keys beside it override. Recorded so the
+  // metadata says which preset a solve ran.
+  std::string preset;
   std::uint64_t seed = 1;
   // Share one set of storage rows between runouts that are suit
   // permutations of each other under a permutation that fixes the root
@@ -184,11 +199,43 @@ struct AbstractionConfig {
   bool board_isomorphism = true;
 };
 
+// How the traversing seat walks the tree on the sampled core.
+//   Vectorized  the hero carries a value per hand of its whole compact
+//               universe (its dealt cards ignored, hands colliding with the
+//               deal zeroed): one deal trains every hero hand at once, at
+//               the cost of a per-hand vector at every node and a universe-
+//               wide showdown at every terminal.
+//   Pinned      the hero is dealt a hand like every other seat and the walk
+//               is SCALAR: at each node it reads and writes the storage row
+//               of its dealt hand (a bucket under hand abstraction). This is
+//               MonkerSolver's shape - single-sample MCCFR in the abstract
+//               game - and the reason it exists: a deal costs microseconds
+//               instead of milliseconds, so bucket rows pool samples from
+//               hundreds of thousands of deals a second.
+enum class HeroMode : std::uint8_t { Vectorized, Pinned };
+
+// What the OTHER seats do at their decision nodes during a hero's walk.
+//   Chance    every action is enumerated, weighted by the actor's current
+//             strategy (chance-sampled CFR: only the cards are sampled).
+//   External  one action is sampled from the actor's current strategy
+//             (external-sampling MCCFR); the hero still enumerates its own.
+//             The sampled action's probability cancels against its own
+//             sampling weight, so the walk carries no opponent reach.
+enum class UpdateScheme : std::uint8_t { Chance, External };
+
 struct SampledConfig {
   bool enabled = false;
   std::uint64_t seed = 20260830;
+  HeroMode hero = HeroMode::Vectorized;
+  UpdateScheme update = UpdateScheme::Chance;
   std::uint32_t batch = 512;
   std::uint32_t lanes = 16;
+  // Contiguous group ranges the lane fold is split into, each folded by one
+  // pool thread with the lanes applied in lane order. Any value produces the
+  // same bits (cells never straddle a shard, and per cell the addition order
+  // is still lane order), so this is a throughput knob only: 0 = one per
+  // pool thread times four. Excluded from the solve key like `threads`.
+  std::uint32_t fold_shards = 0;
   AbstractionConfig abstraction;
   // Deal the OPPONENTS of each hero traversal in proportion to their ranges
   // (DealGame::sample_hero_deal), one deal per hero per iteration, weighted

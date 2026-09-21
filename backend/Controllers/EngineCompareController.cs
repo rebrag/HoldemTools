@@ -31,11 +31,13 @@ namespace PokerRangeAPI2.Controllers
 
         private readonly AppDbContext _db;
         private readonly IConfiguration _config;
+        private readonly EnginePlanner _planner;
 
         public EngineCompareController(AppDbContext db, IConfiguration config)
         {
             _db = db;
             _config = config;
+            _planner = new EnginePlanner(config);
         }
 
         public class CreateDto
@@ -76,6 +78,10 @@ namespace PokerRangeAPI2.Controllers
             public bool DisableCrossCheck { get; set; }
             /// <summary>The job also solves the tree on htsolver's sampled core.</summary>
             public bool RunSampledCore { get; set; }
+
+            /// <summary>What `engine plan` said at queue time (tree size, per-core
+            /// memory and rate, the recommendation); null when nothing planned.</summary>
+            public JsonNode? Plan { get; set; }
 
             /// <summary>Which payloads this job has, so the page knows what to fetch.</summary>
             public bool HasHtResult { get; set; }
@@ -120,6 +126,7 @@ namespace PokerRangeAPI2.Controllers
                 CompletedAtUtc = job.CompletedAtUtc,
                 CancelRequestedAtUtc = job.CancelRequestedAtUtc,
                 Timings = ParseTimings(job.TimingsJson),
+                Plan = ParseTimings(job.PlanJson),
                 SolveId = job.SolveId,
                 SolveKey = job.SolveKey,
                 Iterations = job.Iterations,
@@ -181,6 +188,29 @@ namespace PokerRangeAPI2.Controllers
                 request.DisableCrossCheck = true;
             }
 
+            // Queue-time planning: `engine plan` sizes the tree, estimates each
+            // core's memory and rate, and picks the core for a request that
+            // asked for algorithm.family "auto" (the 3+ seat /compare path).
+            // Publish jobs are river spots on the vectorized core and skip it.
+            string? planJson = null;
+            if (request.Mode != EngineCompareJobMode.Publish)
+            {
+                var (plan, planError) = await _planner.PlanAsync(request.Config, HttpContext.RequestAborted);
+                if (planError != null) return BadRequest(planError);
+                if (plan != null) planJson = EnginePlanner.Store(plan, 16000);
+                var family = request.Config["algorithm"]?["family"]?.GetValue<string>();
+                if (family == "auto")
+                {
+                    if (plan == null)
+                    {
+                        return BadRequest("algorithm.family \"auto\" needs the planner (engine.exe) on " +
+                                          "this API instance; set Engine:ExePath, or choose a core explicitly.");
+                    }
+                    var mergeError = EnginePlanner.MergePlan(request.Config, plan);
+                    if (mergeError != null) return BadRequest(mergeError);
+                }
+            }
+
             var configJson = request.Config.ToJsonString();
             if (configJson.Length > MaxConfigBytes)
                 return BadRequest($"config too large (max {MaxConfigBytes} bytes)");
@@ -221,6 +251,9 @@ namespace PokerRangeAPI2.Controllers
                 // fails now rather than on the watcher's machine. The
                 // vectorized showdown sweep has no O(H) form past three
                 // seats; the sampled core pins opponents and has no such wall.
+                // When the planner ran, the merged config already names a
+                // core the engine supports (or was refused above); this is
+                // the fallback rule for an instance without the binary.
                 var family = request.Config["algorithm"]?["family"]?.GetValue<string>();
                 if (seats > 3 && family != "sampled")
                 {
@@ -276,6 +309,7 @@ namespace PokerRangeAPI2.Controllers
                 DisableCompare = request.DisableCompare,
                 DisableCrossCheck = request.DisableCrossCheck,
                 SampledConfigJson = sampledConfigJson,
+                PlanJson = planJson,
                 Status = EngineCompareJobStatus.Queued,
 
                 CreatedAtUtc = DateTimeOffset.UtcNow,

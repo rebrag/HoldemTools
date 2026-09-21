@@ -633,12 +633,17 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
   // one. Both are correct - a QRE deliberately is not a Nash equilibrium.
   meta["mode"] = config.qre_mode;
   meta["solver_family"] = config.sampled.enabled ? "sampled" : "vectorized";
-  meta["sampled"] = config.sampled.enabled
-                        ? json({{"seed", config.sampled.seed},
-                                {"batch", config.sampled.batch},
-                                {"lanes", config.sampled.lanes},
-                                {"ev_deals", stats.ev_deals}})
-                        : json(nullptr);
+  meta["sampled"] =
+      config.sampled.enabled
+          ? json({{"seed", config.sampled.seed},
+                  {"batch", config.sampled.batch},
+                  {"lanes", config.sampled.lanes},
+                  {"hero", config.sampled.hero == HeroMode::Pinned ? "pinned" : "vectorized"},
+                  {"update",
+                   config.sampled.update == UpdateScheme::External ? "external" : "chance"},
+                  {"deal", config.sampled.range_deal ? "range" : "uniform"},
+                  {"ev_deals", stats.ev_deals}})
+          : json(nullptr);
 
   meta["lambda"] = config.qre.enabled ? json(config.qre.lambda) : json(nullptr);
   meta["iterations"] = stats.iterations;
@@ -727,6 +732,37 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
   if (!stats.stopped_reason.empty()) {
     meta["stopped_reason"] = stats.stopped_reason;
     meta["requested_iterations"] = config.iterations;
+  }
+  // What "solved" means for this artifact, in one place: why the loop
+  // ended, what it was asked to reach, and the LAST exploitability actually
+  // measured (with where on the clock it was measured). Null measurements
+  // where none is possible (teams, 4+ seats). A reader that wants the
+  // whole curve has metadata.convergence.
+  {
+    json solved;
+    solved["stopped_reason"] =
+        stats.stopped_reason.empty() ? json("budget") : json(stats.stopped_reason);
+    solved["target_exploitable_pct"] =
+        stats.target_exploitable_pct > 0.0 ? json(stats.target_exploitable_pct) : json(nullptr);
+    if (stats.nashconv_valid && !stats.convergence.empty()) {
+      const ConvergencePoint& last = stats.convergence.back();
+      const double pct = config.pot > 0 ? last.exploitable_chips /
+                                              static_cast<double>(config.pot) * 100.0
+                                        : 0.0;
+      solved["last_exploitable_chips"] = last.exploitable_chips;
+      solved["last_exploitable_pct_pot"] = config.pot > 0 ? json(pct) : json(nullptr);
+      solved["measured_at_iteration"] = last.iteration;
+      solved["measured_at_solve_s"] = last.solve_s;
+      solved["reached"] = stats.target_exploitable_pct > 0.0 && config.pot > 0 &&
+                          pct <= stats.target_exploitable_pct;
+    } else {
+      solved["last_exploitable_chips"] = nullptr;
+      solved["last_exploitable_pct_pot"] = nullptr;
+      solved["measured_at_iteration"] = nullptr;
+      solved["measured_at_solve_s"] = nullptr;
+      solved["reached"] = nullptr;
+    }
+    meta["solved"] = std::move(solved);
   }
   if (!config.partition.empty()) {
     meta["partition"] = config.partition;

@@ -339,6 +339,22 @@ SolveConfig load_config(const std::string& path_text) {
     config.sampled.seed = s.value("seed", config.sampled.seed);
     config.sampled.batch = s.value("batch", config.sampled.batch);
     config.sampled.lanes = s.value("lanes", config.sampled.lanes);
+    config.sampled.fold_shards = s.value("fold_shards", config.sampled.fold_shards);
+    if (s.contains("hero")) {
+      const std::string hero = s.at("hero").get<std::string>();
+      if (hero == "vectorized") config.sampled.hero = HeroMode::Vectorized;
+      else if (hero == "pinned") config.sampled.hero = HeroMode::Pinned;
+      else fail("algorithm.sampled.hero must be vectorized | pinned, got '" + hero + "'");
+    }
+    if (s.contains("update")) {
+      const std::string update = s.at("update").get<std::string>();
+      if (update == "chance") config.sampled.update = UpdateScheme::Chance;
+      else if (update == "external") config.sampled.update = UpdateScheme::External;
+      else fail("algorithm.sampled.update must be chance | external, got '" + update + "'");
+    }
+    if (config.sampled.fold_shards > 65536) {
+      fail("algorithm.sampled.fold_shards must be in [0, 65536] (0 = automatic)");
+    }
     if (s.contains("symmetry")) {
       config.sampled.symmetry = s.at("symmetry").get<bool>();
       // Recorded so the solver can refuse an EXPLICIT request on a game
@@ -362,16 +378,34 @@ SolveConfig load_config(const std::string& path_text) {
       const json& a = s.at("abstraction");
       AbstractionConfig& ab = config.sampled.abstraction;
       ab.enabled = true;
+      // The preset fills the defaults first; explicit keys beside it win.
+      ab.preset = a.value("preset", ab.preset);
+      if (ab.preset == "monker") {
+        ab.method = "moments";
+        ab.flop = 30;
+        ab.turn = 30;
+        ab.river = 30;
+        ab.tiers = 4;
+      } else if (!ab.preset.empty()) {
+        fail("algorithm.sampled.abstraction.preset must be \"monker\", got '" + ab.preset + "'");
+      }
       ab.method = a.value("method", ab.method);
+      ab.tiers = a.value("tiers", ab.tiers);
       ab.flop = a.value("flop", ab.flop);
       ab.turn = a.value("turn", ab.turn);
       ab.river = a.value("river", ab.river);
       ab.bins = a.value("bins", ab.bins);
       ab.seed = a.value("seed", ab.seed);
       ab.board_isomorphism = a.value("board_isomorphism", ab.board_isomorphism);
-      if (ab.method != "equity" && ab.method != "histogram") {
-        fail("algorithm.sampled.abstraction.method must be equity | histogram, got '" +
+      if (ab.method != "equity" && ab.method != "histogram" && ab.method != "moments") {
+        fail("algorithm.sampled.abstraction.method must be equity | histogram | moments, got '" +
              ab.method + "'");
+      }
+      if (ab.tiers < 1 || ab.tiers > 64) {
+        fail("algorithm.sampled.abstraction.tiers must be in [1, 64]");
+      }
+      if (ab.tiers > 1 && ab.method != "moments") {
+        fail("algorithm.sampled.abstraction.tiers applies to method \"moments\" only");
       }
       for (int b : {ab.flop, ab.turn, ab.river}) {
         if (b < 0 || b > 65535) {
@@ -593,6 +627,25 @@ SolveConfig load_config(const std::string& path_text) {
     config.target_exploitable_pct =
         budget.value("target_exploitable_pct", config.target_exploitable_pct);
     config.checkpoint_every = budget.value("checkpoint_every", config.checkpoint_every);
+    if (budget.contains("measure_at_seconds")) {
+      config.measure_at_seconds = budget.at("measure_at_seconds").get<std::vector<double>>();
+      double last = 0.0;
+      for (double m : config.measure_at_seconds) {
+        if (m <= last) fail("budget.measure_at_seconds must be positive and ascending");
+        last = m;
+      }
+      if (!config.sampled.enabled) {
+        fail("budget.measure_at_seconds applies to the sampled core (the vectorized loop "
+             "measures every checkpoint_every iterations)");
+      }
+    }
+    if (config.sampled.hero == HeroMode::Pinned && !budget.contains("checkpoint_every")) {
+      // checkpoint_every is the best-response cadence, and a pinned-hero
+      // solve runs six figures of deals a second: the 1000-iteration
+      // default would measure a flop tree's exploitability every few
+      // milliseconds. Measure at the end, or at the marks above.
+      config.checkpoint_every = config.iterations;
+    }
     config.max_seconds = budget.value("max_seconds", config.max_seconds);
     config.stop_file = budget.value("stop_file", config.stop_file);
     if (config.iterations == 0) fail("budget.iterations must be positive");
@@ -629,6 +682,12 @@ SolveConfig load_config(const std::string& path_text) {
   if (config.export_bucketed && !config.sampled.abstraction.enabled) {
     fail("output.export \"bucketed\" writes one strategy blob per bucket group, so it "
          "needs algorithm.sampled.abstraction; a per-hand solve exports per_hand");
+  }
+  if (config.sampled.hero == HeroMode::Pinned && !config.sampled.partition_team.empty()) {
+    // A team hero's partner reads a per-hand VECTOR of the hero's hands (the
+    // two-sided update); a pinned hero has one hand. Teams stay vectorized.
+    fail("algorithm.sampled.hero \"pinned\" is not supported with a hand-sharing team; "
+         "team solves run the vectorized hero");
   }
   if (config.sampled.abstraction.enabled && !config.sampled.partition_team.empty()) {
     // A team actor's rows are the joint suit orbits of the (own, partner)
@@ -698,6 +757,12 @@ nlohmann::json solve_identity(const SolveConfig& config) {
   j.erase("solve");
   j.erase("threads");
   j.erase("memory_limit_gb");
+  // Fold sharding is a thread-count-like throughput knob: it cannot change a
+  // single bit of the result, so it must not fork a lineage either.
+  if (j.contains("algorithm") && j.at("algorithm").is_object() &&
+      j.at("algorithm").contains("sampled") && j.at("algorithm").at("sampled").is_object()) {
+    j.at("algorithm").at("sampled").erase("fold_shards");
+  }
   if (j.contains("agents") && j.at("agents").is_object()) {
     j.at("agents").erase("baseline_iterations");
   }

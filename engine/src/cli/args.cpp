@@ -9,6 +9,10 @@ const char* usage() {
   return "usage:\n"
          "  engine solve <config.json>      solve and write the artifact from output.path\n"
          "  engine dry-run <config.json>    print the memory estimate and exit\n"
+         "  engine plan <config.json> [--time-budget-seconds N] [--target-pct X] [--threads T]\n"
+         "                                  JSON on stdout: tree size, per-core memory and predicted\n"
+         "                                  rate, and the recommended core/abstraction/batch for the\n"
+         "                                  budget (no solving, no clustering)\n"
          "  engine dump-json <file.hta> [--node <id>] [--runouts <n>] [--meta-only]\n"
          "                   [--compact] [--fields full|detail|gate|rollup] [--out <path>]\n"
          "                                  dump an artifact as JSON (stdout, or --out file);\n"
@@ -31,7 +35,7 @@ CliArgs parse_args(int argc, const char* const* argv) {
     return args;
   }
   if (args.subcommand != "solve" && args.subcommand != "dry-run" &&
-      args.subcommand != "dump-json") {
+      args.subcommand != "dump-json" && args.subcommand != "plan") {
     args.error = "unknown subcommand '" + args.subcommand + "'";
     return args;
   }
@@ -62,6 +66,12 @@ CliArgs parse_args(int argc, const char* const* argv) {
       }
     } else if (flag == "--out" && i + 1 < argc && args.subcommand == "dump-json") {
       args.out_path = argv[++i];
+    } else if (flag == "--time-budget-seconds" && i + 1 < argc && args.subcommand == "plan") {
+      args.time_budget_s = std::strtod(argv[++i], nullptr);
+    } else if (flag == "--target-pct" && i + 1 < argc && args.subcommand == "plan") {
+      args.target_pct = std::strtod(argv[++i], nullptr);
+    } else if (flag == "--threads" && i + 1 < argc && args.subcommand == "plan") {
+      args.threads = static_cast<int>(std::strtol(argv[++i], nullptr, 10));
     } else {
       args.error = "unexpected argument '" + flag + "'";
       return args;

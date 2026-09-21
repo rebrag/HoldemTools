@@ -141,6 +141,13 @@ struct SolveConfig {
   // solve resumable rather than lost.
   std::string stop_file;
   std::uint64_t checkpoint_every = 1000;
+  // Solver-time marks (seconds inside solver.run(), setup and measurement
+  // excluded) at which the sampled loop ends its current step, measures the
+  // best response, and records a convergence point - in addition to the
+  // iteration cadence of checkpoint_every. Ascending; empty = none. This is
+  // how an exploitability-against-solver-time curve is taken on a tree
+  // whose best response costs minutes: the marks are few and chosen.
+  std::vector<double> measure_at_seconds;
   double memory_limit_gb = 12.0;
 
   // Solver checkpoint (sampled family only). When set, the solve RESUMES

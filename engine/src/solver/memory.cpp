@@ -101,7 +101,51 @@ std::size_t lane_bound(const PublicTree& tree, const InfosetIndexer& ix, NodeId 
   return bound;
 }
 
+// Log entries one PINNED walk can write below `id` for `hero`, along one
+// runout: every action at every decision node it visits (regrets at the
+// hero's, the average strategy at the others'), with every child descended
+// at hero nodes and at opponent nodes under chance sampling, one child under
+// external sampling.
+std::size_t hero_path_cells(const PublicTree& tree, NodeId id, int hero, bool external) {
+  const Node& node = tree[id];
+  if (node.kind == NodeKind::Terminal) return 0;
+  if (node.kind == NodeKind::Chance) {
+    std::size_t best = 0;
+    for (std::uint16_t c = 0; c < node.num_children; ++c) {
+      best = std::max(best, hero_path_cells(tree, node.first_child + c, hero, external));
+    }
+    return best;
+  }
+  if (node.actor == hero) {
+    std::size_t total = node.num_children;
+    for (std::uint16_t c = 0; c < node.num_children; ++c) {
+      total += hero_path_cells(tree, node.first_child + c, hero, external);
+    }
+    return total;
+  }
+  std::size_t total = node.num_children;
+  std::size_t below_max = 0;
+  std::size_t below_sum = 0;
+  for (std::uint16_t c = 0; c < node.num_children; ++c) {
+    const std::size_t below = hero_path_cells(tree, node.first_child + c, hero, external);
+    below_max = std::max(below_max, below);
+    below_sum += below;
+  }
+  return total + (external ? below_max : below_sum);
+}
+
 }  // namespace
+
+std::size_t pinned_log_entries_per_lane(const Game& game, const SampledConfig& sampled) {
+  const std::size_t deals_per_lane =
+      (static_cast<std::size_t>(sampled.batch) + sampled.lanes - 1) / std::max<std::uint32_t>(1, sampled.lanes);
+  std::size_t per_deal = 0;
+  for (int s = 0; s < game.num_seats(); ++s) {
+    per_deal += hero_path_cells(game.tree(), game.tree().root(), s,
+                                sampled.update == UpdateScheme::External);
+  }
+  return deals_per_lane * per_deal;
+}
 
 MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc,
                                Precision precision, const SampledConfig* sampled,
@@ -167,10 +211,20 @@ MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc,
     // adds the conditioned-EV numerator/denominator pair (same size, same
     // lanes).
     const std::size_t arrays_per_tier = sampled->partition_team.empty() ? 2 : 4;
-    est.regret_strategy_bytes =
-        arrays_per_tier * total * sizeof(float) +
+    std::size_t lane_bytes =
         static_cast<std::size_t>(sampled->lanes) *
-            (arrays_per_tier * lane_cells * sizeof(float) + lane_index_bytes);
+        (arrays_per_tier * lane_cells * sizeof(float) + lane_index_bytes);
+    if (sampled->hero == HeroMode::Pinned) {
+      // No blocks: a log of 12-byte entries plus its partitioned copy, per
+      // lane, bounded by the tree walk above, and the lane's shard offsets.
+      const std::size_t entries = pinned_log_entries_per_lane(game, *sampled);
+      const std::size_t shards =
+          sampled->fold_shards > 0 ? sampled->fold_shards
+                                   : static_cast<std::size_t>(resolve_thread_count(threads)) * 4;
+      lane_bytes = static_cast<std::size_t>(sampled->lanes) *
+                   (2 * entries * 12 + (shards + 1) * sizeof(std::size_t) + kHeapBlockOverhead);
+    }
+    est.regret_strategy_bytes = arrays_per_tier * total * sizeof(float) + lane_bytes;
     est.recalc_bytes = 0;
   }
 

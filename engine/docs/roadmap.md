@@ -1264,6 +1264,123 @@ The M8b groundwork's "six and up does not converge on tight ranges at all" was a
 There is still no exact best response past three seats, so 0.28% is seed agreement rather than exploitability - necessary, not sufficient - and the deals are now real work (every one traverses), so a 4+ seat solve is budgeted by traversals, not by the old free rejections.
 Lanes must not exceed the batch, and a lane runs `batch / lanes` deals per batch, so a 64-deal batch keeps sixteen lanes at four deals each.
 
+### M8g - the pinned hero: Monker-shaped MCCFR on the sampled core. Landed 2026-09-20.
+
+The goal was the saved `/compare` tree `flop3way100%SPR4` (`Ts 6h 9h`, 3-way, 100% ranges, pot 100, stacks 400; the repo copy is `configs/multiway3_flop_bucketed.json`) to a stated accuracy in under a minute on the dev box.
+Every number here is (2026-09-20, 16 threads, ENGINE_SIMD AVX2, 9800X3D 32 GB, box otherwise idle) with the commit beside it.
+
+**The baseline, measured first (855657b).**
+`dry-run`: 7,282,835 nodes (2,775,762 decision), 1176-hand universe, histogram 0/200/200 with runout sharing = 764,509,008 storage cells in 1,688,936 groups, estimated peak 17.99 GB, setup 1.14 s.
+The vectorized hero at `batch 2048, lanes 16` ran 134 deals/s idle (the 110 of M8e was under load): 6,144 deals in 45.9 s of solver time, exploitable **53.3% of pot** at the 60 s mark.
+The exact 3-seat best response on this tree costs **725 s per measurement**, the sampled EV pass 63 s, the bucketed export 14 s: a "60 s" run was 786 s of wall clock.
+
+**Why the vectorized hero could not get there.**
+Every deal ran three vectorized traversals over 1,176 hands, each visiting every betting line along one runout and paying a 1,176-wide `showdown_share` at every showdown terminal.
+MonkerSolver's shape is the opposite: one dealt hand per seat, a bucket lookup per node, a scalar walk - single-sample MCCFR in the abstract game, 2.45e9 iterations in 29 minutes on 29 threads on this same tree.
+
+**Three store changes first, each pinned (7af5552, dbb94fe, 0f204e8).**
+The lane fold went parallel over contiguous group ranges (per cell the addition order stays lane order, so the five absolute digests of `test_sampled_digest.cpp` did not move); the store went row-major with `{regret, strategy sum}` interleaved per cell (a pure permutation: the digests read through canonical accessors and did not move); and the per-batch discount sweep was deleted in favour of folding each batch's deltas times its end iteration (`R = sum_b b1 * delta_b`, every consumer homogeneous of degree 0, pinned by `test_sampled_store.cpp`; the digests re-recorded with the reason).
+The sweep was 0.6 s per batch on this store and had made the M8f batch lever unusable here; at `batch 256` the vectorized hero then ran 144 deals/s at 9.3 GB (879619f, with the slice pacer that replaced a fixed 250k-iteration deadline slice - half an hour on this tree).
+
+**The pinned hero (ee48fc3).**
+`algorithm.sampled.hero: "pinned"` deals the hero too and walks the tree as a scalar; `algorithm.sampled.update: "external"` samples the other seats' actions.
+On the flop store at histogram 0/200/200, `batch 4096, lanes 16`:
+
+| walk | deals/s | peak RSS |
+|---|---|---|
+| vectorized hero, chance (batch 256) | 144 | 9.3 GB |
+| pinned hero, chance | 83,600 | 8.3 GB |
+| pinned hero, external | 384,000 | 8.0 GB |
+
+Deals are not comparable work across the rows: a pinned deal trains one row per visited node, a vectorized deal every row the hands reach.
+The number that is comparable is the curve below.
+
+**The estimator bug the toys caught.**
+Accumulating the average strategy at the hero's own nodes reaches them in proportion to the opponents' strategy and never below an opponent action of probability zero; the average freezes there at whatever early iterations left, and Leduc sat at 0.09-0.15 of a 2-chip pot for 25M iterations.
+Standard external-sampling MCCFR accumulates the average at the OTHER seats' nodes during the hero's walk, weighted by the value weight times their strategy; with that rule (both schemes) Leduc converges monotonically: pinned chance 0.052 / 0.037 / 0.015 and pinned external 0.064 / 0.048 / 0.020 at 0.4M / 0.8M / 3.2M against the vectorized hero's 0.027 / 0.019 / 0.010.
+Exact heads-up; past two seats the remaining seats' reach rides along, which is Pluribus's approximation and the reason a 3-way pinned solve is gated on the exact best response below rather than assumed.
+
+**Gates (`tests/test_sampled_pinned.cpp`).**
+Kuhn under both schemes, Leduc converging through its chance node, bitwise identity at 1 vs 8 threads and at 1 vs 64 fold shards, slicing and checkpoint round trips bitwise, the memory estimator's log ceiling against what a lane actually held, and the 3-way tight15 river spot of the cross-core gate: pinned external 0.34 chips nashconv of a 90-chip pot at 2M deals (0.4%), root EVs within 0.19 chips of the exact core, chips conserved.
+
+**The flop spot, pinned + external, exact best response at solver-time marks (ee48fc3, histogram 0/200/200 with runout sharing, `batch 4096, lanes 16`, `budget.measure_at_seconds [60, 300, 1800, 3600]`).**
+Solver time excludes the measurements (725 s each); the run took 6,784 s of wall clock for 3,602 s of solving.
+
+| solver time | deals | exploitable per seat, % of pot | best-response root EVs | baseline (vectorized hero, 855657b) |
+|---|---|---|---|---|
+| 60 s | 23.2M | **27.9** | 31.45 / 32.69 / 35.86 | 53.3 (6,144 deals) |
+| 5 min | 137M | **9.0** | 30.47 / 32.58 / 36.95 | |
+| 30 min | 809M | **2.5** | 30.04 / 32.43 / 37.53 | |
+| 60 min | 1,629M | **1.6** | 29.97 / 32.43 / 37.61 | 11.6 after 4.4 h (M8e, 1.75M deals) |
+
+452k deals/s sustained over the hour at 8.0 GB peak RSS (the estimator said 7.1 GB).
+Root EVs from the sampled pass at the end: 30.24 / 32.20 / 37.56 (sum 100.00), against MonkerSolver's 29.99 / 32.55 / 37.46 - inside 0.35 chips per seat, the same band M8e's 4.4-hour solve reached from the other side.
+The chip conservation of every sampled solve is unchanged: each deal's payoffs sum to the pot.
+
+**Read it straight.** Sixty seconds of the pinned hero buys what the vectorized hero could not reach in four hours, and the curve keeps descending through the hour without a knee.
+It is still 1.6% of pot after an hour on a store of 255M rows, against Monker's 29 minutes on 29 threads on ~60M rows; the monker preset below is the like-for-like.
+
+**The turn gate (`Ts 6h 9h 9c`, `configs/multiway3_turn_bucketed.json`, 297ea85).**
+The exact reference reproduces M8e: 250 vectorized iterations to 0.135% of pot, root EVs 30.63 / 32.74 / 36.63, in 2,013 s (0.124 iterations/s - the number `engine plan` is now calibrated to; the earlier "a few seconds" was wrong by two orders of magnitude and is withdrawn).
+
+The abstraction's OWN cost, the reach-weighted projection of that solve rated by the exact best response (`tools/bucket_probe.cpp --artifact`, chips per seat of a 100 pot):
+
+| method | turn | river | rows | exploitable % pot | delta vs exact |
+|---|---|---|---|---|---|
+| histogram | 200 | 200 | 11.6M | 0.39 | 0.25 |
+| histogram | 200 | 30 | 1.8M | 0.78 | 0.65 |
+| moments | 200x4 | 200 | 11.7M | 0.68 | 0.55 |
+| moments | 200x4 | 30 | 1.9M | 0.92 | 0.79 |
+| **moments 30x4 / 30 (the monker preset)** | 30x4 | 30 | 1.8M | **2.17** | 2.03 |
+| histogram | 30 | 30 | 1.7M | 4.95 | 4.82 |
+
+Monker's own bucket counts cost about 2% of pot by themselves on this tree; at equal strength counts the histogram k-means still beats the moments pair (0.39 against 0.68 at 200), as M8e found against equity quantiles.
+The per-board canonicalization is exact and changes no row count here (the turn card 9c is a club and the root symmetry is c<->d, so the stabilizer is trivial past the flop).
+
+The pinned hero on the same tree, external sampling, `batch 4096, lanes 16`, exact best response at the marks:
+
+| abstraction | 60 s | 300 s | deals/s |
+|---|---|---|---|
+| histogram 200/200 (11.6M rows) | 0.85% (86M deals) | 0.48% (428M) | 1.36M |
+| monker preset (1.8M rows) | 1.13% (99M) | 0.98% (495M) | 1.57M |
+
+Against the bucketed VECTORIZED hero of M8e at `batch 128`: 3.44% at 250k deals, 1.55% at 1M, which took minutes per 250k.
+The finer store wins on the turn at every mark, and the monker preset's curve flattens toward its own floor; where the preset earns its place is the flop store, four times smaller than histogram 200/200 with flop buckets it does not have, and that is the flop table below.
+
+**The flop spot under the monker preset (297ea85; pinned + external, `batch 4096, lanes 16`, same marks).**
+117,480,600 storage cells in the same 1,688,936 groups (6.5x fewer than histogram 0/200/200), estimated peak 2.36 GB, measured 2.6 GB.
+
+| solver time | histogram 0/200/200 (255M rows) | monker preset (39M rows) |
+|---|---|---|
+| 60 s | 27.9% | **18.8%** |
+| 5 min | 9.0% | **6.1%** |
+| 30 min | **2.5%** | 2.3% |
+| 60 min | **1.62%** | 1.80% |
+
+The smaller abstract game pools its samples sooner and leads for the first half hour; the finer one has the lower floor (0.39% against 2.17% on the turn gate) and passes it by the hour, and neither has flattened yet.
+Root EVs under the preset at the hour: best response 29.88 / 32.38 / 37.74, sampled pass 30.12 / 32.31 / 37.57, against Monker's 29.99 / 32.55 / 37.46.
+
+**4+ seats (`tools/bench_multiway.py --hero pinned --update external --skip-exploitability --widths 15%,100% --seats 4,6,8 --batches 4096 --lanes 16 --iters 2000000`, river tree, seeds 1 and 999).**
+Worst per-seat root EV gap between the two seeds, 2M deals per solve (seconds each on this river tree at the pinned rate):
+
+| range | 4-way | 6-way | 8-way |
+|---|---|---|---|
+| 15% | 0.46% of pot | 0.30% | 0.26% |
+| 100% | 0.25% | 0.36% | 0.50% |
+
+The same band the vectorized hero reached under range dealing at batch 256 with 200k deals (0.47 / 0.28 / 0.28 on the 15% range, M8f), ten times the deals at a fraction of the wall clock; seed agreement, not exploitability, as ever past three seats.
+
+**What sixty seconds buys, honestly.**
+On this tree the pinned hero reaches 19-28% of pot exploitable in sixty seconds of solving (preset or histogram), 6-9% in five minutes, and about 2% in half an hour - against the vectorized hero's 53% at the minute and 11.6% after four hours.
+That is "solved" in the sense the artifact now records (`metadata.solved`: the stopped reason and the last measured exploitability), not in Pio's 0.02%-of-pot sense, and the sixty-second figure is not a number to ship a strategy on.
+Three levers would tighten it, in the order they should be tried: the fold radix by cell (the pinned rate is DRAM-bound on the master, and monotonic RMWs plus merged repeated rows are the standard cure); an abstraction between the two measured here (the preset's floor is 2% of pot on the turn gate and the histogram's 0.4%, so 100-200 histogram buckets with runout sharing on the flop street too); and depth-limiting per `docs/perf-plan.md`, which is the only lever that changes the exponent rather than the constant.
+What no longer needs doing is the thing this milestone started from: the vectorized hero's terminal cost is gone from the multiway path, and a 3-way flop solve is minutes of a single box rather than hours.
+
+**Measurement discipline that this milestone paid for.**
+`budget.measure_at_seconds` exists because the exact 3-seat best response on the flop tree is 725 s and the old `checkpoint_every` default of 1000 iterations would have measured every two milliseconds; a curve is taken at a few solver-time marks and the trace's `solve_s` excludes the measurements.
+The deadline slice is paced by the measured rate (`SlicePacer`) because a fixed 250k-iteration slice was half an hour on the vectorized hero and a quarter second on the pinned one.
+`engine plan` predicts the rates from this tree's constants and is a factor-of-two estimate; the recorded rates here are the truth it is calibrated to.
+
 - **M10 - Bayesian unknown-collusion**: chance root over team type with probability p - now precisely the p-interpolation between M9's two awareness modes (p=0 is unaware, p=1 is aware); opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.
 
 Out of scope, permanently (do not build speculatively): TMECor / coordination-without-card-visibility, cloud SDKs inside the engine.

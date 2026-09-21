@@ -201,3 +201,14 @@ Please open an issue first to discuss significant changes.
 MIT © 2025 Joshua Garber
 
 > *This project is for educational and portfolio purposes; no affiliation with any commercial poker solver tools.*
+
+## Queue-time planning (`Engine:ExePath`)
+
+`POST /api/enginecompare` runs `engine plan` on the request's config before queueing (all modes but publish).
+The plan sizes the tree, estimates every solver core's memory and rate, and for a config whose `algorithm.family` is `"auto"` (the 3+ seat `/compare` path) writes the recommended core, hero mode, update scheme, abstraction preset, batch and iteration cadence into the stored config.
+The plan itself is kept on the job (`PlanJson`, served as `plan` in the job DTO) so the page can show what was chosen.
+A config the engine refuses fails the request with the engine's own message instead of failing on the watcher twenty minutes later.
+
+The binary is looked up at `Engine:ExePath`, then at `engine/engine.exe` beside the API (where the deploy workflow puts it, built by `engine/build.ps1` on the runner), then at a dev checkout's `engine/build/engine.exe`.
+Without one, `"auto"` is refused and the seat-count rule is the only queue-time check.
+Planning builds the job's public tree: the largest 3-way flop trees take about a gigabyte and ten seconds, so the App Service plan needs the headroom, and at most two plans run at once.

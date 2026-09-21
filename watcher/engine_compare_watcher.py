@@ -748,7 +748,10 @@ def handle_multiway(job: Dict[str, Any], run_dir: str, timings: Dict[str, Any],
     config = json.loads(job["config"])
     # Same flags as a compare run: unquantized strategy (the .htc applies its
     # own fixed point) and no 169 rollups, which this payload does not read.
-    config["output"] = {"strategy_quantize_u8": False, "ev_float32": True,
+    # `export` is the job's (the API sets "bucketed" for a planned bucketed
+    # solve: a 3-way flop tree's per-hand export is a 160 GB file) and stays.
+    config["output"] = {**{k: v for k, v in (config.get("output") or {}).items() if k == "export"},
+                        "strategy_quantize_u8": False, "ev_float32": True,
                         "rollups_169": False}
     phase_start = time.perf_counter()
     artifact = run_engine(config, run_dir, cancel)

@@ -56,6 +56,11 @@ struct SolveStats {
   // so a consumer can tell a short solve from a converged one - `iterations`
   // alone looks like the user simply asked for fewer.
   std::string stopped_reason;
+  // What the solve was asked to reach (budget.target_exploitable_pct, 0 =
+  // nothing) - stamped with the last measurement as metadata.solved, so a
+  // consumer can tell "converged" from "ran out of budget" without reading
+  // the trace.
+  double target_exploitable_pct = 0.0;
   nlohmann::json team_rollup;              // conditioned 169x169 chart per team node
   nlohmann::json team_joint;               // exact per-orbit joint strategy per team node
   // Wall clock for the whole solve loop (CFR + every checkpoint's

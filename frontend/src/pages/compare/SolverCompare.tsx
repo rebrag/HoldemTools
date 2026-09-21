@@ -432,6 +432,21 @@ interface CompareJob {
    *  that run's payload exists. */
   runSampledCore?: boolean;
   hasSampledResult?: boolean;
+  /** What `engine plan` chose at queue time, when the API planned the job. */
+  plan?: {
+    seats?: number;
+    nodes?: number;
+    recommendation?: {
+      family?: string;
+      hero?: string;
+      update?: string;
+      abstraction?: { preset?: string; method?: string } | null;
+      batch?: number;
+      predicted_deals_per_second?: number;
+      predicted_iterations_per_second?: number;
+      reason?: string;
+    };
+  } | null;
   /** A pre-split job whose single merged payload this build cannot read. */
 
   legacyResult: boolean;
@@ -443,6 +458,20 @@ interface CompareJob {
 /* Cancelled is terminal and is NOT a failure: an owner-stopped solve still
  * uploads what it had reached, so it opens like any other result. */
 const TERMINAL_STATUSES = ["Done", "Failed", "Cancelled"];
+
+/** One short label for what the planner chose: the core, its walk and
+ *  abstraction, and the rate it predicted. */
+const planLabel = (rec: NonNullable<NonNullable<CompareJob["plan"]>["recommendation"]>): string => {
+  if (rec.family === "vectorized") {
+    const rate = rec.predicted_iterations_per_second;
+    return `planned: exact core${rate ? ` ~${Math.round(rate)} it/s` : ""}`;
+  }
+  const parts = [rec.hero ?? "pinned", rec.update ?? "external"];
+  const ab = rec.abstraction?.preset ?? rec.abstraction?.method;
+  if (ab) parts.push(ab);
+  const rate = rec.predicted_deals_per_second;
+  return `planned: ${parts.join("+")}${rate ? ` ~${Math.round(rate / 1000)}k deals/s` : ""}`;
+};
 const RESULT_STATUSES = ["Done", "Cancelled"];
 
 /** NashConv, or why there is none. Null is not "0" and not "unknown": past
@@ -1623,6 +1652,14 @@ const SolverCompare = () => {
                 }`}
               >
                 {job.board ?? "?"} · {job.mode ?? "compare"} ·{" "}
+                {job.plan?.recommendation && (
+                  <span
+                    className="text-slate-500"
+                    title={job.plan.recommendation.reason ?? ""}
+                  >
+                    {planLabel(job.plan.recommendation)} ·{" "}
+                  </span>
+                )}
                 {RESULT_STATUSES.includes(job.status) && !openable ? "no payload" : job.status}
               </button>
             );
@@ -2260,6 +2297,26 @@ const SolverCompare = () => {
                 </span>
               </label>
 
+              {seats > 2 && (
+                <label className="flex flex-col gap-1">
+                  <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                    Time budget (minutes)
+                  </span>
+                  <input
+                    className={`${inputCls} w-24 tabular-nums`}
+                    value={builder.timeBudgetMinutes}
+                    disabled={solving}
+                    onChange={(e) => setB("timeBudgetMinutes", e.target.value)}
+                    aria-label="Time budget, minutes"
+                  />
+                  <span className="max-w-[15rem] text-[10px] leading-relaxed text-slate-500">
+                    The solve stops here and keeps what it reached. The API plans the core,
+                    hand abstraction and batch for this budget before queueing (
+                    <code>engine plan</code>); the job row shows what it chose.
+                  </span>
+                </label>
+              )}
+
               <fieldset>
                 <legend className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
                   htsolver settings
@@ -2503,6 +2560,90 @@ const SolverCompare = () => {
                 </div>
               </fieldset>
 
+              {seats > 2 && (
+                <fieldset>
+                  <legend className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                    Advanced solver settings
+                  </legend>
+                  <div className="mt-1.5 flex flex-col gap-1.5">
+                    <Check
+                      label="Choose the core myself"
+                      checked={builder.advancedSolver}
+                      disabled={solving}
+                      onChange={(v) => setB("advancedSolver", v)}
+                      title="Off: the API runs engine plan at queue time and picks the core, abstraction and batch for the time budget. On: send these knobs as typed."
+                    />
+                    {builder.advancedSolver && (
+                      <div className="ml-4 flex flex-col gap-1.5 text-[11px] text-slate-300">
+                        <label className="flex items-center gap-2" title="pinned: one dealt hand per seat, a scalar walk (six-figure deals a second, MonkerSolver's shape). vectorized: every hand of the universe per deal, the cross-check.">
+                          <span className="w-24 text-[10px] text-slate-400">hero</span>
+                          <select
+                            className={`${inputCls} w-28`}
+                            value={builder.sampledHero}
+                            disabled={solving}
+                            onChange={(e) => setB("sampledHero", e.target.value as "pinned" | "vectorized")}
+                            aria-label="Sampled core hero"
+                          >
+                            <option value="pinned">pinned</option>
+                            <option value="vectorized">vectorized</option>
+                          </select>
+                        </label>
+                        <label className="flex items-center gap-2" title="external: the other seats sample one action each (external-sampling MCCFR). chance: they are enumerated.">
+                          <span className="w-24 text-[10px] text-slate-400">update</span>
+                          <select
+                            className={`${inputCls} w-28`}
+                            value={builder.sampledUpdate}
+                            disabled={solving}
+                            onChange={(e) => setB("sampledUpdate", e.target.value as "external" | "chance")}
+                            aria-label="Sampled core update"
+                          >
+                            <option value="external">external</option>
+                            <option value="chance">chance</option>
+                          </select>
+                        </label>
+                        <label className="flex items-center gap-2" title="monker: 30 strength quantiles x 4 second-moment tiers on flop and turn, 30 on the river. histogram: k-means 200/200 on turn and river (M8e). none: a row per hand (memory of a flop tree is ~55 GB).">
+                          <span className="w-24 text-[10px] text-slate-400">abstraction</span>
+                          <select
+                            className={`${inputCls} w-28`}
+                            value={builder.sampledAbstraction}
+                            disabled={solving}
+                            onChange={(e) =>
+                              setB("sampledAbstraction", e.target.value as "monker" | "histogram" | "none")
+                            }
+                            aria-label="Sampled core abstraction"
+                          >
+                            <option value="monker">monker</option>
+                            <option value="histogram">histogram</option>
+                            <option value="none">none</option>
+                          </select>
+                        </label>
+                        {(
+                          [
+                            ["sampledBatch", "batch", "w-16",
+                             "Deals per frozen-regret batch: the number of regret-matching steps is deals / batch. No per-batch sweep any more, so a few hundred to a few thousand."],
+                            ["sampledLanes", "lanes", "w-12",
+                             "Accumulation lanes; one per thread on the solving box is right for the pinned hero."],
+                            ["sampledSeed", "seed", "w-24",
+                             "The deal stream. Same seed, same deals, bitwise the same result at any thread count."],
+                          ] as const
+                        ).map(([field, label, width, hint]) => (
+                          <label key={field} className="flex items-center gap-2" title={hint}>
+                            <span className="w-24 text-[10px] text-slate-400">{label}</span>
+                            <input
+                              className={`${inputCls} ${width} tabular-nums`}
+                              value={builder[field]}
+                              disabled={solving}
+                              onChange={(e) => setB(field, e.target.value)}
+                              aria-label={`Sampled core ${label}`}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </fieldset>
+              )}
+
               {/* htsolver's OTHER core on the same tree: a race to the accuracy
                   target above, run after the vectorized solve. */}
               <fieldset>
@@ -2530,7 +2671,7 @@ const SolverCompare = () => {
                           ["sampledCheckEvery", "check every", "w-20",
                            "Iterations between exploitability measurements. Each is a full vectorized best-response pass, so keep it rare relative to a sampled iteration."],
                           ["sampledBatch", "batch", "w-16",
-                           "Iterations per frozen-regret batch. Large, because the per-batch discount and lane fold sweep the whole store."],
+                           "Iterations per frozen-regret batch: deals / batch is the number of regret-matching steps. No per-batch sweep since 2026-09-20, so a few hundred is right."],
                           ["sampledLanes", "lanes", "w-12",
                            "Each lane holds a full copy of solver storage: the engine default of 16 blows the memory limit on a turn tree. Few lanes, big batches."],
                           ["sampledSeed", "seed", "w-24",

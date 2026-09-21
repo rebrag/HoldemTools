@@ -90,6 +90,7 @@ add_library(engine_core STATIC
   src/solver/infoset_indexer.cpp
   src/solver/agents.cpp
   src/solver/memory.cpp
+  src/solver/plan.cpp
   src/io/local_store.cpp
   src/io/artifact_writer.cpp
   src/io/checkpoint.cpp
@@ -157,6 +158,8 @@ add_executable(engine_tests
   tests/test_team_preflop.cpp
   tests/test_sampled_digest.cpp
   tests/test_abstraction.cpp
+  tests/test_sampled_store.cpp
+  tests/test_sampled_pinned.cpp
 )
 target_link_libraries(engine_tests PRIVATE engine_core doctest::doctest)
 add_test(NAME engine_tests COMMAND engine_tests)

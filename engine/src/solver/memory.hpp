@@ -62,6 +62,14 @@ MemoryEstimate estimate_memory(const Game& game, int threads = 1, bool recalc = 
                                const SampledConfig* sampled = nullptr,
                                bool export_bucketed = false);
 
+// PINNED hero (SampledConfig::hero): the most log entries one lane can hold
+// at a fold - ceil(batch / lanes) deals, each walking every training seat's
+// hero decision nodes along one runout (all actions at hero nodes; at
+// opponent nodes every action under chance sampling, one under external
+// sampling), one entry per hero action. A ceiling from the tree, never an
+// expectation; the solver's max_log_entries() must stay under it.
+std::size_t pinned_log_entries_per_lane(const Game& game, const SampledConfig& sampled);
+
 // Process memory high-water marks, in bytes (0 where unavailable).
 //
 // Two numbers, because they answer different questions and diverge under

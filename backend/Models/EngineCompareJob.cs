@@ -46,6 +46,15 @@ namespace PokerRangeAPI2.Models
         // target. Stored verbatim like ConfigJson; null = no second run.
         public string? SampledConfigJson { get; set; }
 
+        /// <summary>
+        /// What `engine plan` said about this job at queue time: tree size,
+        /// per-core memory and predicted rate, and the recommendation that was
+        /// merged into ConfigJson when the request asked for
+        /// algorithm.family "auto". Null when the API instance had no engine
+        /// binary to plan with, or the mode does not plan (publish).
+        /// </summary>
+        public string? PlanJson { get; set; }
+
 
         public string Status { get; set; } = EngineCompareJobStatus.Queued;
 
