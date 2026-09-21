@@ -155,7 +155,8 @@ def in_range_rate(range_text: str, seats: int, board: str, trials: int = 40000) 
 
 def build_config(seats: int, range_text: str, iters: int, sampled: bool, seed: int,
                  out_path: str, abstraction: dict | None = None, deal: str = "range",
-                 batch: int = 4096, lanes: int = 4) -> dict:
+                 batch: int = 4096, lanes: int = 4, hero: str = "vectorized",
+                 update: str = "chance") -> dict:
     sizing = {"bets": [50, 700], "raises": [700], "max_raises": 1, "allin_threshold": 0.9}
     algorithm: dict = {"update": "dcfr"}
     if sampled:
@@ -163,8 +164,11 @@ def build_config(seats: int, range_text: str, iters: int, sampled: bool, seed: i
         # deal: "uniform" shares one uniform deal per iteration (the M8c
         # original), "range" deals each hero's opponents in proportion to
         # their ranges with the importance weight (the parser's default for
-        # postflop since 2026-09-12).
-        algorithm["sampled"] = {"seed": seed, "batch": batch, "lanes": lanes, "deal": deal}
+        # postflop since 2026-09-12). hero/update: the M8g pinned hero and
+        # external sampling (2026-09-20) - a pinned deal is a scalar walk, so
+        # equal deal counts are NOT equal work against the vectorized hero.
+        algorithm["sampled"] = {"seed": seed, "batch": batch, "lanes": lanes, "deal": deal,
+                                "hero": hero, "update": update}
         if abstraction:
             # Hand abstraction on the sampled core: storage rows per bucket,
             # pooling updates across similar hands - the thing that is
@@ -238,6 +242,10 @@ def main() -> int:
                     help="comma list of batch sizes to run as arms; regrets freeze per batch, "
                          "so deals / batch is the number of regret-matching steps")
     ap.add_argument("--lanes", type=int, default=4)
+    ap.add_argument("--hero", default="vectorized",
+                    help="vectorized | pinned: how the hero walks (algorithm.sampled.hero)")
+    ap.add_argument("--update", default="chance",
+                    help="chance | external: what the other seats do (algorithm.sampled.update)")
     ap.add_argument("--skip-spread", action="store_true", help="skip the seed-spread table")
     ap.add_argument("--iters", default="", help="comma list of deal counts, e.g. 50000,200000")
     args = ap.parse_args()
@@ -297,7 +305,7 @@ def main() -> int:
                     for iters in sampled_iters:
                         got = run(args.engine,
                                   build_config(3, RANGES[w], iters, True, 1, out, arm, deal,
-                                               batch, args.lanes), tmp)
+                                               batch, args.lanes, args.hero, args.update), tmp)
                         expl = got["curve"][-1][1] if got["curve"] else float("nan")
                         cells.append(f"{100 * expl / pot:>10.3f}%")
                     print(f"  {w:<8} {arm_name:<16} {100 * ref_expl / pot:>10.4f}%" + "".join(cells))
@@ -317,9 +325,9 @@ def main() -> int:
                 for seats in seat_counts:
                     iters = sampled_iters[-1]
                     a = run(args.engine, build_config(seats, RANGES[w], iters, True, 1, out, arm, deal,
-                                                      batch, args.lanes), tmp)
+                                                      batch, args.lanes, args.hero, args.update), tmp)
                     b = run(args.engine, build_config(seats, RANGES[w], iters, True, 999, out, arm, deal,
-                                                      batch, args.lanes), tmp)
+                                                      batch, args.lanes, args.hero, args.update), tmp)
                     if not a["evs"] or not b["evs"]:
                         cells.append(f"{'n/a':>22}")
                         continue

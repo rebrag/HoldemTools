@@ -35,7 +35,7 @@ namespace {
 constexpr double kPinnedExternalSecondsPerEntry = 16.0 / (384000.0 * 753.0);
 constexpr double kPinnedChanceSecondsPerEntry = 16.0 / (83600.0 * 11340.0);
 constexpr double kVectorizedSecondsPerNodeHand = 16.0 / (144.0 * 4311.0 * 1176.0 * 3.0);
-constexpr double kExactSecondsPerNodeHandSeat = 16.0 / (25.0 * 25164.0 * 1128.0 * 3.0);  // provisional: ~25 it/s on the turn
+constexpr double kExactSecondsPerNodeHandSeat = 16.0 / (0.124 * 25164.0 * 1128.0 * 3.0);  // 250 iters in 2013 s on the turn
 
 // Nodes one deal walks with every action enumerated (one child at chance
 // nodes), the vectorized hero's per-deal work unit.
