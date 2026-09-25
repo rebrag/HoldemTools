@@ -14,8 +14,7 @@ Solve semantics (lineages, baselines, one result per solve id) are documented in
 | `solveGroupsApi.ts`, `useSolveGroups.ts` | Client and page-level store for `/api/solvegroups` |
 | `MultiwayTreeBuilder.tsx`, `multiwayView.ts` | The spot being built and the config it becomes |
 | `PushFoldResultPanel.tsx`, `pushfoldResult.ts` | A result payload (`PushFoldDump`) and its chart, walked with the solver's `Line` |
-| `PartnerHandSelect.tsx` | Partner-CLASS conditioning for a team seat's chart, for payloads without the exact joint table (panel and plate forms) |
-| `PartnerHandPicker.tsx`, `cardText.ts`, `jointCharts.ts` | Partner-CARDS conditioning over the exact joint table (`metadata.team_joint`, decoded by `src/lib/sessionSim/orbits.ts`): a typed input ("AsQd", parsed by `cardText.ts`) with slots and a keypad in the wide form, the conditioned 13x13 chart, and the per-combo breakdown that shows suit blocking |
+| `HoleCardsPicker.tsx`, `cardInputFocus.ts`, `cardText.ts`, `jointCharts.ts` | The deal: each seat types its OWN cards (a typed input, "AsQd", parsed by `cardText.ts`, with slots and a keypad in the wide form and a shared keypad drawer in the group view). A team seat's cards ring its own chart and condition its partner's: exactly over the joint table (`metadata.team_joint`, decoded by `src/lib/sessionSim/orbits.ts`) with the per-combo breakdown that shows suit blocking, or by hand class (`team_rollup`) on older payloads, the class read off the same two cards. With both hands known the exact joint row is stated ("jams 74%") |
 | `GroupRangesView.tsx` | A group opened rather than simulated: one row of fold-to plates per solve |
 | `fetchPushFoldDump.ts` | One job's payload from the API; shared by the panel and the simulator |
 | `SessionSimulator.tsx` | The simulator drawer: rotation list, group load/save, parameters, results |
@@ -41,6 +40,10 @@ It also opens a group on the page (`GroupRangesView`): one card per solve, one `
 The table is hidden while a group is open and, from lg, the cards are sized to fit the pane without scrolling (compact plates beside a caption; `fitLayout` picks the matrix side from the height and width available, and the caption's own height is the floor).
 The plates render in `Plate`'s `performant` mode - one canvas per matrix instead of 169 cells, no framer-motion wrappers - because sixteen cell grids were tens of thousands of animated DOM nodes and the page lagged; the whole group page is under a thousand nodes now.
 Each card walks its own line: a plate's colour key takes that action for that seat and the other plates show the reactions, with the seat on the spot highlighted only once a line has been taken; Reset line returns the card to the fold-to view, and Open hands the card's line to the single-solve view.
+Each card also holds its own deal: every team seat's plate carries an input for that seat's own cards (the big blind's too, decision or not), and a seat's cards condition its partner's chart.
+The partner comes from `metadata.team.seats` (`teamPartnerOf`), never from the node, which is what lets a node-less plate know whose chart its cards feed.
+The deals are state of the group view (keyed by card) rather than of the cards, so one Clear cards empties them all and one keypad drawer serves every plate; Open carries the card's deal along with its line, and the view is keyed by group so a different group starts with no cards.
+On this page Tab is for the card inputs: nothing else in the group view takes focus, Tab / Shift+Tab / Enter move between the inputs in reading order with wrap-around, a completed second card moves on by itself, and a press anywhere on a picker lands the caret in its input (`focusCardInput` in `cardInputFocus.ts`, which walks `input[data-card-input]` in DOM order).
 
 ## Session simulator
 

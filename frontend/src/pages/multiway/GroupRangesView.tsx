@@ -14,6 +14,19 @@
 // decision on that line, so its plate holds face-down cards until someone
 // jams.
 //
+// Each card also holds its own deal: each seat's hole cards, typed on that
+// seat's plate. A team seat's cards ring its own chart and condition its
+// partner's; with both known, the partner's plate states the exact joint
+// row. The big blind gets the input too, decision or not - its cards are
+// what the partner's chart needs. The deals live here rather than in the
+// cards so one Clear empties them all, one keypad drawer serves every
+// plate, and Open can hand a card's deal to the single-solve view.
+//
+// Tab is for those inputs: nothing else in the view takes focus, Tab /
+// Enter / a completed second card move to the next input in reading order
+// (row by row, seats in acting order), and Tab wraps at the ends - see
+// HoleCardsPicker.
+//
 // From lg the page is a fixed-height workbench, so the cards are laid out to
 // FIT: the compact Plate (matrix beside a narrow sidebar) is sized from the
 // height and width actually available, and the solve's caption sits beside
@@ -38,26 +51,58 @@ import {
   jsonDataFor,
   lineHandlers,
   nodeForSeat,
+  partnerReachLevel,
   seatLabelsOf,
   type LineModel,
 } from "./lineModel";
 import { jointNodeFor } from "@/lib/sessionSim/orbits";
+import { classIndexOfCards } from "./cardText";
 import {
   conditionedGridForCards,
+  exactRowForCards,
+  heldText,
   idsOfCodes,
   jointForDump,
   jsonDataFromCells,
 } from "./jointCharts";
-import PartnerHandPicker from "./PartnerHandPicker";
-import PartnerHandSelect from "./PartnerHandSelect";
-import { actionLabels, fmtCount, type DumpNode, type PushFoldDump } from "./pushfoldResult";
+import { focusCardInputByKey } from "./cardInputFocus";
+import HoleCardsPicker, { DENSE_PICKER_HEIGHT_PX, HoleCardsKeypad } from "./HoleCardsPicker";
+import {
+  actionLabels,
+  CLASS_NAMES,
+  fmtCount,
+  teamPartnerOf,
+  type DumpNode,
+  type PushFoldDump,
+} from "./pushfoldResult";
 import type { SolveGroup } from "./solveGroupsApi";
 import { spotTitle } from "./solveIdentity";
 import { PhaseBadge } from "./SolvesDrawer";
 import type { LoadedDump } from "./useDumps";
 
-/** What a plate hands the overlay: its zoom payload plus the card it is in. */
-type ZoomTarget = PlateZoomPayload & { caption: string; partnerText: string };
+/** The deal: each seat's hole cards (0 to 2 codes), keyed by seat index. */
+export type HeldCards = Record<number, string[]>;
+/** The one array every seat without cards shares, so plate props keep
+ *  their identity across renders. */
+const NO_CARDS: string[] = [];
+/** Likewise for a card whose deal has nothing typed yet. */
+const NO_HELD: HeldCards = {};
+
+/** Which card's which seat the shared keypad drawer is editing. */
+interface KeypadTarget {
+  rowKey: string;
+  seat: number;
+}
+/** The name a card input carries on the page (`data-card-input`). */
+const inputKeyFor = (rowKey: string, seat: number): string => `${rowKey}:${seat}`;
+
+/** What a plate hands the overlay: its zoom payload plus the card it is in,
+ *  the pair's cards in words, and the hand ringed on it. */
+type ZoomTarget = PlateZoomPayload & {
+  caption: string;
+  cardsText: string;
+  selectedHand: string | null;
+};
 
 /* ---------- geometry ---------- */
 
@@ -142,10 +187,18 @@ const NO_DECISION = (
   </div>
 );
 
-/* Stands in for the partner select on the plates of a card that has one, so
- * every matrix in the card starts at the same height (wide layout only; the
- * compact sidebar stacks nothing above the matrix). */
-const HEADER_SPACER = <div aria-hidden="true" className="h-[23px]" />;
+/* Stands in for the hole-cards picker on the plates of a card that has one,
+ * so every matrix in the card starts at the same height (wide layout only;
+ * the compact sidebar stacks nothing above the matrix). */
+const HEADER_SPACER = <div aria-hidden="true" style={{ height: DENSE_PICKER_HEIGHT_PX }} />;
+
+/** "jams 74%": the exact joint row's mix for a jam-or-fold node, as a note
+ *  line. Only the jam is stated; the rest folds. */
+const exactMixText = (freqs: Record<string, number>): string => {
+  const jam = freqs.ALLIN;
+  if (jam == null) return "";
+  return `jams ${Math.round(jam * 100)}%`;
+};
 
 const smallBtn =
   "rounded border border-slate-700 bg-slate-950/50 px-1.5 py-0.5 text-[10px] text-slate-300 transition-colors hover:border-slate-500 hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-40";
@@ -167,6 +220,14 @@ const GroupPlate = React.memo(
     compact,
     dm,
     reserveHeader,
+    rowKey,
+    partnerSeat,
+    ownCards,
+    partnerCards,
+    taken,
+    holderOf,
+    onHeldChange,
+    onOpenKeypad,
     onActionClick,
     caption,
     onZoom,
@@ -174,6 +235,8 @@ const GroupPlate = React.memo(
     dump: PushFoldDump;
     path: number[];
     seat: number;
+    /** The card this plate is in, naming its input on the page. */
+    rowKey: string;
     alive: boolean;
     isActive: boolean;
     isHero: boolean;
@@ -184,6 +247,19 @@ const GroupPlate = React.memo(
     compact: boolean;
     dm: number;
     reserveHeader: boolean;
+    /** The seat this one shares cards with; null for a seat on no team. */
+    partnerSeat: number | null;
+    /** This seat's cards and its partner's, from the card's deal. Both
+     *  are NO_CARDS when unset, never a fresh array. */
+    ownCards: string[];
+    partnerCards: string[];
+    /** Cards every other seat holds, and who holds one - for the input's
+     *  collision error. Only for a team seat. */
+    taken: ReadonlySet<string> | undefined;
+    holderOf: ((card: string) => string | undefined) | undefined;
+    /** Stable two-argument setters: this plate binds its own seat. */
+    onHeldChange: (seat: number, cards: string[]) => void;
+    onOpenKeypad: (seat: number) => void;
     onActionClick: (action: string, file: string) => void;
     /** The card this plate sits in, named for the zoom overlay. */
     caption: string;
@@ -198,88 +274,126 @@ const GroupPlate = React.memo(
     );
     const rollup = node ? dump.metadata.team_rollup?.[String(node.node_id)] : undefined;
     /* Exact joint rows where the payload has them: the partner's cards
-     * condition the chart; otherwise the partner's class does. */
+     * condition the chart; otherwise the partner's class does, derived from
+     * the same two typed cards. */
     const joint = useMemo(() => jointForDump(dump), [dump]);
     const jointNode = node ? jointNodeFor(joint, node) : null;
-    const [partnerClass, setPartnerClass] = useState<number | null>(null);
-    const [partnerCards, setPartnerCards] = useState<string[]>([]);
-    const partnerSeat = jointNode?.partner ?? rollup?.partner;
-    const partnerLabel =
-      partnerSeat != null ? seatLabelsOf(dump)[partnerSeat] ?? `P${partnerSeat}` : "";
+    const labels = useMemo(() => seatLabelsOf(dump), [dump]);
+    const ownLabel = labels[seat] ?? `P${seat}`;
 
-    /* The chart, and whether the partner ever reaches this node with the
-     * cards typed - when not, the chart shown is the marginal and the picker
-     * says so, because a chart that silently did not change reads as a
-     * broken input. */
-    const { data, unreached, rare, coverage } = useMemo(() => {
-      if (!node) {
-        return { data: jsonDataFor(dump, null, seat), unreached: false, rare: false, coverage: 1 };
-      }
-      const ids = idsOfCodes(partnerCards);
-      if (joint && jointNode && ids.length > 0) {
-        const chart = conditionedGridForCards(node, joint, jointNode, ids);
+    /* The chart, the hand ringed on it, and the one line said about it.
+     * When the partner never reaches this node with the cards typed, the
+     * chart shown is the marginal and the line says so, because a chart
+     * that silently did not change reads as a broken input. With the whole
+     * pair known, the line is the exact answer instead. */
+    const { data, selectedHand, note, noteTone } = useMemo(() => {
+      const ownClass = classIndexOfCards(ownCards);
+      const selectedHand = ownClass >= 0 ? CLASS_NAMES[ownClass] : null;
+      const plain = (data: ReturnType<typeof jsonDataFor>, note: string | null = null) => ({
+        data,
+        selectedHand,
+        note,
+        noteTone: "warn" as const,
+      });
+      if (!node) return plain(jsonDataFor(dump, null, seat));
+      const partnerIds = idsOfCodes(partnerCards);
+      if (joint && jointNode && partnerIds.length > 0) {
+        const chart = conditionedGridForCards(node, joint, jointNode, partnerIds);
         const scale = chipScale(dump);
-        return {
-          data: jsonDataFromCells(
-            seatLabelsOf(dump)[seat] ?? `P${seat}`,
-            (dump.metadata.stacks?.[seat] ?? 0) / scale,
-            chart.cells,
-            actionLabels(node),
-            scale
-          ),
-          unreached: chart.unreached,
-          rare: chart.rare,
-          coverage: chart.coverage,
-        };
+        const data = jsonDataFromCells(
+          ownLabel,
+          (dump.metadata.stacks?.[seat] ?? 0) / scale,
+          chart.cells,
+          actionLabels(node),
+          scale
+        );
+        if (chart.unreached) return plain(data, "never here with those - showing the average");
+        if (chart.rare) {
+          return plain(
+            data,
+            `rarely here with those: ${Math.round(chart.coverage * 100)}% of hands have data, rest is average`
+          );
+        }
+        const ownIds = idsOfCodes(ownCards);
+        if (ownIds.length === 2 && partnerIds.length === 2) {
+          const row = exactRowForCards(
+            node,
+            joint,
+            jointNode,
+            [ownIds[0], ownIds[1]],
+            [partnerIds[0], partnerIds[1]]
+          );
+          if (row?.reached) {
+            return { data, selectedHand, note: exactMixText(row.freqs), noteTone: "info" as const };
+          }
+          if (row) return plain(data, "never here with this exact pair");
+        }
+        return plain(data);
       }
-      if (!jointNode && rollup && partnerClass != null) {
-        return {
-          data: conditionedJsonDataFor(dump, node, rollup, partnerClass, seat),
-          unreached: false,
-          rare: false,
-          coverage: 1,
-        };
+      if (!jointNode && rollup) {
+        const cls = classIndexOfCards(partnerCards);
+        if (cls >= 0) {
+          const level = partnerReachLevel(rollup, cls);
+          return plain(
+            conditionedJsonDataFor(dump, node, rollup, cls, seat),
+            level === "never"
+              ? "partner never here with that - untrained"
+              : level === "rare"
+                ? "partner rarely here with that - thin data"
+                : null
+          );
+        }
+        if (partnerCards.length === 1) {
+          return plain(jsonDataFor(dump, node, seat), "this solve needs both partner cards");
+        }
       }
-      return { data: jsonDataFor(dump, node, seat), unreached: false, rare: false, coverage: 1 };
-    }, [dump, node, joint, jointNode, rollup, partnerClass, partnerCards, seat]);
+      return plain(jsonDataFor(dump, node, seat));
+    }, [dump, node, joint, jointNode, rollup, ownCards, partnerCards, seat, ownLabel]);
 
+    const onOwnChange = useCallback(
+      (cards: string[]) => onHeldChange(seat, cards),
+      [onHeldChange, seat]
+    );
+    const openKeypad = useCallback(() => onOpenKeypad(seat), [onOpenKeypad, seat]);
+
+    /* Every team seat gets the picker, decision or not: the big blind at
+     * the root has no chart, and its cards are still what the partner's
+     * chart is conditioned on. */
     const header = useMemo(
       () =>
-        jointNode ? (
-          <PartnerHandPicker
+        partnerSeat != null ? (
+          <HoleCardsPicker
             dense
-            cards={partnerCards}
-            onChange={setPartnerCards}
-            partnerLabel={partnerLabel}
-            note={
-              unreached
-                ? "never here with those - showing the average"
-                : rare
-                  ? `rarely here with those: ${Math.round(coverage * 100)}% of hands have data, rest is average`
-                  : null
-            }
-          />
-        ) : rollup ? (
-          <PartnerHandSelect
-            dense
-            rollup={rollup}
-            partnerLabel={partnerLabel}
-            value={partnerClass}
-            onChange={setPartnerClass}
+            compact={compact}
+            label={ownLabel}
+            cards={ownCards}
+            onChange={onOwnChange}
+            taken={taken}
+            holderOf={holderOf}
+            note={note}
+            noteTone={noteTone}
+            onOpenKeypad={openKeypad}
+            inputKey={inputKeyFor(rowKey, seat)}
           />
         ) : reserveHeader && !compact ? (
           HEADER_SPACER
         ) : undefined,
-      [jointNode, rollup, partnerLabel, partnerClass, partnerCards, unreached, rare, coverage, reserveHeader, compact]
+      [partnerSeat, compact, ownLabel, ownCards, onOwnChange, taken, holderOf, note, noteTone, openKeypad, reserveHeader, rowKey, seat]
     );
 
     /* A click on the matrix opens it large. The payload carries the grid
-     * the plate is showing - conditioned or not - so the zoom shows exactly
-     * what was clicked. */
-    const partnerText = partnerCards.length > 0 ? `${partnerLabel} holds ${partnerCards.join(" ")}` : "";
+     * the plate is showing - conditioned or not - and the pair's cards, so
+     * the zoom shows exactly what was clicked. */
+    const cardsText = useMemo(
+      () =>
+        partnerSeat != null
+          ? heldText(labels, { [seat]: ownCards, [partnerSeat]: partnerCards })
+          : "",
+      [labels, seat, partnerSeat, ownCards, partnerCards]
+    );
     const handleZoom = useCallback(
-      (payload: PlateZoomPayload) => onZoom({ ...payload, caption, partnerText }),
-      [onZoom, caption, partnerText]
+      (payload: PlateZoomPayload) => onZoom({ ...payload, caption, cardsText, selectedHand }),
+      [onZoom, caption, cardsText, selectedHand]
     );
 
     return (
@@ -299,6 +413,7 @@ const GroupPlate = React.memo(
         heightMode="full"
         header={header}
         placeholder={node ? undefined : NO_DECISION}
+        selectedHand={selectedHand}
         performant
         compact={compact}
         dmWidthPx={compact ? dm : undefined}
@@ -321,15 +436,21 @@ const seatLabel = (model: LineModel, seat: number): string =>
 
 const GroupSolveRow = ({
   index,
+  rowKey,
   jobId,
   job,
   loaded,
   fit,
   cols,
+  held,
+  onHeldChange: onRowHeldChange,
+  onOpenKeypad: onOpenRowKeypad,
   onOpenJob,
   onZoom,
 }: {
   index: number;
+  /** This card's name, keying its deal and its inputs. */
+  rowKey: string;
   jobId: string;
   job: CompareJob | undefined;
   loaded: LoadedDump | undefined;
@@ -339,10 +460,23 @@ const GroupSolveRow = ({
   fit: FitLayout | null;
   /** Flowing layout: plates per row. */
   cols: number;
-  onOpenJob: (id: string, path?: number[]) => void;
+  /** This card's deal, and the group's stable setters keyed by card. */
+  held: HeldCards;
+  onHeldChange: (rowKey: string, seat: number, cards: string[]) => void;
+  onOpenKeypad: (target: KeypadTarget) => void;
+  onOpenJob: (id: string, path?: number[], held?: HeldCards) => void;
 }) => {
   const dump = loaded && "dump" in loaded ? loaded.dump : null;
   const [path, setPath] = useState<number[]>([]);
+  /* Bound to this card once, so the plates' memo holds. */
+  const onHeldChange = useCallback(
+    (seat: number, cards: string[]) => onRowHeldChange(rowKey, seat, cards),
+    [onRowHeldChange, rowKey]
+  );
+  const onOpenKeypad = useCallback(
+    (seat: number) => onOpenRowKeypad({ rowKey, seat }),
+    [onOpenRowKeypad, rowKey]
+  );
   const model = useMemo(() => (dump ? buildLineModel(dump, path) : null), [dump, path]);
   const handlers = useMemo(
     () => (dump && model ? lineHandlers(dump, path, setPath, model.seatOf) : null),
@@ -354,6 +488,29 @@ const GroupSolveRow = ({
   const teamSeats = useMemo(() => meta?.team?.seats ?? [], [meta]);
   const teamName = meta ? teamSeats.map((s) => meta.seats[s] ?? s).join("+") : null;
   const order = useMemo(() => (dump ? actingOrder(dump) : []), [dump]);
+  const labels = useMemo(() => (dump ? seatLabelsOf(dump) : []), [dump]);
+  /* What each seat may not type: every other seat's cards. Built once per
+   * deal change rather than per plate render, so the plates' memo holds. */
+  const takenFor = useMemo(() => {
+    const out = new Map<number, ReadonlySet<string>>();
+    for (const seat of order) {
+      const s = new Set<string>();
+      for (const k of Object.keys(held)) {
+        if (Number(k) !== seat) for (const c of held[Number(k)] ?? []) s.add(c);
+      }
+      out.set(seat, s);
+    }
+    return out;
+  }, [held, order]);
+  const holderOf = useCallback(
+    (card: string): string | undefined => {
+      for (const k of Object.keys(held)) {
+        if (held[Number(k)]?.includes(card)) return labels[Number(k)] ?? `P${k}`;
+      }
+      return undefined;
+    },
+    [held, labels]
+  );
   const button = meta?.preflop?.button;
   const maxBet = model ? Math.max(0, ...Object.values(model.playerBets)) : 0;
   const pot = model?.node ? model.node.pot / scale : (meta?.pot ?? 0) / scale;
@@ -423,6 +580,7 @@ const GroupSolveRow = ({
         <span className="flex flex-wrap items-center gap-1">
           <button
             type="button"
+            tabIndex={-1}
             disabled={atRoot}
             onClick={() => setPath([])}
             className={smallBtn}
@@ -433,7 +591,8 @@ const GroupSolveRow = ({
           {job && isOpenable(job) && (
             <button
               type="button"
-              onClick={() => onOpenJob(jobId, path)}
+              tabIndex={-1}
+              onClick={() => onOpenJob(jobId, path, held)}
               className="rounded border border-emerald-700/70 bg-slate-950/50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300 transition-colors hover:bg-emerald-500/10"
               title="Open this solve on its own, at this line"
             >
@@ -449,12 +608,21 @@ const GroupSolveRow = ({
     dump && model && handlers
       ? order.map((seat) => {
           const label = seatLabel(model, seat);
+          const partnerSeat = teamPartnerOf(dump.metadata, seat);
           return (
             <GroupPlate
               key={seat}
               dump={dump}
               path={path}
               seat={seat}
+              rowKey={rowKey}
+              partnerSeat={partnerSeat}
+              ownCards={held[seat] ?? NO_CARDS}
+              partnerCards={partnerSeat != null ? held[partnerSeat] ?? NO_CARDS : NO_CARDS}
+              taken={partnerSeat != null ? takenFor.get(seat) : undefined}
+              holderOf={partnerSeat != null ? holderOf : undefined}
+              onHeldChange={onHeldChange}
+              onOpenKeypad={onOpenKeypad}
               alive={model.alivePlayers[label] ?? true}
               /* Only once a line is taken: at the root every card would
                  otherwise pulse its first actor, which says nothing (the
@@ -531,8 +699,9 @@ const GroupRangesView = ({
   group: SolveGroup;
   jobsById: Map<string, CompareJob>;
   loaded: Record<string, LoadedDump>;
-  /** Open one member as the page's result, optionally at a line. */
-  onOpenJob: (id: string, path?: number[]) => void;
+  /** Open one member as the page's result, optionally at a line and with
+   *  that card's deal. */
+  onOpenJob: (id: string, path?: number[], held?: HeldCards) => void;
   className?: string;
 }) => {
   const isLg = useIsLg();
@@ -540,6 +709,40 @@ const GroupRangesView = ({
   /* The plate clicked, shown large: the compact canvases are for the
    * overview, this is for reading a strategy. */
   const [zoom, setZoom] = useState<ZoomTarget | null>(null);
+  /* Every card's deal, keyed by the card (see the file comment), and the
+   * input whose keypad is open - one drawer for all the plates, mounted
+   * only while open. The caller keys this view by group, so a new group
+   * starts with no cards. */
+  const [heldByRow, setHeldByRow] = useState<Record<string, HeldCards>>({});
+  const onHeldChange = useCallback(
+    (rowKey: string, seat: number, cards: string[]) =>
+      setHeldByRow((cur) => ({
+        ...cur,
+        [rowKey]: { ...(cur[rowKey] ?? NO_HELD), [seat]: cards },
+      })),
+    []
+  );
+  const [keypadTarget, setKeypadTarget] = useState<KeypadTarget | null>(null);
+  /* Closing the keypad hands focus back to the input it came from, a tick
+   * later: a backdrop click closes on mousedown, whose default action
+   * would take a synchronous focus straight back. */
+  const closeKeypad = useCallback(() => {
+    setKeypadTarget((cur) => {
+      if (cur) window.setTimeout(() => focusCardInputByKey(inputKeyFor(cur.rowKey, cur.seat)), 0);
+      return null;
+    });
+  }, []);
+  const anyHeld = Object.values(heldByRow).some((deal) =>
+    Object.values(deal).some((c) => c.length > 0)
+  );
+  const firstDump = useMemo(() => {
+    for (const id of group.jobIds) {
+      const l = loaded[id];
+      if (l && "dump" in l) return l.dump;
+    }
+    return null;
+  }, [group.jobIds, loaded]);
+  const labels = useMemo(() => (firstDump ? seatLabelsOf(firstDump) : []), [firstDump]);
   const seats = useMemo(() => {
     let n = 0;
     for (const id of group.jobIds) {
@@ -549,6 +752,15 @@ const GroupRangesView = ({
     return n || 2;
   }, [group.jobIds, loaded]);
   const cards = group.jobIds.length;
+  const keypadHeld = keypadTarget ? heldByRow[keypadTarget.rowKey] ?? NO_HELD : NO_HELD;
+  const keypadTaken = useMemo(() => {
+    const s = new Set<string>();
+    if (!keypadTarget) return s;
+    for (const k of Object.keys(keypadHeld)) {
+      if (Number(k) !== keypadTarget.seat) for (const c of keypadHeld[Number(k)] ?? []) s.add(c);
+    }
+    return s;
+  }, [keypadHeld, keypadTarget]);
 
   /* Fit from lg, where the container's height is definite; below it the
    * height measured is the content's own, which is nothing to fit into. */
@@ -565,19 +777,26 @@ const GroupRangesView = ({
     .map((id) => jobsById.get(id)?.spot)
     .find((s): s is JobSpot => s != null);
 
-  const rows = group.jobIds.map((id, i) => (
-    <GroupSolveRow
-      key={`${id}-${i}`}
-      index={i}
-      jobId={id}
-      job={jobsById.get(id)}
-      loaded={loaded[id]}
-      fit={fit}
-      cols={cols}
-      onOpenJob={onOpenJob}
-      onZoom={setZoom}
-    />
-  ));
+  const rows = group.jobIds.map((id, i) => {
+    const rowKey = `${id}-${i}`;
+    return (
+      <GroupSolveRow
+        key={rowKey}
+        rowKey={rowKey}
+        index={i}
+        jobId={id}
+        job={jobsById.get(id)}
+        loaded={loaded[id]}
+        fit={fit}
+        cols={cols}
+        held={heldByRow[rowKey] ?? NO_HELD}
+        onHeldChange={onHeldChange}
+        onOpenKeypad={setKeypadTarget}
+        onOpenJob={onOpenJob}
+        onZoom={setZoom}
+      />
+    );
+  });
 
   return (
     <section
@@ -590,7 +809,34 @@ const GroupRangesView = ({
           to them; a colour key plays that action and the other seats react
         </span>
         {spot && <span className="text-[11px] text-slate-300">{spotTitle(spot)}</span>}
+        {anyHeld && (
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={() => setHeldByRow({})}
+            className={`${smallBtn} ml-auto`}
+            title="Forget every card's deal"
+          >
+            Clear cards
+          </button>
+        )}
       </div>
+      <ResponsiveDrawer
+        open={keypadTarget != null}
+        onClose={closeKeypad}
+        zClassName="z-[80]"
+        ariaLabel="Pick a seat's cards"
+      >
+        {keypadTarget && (
+          <HoleCardsKeypad
+            cards={keypadHeld[keypadTarget.seat] ?? NO_CARDS}
+            onChange={(cards) => onHeldChange(keypadTarget.rowKey, keypadTarget.seat, cards)}
+            label={labels[keypadTarget.seat] ?? `P${keypadTarget.seat}`}
+            taken={keypadTaken}
+            onDone={closeKeypad}
+          />
+        )}
+      </ResponsiveDrawer>
       {/* The measured box. From lg it is the leftover height and the cards
           are packed into it; it only scrolls when even the smallest readable
           matrix would not fit. */}
@@ -610,12 +856,16 @@ const GroupRangesView = ({
                 <span className="tabular-nums text-slate-400">bet {fmtBb(zoom.playerBet)}</span>
               )}
               <span className="text-slate-500">{zoom.caption}</span>
-              {zoom.partnerText && <span className="text-emerald-300">{zoom.partnerText}</span>}
+              {zoom.cardsText && <span className="text-emerald-300">{zoom.cardsText}</span>}
             </div>
             {/* The full matrix: labels, hover EVs in big blinds, sized to the
                 viewport's height so the whole grid stays on screen. */}
             <div className="mx-auto w-full" style={{ maxWidth: "min(100%, 76vh)" }}>
-              <DecisionMatrix gridData={zoom.grid} heightMode="full" />
+              <DecisionMatrix
+                gridData={zoom.grid}
+                heightMode="full"
+                selectedHand={zoom.selectedHand}
+              />
             </div>
             <div className="mx-auto w-full" style={{ maxWidth: "min(100%, 76vh)" }}>
               <ColorKey data={zoom.grid} sizeRef={1} />

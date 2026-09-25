@@ -157,6 +157,50 @@ export function conditionedGridForCards(
   };
 }
 
+export interface ExactRow {
+  /** P(action) by label for this exact (own, partner) pair. */
+  freqs: Record<string, number>;
+  /** Team EV in chips by label, null where the row has none. */
+  evs: Record<string, number | null>;
+  /** False when the pair never reaches this node: the frequencies are then
+   *  untrained and should be reported as "never here", not printed. */
+  reached: boolean;
+}
+
+/**
+ * The one row behind a fully known deal: what the actor does at `node`
+ * holding exactly `own` when the partner holds exactly `partner`. Null when
+ * the four cards are not distinct or the table has no such orbit.
+ */
+export function exactRowForCards(
+  node: DumpNode,
+  joint: TeamJoint,
+  jointNode: JointNode,
+  own: [number, number],
+  partner: [number, number]
+): ExactRow | null {
+  const jc = orbitOf(joint, own[0], own[1], partner[0], partner[1]);
+  if (jc < 0) return null;
+  const labels = actionLabels(node);
+  const freqs: Record<string, number> = {};
+  const evs: Record<string, number | null> = {};
+  labels.forEach((label, a) => {
+    freqs[label] = jointFreq(jointNode, jc, a);
+    evs[label] = jointEv(jointNode, jc, a);
+  });
+  return { freqs, evs, reached: jointNode.weight[jc] > 0 };
+}
+
+/** "SB holds AsQd · BB holds KhKd": the deal in words, seats with no cards
+ *  left out, in seat order. */
+export const heldText = (labels: string[], held: Record<number, string[]>): string =>
+  Object.keys(held)
+    .map(Number)
+    .filter((seat) => (held[seat]?.length ?? 0) > 0)
+    .sort((a, b) => a - b)
+    .map((seat) => `${labels[seat] ?? `P${seat}`} holds ${held[seat].join(" ")}`)
+    .join(" · ");
+
 /**
  * Every combo the actor can hold against the partner's exact two cards,
  * with its own row: the per-combo view HandBreakdown renders. Weights are

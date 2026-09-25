@@ -245,6 +245,18 @@ export const conditionedJsonDataFor = (
   return data;
 };
 
+/** How often the partner reaches a node holding class `cls`, read off the
+ *  rollup's `partner_reach`: "never" means the conditioned chart is
+ *  untrained noise, "rare" that it trained on thin data. Null is normal. */
+export const partnerReachLevel = (
+  rollup: { partner_reach?: number[] },
+  cls: number
+): "never" | "rare" | null => {
+  const reach = rollup.partner_reach?.[cls];
+  if (reach == null) return null;
+  return reach < 0.005 ? "never" : reach < 0.05 ? "rare" : null;
+};
+
 /* ---------- the model behind the Line ---------- */
 
 export interface LineModel {

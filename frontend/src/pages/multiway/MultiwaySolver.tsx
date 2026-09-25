@@ -29,7 +29,7 @@ import {
   resolveSeatNav,
   useSeatNavigation,
 } from "@/pages/solver/seatNavigation";
-import GroupRangesView from "./GroupRangesView";
+import GroupRangesView, { type HeldCards } from "./GroupRangesView";
 import MultiwayTreeBuilder from "./MultiwayTreeBuilder";
 import PushFoldResultPanel from "./PushFoldResultPanel";
 import SessionSimulator, {
@@ -89,12 +89,15 @@ const MultiwaySolver = () => {
   const [error, setError] = useState<string | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
   /* The line through the open solve's tree (child indices from the root),
-   * and the partner hand its team charts are conditioned on. Page state
-   * rather than the panel's because the table reads the line too. */
+   * and the deal - each seat's known cards - its team charts are read
+   * against. Page state rather than the panel's because the table reads the
+   * line too, and because a group hands its deal over when a member opens. */
   const [path, setPath] = useState<number[]>(ROOT_PATH);
-  const [partnerClass, setPartnerClass] = useState<number | null>(null);
-  /* The partner's known cards for payloads with the exact joint table. */
-  const [partnerCards, setPartnerCards] = useState<string[]>([]);
+  const [held, setHeld] = useState<HeldCards>({});
+  const onHeldChange = useCallback(
+    (seat: number, cards: string[]) => setHeld((cur) => ({ ...cur, [seat]: cards })),
+    []
+  );
   const [jobs, setJobs] = useState<CompareJob[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   /* Jobs whose Stop has been accepted but whose status has not caught up yet.
@@ -255,14 +258,13 @@ const MultiwaySolver = () => {
   );
 
   const loadResult = useCallback(
-    async (id: string, initialPath: number[] = ROOT_PATH) => {
+    async (id: string, initialPath: number[] = ROOT_PATH, initialHeld: HeldCards = {}) => {
       const request = ++loadRequest.current;
       const parsed = await getDump(id);
       if (request !== loadRequest.current) return;
       setSelection({ kind: "job", id, dump: parsed });
       setPath(initialPath);
-      setPartnerClass(null);
-      setPartnerCards([]);
+      setHeld(initialHeld);
       /* Backfill the row's lineage from the artifact it serves, for jobs from
        * before the watcher reported it. The page is the one party that has
        * just read the metadata; the server records only what it lacks, and
@@ -368,14 +370,15 @@ const MultiwaySolver = () => {
     []
   );
 
-  /* Open a result, optionally at a line - the group view opens a plate's
-   * action that way. The previous result stays on screen until the new one
-   * lands; the strip's highlight moves when the selection does. */
+  /* Open a result, optionally at a line and with a deal - the group view
+   * opens a plate's action that way, cards and all. The previous result
+   * stays on screen until the new one lands; the strip's highlight moves
+   * when the selection does. */
   const openJob = useCallback(
-    async (id: string, initialPath?: number[]) => {
+    async (id: string, initialPath?: number[], initialHeld?: HeldCards) => {
       setError(null);
       try {
-        await loadResult(id, initialPath);
+        await loadResult(id, initialPath, initialHeld);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
@@ -387,7 +390,7 @@ const MultiwaySolver = () => {
     setError(null);
     setSelection({ kind: "group", id });
     setPath(ROOT_PATH);
-    setPartnerClass(null);
+    setHeld({});
     setSolvesOpen(false);
     setBuilderOpen(false);
   }, []);
@@ -803,20 +806,23 @@ const MultiwaySolver = () => {
               model={lineModel}
               path={path}
               onPathChange={setPath}
-              partnerClass={partnerClass}
-              onPartnerClassChange={setPartnerClass}
-              partnerCards={partnerCards}
-              onPartnerCardsChange={setPartnerCards}
+              held={held}
+              onHeldChange={onHeldChange}
               className="lg:min-h-0 lg:flex-1"
               onOpenBaseline={solving ? undefined : openBaseline}
             />
           ) : viewingGroupId ? (
             group ? (
               <GroupRangesView
+                /* Keyed by group so its deal and zoom start fresh with a
+                   different group. */
+                key={group.id}
                 group={group}
                 jobsById={jobsById}
                 loaded={groupDumps}
-                onOpenJob={(id, initialPath) => void openJob(id, initialPath)}
+                onOpenJob={(id, initialPath, initialHeld) =>
+                  void openJob(id, initialPath, initialHeld)
+                }
                 className="lg:min-h-0 lg:flex-1"
               />
             ) : (
