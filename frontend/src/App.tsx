@@ -81,6 +81,12 @@ function App() {
       if (!el.value) return; // nothing to highlight
       // Defer so mobile Safari doesn't clear the selection on the trailing tap.
       requestAnimationFrame(() => {
+        // Only while it is still the focused field: select() also FOCUSES
+        // its element, so a deferred select for a field that focus has
+        // already left would steal focus back - and two such selects in one
+        // frame (Tab pressed twice, or a script moving focus on) bounced
+        // focus between two filled inputs forever.
+        if (document.activeElement !== el) return;
         try {
           el.select();
         } catch {

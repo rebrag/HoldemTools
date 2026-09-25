@@ -101,6 +101,9 @@ interface PlateProps {
   /** Stands in for the matrix when the seat has no decision here (it folded
    *  to the big blind): no colour key, no zoom. Keep it stable too. */
   placeholder?: ReactNode;
+  /** A hand class to ring on the matrix - /multiway's "this seat holds
+   *  AsQd". A primitive, so it costs the memo nothing. */
+  selectedHand?: string | null;
   /** Many plates on one screen: the matrix draws on a canvas and the
    *  framer-motion wrappers (zoom scale, fold fade) become plain elements,
    *  so sixteen plates cost a few hundred DOM nodes instead of tens of
@@ -134,6 +137,7 @@ const Plate: React.FC<PlateProps> = ({
   money,
   header,
   placeholder,
+  selectedHand = null,
   performant = false,
 }) => {
   /* Bet labels carry the solve's money; the colour ramp is calibrated in
@@ -225,6 +229,7 @@ const Plate: React.FC<PlateProps> = ({
       isICMSim={isICMSim}
       heightMode={heightMode}
       reachByHand={reachByHand}
+      selectedHand={selectedHand}
       performant={performant}
     />
   );

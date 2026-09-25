@@ -8,7 +8,13 @@ import { compilePolicy, spotSignature, validateRotation } from "@/lib/sessionSim
 import { simulateHands } from "@/lib/sessionSim/simulateHands";
 import { analyzeSessions } from "@/lib/sessionSim/analyzeSessions";
 import type { PoolMeta, PoolStats } from "@/lib/sessionSim/types";
-import { CLASS_NAMES, type DumpNode, type PushFoldDump } from "@/pages/multiway/pushfoldResult";
+import {
+  CLASS_NAMES,
+  teamPartnerOf,
+  type DumpNode,
+  type PushFoldDump,
+} from "@/pages/multiway/pushfoldResult";
+import { exactRowForCards } from "@/pages/multiway/jointCharts";
 import {
   decodeTeamJoint,
   idOfEngineCard,
@@ -214,6 +220,30 @@ export async function main(): Promise<number> {
     const rate = 1 - (2 * pool.showdowns) / pool.results.length;
     assert.ok(Math.abs(rate - pShare) < 0.01, `fold rate ${rate} vs share rate ${pShare}`);
     ok(`exact joint policy plays per orbit: fold rate ${rate.toFixed(3)} vs ${pShare.toFixed(3)} sharing a suit`);
+
+    // The one row behind a fully known deal, as the viewer states it: a
+    // suit-sharing pair folds, a disjoint-suit pair jams, overlapping cards
+    // are no row at all, and a row with no reach says so rather than
+    // printing its frequencies.
+    assert.equal(teamPartnerOf(dump.metadata, 0), raw.nodes["0"].partner);
+    const root = dump.nodes["0"];
+    const jn = joint.nodes["0"];
+    const shared = exactRowForCards(root, joint, jn, [3, 7], [11, 13]); // AsKs vs QsJd
+    assert.ok(shared && shared.reached);
+    assert.equal(shared.freqs.Fold, 1);
+    assert.equal(shared.freqs.ALLIN, 0);
+    assert.equal(shared.evs.Fold, null);
+    const disjoint = exactRowForCards(root, joint, jn, [0, 4], [9, 14]); // AhKh vs QdJc
+    assert.ok(disjoint && disjoint.reached);
+    assert.equal(disjoint.freqs.Fold, 0);
+    assert.equal(disjoint.freqs.ALLIN, 1);
+    assert.equal(exactRowForCards(root, joint, jn, [0, 4], [0, 9]), null);
+    const jc = orbitOf(joint, 0, 4, 9, 14);
+    const savedWeight = jn.weight[jc];
+    jn.weight[jc] = 0;
+    assert.equal(exactRowForCards(root, joint, jn, [0, 4], [9, 14])?.reached, false);
+    jn.weight[jc] = savedWeight;
+    ok("exactRowForCards reads the deal's one row, and knows when it is unreached");
   }
 
   // 1. The class table agrees with the page's names for every pair of cards.

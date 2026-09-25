@@ -143,6 +143,19 @@ export interface PushFoldDump {
   nodes: Record<string, DumpNode>;
 }
 
+/** The other seat of a hand-sharing team, or null when `seat` is not on
+ *  one. The engine supports exactly one two-seat team and derives every
+ *  node's `partner` (team_rollup, team_joint) from the same pairing, so this
+ *  is the partner on every node - and, unlike the node's field, it is known
+ *  for a seat that has no decision yet (the big blind at the root). */
+export const teamPartnerOf = (meta: PushFoldDump["metadata"], seat: number): number | null => {
+  const seats = meta.team?.seats;
+  if (!seats || seats.length !== 2) return null;
+  if (seats[0] === seat) return seats[1];
+  if (seats[1] === seat) return seats[0];
+  return null;
+};
+
 /** A number with thousands separators, or "-" for nothing. Iteration counts
  *  in the tens of millions are unreadable otherwise, which is half of why
  *  "100000000 iters" was ambiguous in the first place. */

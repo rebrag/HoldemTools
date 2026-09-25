@@ -16,36 +16,40 @@ import DecisionMatrix from "@/pages/solver/DecisionMatrix";
 import HandBreakdown from "@/pages/solver/HandBreakdown";
 import Line from "@/pages/solver/Line";
 import { jointNodeFor } from "@/lib/sessionSim/orbits";
+import { classIndexOfCards } from "./cardText";
+import type { HeldCards } from "./GroupRangesView";
+import HoleCardsPicker from "./HoleCardsPicker";
 import {
   comboDetailForCards,
   conditionedGridForCards,
+  exactRowForCards,
   idsOfCodes,
   jointForDump,
 } from "./jointCharts";
-import { lineHandlers, type LineModel } from "./lineModel";
-import PartnerHandPicker from "./PartnerHandPicker";
-import PartnerHandSelect from "./PartnerHandSelect";
+import { actingOrder, lineHandlers, partnerReachLevel, type LineModel } from "./lineModel";
 import {
   actionPct,
+  CLASS_NAMES,
   conditionedGridFor,
   fmtCount,
   gridFor,
   settingsRows,
+  teamPartnerOf,
   type PushFoldDump,
 } from "./pushfoldResult";
 
 const chip =
   "rounded-full border border-slate-700 bg-slate-800/70 px-2 py-0.5 text-[10px] text-slate-300";
 
+const NO_CARDS: string[] = [];
+
 const PushFoldResultPanel = ({
   dump,
   model,
   path,
   onPathChange,
-  partnerClass,
-  onPartnerClassChange,
-  partnerCards,
-  onPartnerCardsChange,
+  held,
+  onHeldChange,
   className = "",
   onOpenBaseline,
 }: {
@@ -54,15 +58,11 @@ const PushFoldResultPanel = ({
   model: LineModel;
   path: number[];
   onPathChange: (path: number[]) => void;
-  /** Conditioned viewer, class form (payloads without the exact joint
-   *  table): the partner hand class the team charts are conditioned on;
-   *  null = the partner-averaged marginal. */
-  partnerClass: number | null;
-  onPartnerClassChange: (partnerClass: number | null) => void;
-  /** Conditioned viewer, exact form: the partner's known cards (0 to 2
-   *  codes). Used when the payload carries `team_joint`. */
-  partnerCards: string[];
-  onPartnerCardsChange: (cards: string[]) => void;
+  /** The deal: each seat's known cards (0 to 2 codes). A team seat's chart
+   *  is conditioned on its partner's cards - exactly when the payload
+   *  carries `team_joint`, by hand class otherwise - and rings its own. */
+  held: HeldCards;
+  onHeldChange: (seat: number, cards: string[]) => void;
   /** The page hands this a definite height. Everything below is sized from
    *  it - see the grid wrapper's comment. */
   className?: string;
@@ -107,12 +107,25 @@ const PushFoldResultPanel = ({
     node && node.kind === "decision" && meta.team && meta.team_rollup
       ? meta.team_rollup[String(node.node_id)]
       : undefined;
+  /* The deal as it bears on the seat on the spot: its own cards ring the
+   * chart, its partner's condition it. Neither applies to a seat on no
+   * team, whose chart is the plain marginal. */
+  const actor = node && node.kind === "decision" ? node.actor : null;
+  const actorPartner = actor != null ? teamPartnerOf(meta, actor) : null;
+  const ownCards = actor != null ? held[actor] ?? NO_CARDS : NO_CARDS;
+  const partnerCards = actorPartner != null ? held[actorPartner] ?? NO_CARDS : NO_CARDS;
+  const ownHand = useMemo(() => {
+    const cls = classIndexOfCards(ownCards);
+    return cls >= 0 ? CLASS_NAMES[cls] : null;
+  }, [ownCards]);
   /* The exact joint rows, when the artifact carries them: conditioning is
-   * then on the partner's CARDS, and the class select gives way to a card
-   * picker plus a per-combo breakdown. */
+   * then on the partner's CARDS, suits included, with a per-combo breakdown
+   * under the chart; older payloads condition on the partner's class, read
+   * off the same two typed cards. */
   const joint = useMemo(() => jointForDump(dump), [dump]);
   const jointNode = node && node.kind === "decision" ? jointNodeFor(joint, node) : null;
   const partnerIds = useMemo(() => idsOfCodes(partnerCards), [partnerCards]);
+  const ownIds = useMemo(() => idsOfCodes(ownCards), [ownCards]);
   const exact = useMemo(
     () =>
       node && node.kind === "decision" && joint && jointNode && partnerIds.length > 0
@@ -120,17 +133,19 @@ const PushFoldResultPanel = ({
         : null,
     [node, joint, jointNode, partnerIds]
   );
+  const partnerClass = classIndexOfCards(partnerCards);
   const grid = useMemo(() => {
     if (!node || node.kind !== "decision") return [];
     if (exact) return exact.cells;
-    if (!jointNode && teamRollup && partnerClass != null) {
+    if (!jointNode && teamRollup && partnerClass >= 0) {
       return conditionedGridFor(node, teamRollup, partnerClass);
     }
     return gridFor(node);
   }, [node, exact, jointNode, teamRollup, partnerClass]);
   /* Per-combo view under the chart once the partner's hand is pinned: the
-   * cell under the pointer (or the pinned one) expands into its combos,
-   * each with its own row, the partner's cards blocking some of them. */
+   * cell under the pointer (or the pinned one, or the seat's own hand)
+   * expands into its combos, each with its own row, the partner's cards
+   * blocking some of them. */
   const [pinnedHand, setPinnedHand] = useState<string | null>(null);
   const [hoveredHand, setHoveredHand] = useState<string | null>(null);
   const comboDetail = useMemo(
@@ -140,22 +155,63 @@ const PushFoldResultPanel = ({
         : null,
     [node, joint, jointNode, partnerIds]
   );
-  const partnerNote = !jointNode
-    ? null
-    : partnerIds.length === 0
-      ? "Partner-averaged chart. Pick the partner's cards to see the conditioned strategy, suits included."
-      : exact?.unreached
-        ? "The partner never reaches this spot holding those cards, so this is the partner-averaged chart."
-        : exact?.rare
-          ? `The partner rarely arrives here holding those cards: only ${Math.round(
-              exact.coverage * 100
-            )}% of your hands have data for it at this node, the rest show the average. Read it loosely.`
-          : partnerIds.length === 1
-          ? "Every partner hand holding that card, reach-weighted."
-          : "Exact: each cell averages its combos the partner's cards leave free. Hover or click a cell to see them one by one below.";
+  /* The one row behind a fully known deal: what this exact hand does
+   * against the partner's exact hand. */
+  const exactRow = useMemo(
+    () =>
+      node && node.kind === "decision" && joint && jointNode && ownIds.length === 2 && partnerIds.length === 2
+        ? exactRowForCards(node, joint, jointNode, [ownIds[0], ownIds[1]], [partnerIds[0], partnerIds[1]])
+        : null,
+    [node, joint, jointNode, ownIds, partnerIds]
+  );
+  const teamSeats = useMemo(
+    () => (meta.team?.seats.length === 2 ? actingOrder(dump).filter((s) => meta.team!.seats.includes(s)) : []),
+    [dump, meta.team]
+  );
+  const anyTeamCards = teamSeats.some((s) => (held[s]?.length ?? 0) > 0);
+  const partnerName = actorPartner != null ? seats[actorPartner] ?? `P${actorPartner}` : "";
+  const actorName = actor != null ? seats[actor] ?? `P${actor}` : null;
+  const legacyLevel = !jointNode && teamRollup && partnerClass >= 0 ? partnerReachLevel(teamRollup, partnerClass) : null;
+  const scale = meta.chip_scale > 0 ? meta.chip_scale : 1;
+  const exactLine =
+    exactRow && exactRow.freqs.ALLIN != null
+      ? `${ownCards.join("")} against ${partnerCards.join("")}: jams ${Math.round(exactRow.freqs.ALLIN * 100)}%` +
+        (exactRow.evs.ALLIN != null ? ` (team EV of jamming ${exactRow.evs.ALLIN >= 0 ? "+" : ""}${(exactRow.evs.ALLIN / scale).toFixed(2)} bb)` : "")
+      : null;
+  const dealNote: { text: string; tone: "info" | "warn" | "muted" } | null =
+    teamSeats.length === 0 || actor == null
+      ? null
+      : actorPartner == null
+        ? anyTeamCards
+          ? { text: `${actorName} is not on the team, so the deal does not change this chart.`, tone: "muted" }
+          : null
+        : jointNode
+          ? partnerIds.length === 0
+            ? { text: `Partner-averaged chart. Type ${partnerName}'s cards to see the conditioned strategy, suits included.`, tone: "muted" }
+            : exact?.unreached
+              ? { text: `${partnerName} never reaches this spot holding those cards, so this is the partner-averaged chart.`, tone: "warn" }
+              : exact?.rare
+                ? { text: `${partnerName} rarely arrives here holding those cards: only ${Math.round(exact.coverage * 100)}% of ${actorName}'s hands have data for it at this node, the rest show the average. Read it loosely.`, tone: "warn" }
+                : exactRow && !exactRow.reached
+                  ? { text: `The pair never reaches this spot holding exactly these hands.`, tone: "warn" }
+                  : exactLine
+                    ? { text: exactLine, tone: "info" }
+                    : partnerIds.length === 1
+                      ? { text: `Every ${partnerName} hand holding that card, reach-weighted.`, tone: "muted" }
+                      : { text: "Exact: each cell averages its combos the partner's cards leave free. Hover or click a cell to see them one by one below.", tone: "muted" }
+          : teamRollup
+            ? partnerClass >= 0
+              ? legacyLevel === "never"
+                ? { text: `${partnerName} never reaches this spot holding that hand - this conditioning never happens, so the chart is untrained noise.`, tone: "warn" }
+                : legacyLevel === "rare"
+                  ? { text: `${partnerName} rarely arrives here with that hand, so this conditioned chart trains on thin data - read it loosely.`, tone: "warn" }
+                  : { text: teamRollup.ev ? "Conditioned on the partner's hand class - the shared-cards strategy itself. Tooltip EVs are the TEAM's (own + partner, in big blinds)." : "Conditioned on the partner's hand class. Frequencies only; this payload predates conditioned EVs.", tone: "muted" }
+              : partnerCards.length === 1
+                ? { text: `This solve conditions by hand class, so type both of ${partnerName}'s cards.`, tone: "muted" }
+                : { text: `Partner-averaged chart. Type ${partnerName}'s cards to see the conditioned strategy.`, tone: "muted" }
+            : null;
   const rows = useMemo(() => settingsRows(meta), [meta]);
   const jamPct = node && node.kind === "decision" ? actionPct(node, "ALLIN") : 0;
-  const actorName = node?.actor != null ? seats[node.actor] ?? `P${node.actor}` : null;
 
   return (
     <section
@@ -337,22 +393,43 @@ const PushFoldResultPanel = ({
                   {jamPct.toFixed(1)}% of combos jam
                 </span>
               </div>
-              {jointNode ? (
-                <PartnerHandPicker
-                  cards={partnerCards}
-                  onChange={onPartnerCardsChange}
-                  partnerLabel={seats[jointNode.partner] ?? `P${jointNode.partner}`}
-                  note={partnerNote}
-                />
-              ) : (
-                teamRollup && (
-                  <PartnerHandSelect
-                    rollup={teamRollup}
-                    partnerLabel={seats[teamRollup.partner] ?? `P${teamRollup.partner}`}
-                    value={partnerClass}
-                    onChange={onPartnerClassChange}
-                  />
-                )
+              {/* The deal: one picker per team seat, in acting order. The
+                  seat on the spot sees its own hand ringed and its chart
+                  conditioned on the partner's cards; the cards are stated
+                  whoever is on the spot, since they are a fact about the
+                  hand rather than about the node. */}
+              {teamSeats.length === 2 && (
+                <div className="flex shrink-0 flex-col gap-1">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                    {teamSeats.map((seat) => {
+                      const other = teamSeats.find((s) => s !== seat)!;
+                      const otherCards = held[other] ?? NO_CARDS;
+                      return (
+                        <HoleCardsPicker
+                          key={seat}
+                          cards={held[seat] ?? NO_CARDS}
+                          onChange={(cards) => onHeldChange(seat, cards)}
+                          label={seats[seat] ?? `P${seat}`}
+                          taken={new Set(otherCards)}
+                          holderOf={() => seats[other] ?? `P${other}`}
+                        />
+                      );
+                    })}
+                  </div>
+                  {dealNote && (
+                    <p
+                      className={`text-[10px] ${
+                        dealNote.tone === "info"
+                          ? "text-emerald-300"
+                          : dealNote.tone === "warn"
+                            ? "text-amber-300"
+                            : "text-slate-500"
+                      }`}
+                    >
+                      {dealNote.text}
+                    </p>
+                  )}
+                </div>
               )}
               {/* DecisionMatrix is w-full aspect-square and its className cannot
                   be overridden through the spread, so the only way to bound it by
@@ -369,7 +446,7 @@ const PushFoldResultPanel = ({
                     gridData={grid}
                     heightMode="full"
                     money={money}
-                    selectedHand={comboDetail ? pinnedHand : null}
+                    selectedHand={(comboDetail ? pinnedHand : null) ?? ownHand}
                     onHandSelect={
                       comboDetail
                         ? (hand) => setPinnedHand((cur) => (cur === hand ? null : hand))
@@ -385,7 +462,7 @@ const PushFoldResultPanel = ({
                    the blocking the exact table exists to show. */
                 <HandBreakdown
                   data={grid}
-                  hand={pinnedHand ?? hoveredHand}
+                  hand={pinnedHand ?? hoveredHand ?? ownHand}
                   board={partnerCards}
                   comboDetail={comboDetail}
                   chipScale={meta.chip_scale > 0 ? meta.chip_scale : 1}

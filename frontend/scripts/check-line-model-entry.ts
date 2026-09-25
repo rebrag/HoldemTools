@@ -6,20 +6,26 @@
 // never imported by the app.
 import assert from "node:assert/strict";
 import { indexLineBySeat } from "@/pages/solver/seatNavigation";
-import { CLASS_NAMES, type DumpNode, type PushFoldDump } from "@/pages/multiway/pushfoldResult";
+import {
+  CLASS_NAMES,
+  teamPartnerOf,
+  type DumpNode,
+  type PushFoldDump,
+} from "@/pages/multiway/pushfoldResult";
 import {
   actingOrder,
   buildLineModel,
   conditionedJsonDataFor,
   fileForSeat,
   jsonDataFor,
+  partnerReachLevel,
   pathFoldingTo,
   pathWithSeatAction,
   seatOfFile,
   tableSeatsFor,
 } from "@/pages/multiway/lineModel";
 import type { HandData } from "@/lib/solver/utils";
-import { formatCardsText, parseCardsText } from "@/pages/multiway/cardText";
+import { classIndexOfCards, formatCardsText, parseCardsText } from "@/pages/multiway/cardText";
 
 /** SB = seat 0, BB = seat 1, BTN = seat 2; button on 2; blinds 1/2; stacks
  *  20 chips at 2 chips per blind. BTN acts first, then SB, then BB. Every
@@ -211,18 +217,72 @@ export async function main(): Promise<number> {
     // Typed cards: forgiving about case, spaces and "10", strict about what
     // can never be a card, a repeat, or a third card; a trailing rank is
     // merely incomplete.
-    assert.deepEqual(parseCardsText("AsQd"), { cards: ["As", "Qd"], error: false, incomplete: false });
+    const clean = { error: false, incomplete: false, conflict: null };
+    assert.deepEqual(parseCardsText("AsQd"), { cards: ["As", "Qd"], ...clean });
     assert.deepEqual(parseCardsText("as qD").cards, ["As", "Qd"]);
     assert.deepEqual(parseCardsText("10h,9h").cards, ["Th", "9h"]);
-    assert.deepEqual(parseCardsText("AsQ"), { cards: ["As"], error: false, incomplete: true });
-    assert.deepEqual(parseCardsText("As"), { cards: ["As"], error: false, incomplete: false });
-    assert.deepEqual(parseCardsText(""), { cards: [], error: false, incomplete: false });
+    assert.deepEqual(parseCardsText("AsQ"), { cards: ["As"], ...clean, incomplete: true });
+    assert.deepEqual(parseCardsText("As"), { cards: ["As"], ...clean });
+    assert.deepEqual(parseCardsText(""), { cards: [], ...clean });
     assert.equal(parseCardsText("AsAs").error, true);
     assert.equal(parseCardsText("AxQd").error, true);
     assert.equal(parseCardsText("AsQdKh").error, true);
     assert.equal(parseCardsText("1s").error, true);
     assert.equal(formatCardsText(["As", "Qd"]), "AsQd");
     ok("typed cards parse the way a person types them");
+
+    // A card another seat holds is an error that names the card; the cards
+    // before it still parse, and nothing else about the text changes.
+    const taken = new Set(["Qd"]);
+    assert.deepEqual(parseCardsText("AsQd", taken), {
+      cards: ["As"],
+      error: true,
+      incomplete: false,
+      conflict: "Qd",
+    });
+    assert.deepEqual(parseCardsText("AsKd", taken), { cards: ["As", "Kd"], ...clean });
+    assert.equal(parseCardsText("AsQd", new Set()).conflict, null);
+    ok("a card held elsewhere in the deal is a named conflict");
+
+    // Two typed cards name their 169-class by the engine's index, which is
+    // also CLASS_NAMES' and HAND_ORDER's; anything short of two cards is -1.
+    assert.equal(classIndexOfCards(["As", "Kd"]), CLASS_NAMES.indexOf("AKo"));
+    assert.equal(classIndexOfCards(["Kd", "As"]), CLASS_NAMES.indexOf("AKo"));
+    assert.equal(classIndexOfCards(["As", "Ks"]), CLASS_NAMES.indexOf("AKs"));
+    assert.equal(classIndexOfCards(["7h", "7d"]), CLASS_NAMES.indexOf("77"));
+    assert.equal(classIndexOfCards(["2c", "Th"]), CLASS_NAMES.indexOf("T2o"));
+    assert.equal(classIndexOfCards(["As"]), -1);
+    assert.equal(classIndexOfCards(["As", "As"]), -1);
+    assert.equal(classIndexOfCards(["As", "Xx"]), -1);
+    assert.equal(classIndexOfCards([]), -1);
+    const byCards = conditionedJsonDataFor(
+      dump,
+      dump.nodes["0"],
+      rollup,
+      classIndexOfCards(["Ah", "Ad"]),
+      2
+    );
+    assert.equal(hands(byCards.Fold).AA[0], 0.25);
+    ok("two typed cards index the class rollup");
+
+    // The partner is read off the team, not the node: the big blind at the
+    // root has no node and still has a partner. A seat on no team has none.
+    assert.equal(teamPartnerOf(dump.metadata, 0), 2);
+    assert.equal(teamPartnerOf(dump.metadata, 2), 0);
+    assert.equal(teamPartnerOf(dump.metadata, 1), null);
+    assert.equal(teamPartnerOf({ ...dump.metadata, team: null }, 0), null);
+    assert.equal(
+      teamPartnerOf({ ...dump.metadata, team: { ...dump.metadata.team!, seats: [0, 1, 2] } }, 0),
+      null
+    );
+    assert.equal(teamPartnerOf(dump.metadata, 2), dump.metadata.team_rollup!["0"].partner);
+    ok("teamPartnerOf is the node's partner, known without a node");
+
+    assert.equal(partnerReachLevel({ partner_reach: [0.001, 0.02, 0.5] }, 0), "never");
+    assert.equal(partnerReachLevel({ partner_reach: [0.001, 0.02, 0.5] }, 1), "rare");
+    assert.equal(partnerReachLevel({ partner_reach: [0.001, 0.02, 0.5] }, 2), null);
+    assert.equal(partnerReachLevel({}, 0), null);
+    ok("partner reach levels: never under 0.5%, rare under 5%");
 
     console.log(`\n${checks} checks passed in ${Date.now() - started} ms.`);
     return 0;
