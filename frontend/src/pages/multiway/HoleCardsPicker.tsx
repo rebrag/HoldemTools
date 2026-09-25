@@ -100,7 +100,7 @@ const CardsInput = ({
   taken: ReadonlySet<string>;
   holderOf?: (card: string) => string | undefined;
   inputKey?: string;
-  inputRef: React.RefObject<HTMLInputElement>;
+  inputRef: React.RefObject<HTMLInputElement | null>;
 }) => {
   const [text, setText] = useState(() => formatCardsText(cards));
   const [error, setError] = useState(false);
