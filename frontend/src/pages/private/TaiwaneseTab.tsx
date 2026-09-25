@@ -358,14 +358,55 @@ const TaiwaneseTab: React.FC = () => {
             {solvedModel === "selfplay" ? "self-play opponents" : "heuristic opponents"}. EV is
             net points per deal.
           </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {result.splits.slice(0, 10).map((s, i) => (
+              <div
+                key={s.top.join("") + s.middle.join("")}
+                className="rounded-lg bg-white/[0.04] p-3 flex items-start justify-between gap-3"
+              >
+                <div>
+                  <p className="text-xs text-emerald-100/50 mb-1.5">#{i + 1}</p>
+                  <SplitRows split={s} cardWidth={30} />
+                </div>
+                <span className="shrink-0 rounded-full bg-emerald-400/15 border border-emerald-400/40 px-2.5 py-1 text-xs font-semibold text-emerald-300">
+                  {fmtEv(s.evPoints)}
+                  <span className="font-normal text-emerald-100/50">{fmtErr(s.evStdErr)}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAll((v) => !v)}
+            className="mt-4 text-sm text-emerald-300 underline decoration-emerald-300/40 hover:text-emerald-200 transition-colors"
+          >
+            {showAll ? "Hide" : "Show"} all {result.splits.length} splits
+          </button>
+          {showAll && (
+            <div className="mt-3 font-mono text-xs text-emerald-100/80 space-y-1 overflow-x-auto">
+              {result.splits.map((s, i) => (
+                <p key={s.top.join("") + s.middle.join("")} className="whitespace-nowrap">
+                  {String(i + 1).padStart(3, " ")}. {s.top.join("")} | {s.middle.join(" ")} |{" "}
+                  {s.bottom.join(" ")} {"->"} {fmtEv(s.evPoints)}
+                </p>
+              ))}
+            </div>
+          )}
+          <p className="mt-4 text-xs text-emerald-100/50">
+            Any card may be set in any row. Each opponent is dealt 7 random cards and{" "}
+            {solvedModel === "selfplay"
+              ? "sets them as the self-play policy below does"
+              : "sets them with a fixed rule of thumb (best Omaha material to the bottom)"}
+            . Points follow the scoring behind the info button.
+          </p>
           {libStats && libStats.length > 0 && (
-            <div className="mt-2">
+            <div className="mt-4 border-t border-white/10 pt-4">
               <p className="font-mono text-xs text-emerald-100/60">
                 Opponent policy: self-play over an opponent pool of{" "}
                 {(solvedLibrary?.entries.length ?? LIBRARY_ENTRIES).toLocaleString("en-US")}{" "}
                 hands, {libRounds} rounds. "Exploitable by" is what a random hand's best split
                 averages against that policy: 0 is a perfect equilibrium, and any positive amount
-                is how hot the EVs below run on average.{" "}
+                is how hot the EVs above run on average.{" "}
                 {finalStats
                   ? "The last row is the policy you solved against."
                   : `The policy you solved against, after round ${libRounds}, was not measured; the rows describe the rounds before it.`}
@@ -416,47 +457,6 @@ const TaiwaneseTab: React.FC = () => {
               )}
             </div>
           )}
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            {result.splits.slice(0, 10).map((s, i) => (
-              <div
-                key={s.top.join("") + s.middle.join("")}
-                className="rounded-lg bg-white/[0.04] p-3 flex items-start justify-between gap-3"
-              >
-                <div>
-                  <p className="text-xs text-emerald-100/50 mb-1.5">#{i + 1}</p>
-                  <SplitRows split={s} cardWidth={30} />
-                </div>
-                <span className="shrink-0 rounded-full bg-emerald-400/15 border border-emerald-400/40 px-2.5 py-1 text-xs font-semibold text-emerald-300">
-                  {fmtEv(s.evPoints)}
-                  <span className="font-normal text-emerald-100/50">{fmtErr(s.evStdErr)}</span>
-                </span>
-              </div>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowAll((v) => !v)}
-            className="mt-4 text-sm text-emerald-300 underline decoration-emerald-300/40 hover:text-emerald-200 transition-colors"
-          >
-            {showAll ? "Hide" : "Show"} all {result.splits.length} splits
-          </button>
-          {showAll && (
-            <div className="mt-3 font-mono text-xs text-emerald-100/80 space-y-1 overflow-x-auto">
-              {result.splits.map((s, i) => (
-                <p key={s.top.join("") + s.middle.join("")} className="whitespace-nowrap">
-                  {String(i + 1).padStart(3, " ")}. {s.top.join("")} | {s.middle.join(" ")} |{" "}
-                  {s.bottom.join(" ")} {"->"} {fmtEv(s.evPoints)}
-                </p>
-              ))}
-            </div>
-          )}
-          <p className="mt-4 text-xs text-emerald-100/50">
-            Any card may be set in any row. Each opponent is dealt 7 random cards and{" "}
-            {solvedModel === "selfplay"
-              ? "sets them as the self-play policy above does"
-              : "sets them with a fixed rule of thumb (best Omaha material to the bottom)"}
-            . Points follow the scoring behind the info button.
-          </p>
         </div>
       )}
 
