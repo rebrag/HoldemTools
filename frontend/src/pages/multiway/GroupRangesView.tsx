@@ -35,8 +35,11 @@
 import React, { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { CardBack } from "@/components/PokerTableSeat";
 import { PokerTableBackdrop } from "@/components/PokerTableSurface";
+import KeyBindButton from "@/components/KeyBindButton";
 import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import useElementSize from "@/hooks/useElementSize";
+import { formatCombo, parseCombo, useKeyBinding, type KeyCombo } from "@/hooks/useKeyBinding";
+import { useLocalStorageState } from "@/hooks/useLocalStorageState";
 import ColorKey from "@/pages/solver/ColorKey";
 import DecisionMatrix from "@/pages/solver/DecisionMatrix";
 import Plate, { type PlateZoomPayload } from "@/pages/solver/Plate";
@@ -115,9 +118,9 @@ const CARD_BORDER = 1;
 /* The caption column beside a fitted card's plates. */
 const CAPTION_W = 132;
 const CAPTION_GAP = 8;
-/* The caption is five short lines; a card cannot be shorter than that, so a
- * row too low for it means the view has to scroll. */
-const CAPTION_MIN_H = 96;
+/* The caption is five short lines and a row of buttons; a card cannot be
+ * shorter than that, so a row too low for it means the view has to scroll. */
+const CAPTION_MIN_H = 108;
 /* The compact Plate: matrix, a 4px gap, the sidebar, and a 1px border each
  * side. The sidebar holds the seat header, the partner select and the key. */
 const SIDEBAR_W = 76;
@@ -201,7 +204,15 @@ const exactMixText = (freqs: Record<string, number>): string => {
 };
 
 const smallBtn =
-  "rounded border border-slate-700 bg-slate-950/50 px-1.5 py-0.5 text-[10px] text-slate-300 transition-colors hover:border-slate-500 hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-40";
+  "min-h-[24px] rounded border border-slate-700 bg-slate-950/50 px-1.5 py-0.5 text-[10px] text-slate-300 transition-colors hover:border-slate-500 hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-40";
+/* The caption's two buttons: tall enough to hit without aiming, and in the
+ * fitted layout they split the caption column between them. */
+const captionBtn =
+  "min-h-[30px] whitespace-nowrap rounded-md border bg-slate-950/50 px-2 py-1 text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-40";
+const resetBtn = `${captionBtn} border-slate-700 text-slate-300 hover:border-slate-500 hover:text-slate-100`;
+const openBtn = `${captionBtn} border-emerald-700/70 font-medium text-emerald-300 hover:bg-emerald-500/10`;
+/** The one key the group view binds, remembered across visits. */
+const CLEAR_CARDS_KEY = "multiway.clearCardsKey";
 
 /* ---------- one seat ---------- */
 
@@ -577,13 +588,13 @@ const GroupSolveRow = ({
       )}
       {status}
       {dump && (
-        <span className="flex flex-wrap items-center gap-1">
+        <span className={fit ? "mt-0.5 flex w-full items-stretch gap-1" : "flex flex-wrap items-center gap-1"}>
           <button
             type="button"
             tabIndex={-1}
             disabled={atRoot}
             onClick={() => setPath([])}
-            className={smallBtn}
+            className={`${resetBtn} ${fit ? "flex-auto" : ""}`}
             title="Back to the start: every seat's chart as if it folded to them"
           >
             Reset line
@@ -593,7 +604,7 @@ const GroupSolveRow = ({
               type="button"
               tabIndex={-1}
               onClick={() => onOpenJob(jobId, path, held)}
-              className="rounded border border-emerald-700/70 bg-slate-950/50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300 transition-colors hover:bg-emerald-500/10"
+              className={`${openBtn} ${fit ? "flex-auto" : ""}`}
               title="Open this solve on its own, at this line"
             >
               Open
@@ -735,6 +746,16 @@ const GroupRangesView = ({
   const anyHeld = Object.values(heldByRow).some((deal) =>
     Object.values(deal).some((c) => c.length > 0)
   );
+  const clearCards = useCallback(() => setHeldByRow({}), []);
+  /* The shortcut for it, chosen from the header and kept across visits.
+   * A plain key stays out of the card inputs (see useKeyBinding), so a
+   * modified combo is the one that clears from inside a field. */
+  const [clearKey, setClearKey] = useLocalStorageState<KeyCombo | null>(
+    CLEAR_CARDS_KEY,
+    null,
+    parseCombo
+  );
+  useKeyBinding(clearKey, clearCards);
   const firstDump = useMemo(() => {
     for (const id of group.jobIds) {
       const l = loaded[id];
@@ -809,17 +830,21 @@ const GroupRangesView = ({
           to them; a colour key plays that action and the other seats react
         </span>
         {spot && <span className="text-[11px] text-slate-300">{spotTitle(spot)}</span>}
-        {anyHeld && (
+        {/* Always in the row, disabled until a card is typed: a button that
+            comes and goes changed the row's height and nudged every plate. */}
+        <span className="ml-auto flex items-center gap-1">
           <button
             type="button"
             tabIndex={-1}
-            onClick={() => setHeldByRow({})}
-            className={`${smallBtn} ml-auto`}
-            title="Forget every card's deal"
+            disabled={!anyHeld}
+            onClick={clearCards}
+            className={smallBtn}
+            title={`Forget every card's deal${clearKey ? ` (${formatCombo(clearKey)})` : ""}`}
           >
             Clear cards
           </button>
-        )}
+          <KeyBindButton combo={clearKey} onChange={setClearKey} action="Clear cards" tabIndex={-1} />
+        </span>
       </div>
       <ResponsiveDrawer
         open={keypadTarget != null}

@@ -329,6 +329,7 @@ const Plate: React.FC<PlateProps> = ({
           flex-direction: column;
           width: 100%;
           height: 100%;
+          gap: 4px;
         }
         /* The header keeps its content height; the colour key takes what is
            left and hugs the bottom. A 50/50 split let a four-bar key overflow
@@ -347,17 +348,19 @@ const Plate: React.FC<PlateProps> = ({
           justify-content: flex-end;
           overflow: visible;
         }
-        /* The key's bars stack, fill the column from the bottom, and SHRINK
-           evenly when the sidebar is shorter than four full bars - they used
-           to keep their height and climb over the header instead. */
+        /* The key's bars stack and SHARE the column's leftover height
+           evenly, so each is a tall click target rather than a 23px strip
+           under a run of empty sidebar; when the sidebar is shorter than the
+           bars need, they shrink evenly instead of climbing over the header. */
         .ck-vertical .ck-bottom .flex {
           flex-direction: column !important;
           flex-wrap: nowrap !important;
           justify-content: flex-end;
           height: 100%;
+          margin-bottom: 0 !important;
         }
         .ck-vertical .ck-bottom .flex > div {
-          flex: 0 1 auto !important;
+          flex: 1 1 0 !important;
           min-height: 0;
           display: flex;
           flex-direction: column;
@@ -365,7 +368,6 @@ const Plate: React.FC<PlateProps> = ({
         .ck-vertical .ck-bottom .flex > div > div {
           flex: 1 1 auto;
           height: auto !important;
-          max-height: 23px;
           min-height: 0;
         }
         .ck-vertical .ck-bottom button {
