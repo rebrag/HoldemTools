@@ -8,6 +8,10 @@
 // combo breakdown under it shows each of those combos on its own - which is
 // where the partner blocking your suits becomes visible.
 //
+// The partner need not be pinned to exact cards: a holding typed as ranks
+// ("AQ", "66") is the set of its combos, and every chart and row here is
+// the reach-weighted average over whatever combos a holding allows.
+//
 // Everything here is in the artifact's chips; callers divide by the chip
 // scale where they want big blinds (the plates do, the panel's tooltip does
 // its own conversion).
@@ -25,7 +29,14 @@ import {
 } from "@/lib/sessionSim/orbits";
 import { idToString } from "@/lib/sessionSim/cards";
 import { decodeTeamJoint } from "@/lib/sessionSim/orbits";
-import { actionLabels, gridFor, type DumpNode, type PushFoldDump } from "./pushfoldResult";
+import { classesOfHolding, formatHolding, type Holding } from "./cardText";
+import {
+  actionLabels,
+  CLASS_NAMES,
+  gridFor,
+  type DumpNode,
+  type PushFoldDump,
+} from "./pushfoldResult";
 
 /** The decoded joint table for a payload, built once: decoding sorts
  *  93,769 keys, and the group view holds several payloads at once. */
@@ -53,11 +64,18 @@ const combosOfClass = (hand: string): [number, number][] => {
   return hit;
 };
 
-/** Every partner combo consistent with the cards given: one when both are
- *  known, the 51 holding that card when one is. */
-const partnerCombos = (cards: number[]): [number, number][] => {
-  if (cards.length >= 2) return [[cards[0], cards[1]]];
-  const c = cards[0];
+/** Every combo a holding allows, as card ids: the one pair two exact cards
+ *  make, the 51 holding a single known card, every combo of the class(es) a
+ *  rank holding names, none for nothing typed. Combos colliding with other
+ *  known cards are left in: `orbitOf` refuses those pairs where they meet. */
+export const combosOfHolding = (h: Holding): [number, number][] => {
+  if (h.kind === "ranks") {
+    return classesOfHolding(h).flatMap((cls) => combosOfClass(CLASS_NAMES[cls]));
+  }
+  const ids = idsOfCodes(h.cards);
+  if (ids.length >= 2) return [[ids[0], ids[1]]];
+  if (ids.length === 0) return [];
+  const c = ids[0];
   const out: [number, number][] = [];
   for (let x = 0; x < 52; x += 1) if (x !== c) out.push([c, x]);
   return out;
@@ -90,9 +108,9 @@ const RARE_MEAN_WEIGHT = 0.02;
 const RARE_COVERAGE = 0.5;
 
 /**
- * The actor's 13x13 chart at `node` given the partner holds `partnerCards`
- * (one or two ids). Cells average their combos' exact rows, weighted by
- * reach; a cell whose combos all collide with the partner's cards, or that
+ * The actor's 13x13 chart at `node` given the partner holds one of
+ * `partners` (see `combosOfHolding`). Cells average their combos' exact
+ * rows over every partner combo, weighted by the pair's reach; a cell whose combos all collide with the partner's cards, or that
  * the solve never reached, shows the node's marginal for that class so the
  * grid never has a hole - and the cell's EVs stay empty to say so.
  */
@@ -100,14 +118,13 @@ export function conditionedGridForCards(
   node: DumpNode,
   joint: TeamJoint,
   jointNode: JointNode,
-  partnerCards: number[]
+  partners: [number, number][]
 ): ConditionedChart {
   const labels = actionLabels(node);
   const marginal = gridFor(node);
-  if (partnerCards.length === 0) {
+  if (partners.length === 0) {
     return { cells: marginal, unreached: false, reach: 1, coverage: 1, rare: false };
   }
-  const partners = partnerCombos(partnerCards);
   const A = labels.length;
   let total = 0;
   let pairs = 0;
@@ -158,9 +175,9 @@ export function conditionedGridForCards(
 }
 
 export interface ExactRow {
-  /** P(action) by label for this exact (own, partner) pair. */
+  /** P(action) by label for this pair of hands. */
   freqs: Record<string, number>;
-  /** Team EV in chips by label, null where the row has none. */
+  /** Team EV in chips by label, null where the rows have none. */
   evs: Record<string, number | null>;
   /** False when the pair never reaches this node: the frequencies are then
    *  untrained and should be reported as "never here", not printed. */
@@ -168,37 +185,89 @@ export interface ExactRow {
 }
 
 /**
- * The one row behind a fully known deal: what the actor does at `node`
- * holding exactly `own` when the partner holds exactly `partner`. Null when
- * the four cards are not distinct or the table has no such orbit.
+ * The row behind two known hands: what the actor does at `node` holding one
+ * of `own` while the partner holds one of `partners` (see
+ * `combosOfHolding`). With one combo a side it is the table's one row; with
+ * more - a hand typed as ranks - it is the average of every dealable pair's
+ * row weighted by that pair's reach, which is the strategy conditioned on
+ * the two hands. Null when no pair can be dealt (overlapping cards, no such
+ * orbit).
  */
-export function exactRowForCards(
+export function rowForCombos(
+  node: DumpNode,
+  joint: TeamJoint,
+  jointNode: JointNode,
+  own: [number, number][],
+  partners: [number, number][]
+): ExactRow | null {
+  const labels = actionLabels(node);
+  const A = labels.length;
+  /* Reach-weighted sums, and plain ones for when nothing is reached. */
+  const fw = new Float64Array(A);
+  const ewSum = new Float64Array(A);
+  const ewW = new Float64Array(A);
+  const fPlain = new Float64Array(A);
+  const ePlain = new Float64Array(A);
+  const ePlainN = new Float64Array(A);
+  let W = 0;
+  let dealt = 0;
+  for (const [o1, o2] of own) {
+    for (const [p1, p2] of partners) {
+      const jc = orbitOf(joint, o1, o2, p1, p2);
+      if (jc < 0) continue;
+      dealt += 1;
+      const w = jointNode.weight[jc] / 65535;
+      W += w;
+      for (let a = 0; a < A; a += 1) {
+        const f = jointFreq(jointNode, jc, a);
+        const e = jointEv(jointNode, jc, a);
+        fw[a] += w * f;
+        fPlain[a] += f;
+        if (e != null) {
+          ewSum[a] += w * e;
+          ewW[a] += w;
+          ePlain[a] += e;
+          ePlainN[a] += 1;
+        }
+      }
+    }
+  }
+  if (dealt === 0) return null;
+  const reached = W > 0;
+  const freqs: Record<string, number> = {};
+  const evs: Record<string, number | null> = {};
+  labels.forEach((label, a) => {
+    /* With no reach anywhere there is nothing to weight by: the plain mean
+     * is reported, and `reached` says it is untrained. */
+    freqs[label] = reached ? fw[a] / W : fPlain[a] / dealt;
+    evs[label] =
+      reached && ewW[a] > 0
+        ? ewSum[a] / ewW[a]
+        : !reached && ePlainN[a] > 0
+          ? ePlain[a] / ePlainN[a]
+          : null;
+  });
+  return { freqs, evs, reached };
+}
+
+/** The one row behind a fully known deal: `rowForCombos` with exactly one
+ *  combo a side. */
+export const exactRowForCards = (
   node: DumpNode,
   joint: TeamJoint,
   jointNode: JointNode,
   own: [number, number],
   partner: [number, number]
-): ExactRow | null {
-  const jc = orbitOf(joint, own[0], own[1], partner[0], partner[1]);
-  if (jc < 0) return null;
-  const labels = actionLabels(node);
-  const freqs: Record<string, number> = {};
-  const evs: Record<string, number | null> = {};
-  labels.forEach((label, a) => {
-    freqs[label] = jointFreq(jointNode, jc, a);
-    evs[label] = jointEv(jointNode, jc, a);
-  });
-  return { freqs, evs, reached: jointNode.weight[jc] > 0 };
-}
+): ExactRow | null => rowForCombos(node, joint, jointNode, [own], [partner]);
 
-/** "SB holds AsQd · BB holds KhKd": the deal in words, seats with no cards
- *  left out, in seat order. */
-export const heldText = (labels: string[], held: Record<number, string[]>): string =>
+/** "SB holds AsQd · BB holds AQ": the deal in words, seats with nothing
+ *  typed left out, in seat order. */
+export const heldText = (labels: string[], held: Record<number, Holding>): string =>
   Object.keys(held)
     .map(Number)
-    .filter((seat) => (held[seat]?.length ?? 0) > 0)
+    .filter((seat) => held[seat] != null && formatHolding(held[seat]) !== "")
     .sort((a, b) => a - b)
-    .map((seat) => `${labels[seat] ?? `P${seat}`} holds ${held[seat].join(" ")}`)
+    .map((seat) => `${labels[seat] ?? `P${seat}`} holds ${formatHolding(held[seat])}`)
     .join(" · ");
 
 /**

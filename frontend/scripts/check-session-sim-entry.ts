@@ -14,9 +14,16 @@ import {
   type DumpNode,
   type PushFoldDump,
 } from "@/pages/multiway/pushfoldResult";
-import { exactRowForCards } from "@/pages/multiway/jointCharts";
+import {
+  combosOfHolding,
+  conditionedGridForCards,
+  exactRowForCards,
+  rowForCombos,
+} from "@/pages/multiway/jointCharts";
+import { HAND_ORDER } from "@/lib/solver/handOrder";
 import {
   decodeTeamJoint,
+  idOfCode,
   idOfEngineCard,
   orbitKey,
   orbitOf,
@@ -244,6 +251,67 @@ export async function main(): Promise<number> {
     assert.equal(exactRowForCards(root, joint, jn, [0, 4], [9, 14])?.reached, false);
     jn.weight[jc] = savedWeight;
     ok("exactRowForCards reads the deal's one row, and knows when it is unreached");
+
+    // Ranks alone: a holding is the set of its combos, and the row is the
+    // reach-weighted mix over every pair of them that can be dealt.
+    const ranks = (hand: string) => combosOfHolding({ kind: "ranks", hand });
+    const cardsOf = (...codes: string[]) => combosOfHolding({ kind: "cards", cards: codes });
+    assert.equal(ranks("AQ").length, 16);
+    assert.equal(ranks("AQs").length, 4);
+    assert.equal(ranks("AQo").length, 12);
+    assert.equal(ranks("66").length, 6);
+    assert.equal(cardsOf("As", "Qd").length, 1);
+    assert.equal(cardsOf("As").length, 51);
+    assert.equal(cardsOf().length, 0);
+    // AA against AA: only the 6 disjoint pairs deal, none shares a suit.
+    const aces = rowForCombos(root, joint, jn, ranks("AA"), ranks("AA"));
+    assert.ok(aces && aces.reached);
+    assert.equal(aces.freqs.ALLIN, 1);
+    // AK against QJ: the mix is the plain mean of the exact rows, every
+    // weight being equal here.
+    let folds = 0;
+    let dealt = 0;
+    for (const o of ranks("AK")) {
+      for (const p of ranks("QJ")) {
+        const row = exactRowForCards(root, joint, jn, o, p);
+        if (!row) continue;
+        dealt += 1;
+        folds += row.freqs.Fold;
+      }
+    }
+    const akqj = rowForCombos(root, joint, jn, ranks("AK"), ranks("QJ"));
+    assert.ok(akqj && akqj.reached);
+    assert.equal(dealt, 256);
+    assert.ok(Math.abs(akqj.freqs.Fold - folds / dealt) < 1e-9);
+    // The chart conditioned on the partner's ranks: its AKo cell is the same
+    // mix restricted to the offsuit combos.
+    let oFolds = 0;
+    let oDealt = 0;
+    for (const o of ranks("AKo")) {
+      for (const p of ranks("QJ")) {
+        const row = exactRowForCards(root, joint, jn, o, p);
+        if (!row) continue;
+        oDealt += 1;
+        oFolds += row.freqs.Fold;
+      }
+    }
+    const byRanks = conditionedGridForCards(root, joint, jn, ranks("QJ"));
+    const akoCell = byRanks.cells[HAND_ORDER.indexOf("AKo")];
+    assert.ok(Math.abs(akoCell.actions.Fold - oFolds / oDealt) < 1e-9);
+    // AKs against QsJs: AsKs shares a suit and folds, the other three jam -
+    // until their (one, suit-symmetric) orbit loses its reach, when only the
+    // reached row speaks.
+    const suited = rowForCombos(root, joint, jn, ranks("AKs"), cardsOf("Qs", "Js"));
+    assert.ok(suited && suited.reached);
+    assert.ok(Math.abs(suited.freqs.Fold - 0.25) < 1e-9);
+    const offJc = orbitOf(joint, idOfCode("Ah"), idOfCode("Kh"), idOfCode("Qs"), idOfCode("Js"));
+    const savedOff = jn.weight[offJc];
+    jn.weight[offJc] = 0;
+    assert.equal(rowForCombos(root, joint, jn, ranks("AKs"), cardsOf("Qs", "Js"))?.freqs.Fold, 1);
+    jn.weight[offJc] = savedOff;
+    // Overlapping holdings deal nothing.
+    assert.equal(rowForCombos(root, joint, jn, cardsOf("As", "Ks"), cardsOf("As", "Qd")), null);
+    ok("rank holdings average their combos' rows by reach");
   }
 
   // 1. The class table agrees with the page's names for every pair of cards.
