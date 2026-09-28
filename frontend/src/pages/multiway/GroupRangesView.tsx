@@ -18,10 +18,12 @@
 // seat's plate - exact cards ("AsQd") or only the ranks ("AQ", "66"), which
 // average over the hand's combos. A team seat's cards ring its own chart
 // and condition its partner's; with both known, the partner's plate states
-// the joint row (the exact one, or the reach-weighted mix of the combos). The big blind gets the input too, decision or not - its cards are
-// what the partner's chart needs. The deals live here rather than in the
-// cards so one Clear empties them all, one keypad drawer serves every
-// plate, and Open can hand a card's deal to the single-solve view.
+// the joint row (the exact one, or the reach-weighted mix of the combos).
+// The big blind gets the input too, decision or not - its cards are what
+// the partner's chart needs. The deals and the lines live here rather than
+// in the cards so one Clear cards empties every deal and puts every line
+// back to the start, one keypad drawer serves every plate, and Open can
+// hand a card's deal and line to the single-solve view.
 //
 // Tab is for those inputs: nothing else in the view takes focus, Tab /
 // Enter / a completed second card move to the next input in reading order
@@ -96,6 +98,8 @@ import type { LoadedDump } from "./useDumps";
 /** The deal of a card with nothing typed yet, shared so props keep their
  *  identity across renders (as EMPTY_HOLDING is for a seat). */
 const NO_HELD: HeldCards = {};
+/** Likewise the line of a card that has taken none: "folds to each seat". */
+const ROOT_PATH: number[] = [];
 
 /** Which card's which seat the shared keypad drawer is editing. */
 interface KeypadTarget {
@@ -331,12 +335,10 @@ const GroupPlate = React.memo(
           scale
         );
         if (chart.unreached) return plain(data, "never here with those - showing the average");
-        if (chart.rare) {
-          return plain(
-            data,
-            `rarely here with those: ${Math.round(chart.coverage * 100)}% of hands have data, rest is average`
-          );
-        }
+        /* With this seat's hand known too, the pair's own row is the answer
+         * and comes first: "rarely here" describes the rest of the chart
+         * (how few of this seat's hands the partner's cards arrive here
+         * with), not the hand typed, which may be one of the few. */
         if (isCompleteHolding(own) && isCompleteHolding(partner)) {
           const row = rowForCombos(node, joint, jointNode, combosOfHolding(own), partners);
           if (row?.reached) {
@@ -346,6 +348,12 @@ const GroupPlate = React.memo(
             const exact = own.kind === "cards" && partner.kind === "cards";
             return plain(data, exact ? "never here with this exact pair" : "never here with these hands");
           }
+        }
+        if (chart.rare) {
+          return plain(
+            data,
+            `rarely here with those: ${Math.round(chart.coverage * 100)}% of hands have data, rest is average`
+          );
         }
         return plain(data);
       }
@@ -472,6 +480,8 @@ const GroupSolveRow = ({
   cols,
   held,
   onHeldChange: onRowHeldChange,
+  path,
+  onPathChange,
   onOpenKeypad: onOpenRowKeypad,
   onOpenJob,
   onZoom,
@@ -491,12 +501,19 @@ const GroupSolveRow = ({
   /** This card's deal, and the group's stable setters keyed by card. */
   held: HeldCards;
   onHeldChange: (rowKey: string, seat: number, holding: Holding) => void;
+  /** This card's line (ROOT_PATH when none is taken), and the group's
+   *  stable setter keyed by card. */
+  path: number[];
+  onPathChange: (rowKey: string, path: number[]) => void;
   onOpenKeypad: (target: KeypadTarget) => void;
   onOpenJob: (id: string, path?: number[], held?: HeldCards) => void;
 }) => {
   const dump = loaded && "dump" in loaded ? loaded.dump : null;
-  const [path, setPath] = useState<number[]>([]);
   /* Bound to this card once, so the plates' memo holds. */
+  const setPath = useCallback(
+    (next: number[]) => onPathChange(rowKey, next.length === 0 ? ROOT_PATH : next),
+    [onPathChange, rowKey]
+  );
   const onHeldChange = useCallback(
     (seat: number, holding: Holding) => onRowHeldChange(rowKey, seat, holding),
     [onRowHeldChange, rowKey]
@@ -508,7 +525,7 @@ const GroupSolveRow = ({
   const model = useMemo(() => (dump ? buildLineModel(dump, path) : null), [dump, path]);
   const handlers = useMemo(
     () => (dump && model ? lineHandlers(dump, path, setPath, model.seatOf) : null),
-    [dump, model, path]
+    [dump, model, path, setPath]
   );
 
   const meta = dump?.metadata;
@@ -611,7 +628,7 @@ const GroupSolveRow = ({
             type="button"
             tabIndex={-1}
             disabled={atRoot}
-            onClick={() => setPath([])}
+            onClick={() => setPath(ROOT_PATH)}
             className={`${resetBtn} ${fit ? "flex-auto" : ""}`}
             title="Back to the start: every seat's chart as if it folded to them"
           >
@@ -751,6 +768,13 @@ const GroupRangesView = ({
       })),
     []
   );
+  /* Every card's line, keyed the same way; a card missing here is at the
+   * root. */
+  const [pathByRow, setPathByRow] = useState<Record<string, number[]>>({});
+  const onPathChange = useCallback(
+    (rowKey: string, path: number[]) => setPathByRow((cur) => ({ ...cur, [rowKey]: path })),
+    []
+  );
   const [keypadTarget, setKeypadTarget] = useState<KeypadTarget | null>(null);
   /* Closing the keypad hands focus back to the input it came from, a tick
    * later: a backdrop click closes on mousedown, whose default action
@@ -761,10 +785,15 @@ const GroupRangesView = ({
       return null;
     });
   }, []);
-  const anyHeld = Object.values(heldByRow).some((deal) =>
-    Object.values(deal).some((h) => !isEmptyHolding(h))
-  );
-  const clearCards = useCallback(() => setHeldByRow({}), []);
+  /* Clear cards starts the whole group over: no deal, every card back on
+   * "folds to each seat". Enabled while either is left to clear. */
+  const anyToClear =
+    Object.values(heldByRow).some((deal) => Object.values(deal).some((h) => !isEmptyHolding(h))) ||
+    Object.values(pathByRow).some((p) => p.length > 0);
+  const clearCards = useCallback(() => {
+    setHeldByRow({});
+    setPathByRow({});
+  }, []);
   /* The shortcut for it, chosen from the header and kept across visits.
    * A plain key stays out of the card inputs (see useKeyBinding), so a
    * modified combo is the one that clears from inside a field. */
@@ -830,6 +859,8 @@ const GroupRangesView = ({
         cols={cols}
         held={heldByRow[rowKey] ?? NO_HELD}
         onHeldChange={onHeldChange}
+        path={pathByRow[rowKey] ?? ROOT_PATH}
+        onPathChange={onPathChange}
         onOpenKeypad={setKeypadTarget}
         onOpenJob={onOpenJob}
         onZoom={setZoom}
@@ -848,16 +879,16 @@ const GroupRangesView = ({
           to them; a colour key plays that action and the other seats react
         </span>
         {spot && <span className="text-[11px] text-slate-300">{spotTitle(spot)}</span>}
-        {/* Always in the row, disabled until a card is typed: a button that
+        {/* Always in the row, disabled until a card is typed or a line taken: a button that
             comes and goes changed the row's height and nudged every plate. */}
         <span className="ml-auto flex items-center gap-1">
           <button
             type="button"
             tabIndex={-1}
-            disabled={!anyHeld}
+            disabled={!anyToClear}
             onClick={clearCards}
             className={smallBtn}
-            title={`Forget every card's deal${clearKey ? ` (${formatCombo(clearKey)})` : ""}`}
+            title={`Forget every card's deal and put every line back to the start${clearKey ? ` (${formatCombo(clearKey)})` : ""}`}
           >
             Clear cards
           </button>
