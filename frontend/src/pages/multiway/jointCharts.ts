@@ -110,9 +110,10 @@ const RARE_COVERAGE = 0.5;
 /**
  * The actor's 13x13 chart at `node` given the partner holds one of
  * `partners` (see `combosOfHolding`). Cells average their combos' exact
- * rows over every partner combo, weighted by the pair's reach; a cell whose combos all collide with the partner's cards, or that
- * the solve never reached, shows the node's marginal for that class so the
- * grid never has a hole - and the cell's EVs stay empty to say so.
+ * rows over every partner combo, weighted by the pair's reach; a cell
+ * whose combos all collide with the partner's cards, or that the solve
+ * never reached, shows the node's marginal for that class so the grid
+ * never has a hole - and the cell's EVs stay empty to say so.
  */
 export function conditionedGridForCards(
   node: DumpNode,

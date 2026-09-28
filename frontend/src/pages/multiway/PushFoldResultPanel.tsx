@@ -209,12 +209,20 @@ const PushFoldResultPanel = ({
             ? { text: `Partner-averaged chart. Type ${partnerName}'s cards (or just the ranks, like AQ) to see the conditioned strategy, suits included.`, tone: "muted" }
             : exact?.unreached
               ? { text: `${partnerName} never reaches this spot holding those cards, so this is the partner-averaged chart.`, tone: "warn" }
-              : exact?.rare
-                ? { text: `${partnerName} rarely arrives here holding those cards: only ${Math.round(exact.coverage * 100)}% of ${actorName}'s hands have data for it at this node, the rest show the average. Read it loosely.`, tone: "warn" }
-                : exactRow && !exactRow.reached
-                  ? { text: exactDeal ? `The pair never reaches this spot holding exactly these hands.` : `The pair never reaches this spot holding these hands.`, tone: "warn" }
-                  : exactLine
-                    ? { text: exactLine, tone: "info" }
+              /* The pair's own row first: "rarely" describes the rest of
+                 the chart, and the hand typed may be one of the few that
+                 do arrive here. */
+              : exactRow && !exactRow.reached
+                ? { text: exactDeal ? `The pair never reaches this spot holding exactly these hands.` : `The pair never reaches this spot holding these hands.`, tone: "warn" }
+                : exactLine
+                  ? {
+                      text: exact?.rare
+                        ? `${exactLine}. Only ${Math.round(exact.coverage * 100)}% of ${actorName}'s hands arrive here with ${partnerName} holding those, so the other cells mostly show the average.`
+                        : exactLine,
+                      tone: "info",
+                    }
+                  : exact?.rare
+                    ? { text: `${partnerName} rarely arrives here holding those cards: only ${Math.round(exact.coverage * 100)}% of ${actorName}'s hands have data for it at this node, the rest show the average. Read it loosely.`, tone: "warn" }
                     : partner.kind === "ranks"
                       ? { text: `Every ${formatHolding(partner)} combo ${partnerName} can hold, reach-weighted.`, tone: "muted" }
                       : partnerIds.length === 1
