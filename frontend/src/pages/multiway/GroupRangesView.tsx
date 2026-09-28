@@ -15,9 +15,10 @@
 // jams.
 //
 // Each card also holds its own deal: each seat's hole cards, typed on that
-// seat's plate. A team seat's cards ring its own chart and condition its
-// partner's; with both known, the partner's plate states the exact joint
-// row. The big blind gets the input too, decision or not - its cards are
+// seat's plate - exact cards ("AsQd") or only the ranks ("AQ", "66"), which
+// average over the hand's combos. A team seat's cards ring its own chart
+// and condition its partner's; with both known, the partner's plate states
+// the joint row (the exact one, or the reach-weighted mix of the combos). The big blind gets the input too, decision or not - its cards are
 // what the partner's chart needs. The deals live here rather than in the
 // cards so one Clear empties them all, one keypad drawer serves every
 // plate, and Open can hand a card's deal to the single-solve view.
@@ -41,7 +42,7 @@ import useElementSize from "@/hooks/useElementSize";
 import { formatCombo, parseCombo, useKeyBinding, type KeyCombo } from "@/hooks/useKeyBinding";
 import { useLocalStorageState } from "@/hooks/useLocalStorageState";
 import ColorKey from "@/pages/solver/ColorKey";
-import DecisionMatrix from "@/pages/solver/DecisionMatrix";
+import DecisionMatrix, { type SelectedHands } from "@/pages/solver/DecisionMatrix";
 import Plate, { type PlateZoomPayload } from "@/pages/solver/Plate";
 import { isOpenable, type CompareJob, type JobSpot } from "./compareJob";
 import {
@@ -59,14 +60,23 @@ import {
   type LineModel,
 } from "./lineModel";
 import { jointNodeFor } from "@/lib/sessionSim/orbits";
-import { classIndexOfCards } from "./cardText";
 import {
+  cardsOfHolding,
+  classesOfHolding,
+  EMPTY_HOLDING,
+  holdingOfCards,
+  isCompleteHolding,
+  isEmptyHolding,
+  type HeldCards,
+  type Holding,
+} from "./cardText";
+import {
+  combosOfHolding,
   conditionedGridForCards,
-  exactRowForCards,
   heldText,
-  idsOfCodes,
   jointForDump,
   jsonDataFromCells,
+  rowForCombos,
 } from "./jointCharts";
 import { focusCardInputByKey } from "./cardInputFocus";
 import HoleCardsPicker, { DENSE_PICKER_HEIGHT_PX, HoleCardsKeypad } from "./HoleCardsPicker";
@@ -83,12 +93,8 @@ import { spotTitle } from "./solveIdentity";
 import { PhaseBadge } from "./SolvesDrawer";
 import type { LoadedDump } from "./useDumps";
 
-/** The deal: each seat's hole cards (0 to 2 codes), keyed by seat index. */
-export type HeldCards = Record<number, string[]>;
-/** The one array every seat without cards shares, so plate props keep
- *  their identity across renders. */
-const NO_CARDS: string[] = [];
-/** Likewise for a card whose deal has nothing typed yet. */
+/** The deal of a card with nothing typed yet, shared so props keep their
+ *  identity across renders (as EMPTY_HOLDING is for a seat). */
 const NO_HELD: HeldCards = {};
 
 /** Which card's which seat the shared keypad drawer is editing. */
@@ -104,7 +110,7 @@ const inputKeyFor = (rowKey: string, seat: number): string => `${rowKey}:${seat}
 type ZoomTarget = PlateZoomPayload & {
   caption: string;
   cardsText: string;
-  selectedHand: string | null;
+  selectedHand: SelectedHands;
 };
 
 /* ---------- geometry ---------- */
@@ -233,8 +239,8 @@ const GroupPlate = React.memo(
     reserveHeader,
     rowKey,
     partnerSeat,
-    ownCards,
-    partnerCards,
+    own,
+    partner,
     taken,
     holderOf,
     onHeldChange,
@@ -260,16 +266,16 @@ const GroupPlate = React.memo(
     reserveHeader: boolean;
     /** The seat this one shares cards with; null for a seat on no team. */
     partnerSeat: number | null;
-    /** This seat's cards and its partner's, from the card's deal. Both
-     *  are NO_CARDS when unset, never a fresh array. */
-    ownCards: string[];
-    partnerCards: string[];
+    /** This seat's holding and its partner's, from the card's deal. Both
+     *  are EMPTY_HOLDING when unset, never a fresh object. */
+    own: Holding;
+    partner: Holding;
     /** Cards every other seat holds, and who holds one - for the input's
      *  collision error. Only for a team seat. */
     taken: ReadonlySet<string> | undefined;
     holderOf: ((card: string) => string | undefined) | undefined;
     /** Stable two-argument setters: this plate binds its own seat. */
-    onHeldChange: (seat: number, cards: string[]) => void;
+    onHeldChange: (seat: number, holding: Holding) => void;
     onOpenKeypad: (seat: number) => void;
     onActionClick: (action: string, file: string) => void;
     /** The card this plate sits in, named for the zoom overlay. */
@@ -284,9 +290,9 @@ const GroupPlate = React.memo(
       [dump, path, seat]
     );
     const rollup = node ? dump.metadata.team_rollup?.[String(node.node_id)] : undefined;
-    /* Exact joint rows where the payload has them: the partner's cards
-     * condition the chart; otherwise the partner's class does, derived from
-     * the same two typed cards. */
+    /* Exact joint rows where the payload has them: the partner's cards (or
+     * every combo of the ranks typed) condition the chart; otherwise the
+     * partner's class does, derived from the same text. */
     const joint = useMemo(() => jointForDump(dump), [dump]);
     const jointNode = node ? jointNodeFor(joint, node) : null;
     const labels = useMemo(() => seatLabelsOf(dump), [dump]);
@@ -296,10 +302,16 @@ const GroupPlate = React.memo(
      * When the partner never reaches this node with the cards typed, the
      * chart shown is the marginal and the line says so, because a chart
      * that silently did not change reads as a broken input. With the whole
-     * pair known, the line is the exact answer instead. */
+     * pair known, the line is the pair's row instead: exact for exact
+     * cards, the reach-weighted mix over the combos for ranks. */
     const { data, selectedHand, note, noteTone } = useMemo(() => {
-      const ownClass = classIndexOfCards(ownCards);
-      const selectedHand = ownClass >= 0 ? CLASS_NAMES[ownClass] : null;
+      const ownClasses = classesOfHolding(own);
+      const selectedHand: SelectedHands =
+        ownClasses.length === 0
+          ? null
+          : ownClasses.length === 1
+            ? CLASS_NAMES[ownClasses[0]]
+            : ownClasses.map((c) => CLASS_NAMES[c]);
       const plain = (data: ReturnType<typeof jsonDataFor>, note: string | null = null) => ({
         data,
         selectedHand,
@@ -307,9 +319,9 @@ const GroupPlate = React.memo(
         noteTone: "warn" as const,
       });
       if (!node) return plain(jsonDataFor(dump, null, seat));
-      const partnerIds = idsOfCodes(partnerCards);
-      if (joint && jointNode && partnerIds.length > 0) {
-        const chart = conditionedGridForCards(node, joint, jointNode, partnerIds);
+      const partners = combosOfHolding(partner);
+      if (joint && jointNode && partners.length > 0) {
+        const chart = conditionedGridForCards(node, joint, jointNode, partners);
         const scale = chipScale(dump);
         const data = jsonDataFromCells(
           ownLabel,
@@ -325,24 +337,29 @@ const GroupPlate = React.memo(
             `rarely here with those: ${Math.round(chart.coverage * 100)}% of hands have data, rest is average`
           );
         }
-        const ownIds = idsOfCodes(ownCards);
-        if (ownIds.length === 2 && partnerIds.length === 2) {
-          const row = exactRowForCards(
-            node,
-            joint,
-            jointNode,
-            [ownIds[0], ownIds[1]],
-            [partnerIds[0], partnerIds[1]]
-          );
+        if (isCompleteHolding(own) && isCompleteHolding(partner)) {
+          const row = rowForCombos(node, joint, jointNode, combosOfHolding(own), partners);
           if (row?.reached) {
             return { data, selectedHand, note: exactMixText(row.freqs), noteTone: "info" as const };
           }
-          if (row) return plain(data, "never here with this exact pair");
+          if (row) {
+            const exact = own.kind === "cards" && partner.kind === "cards";
+            return plain(data, exact ? "never here with this exact pair" : "never here with these hands");
+          }
         }
         return plain(data);
       }
       if (!jointNode && rollup) {
-        const cls = classIndexOfCards(partnerCards);
+        const classes = classesOfHolding(partner);
+        if (partner.kind === "ranks" && classes.length > 1) {
+          /* The class rollup has no per-combo reach to average AQs and AQo
+           * by, so it needs the class. */
+          return plain(
+            jsonDataFor(dump, node, seat),
+            `this solve needs ${partner.hand}s or ${partner.hand}o`
+          );
+        }
+        const cls = classes[0] ?? -1;
         if (cls >= 0) {
           const level = partnerReachLevel(rollup, cls);
           return plain(
@@ -354,15 +371,15 @@ const GroupPlate = React.memo(
                 : null
           );
         }
-        if (partnerCards.length === 1) {
+        if (cardsOfHolding(partner).length === 1) {
           return plain(jsonDataFor(dump, node, seat), "this solve needs both partner cards");
         }
       }
       return plain(jsonDataFor(dump, node, seat));
-    }, [dump, node, joint, jointNode, rollup, ownCards, partnerCards, seat, ownLabel]);
+    }, [dump, node, joint, jointNode, rollup, own, partner, seat, ownLabel]);
 
     const onOwnChange = useCallback(
-      (cards: string[]) => onHeldChange(seat, cards),
+      (holding: Holding) => onHeldChange(seat, holding),
       [onHeldChange, seat]
     );
     const openKeypad = useCallback(() => onOpenKeypad(seat), [onOpenKeypad, seat]);
@@ -377,7 +394,7 @@ const GroupPlate = React.memo(
             dense
             compact={compact}
             label={ownLabel}
-            cards={ownCards}
+            holding={own}
             onChange={onOwnChange}
             taken={taken}
             holderOf={holderOf}
@@ -389,7 +406,7 @@ const GroupPlate = React.memo(
         ) : reserveHeader && !compact ? (
           HEADER_SPACER
         ) : undefined,
-      [partnerSeat, compact, ownLabel, ownCards, onOwnChange, taken, holderOf, note, noteTone, openKeypad, reserveHeader, rowKey, seat]
+      [partnerSeat, compact, ownLabel, own, onOwnChange, taken, holderOf, note, noteTone, openKeypad, reserveHeader, rowKey, seat]
     );
 
     /* A click on the matrix opens it large. The payload carries the grid
@@ -398,9 +415,9 @@ const GroupPlate = React.memo(
     const cardsText = useMemo(
       () =>
         partnerSeat != null
-          ? heldText(labels, { [seat]: ownCards, [partnerSeat]: partnerCards })
+          ? heldText(labels, { [seat]: own, [partnerSeat]: partner })
           : "",
-      [labels, seat, partnerSeat, ownCards, partnerCards]
+      [labels, seat, partnerSeat, own, partner]
     );
     const handleZoom = useCallback(
       (payload: PlateZoomPayload) => onZoom({ ...payload, caption, cardsText, selectedHand }),
@@ -473,7 +490,7 @@ const GroupSolveRow = ({
   cols: number;
   /** This card's deal, and the group's stable setters keyed by card. */
   held: HeldCards;
-  onHeldChange: (rowKey: string, seat: number, cards: string[]) => void;
+  onHeldChange: (rowKey: string, seat: number, holding: Holding) => void;
   onOpenKeypad: (target: KeypadTarget) => void;
   onOpenJob: (id: string, path?: number[], held?: HeldCards) => void;
 }) => {
@@ -481,7 +498,7 @@ const GroupSolveRow = ({
   const [path, setPath] = useState<number[]>([]);
   /* Bound to this card once, so the plates' memo holds. */
   const onHeldChange = useCallback(
-    (seat: number, cards: string[]) => onRowHeldChange(rowKey, seat, cards),
+    (seat: number, holding: Holding) => onRowHeldChange(rowKey, seat, holding),
     [onRowHeldChange, rowKey]
   );
   const onOpenKeypad = useCallback(
@@ -500,14 +517,15 @@ const GroupSolveRow = ({
   const teamName = meta ? teamSeats.map((s) => meta.seats[s] ?? s).join("+") : null;
   const order = useMemo(() => (dump ? actingOrder(dump) : []), [dump]);
   const labels = useMemo(() => (dump ? seatLabelsOf(dump) : []), [dump]);
-  /* What each seat may not type: every other seat's cards. Built once per
-   * deal change rather than per plate render, so the plates' memo holds. */
+  /* What each seat may not type: every other seat's exact cards (ranks
+   * reserve none). Built once per deal change rather than per plate
+   * render, so the plates' memo holds. */
   const takenFor = useMemo(() => {
     const out = new Map<number, ReadonlySet<string>>();
     for (const seat of order) {
       const s = new Set<string>();
       for (const k of Object.keys(held)) {
-        if (Number(k) !== seat) for (const c of held[Number(k)] ?? []) s.add(c);
+        if (Number(k) !== seat) for (const c of cardsOfHolding(held[Number(k)])) s.add(c);
       }
       out.set(seat, s);
     }
@@ -516,7 +534,7 @@ const GroupSolveRow = ({
   const holderOf = useCallback(
     (card: string): string | undefined => {
       for (const k of Object.keys(held)) {
-        if (held[Number(k)]?.includes(card)) return labels[Number(k)] ?? `P${k}`;
+        if (cardsOfHolding(held[Number(k)]).includes(card)) return labels[Number(k)] ?? `P${k}`;
       }
       return undefined;
     },
@@ -628,8 +646,8 @@ const GroupSolveRow = ({
               seat={seat}
               rowKey={rowKey}
               partnerSeat={partnerSeat}
-              ownCards={held[seat] ?? NO_CARDS}
-              partnerCards={partnerSeat != null ? held[partnerSeat] ?? NO_CARDS : NO_CARDS}
+              own={held[seat] ?? EMPTY_HOLDING}
+              partner={partnerSeat != null ? held[partnerSeat] ?? EMPTY_HOLDING : EMPTY_HOLDING}
               taken={partnerSeat != null ? takenFor.get(seat) : undefined}
               holderOf={partnerSeat != null ? holderOf : undefined}
               onHeldChange={onHeldChange}
@@ -726,10 +744,10 @@ const GroupRangesView = ({
    * starts with no cards. */
   const [heldByRow, setHeldByRow] = useState<Record<string, HeldCards>>({});
   const onHeldChange = useCallback(
-    (rowKey: string, seat: number, cards: string[]) =>
+    (rowKey: string, seat: number, holding: Holding) =>
       setHeldByRow((cur) => ({
         ...cur,
-        [rowKey]: { ...(cur[rowKey] ?? NO_HELD), [seat]: cards },
+        [rowKey]: { ...(cur[rowKey] ?? NO_HELD), [seat]: holding },
       })),
     []
   );
@@ -744,7 +762,7 @@ const GroupRangesView = ({
     });
   }, []);
   const anyHeld = Object.values(heldByRow).some((deal) =>
-    Object.values(deal).some((c) => c.length > 0)
+    Object.values(deal).some((h) => !isEmptyHolding(h))
   );
   const clearCards = useCallback(() => setHeldByRow({}), []);
   /* The shortcut for it, chosen from the header and kept across visits.
@@ -778,7 +796,7 @@ const GroupRangesView = ({
     const s = new Set<string>();
     if (!keypadTarget) return s;
     for (const k of Object.keys(keypadHeld)) {
-      if (Number(k) !== keypadTarget.seat) for (const c of keypadHeld[Number(k)] ?? []) s.add(c);
+      if (Number(k) !== keypadTarget.seat) for (const c of cardsOfHolding(keypadHeld[Number(k)])) s.add(c);
     }
     return s;
   }, [keypadHeld, keypadTarget]);
@@ -854,8 +872,10 @@ const GroupRangesView = ({
       >
         {keypadTarget && (
           <HoleCardsKeypad
-            cards={keypadHeld[keypadTarget.seat] ?? NO_CARDS}
-            onChange={(cards) => onHeldChange(keypadTarget.rowKey, keypadTarget.seat, cards)}
+            cards={cardsOfHolding(keypadHeld[keypadTarget.seat] ?? EMPTY_HOLDING)}
+            onChange={(cards) =>
+              onHeldChange(keypadTarget.rowKey, keypadTarget.seat, holdingOfCards(cards))
+            }
             label={labels[keypadTarget.seat] ?? `P${keypadTarget.seat}`}
             taken={keypadTaken}
             onDone={closeKeypad}

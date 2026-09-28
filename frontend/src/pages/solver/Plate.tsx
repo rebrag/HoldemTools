@@ -15,7 +15,7 @@ import React, {
 import { combineDataByHand, HandCellData, JsonData } from "@/lib/solver/utils";
 import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
 import ColorKey from "./ColorKey";
-import DecisionMatrix from "./DecisionMatrix";
+import DecisionMatrix, { type SelectedHands } from "./DecisionMatrix";
 import PlateHeader from "./PlateHeader";
 import { motion } from "framer-motion";
 import { HAND_ORDER } from "@/lib/solver/handOrder";
@@ -101,9 +101,10 @@ interface PlateProps {
   /** Stands in for the matrix when the seat has no decision here (it folded
    *  to the big blind): no colour key, no zoom. Keep it stable too. */
   placeholder?: ReactNode;
-  /** A hand class to ring on the matrix - /multiway's "this seat holds
-   *  AsQd". A primitive, so it costs the memo nothing. */
-  selectedHand?: string | null;
+  /** The hand class(es) to ring on the matrix - /multiway's "this seat
+   *  holds AsQd" (one) or "holds AQ" (AQs and AQo). An array must keep its
+   *  identity across renders, or it costs the memo. */
+  selectedHand?: SelectedHands;
   /** Many plates on one screen: the matrix draws on a canvas and the
    *  framer-motion wrappers (zoom scale, fold fade) become plain elements,
    *  so sixteen plates cost a few hundred DOM nodes instead of tens of

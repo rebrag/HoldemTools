@@ -11,21 +11,31 @@
 // chart are at a keyboard and two cards are four keystrokes; the card slots
 // and keypad stay in the wide form for touch, and the dense form below lg
 // offers a button that opens a keypad the owner supplies. One card narrows
-// the partner's chart to every hand holding it; two pin it. A card another
-// seat already holds is an error that names the holder.
+// the partner's chart to every hand holding it; two pin it. Ranks alone -
+// "AQ", "66", "AQs" - name a hand without its suits, and the charts average
+// over its combos. A card another seat already holds is an error that names
+// the holder.
 //
 // On the page, Tab is for these inputs: every card input carries
 // `data-card-input`, Tab / Shift+Tab / Enter move between them in DOM
-// order with wrap-around, and the second card typed moves on by itself, so
-// a whole group's deals can be typed without touching the mouse (the travel
-// itself is cardInputFocus.ts). Everything else the picker renders is kept
-// out of the tab order.
+// order with wrap-around, and the second exact card typed moves on by
+// itself, so a whole group's deals can be typed without touching the mouse
+// (the travel itself is cardInputFocus.ts). Rank-only text never moves on
+// by itself: "AQ" may still become "AQs". Everything else the picker
+// renders is kept out of the tab order.
 import { useEffect, useRef, useState } from "react";
 import PlayingCard from "@/components/PlayingCard";
 import RankSuitKeypad from "@/components/RankSuitKeypad";
 import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import { focusCardInput } from "./cardInputFocus";
-import { formatCardsText, parseCardsText } from "./cardText";
+import {
+  cardsOfHolding,
+  formatHolding,
+  holdingOfCards,
+  isEmptyHolding,
+  parseHoldingText,
+  type Holding,
+} from "./cardText";
 
 /** The dense form's height with its label line, so a plate without a
  *  picker can reserve the same and keep the matrices in a card level. */
@@ -80,11 +90,11 @@ const Slot = ({
     </button>
   );
 
-/** The typed form of the cards. Local text so a half-typed hand is not
+/** The typed form of the holding. Local text so a half-typed hand is not
  *  fought over; committed on every keystroke that parses, re-synced when the
- *  cards change from outside (a slot removed, cleared, the keypad). */
+ *  holding changes from outside (a slot removed, cleared, the keypad). */
 const CardsInput = ({
-  cards,
+  holding,
   onChange,
   dense,
   label,
@@ -93,8 +103,8 @@ const CardsInput = ({
   inputKey,
   inputRef,
 }: {
-  cards: string[];
-  onChange: (cards: string[]) => void;
+  holding: Holding;
+  onChange: (holding: Holding) => void;
   dense: boolean;
   label: string;
   taken: ReadonlySet<string>;
@@ -102,19 +112,19 @@ const CardsInput = ({
   inputKey?: string;
   inputRef: React.RefObject<HTMLInputElement | null>;
 }) => {
-  const [text, setText] = useState(() => formatCardsText(cards));
+  const [text, setText] = useState(() => formatHolding(holding));
   const [error, setError] = useState(false);
   const [conflict, setConflict] = useState<string | null>(null);
-  /* Set when a keystroke completes the second card: focus moves on once
-   * the commit has come back around as `cards`, not inside the change
-   * handler - moving focus there fires this input's own blur with the
-   * commit still pending, and the two fight over the text. */
+  /* Set when a keystroke completes the second exact card: focus moves on
+   * once the commit has come back around as `holding`, not inside the
+   * change handler - moving focus there fires this input's own blur with
+   * the commit still pending, and the two fight over the text. */
   const advanceRef = useRef(false);
-  const external = formatCardsText(cards);
+  const external = formatHolding(holding);
   useEffect(() => {
     // Only when the outside disagrees with what the text already means, so
     // typing is never interrupted by its own echo.
-    setText((cur) => (parseCardsText(cur).cards.join("") === external ? cur : external));
+    setText((cur) => (formatHolding(parseHoldingText(cur).holding) === external ? cur : external));
     setError(false);
     setConflict(null);
     if (advanceRef.current) {
@@ -125,8 +135,8 @@ const CardsInput = ({
   const problem = conflict
     ? `${conflict} is held by ${holderOf?.(conflict) ?? "another seat"}.`
     : error
-      ? "That is not two cards."
-      : "One card narrows the partner's chart, two pin it. Tab or Enter moves to the next seat.";
+      ? "That is not two cards or a hand like AQ."
+      : "One card narrows the partner's chart, two pin it, ranks alone average the hand's combos. Tab or Enter moves to the next seat.";
   return (
     <input
       ref={inputRef}
@@ -135,12 +145,12 @@ const CardsInput = ({
       onChange={(e) => {
         const next = e.target.value;
         setText(next);
-        const parsed = parseCardsText(next, taken);
+        const parsed = parseHoldingText(next, taken);
         setError(parsed.error);
         setConflict(parsed.conflict);
-        if (!parsed.error && !parsed.incomplete && parsed.cards.join("") !== external) {
-          advanceRef.current = parsed.cards.length === 2;
-          onChange(parsed.cards);
+        if (!parsed.error && !parsed.incomplete && formatHolding(parsed.holding) !== external) {
+          advanceRef.current = cardsOfHolding(parsed.holding).length === 2;
+          onChange(parsed.holding);
         }
       }}
       onKeyDown={(e) => {
@@ -161,7 +171,7 @@ const CardsInput = ({
       enterKeyHint="next"
       maxLength={9}
       aria-label={`${label} holds`}
-      title={`Type ${label}'s cards, e.g. AsQd or Th 9h. ${problem}`}
+      title={`Type ${label}'s cards, e.g. AsQd or Th 9h, or just the ranks, e.g. AQ, AQs or 66. ${problem}`}
       aria-invalid={error || undefined}
       className={`min-w-0 rounded border bg-slate-800/80 font-mono tabular-nums leading-tight text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 ${
         dense ? "w-full px-1.5 py-1 text-[11px]" : "w-20 px-1.5 py-1 text-[11px]"
@@ -246,7 +256,7 @@ export const HoleCardsKeypad = ({
 };
 
 const HoleCardsPicker = ({
-  cards,
+  holding,
   onChange,
   label,
   dense = false,
@@ -258,9 +268,9 @@ const HoleCardsPicker = ({
   onOpenKeypad,
   inputKey,
 }: {
-  /** Zero to two card codes ("Ah"): what this seat holds. */
-  cards: string[];
-  onChange: (cards: string[]) => void;
+  /** What this seat holds: zero to two exact cards, or ranks alone. */
+  holding: Holding;
+  onChange: (holding: Holding) => void;
   /** The seat whose cards these are. */
   label: string;
   /** The plate-sidebar form: a typed input and one note line, fixed height,
@@ -288,7 +298,11 @@ const HoleCardsPicker = ({
 }) => {
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const remove = (code: string) => onChange(cards.filter((c) => c !== code));
+  /* The slots and the keypad deal in exact cards; a rank holding shows as
+   * empty slots, and a card picked replaces it. */
+  const cards = cardsOfHolding(holding);
+  const setCards = (next: string[]) => onChange(holdingOfCards(next));
+  const remove = (code: string) => setCards(cards.filter((c) => c !== code));
   /* A press anywhere on the picker lands the caret in its input - without
    * the default mousedown, which would blur and re-focus the input and
    * re-select its text on every click in the padding. */
@@ -313,7 +327,7 @@ const HoleCardsPicker = ({
         )}
         <div className="flex min-w-0 items-center gap-0.5">
           <CardsInput
-            cards={cards}
+            holding={holding}
             onChange={onChange}
             dense
             label={label}
@@ -366,7 +380,7 @@ const HoleCardsPicker = ({
         {label} holds
       </span>
       <CardsInput
-        cards={cards}
+        holding={holding}
         onChange={onChange}
         dense={false}
         label={label}
@@ -376,11 +390,11 @@ const HoleCardsPicker = ({
         inputRef={inputRef}
       />
       <div className="flex items-center gap-1">{slots}</div>
-      {cards.length > 0 && (
+      {!isEmptyHolding(holding) && (
         <button
           type="button"
           tabIndex={-1}
-          onClick={() => onChange([])}
+          onClick={() => setCards([])}
           className="rounded border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
           title={`Forget ${label}'s cards`}
         >
@@ -400,7 +414,7 @@ const HoleCardsPicker = ({
       >
         <HoleCardsKeypad
           cards={cards}
-          onChange={onChange}
+          onChange={setCards}
           label={label}
           taken={taken}
           onDone={() => setOpen(false)}

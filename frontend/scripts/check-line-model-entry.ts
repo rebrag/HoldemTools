@@ -25,7 +25,16 @@ import {
   tableSeatsFor,
 } from "@/pages/multiway/lineModel";
 import type { HandData } from "@/lib/solver/utils";
-import { classIndexOfCards, formatCardsText, parseCardsText } from "@/pages/multiway/cardText";
+import {
+  classesOfHolding,
+  classIndexOfCards,
+  EMPTY_HOLDING,
+  formatCardsText,
+  formatHolding,
+  isCompleteHolding,
+  parseCardsText,
+  parseHoldingText,
+} from "@/pages/multiway/cardText";
 
 /** SB = seat 0, BB = seat 1, BTN = seat 2; button on 2; blinds 1/2; stacks
  *  20 chips at 2 chips per blind. BTN acts first, then SB, then BB. Every
@@ -264,6 +273,49 @@ export async function main(): Promise<number> {
     );
     assert.equal(hands(byCards.Fold).AA[0], 0.25);
     ok("two typed cards index the class rollup");
+
+    // Ranks alone: a rank in the second character makes it a hand, high
+    // rank first; a suit there keeps it cards, parsed exactly as before.
+    const ranksOf = (text: string) => parseHoldingText(text).holding;
+    assert.deepEqual(ranksOf("66"), { kind: "ranks", hand: "66" });
+    assert.deepEqual(ranksOf("aq"), { kind: "ranks", hand: "AQ" });
+    assert.deepEqual(ranksOf("QA"), { kind: "ranks", hand: "AQ" });
+    assert.deepEqual(ranksOf("AQs"), { kind: "ranks", hand: "AQs" });
+    assert.deepEqual(ranksOf("q a O"), { kind: "ranks", hand: "AQo" });
+    assert.deepEqual(ranksOf("10 9s"), { kind: "ranks", hand: "T9s" });
+    assert.equal(parseHoldingText("66s").error, true);
+    assert.equal(parseHoldingText("AQx").error, true);
+    assert.equal(parseHoldingText("AQsK").error, true);
+    assert.deepEqual(parseHoldingText("A"), {
+      holding: EMPTY_HOLDING,
+      error: false,
+      incomplete: true,
+      conflict: null,
+    });
+    assert.deepEqual(parseHoldingText("AsQ"), {
+      holding: { kind: "cards", cards: ["As"] },
+      error: false,
+      incomplete: true,
+      conflict: null,
+    });
+    assert.deepEqual(ranksOf("AsQd"), { kind: "cards", cards: ["As", "Qd"] });
+    assert.equal(parseHoldingText("AsQd", taken).conflict, "Qd");
+    assert.equal(parseHoldingText("AQ", new Set(["As", "Ad", "Ah"])).error, false);
+    assert.equal(formatHolding({ kind: "ranks", hand: "AQs" }), "AQs");
+    assert.equal(formatHolding(EMPTY_HOLDING), "");
+    assert.deepEqual(classesOfHolding({ kind: "ranks", hand: "AQ" }), [
+      CLASS_NAMES.indexOf("AQs"),
+      CLASS_NAMES.indexOf("AQo"),
+    ]);
+    assert.deepEqual(classesOfHolding({ kind: "ranks", hand: "66" }), [CLASS_NAMES.indexOf("66")]);
+    assert.deepEqual(classesOfHolding({ kind: "ranks", hand: "AQo" }), [CLASS_NAMES.indexOf("AQo")]);
+    assert.deepEqual(classesOfHolding({ kind: "cards", cards: ["As", "Qs"] }), [
+      CLASS_NAMES.indexOf("AQs"),
+    ]);
+    assert.deepEqual(classesOfHolding({ kind: "cards", cards: ["As"] }), []);
+    assert.equal(isCompleteHolding({ kind: "ranks", hand: "AQ" }), true);
+    assert.equal(isCompleteHolding({ kind: "cards", cards: ["As"] }), false);
+    ok("ranks alone name a hand; cards still parse as cards");
 
     // The partner is read off the team, not the node: the big blind at the
     // root has no node and still has a partner. A seat on no team has none.

@@ -37,8 +37,9 @@ interface DecisionMatrixProps extends HTMLAttributes<HTMLDivElement> {
    *  "pct", since its trees have no big blind to calibrate against. */
   sizeUnit?: BetUnit;
   onMatrixClick?: () => void;
-  /** The pinned hand class, ringed in the grid (study view's breakdown). */
-  selectedHand?: string | null;
+  /** The hand class(es) ringed in the grid: the study view's pinned hand,
+   *  or /multiway's seat holding "AQ" (both AQs and AQo). */
+  selectedHand?: SelectedHands;
   /** Fires when a cell is clicked. Supplying it makes cells clickable; without
    *  it the grid is display-only and clicks fall through to onMatrixClick. */
   onHandSelect?: (hand: string) => void;
@@ -56,6 +57,11 @@ interface DecisionMatrixProps extends HTMLAttributes<HTMLDivElement> {
 }
 
 /* ---------- helper: fabricate an “empty” cell ---------- */
+/** One ringed hand class, several, or none. */
+export type SelectedHands = string | readonly string[] | null;
+const isSelected = (sel: SelectedHands | undefined, hand: string): boolean =>
+  sel == null ? false : typeof sel === "string" ? sel === hand : sel.includes(hand);
+
 const BLANK_ACTIONS = ALL_ACTIONS.concat("UNKNOWN").reduce<Record<string, number>>(
   (obj, a) => ({ ...obj, [a]: 0 }),
   {}
@@ -192,7 +198,7 @@ const DecisionMatrix: FC<DecisionMatrixProps> = ({
             heightPct={heightFor(cellData.hand)}
             stripes={displayData?.stripesByHand?.get(cellData.hand) ?? null}
             solidColor={displayData?.solidByHand?.get(cellData.hand) ?? null}
-            selected={selectedHand === cellData.hand}
+            selected={isSelected(selectedHand, cellData.hand)}
             onSelect={onHandSelect ? () => onHandSelect(cellData.hand) : undefined}
             onHover={(evs) => {
               setHoveredEVs(evs);
@@ -245,7 +251,7 @@ const CanvasMatrix: FC<{
   heightFor: (hand: string) => number;
   sizeRef: number;
   sizeUnit: BetUnit;
-  selectedHand: string | null;
+  selectedHand: SelectedHands;
   onHandSelect?: (hand: string) => void;
   onHandHover?: (hand: string) => void;
 }> = ({ cells, width, heightFor, sizeRef, sizeUnit, selectedHand, onHandSelect, onHandHover }) => {
@@ -302,19 +308,17 @@ const CanvasMatrix: FC<{
     ctx.strokeStyle = "rgba(203, 213, 224, 0.22)";
     ctx.lineWidth = Math.max(0.7, dpr * 0.7);
     for (let k = 0; k < 13; k += 1) ctx.strokeRect(k * cw, k * cw, cw, cw);
-    if (selectedHand) {
-      const i = cells.findIndex((c) => c.hand === selectedHand);
-      if (i >= 0) {
-        const col = i % 13;
-        const row = Math.floor(i / 13);
-        ctx.lineWidth = 2 * dpr;
-        ctx.strokeStyle = "rgba(255,255,255,0.95)";
-        ctx.strokeRect(col * cw + dpr, row * cw + dpr, cw - 2 * dpr, cw - 2 * dpr);
-        ctx.lineWidth = dpr;
-        ctx.strokeStyle = "rgba(0,0,0,0.6)";
-        ctx.strokeRect(col * cw + 3 * dpr, row * cw + 3 * dpr, cw - 6 * dpr, cw - 6 * dpr);
-      }
-    }
+    cells.forEach((cell, i) => {
+      if (!isSelected(selectedHand, cell.hand)) return;
+      const col = i % 13;
+      const row = Math.floor(i / 13);
+      ctx.lineWidth = 2 * dpr;
+      ctx.strokeStyle = "rgba(255,255,255,0.95)";
+      ctx.strokeRect(col * cw + dpr, row * cw + dpr, cw - 2 * dpr, cw - 2 * dpr);
+      ctx.lineWidth = dpr;
+      ctx.strokeStyle = "rgba(0,0,0,0.6)";
+      ctx.strokeRect(col * cw + 3 * dpr, row * cw + 3 * dpr, cw - 6 * dpr, cw - 6 * dpr);
+    });
     // Labels only where they can be read.
     if (cw / dpr >= 18) {
       ctx.fillStyle = "#fff";

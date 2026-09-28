@@ -29,7 +29,8 @@ import {
   resolveSeatNav,
   useSeatNavigation,
 } from "@/pages/solver/seatNavigation";
-import GroupRangesView, { type HeldCards } from "./GroupRangesView";
+import type { HeldCards, Holding } from "./cardText";
+import GroupRangesView from "./GroupRangesView";
 import MultiwayTreeBuilder from "./MultiwayTreeBuilder";
 import PushFoldResultPanel from "./PushFoldResultPanel";
 import SessionSimulator, {
@@ -89,13 +90,13 @@ const MultiwaySolver = () => {
   const [error, setError] = useState<string | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
   /* The line through the open solve's tree (child indices from the root),
-   * and the deal - each seat's known cards - its team charts are read
+   * and the deal - each seat's known cards or ranks - its team charts are read
    * against. Page state rather than the panel's because the table reads the
    * line too, and because a group hands its deal over when a member opens. */
   const [path, setPath] = useState<number[]>(ROOT_PATH);
   const [held, setHeld] = useState<HeldCards>({});
   const onHeldChange = useCallback(
-    (seat: number, cards: string[]) => setHeld((cur) => ({ ...cur, [seat]: cards })),
+    (seat: number, holding: Holding) => setHeld((cur) => ({ ...cur, [seat]: holding })),
     []
   );
   const [jobs, setJobs] = useState<CompareJob[]>([]);
