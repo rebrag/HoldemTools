@@ -213,7 +213,10 @@ const SimSelect: React.FC<SimSelectProps> = ({
   );
 
   return (
-    <div className="relative flex h-full flex-col justify-between gap-1 rounded-xl border border-hairline bg-surface/85 p-1.5 shadow-md backdrop-blur-md overflow-visible sm:gap-1.5 sm:p-2">
+    /* Phone padding is p-1 so the two h-9 rows plus their gap come to the
+       line strip's phone card height exactly (see lineCard.ts) and the panel
+       never stretches the strip taller than its cards. */
+    <div className="relative flex h-full flex-col justify-between gap-1 rounded-xl border border-hairline bg-surface/85 p-1 shadow-md backdrop-blur-md overflow-visible sm:gap-1.5 sm:p-2">
       {/* Row 1 (desktop): sim identity + info popover. The phone shows the sim
           in the trigger below instead, and reaches this card via its own info
           button - two lines of chrome is more than a 170px panel can spare. */}

@@ -10,8 +10,19 @@
 // PostflopLine renders preflop cards of its own, so both files have to agree on
 // the preflop width - hence one module rather than two sets of literals.
 
-/** The one card height, both strips. Fits a header plus five option rows. */
-export const LINE_CARD_H = "h-28";
+/** The one card height, both strips. From sm it fits a header plus five
+ *  option rows; a phone gets a shorter card (header plus four rows at the
+ *  tighter phone row padding below), since the strip is the one block of
+ *  chrome between the navbar and the study and every row it takes comes off
+ *  the matrix. Seats with more options scroll inside the card. */
+export const LINE_CARD_H = "h-[5.25rem] sm:h-28";
+
+/** Card padding: the phone trims the vertical half so the shorter card
+ *  still holds four rows. */
+export const LINE_CARD_PAD = "px-1.5 py-0.5 sm:py-1";
+
+/** Option row padding, same idea. */
+export const LINE_OPTION_PAD = "px-1 py-0 sm:py-0.5";
 
 /** Seat cards: "Raise 2.5", "Allin 80". */
 export const LINE_CARD_W_PREFLOP = "w-[5.5rem]";

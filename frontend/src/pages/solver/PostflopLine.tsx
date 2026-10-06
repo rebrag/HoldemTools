@@ -17,6 +17,8 @@ import type { PreflopLineNode } from "./usePreflopLineNodes";
 import { fmtMoneyValue, type MoneyOpts } from "./boardDisplay";
 import {
   LINE_CARD_H,
+  LINE_CARD_PAD,
+  LINE_OPTION_PAD,
   LINE_CARD_W_POSTFLOP,
   LINE_CARD_W_PREFLOP,
   LINE_OPTION_TEXT,
@@ -94,7 +96,7 @@ export interface PostflopLineProps {
  * they show. `clickable` cards take a click anywhere on their body, not just
  * on an option row. */
 const cardClass = (width: string, active = false, clickable = false) =>
-  `flex flex-shrink-0 flex-col rounded-md border px-1.5 py-1 ${width} ${LINE_CARD_H} transition-colors ${
+  `flex flex-shrink-0 flex-col rounded-md border ${LINE_CARD_PAD} ${width} ${LINE_CARD_H} transition-colors ${
     active
       ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_0_2px_rgba(16,185,129,0.35)]"
       : "border-white/15 bg-white/5"
@@ -147,7 +149,7 @@ const OptionRow: React.FC<{
     }}
     disabled={disabled || !onClick}
     title={title}
-    className={`flex flex-shrink-0 items-center gap-1 rounded-sm px-1 py-0.5 text-left transition-colors ${
+    className={`flex flex-shrink-0 items-center gap-1 rounded-sm ${LINE_OPTION_PAD} text-left transition-colors ${
       taken ? "bg-white/15" : ""
     } ${
       onClick && !disabled

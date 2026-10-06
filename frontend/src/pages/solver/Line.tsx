@@ -6,7 +6,9 @@ import type { JsonData } from "@/lib/solver/utils";
 import { canPassAction, indexLineBySeat, resolveSeatNav } from "./seatNavigation";
 import {
   LINE_CARD_H,
+  LINE_CARD_PAD,
   LINE_CARD_W_PREFLOP,
+  LINE_OPTION_PAD,
   LINE_OPTION_TEXT,
   LINE_OPTIONS_COL,
 } from "./lineCard";
@@ -184,7 +186,7 @@ const Line: React.FC<LineProps> = ({
               data-active={isActive ? "true" : undefined}
               onClick={card?.run}
               title={card?.title}
-              className={`flex flex-shrink-0 flex-col rounded-md border px-1.5 py-1 ${LINE_CARD_W_PREFLOP} ${LINE_CARD_H} transition-colors ${
+              className={`flex flex-shrink-0 flex-col rounded-md border ${LINE_CARD_PAD} ${LINE_CARD_W_PREFLOP} ${LINE_CARD_H} transition-colors ${
                 card ? "cursor-pointer hover:bg-white/[0.07]" : ""
               } ${
                 isActive
@@ -227,7 +229,7 @@ const Line: React.FC<LineProps> = ({
                           if (file) onActionClick(action, file);
                         }}
                         disabled={!file}
-                        className={`group flex flex-shrink-0 items-center rounded-sm px-1 py-0.5 text-left transition-colors hover:bg-white/10 disabled:hover:bg-transparent ${
+                        className={`group flex flex-shrink-0 items-center rounded-sm ${LINE_OPTION_PAD} text-left transition-colors hover:bg-white/10 disabled:hover:bg-transparent ${
                           taken ? "bg-white/15" : ""
                         }`}
                         title={`${pos}: ${action}`}
