@@ -28,6 +28,8 @@ import { solutionOpenUrl } from "@/lib/solver/postflopLibrary";
 import { useLocalHandHistories } from "@/hooks/useLocalHandHistories";
 import useHandSolutions from "@/hooks/useHandSolutions";
 import { usePlayers } from "@/hooks/usePlayers";
+import type { Player } from "@/lib/playersApi";
+import PlayerPhotoLightbox from "./players/PlayerPhotoLightbox";
 import useNoOverscroll from "@/hooks/useNoOverscroll";
 import { positionLabelsForSeats } from "./create/positions";
 import { buildTableSeats, potView, TableCenter } from "./create/tableView";
@@ -204,6 +206,11 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [unitMode, setUnitMode] = useState<"bb" | "chips">("chips");
+  /* The player whose photo is enlarged over the table. `photoOpen` is held
+   * apart from the player so the lightbox keeps its content through its exit
+   * animation instead of blanking the moment it closes. */
+  const [photoPlayer, setPhotoPlayer] = useState<Player | null>(null);
+  const [photoOpen, setPhotoOpen] = useState(false);
 
   const last = replay ? replay.frames.length - 1 : 0;
 
@@ -336,6 +343,27 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
       ? playersById.get(s.playerId)
       : undefined
   );
+  // A seat's photo is a tap target only when there is a photo to enlarge: a
+  // linked player without one keeps the initials avatar, inert, so nothing
+  // on the table ever looks tappable with nothing behind it.
+  const tableSeats = buildTableSeats({
+    state: data.state,
+    engine: frame,
+    labels,
+    unitMode,
+    concealSeats,
+    seatExtras,
+    avatarPlayers,
+  }).map((seat, i) => ({ ...seat, avatarInteractive: !!avatarPlayers[i]?.hasPhoto }));
+  const openPhoto = (i: number) => {
+    const p = avatarPlayers[i];
+    if (!p?.hasPhoto) return;
+    // Hold the frame still under the overlay rather than letting the hand
+    // run on behind a face.
+    setPlaying(false);
+    setPhotoPlayer(p);
+    setPhotoOpen(true);
+  };
 
   const tap = reduce ? undefined : { scale: 0.9 };
 
@@ -388,7 +416,7 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
   const pot = potView(frame, unitMode);
 
   return (
-    <div className="mx-auto flex min-h-[calc(100dvh-3rem)] max-w-3xl flex-col overflow-x-clip px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+    <div className="mx-auto flex min-h-[calc(100dvh-3rem)] max-w-5xl flex-col overflow-x-clip px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
       {/* Header — the solution link (when this hand has a solved board) and
           the unit toggle. What used to sit here besides the toggle was the
           hand's first text line as a title (the serializer's "Hand converted by
@@ -425,14 +453,24 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
         </button>
       </div>
 
-      {/* Table — must be a block wrapper with a definite width so PokerTable's
-          aspect-ratio box derives a real height (a flex-centered wrapper
-          collapses it and piles every seat into the center). */}
-      <div className="w-full py-2">
+      {/* Table. The wrapper is a flex COLUMN with a definite width: PokerTable
+          derives its height from its width, so the table keeps that width as
+          a column child (a row-direction flex centre would shrink it and pile
+          every seat into the middle). The column takes whatever height the
+          caption and transport leave, and centres the table in it, so a tall
+          viewport reads as a composed screen rather than a hole above the
+          transport. The table's width is capped by that height too (21rem is
+          the measured chrome around it: nav, header, caption, progress,
+          transport, paddings), so a tall desktop window gets a bigger table
+          instead of a bigger gap; 1.32 is PokerTable's TABLE_ASPECT. */}
+      <div className="flex w-full grow flex-col justify-center py-2">
         <PokerTable
           size={data.state.tableSize}
-          seats={buildTableSeats({ state: data.state, engine: frame, labels, unitMode, concealSeats, seatExtras, avatarPlayers })}
-          maxWidthClassName="max-w-2xl"
+          seats={tableSeats}
+          className="shrink-0"
+          maxWidthClassName="max-w-[clamp(15rem,calc((100dvh-21rem)*1.32),62rem)]"
+          onSeatAvatarClick={openPhoto}
+          seatAvatarLabel={(label) => `View ${label}'s photo`}
           potAmount={pot?.amount}
           potLabel={pot?.label}
           sidePots={pot?.sidePots}
@@ -447,6 +485,12 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
           )}
         />
       </div>
+      {/* Always mounted so its exit animation plays; `open` does the showing. */}
+      <PlayerPhotoLightbox
+        open={photoOpen}
+        player={photoPlayer}
+        onClose={() => setPhotoOpen(false)}
+      />
 
       {/* Caption / winner */}
       <div className="min-h-[2.5rem] px-1 text-center">
@@ -492,8 +536,9 @@ const HandReplay: React.FC<{ user: User | null; shared?: boolean }> = ({
         </div>
       </div>
 
-      {/* Transport controls — pinned to the bottom (mobile thumb-zone) */}
-      <div className="mt-auto flex flex-col gap-2">
+      {/* Transport controls - at the bottom (mobile thumb-zone), since the
+          table column above takes the spare height */}
+      <div className="flex flex-col gap-2">
         {/* Playback speed selector (tap to cycle) */}
         <div className="flex justify-end">
           <button

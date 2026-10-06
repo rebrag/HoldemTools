@@ -1218,12 +1218,15 @@ const CreateHandHistory: React.FC<Props> = ({
   const pot = potView(engine, unitMode);
 
   return (
-    // Full-height flex column (standalone only) so the controls column can be
-    // pushed flush to the bottom with `mt-auto`, the same way the replayer docks
-    // its transport bar into the mobile thumb-zone. Embedded in the bankroll
-    // modal the page has no viewport of its own, so it stays a plain block.
+    // Full-height flex column (standalone only) so the table column can take
+    // the spare height and the controls land flush at the bottom, the same way
+    // the replayer docks its transport bar into the mobile thumb-zone.
+    // Embedded in the bankroll modal the page has no viewport of its own, so
+    // it stays a plain block. The lg cap is the table's own cap (1400px) plus
+    // the 400px controls column and the gaps, so a wide monitor centres the
+    // pair instead of spreading it.
     <div
-      className={`mx-auto flex max-w-6xl flex-col overflow-x-clip px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] ${
+      className={`mx-auto flex max-w-6xl flex-col overflow-x-clip px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] lg:max-w-[1864px] ${
         embedded ? "" : "min-h-[calc(100dvh-3rem)]"
       }`}
     >
@@ -1316,7 +1319,13 @@ const CreateHandHistory: React.FC<Props> = ({
       )}
       <div className="flex flex-1 flex-col gap-4 lg:flex-row lg:items-start lg:gap-8">
       {/* ───────── Table (left column) ───────── */}
-      <div className="w-full lg:flex-1 lg:min-w-0 relative pt-2">
+      {/* Below lg this column takes whatever height the controls leave and
+          centres the table in it, so a tall viewport reads as a composed
+          table-over-controls screen rather than a hole between the two. */}
+      <div className="flex w-full grow flex-col justify-center pt-2 lg:flex-1 lg:min-w-0">
+      {/* The banner is positioned against THIS box, not the column, so it
+          rides the table wherever the column centres it. */}
+      <div className="relative w-full">
       {/* Placement banner overlays the table top so it takes no flow height —
           arming never shifts the layout. The idle "move button" affordance
           lives on the D badge itself. */}
@@ -1344,12 +1353,17 @@ const CreateHandHistory: React.FC<Props> = ({
       <PokerTable
         size={state.tableSize}
         seats={displayedSeats}
-        /* Setup must fit a phone viewport WITH the form below it — cap the
-           table's width by the height left over so nothing scrolls. */
-        className={
+        className="shrink-0"
+        /* Setup must fit a phone viewport WITH the form below it - cap the
+           table's width by the height left over so nothing scrolls. From lg
+           the controls sit beside the table, so the table grows with the
+           viewport height instead (7rem = navbar + paddings), up to 1400px.
+           The 1.32 is PokerTable's TABLE_ASPECT (scene width per height), a
+           literal because Tailwind cannot JIT a class from the TS constant. */
+        maxWidthClassName={
           phase === "setup"
-            ? "mx-auto max-w-[clamp(15rem,calc((100dvh-26rem)*1.4),42rem)] lg:max-w-none"
-            : undefined
+            ? "max-w-[clamp(15rem,calc((100dvh-26rem)*1.32),42rem)] lg:max-w-[min(1400px,calc((100dvh-7rem)*1.32))]"
+            : "max-w-2xl lg:max-w-[min(1400px,calc((100dvh-7rem)*1.32))]"
         }
         onSeatClick={(i) => (placement ? handlePlacementTarget(i) : setEditingSeat(i))}
         /* The photo is its own target: it edits the PERSON (name, notes,
@@ -1373,7 +1387,6 @@ const CreateHandHistory: React.FC<Props> = ({
             : undefined
         }
         dealerBadgeArmed={placement?.kind === "button"}
-        maxWidthClassName="max-w-2xl"
         potAmount={pot?.amount}
         potLabel={pot?.label}
         sidePots={pot?.sidePots}
@@ -1395,14 +1408,15 @@ const CreateHandHistory: React.FC<Props> = ({
         )}
       />
       </div>
+      </div>
 
       {/* ───────── Controls (right column) ───────── */}
-      {/* `mt-auto` docks this to the bottom of the viewport on mobile (setup
-          form and action panel alike); on lg it's a side column again, where an
-          auto top margin would instead push it to the bottom of the row. */}
+      {/* On mobile this lands at the bottom of the viewport (setup form and
+          action panel alike) because the table column above takes the spare
+          height; on lg it is a side column. */}
       <div
         data-testid="hh-controls"
-        className="mt-auto w-full lg:mt-0 lg:w-[400px] lg:flex-shrink-0"
+        className="w-full lg:w-[400px] lg:flex-shrink-0"
       >
       {/* ───────── Action phase ───────── */}
       {phase === "action" && engine && (
@@ -1700,10 +1714,11 @@ const CreateHandHistory: React.FC<Props> = ({
             />
           </label>
 
-          {/* Hidden on phones: the setup (table + this form) must fit one
+          {/* Hidden on short phones: the setup (table + this form) must fit one
               mobile viewport without scrolling, and this hint is the one block
-              that doesn't earn its rows there. */}
-          <p className="mt-3 hidden text-[11px] text-gray-500 sm:block">
+              that doesn't earn its rows there. A tall viewport has the rows to
+              spare, so it shows there even when narrow. */}
+          <p className="mt-3 hidden text-[11px] text-gray-500 sm:block [@media(min-height:900px)]:block">
             Tap each seat to set its name, stack, and hole cards. Mark the dealer
             button, your own seat (hero), or straddles (up to a triple straddle —
             each defaults to double the last). Use the “+ 2nd board” chip

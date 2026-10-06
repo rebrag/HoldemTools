@@ -7,6 +7,15 @@ export interface SeatCoord {
   y: number; // percent of container height
 }
 
+// Seat ring radii, % of the table surface. The surface's rail band is inset
+// 3%..9% (PokerTableSurface), so a 40% x radius puts the side seats' centre
+// at 10% - on the rail, cards overlapping the felt edge, poker-cam style -
+// rather than the old 46%, which centred them at 4% and hung half of every
+// side cluster outside the table's own box (where callers clipped it). The
+// y radius stays: the bet ring and pot band below are tuned against it.
+const SEAT_RX = 40;
+const SEAT_RY = 43;
+
 // Evenly distribute seats around an ellipse, seat 0 at bottom-center (hero).
 // Seat index increases clockwise so action (which follows seat order) visibly
 // moves clockwise, as at a real table.
@@ -14,8 +23,8 @@ export function seatCoords(size: number): SeatCoord[] {
   return Array.from({ length: size }, (_, i) => {
     const angle = (i / size) * 2 * Math.PI;
     return {
-      x: 50 - 46 * Math.sin(angle),
-      y: 50 + 43 * Math.cos(angle),
+      x: 50 - SEAT_RX * Math.sin(angle),
+      y: 50 + SEAT_RY * Math.cos(angle),
     };
   });
 }
@@ -46,8 +55,9 @@ const BET_TOP_MIN_Y = 25;
 // The board's vertical extent (five cards centered on 50%).
 const BET_BOARD_BAND = { top: 42, bottom: 58 } as const;
 // Tower position for board-band side seats: partway from the seat toward the
-// table center, past the board's x extent (~24-76%).
-const BET_STACK_T = 0.3;
+// table center, between the seat plate's inner edge (~21% with the 40% seat
+// ring) and the board's x extent (~28-72%).
+const BET_STACK_T = 0.36;
 
 export interface BetCoord extends SeatCoord {
   /** Stack the chips as a vertical tower (narrow footprint beside the board)
