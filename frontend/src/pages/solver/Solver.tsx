@@ -1697,7 +1697,7 @@ const Solver = ({ user }: SolverProps) => {
               not layout-dependent - it rides in the sim panel above.) */}
           {!singleRangeView && (
             <div className="px-2 sm:px-4 mt-2">
-              <div className="mx-auto flex w-full max-w-[1800px] items-center justify-end gap-1.5">
+              <div className="flex w-full items-center justify-end gap-1.5">
                 <MatrixHeightModePill
                   heightMode={matrixHeightMode}
                   onChange={setMatrixHeightMode}

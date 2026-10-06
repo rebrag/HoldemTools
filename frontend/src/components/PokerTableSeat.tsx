@@ -61,6 +61,10 @@ export interface PokerTableSeatData {
    *  hover cue) while its neighbours stay clickable. Defaults to true, so a
    *  table that passes onSeatClick keeps every seat live unless told otherwise. */
   interactive?: boolean;
+  /** Opt this seat's avatar out of `onSeatAvatarClick` while its neighbours'
+   *  stay live - e.g. the replayer, where the click shows the photo, so a
+   *  player without one must not look tappable. Defaults to true. */
+  avatarInteractive?: boolean;
   /** Tooltip on the seat, e.g. what clicking it will do. */
   title?: string;
   /** extra node rendered below the badges (e.g. an equity readout).
@@ -85,9 +89,12 @@ export interface PokerTableSeatProps {
   onClick?: () => void;
   onDealerBadgeClick?: () => void;
   dealerBadgeArmed?: boolean;
-  /** Makes the player photo its own target, opening that player's editor.
-   *  Omit to keep the avatar decorative (its default everywhere else). */
+  /** Makes the player photo its own target (the recorder opens the player's
+   *  editor, the replayer the photo lightbox). Omit to keep the avatar
+   *  decorative (its default everywhere else). */
   onAvatarClick?: () => void;
+  /** Accessible name + tooltip of that target, e.g. "Edit Josh". */
+  avatarLabel?: string;
   pageVisible: boolean;
 }
 
@@ -101,6 +108,7 @@ const PokerTableSeat: React.FC<PokerTableSeatProps> = ({
   onDealerBadgeClick,
   dealerBadgeArmed,
   onAvatarClick,
+  avatarLabel,
   pageVisible,
 }) => {
   const px = (n: number) => Math.round(n * scale);
@@ -243,8 +251,8 @@ const PokerTableSeat: React.FC<PokerTableSeatProps> = ({
           <span
             role={onAvatarClick ? "button" : undefined}
             tabIndex={onAvatarClick ? 0 : undefined}
-            aria-label={onAvatarClick ? `Edit ${seat.label}` : undefined}
-            title={onAvatarClick ? `Edit ${seat.label}` : undefined}
+            aria-label={onAvatarClick ? avatarLabel ?? `Edit ${seat.label}` : undefined}
+            title={onAvatarClick ? avatarLabel ?? `Edit ${seat.label}` : undefined}
             onClick={
               onAvatarClick
                 ? (e) => {

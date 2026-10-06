@@ -63,11 +63,10 @@ const SingleRangeDesktopView = ({
 
   return (
     <div ref={wrapRef} className="relative w-full px-2 sm:px-4">
-      {/* Same max width as the study top strip so the columns align with it. */}
-      <div
-        ref={container.ref}
-        className="relative z-10 mx-auto w-full max-w-[1800px]"
-      >
+      {/* Same side padding as the study top strip, and no width cap: the
+          columns fill the window edge to edge the way the strip does, so
+          the two line up at every viewport. */}
+      <div ref={container.ref} className="relative z-10 w-full">
         <SingleRangeStudy
           tableSeats={tableSeatsOverride ?? tableSeats}
           seatCount={tableSeatsOverride?.length ?? positions.length}

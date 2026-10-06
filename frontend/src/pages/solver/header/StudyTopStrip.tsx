@@ -19,7 +19,9 @@ const StudyTopStrip = ({
   ...simSelectProps
 }: StudyTopStripProps) => (
   <div className="px-2 sm:px-4 mt-1">
-    <div className="mx-auto w-full max-w-[1800px]">
+    {/* No width cap: the study view below fills the window, and the strip
+        shares its side padding so the two stay flush. */}
+    <div className="w-full">
       <div className="relative z-50 flex items-stretch gap-2 sm:gap-3">
         {/* The phone width is the sim panel's control row measured exactly -
             four 36px buttons, three 4px gaps, 6px padding each side - so every

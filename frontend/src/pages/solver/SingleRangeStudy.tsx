@@ -5,7 +5,7 @@
 // views/SingleRangeDesktopView).
 import React from "react";
 import LoadingOverlay from "@/components/LoadingOverlay";
-import PokerTable, { type PokerTableSeatData } from "@/components/PokerTable";
+import PokerTable, { TABLE_ASPECT, type PokerTableSeatData } from "@/components/PokerTable";
 import { HandCellData } from "@/lib/solver/utils";
 import type { ComboDetail } from "@/lib/solver/comboDetail";
 import type { MatrixHeightMode } from "@/lib/solver/matrixHeight";
@@ -20,7 +20,7 @@ import ActionSummary from "./ActionSummary";
 import HandBreakdown from "./HandBreakdown";
 import SolverTableCenter from "./SolverTableCenter";
 import { useSeatNavigation, type SeatNavTarget } from "./seatNavigation";
-import { boardCardWidth, solverPotLabel, type MoneyDisplay } from "./boardDisplay";
+import { solverPotLabel, type MoneyDisplay } from "./boardDisplay";
 
 interface SingleRangeStudyProps {
   tableSeats: PokerTableSeatData[];
@@ -91,8 +91,20 @@ const GAP = 16;
 const HDR_CTRL_H = 36; // the pills' `compact` h-9
 const HDR_GAP = 8;
 const HDR_H = HDR_CTRL_H + HDR_GAP;
+/* The right column takes every pixel the (height-bound, square) matrix leaves,
+ * so the pair fills the window the way GTO Wizard's does and stays flush with
+ * the top strip; only past RIGHT_MAX (an ultra-wide monitor) is anything left
+ * over to centre. */
 const RIGHT_MIN = 300;
-const RIGHT_MAX = 620;
+const RIGHT_MAX = 1400;
+/* From this width the column stops stacking the table over the action
+ * summary and puts them side by side instead: a 500px table centred in a
+ * 900px column would just move the dead space inside the column. */
+const WIDE_RIGHT = 720;
+const TABLE_MAX_STACKED = 520;
+const TABLE_MAX_WIDE = 560;
+const TABLE_SHARE_WIDE = 0.6; // of the column's width, when side by side
+const TABLE_SHARE_H = 0.55; // of the column's height, either arrangement
 /** This view's own root padding (py-2), which sits inside the measured top. */
 const ROOT_PY = 16;
 
@@ -169,7 +181,54 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
     RIGHT_MAX
   );
 
-  const tableW = Math.min(rightW, 440);
+  const wide = rightW >= WIDE_RIGHT;
+  /* The table also yields to the column's height: past TABLE_SHARE_H of it
+   * the hands grid underneath would be too short to show a class's combos,
+   * which on a 1280x800 laptop is what a 520px table would do. */
+  const colH = matrixSize + HDR_H;
+  const tableHCap = Math.round(colH * TABLE_SHARE_H * TABLE_ASPECT);
+  const tableW = wide
+    ? Math.min(TABLE_MAX_WIDE, Math.round(rightW * TABLE_SHARE_WIDE), tableHCap)
+    : Math.min(rightW, TABLE_MAX_STACKED, tableHCap);
+  /* The table's rendered height: the side-by-side row is sized to it so the
+   * action column beside it stretches to exactly the table's bottom edge. */
+  const tableH = Math.round(tableW / TABLE_ASPECT);
+
+  const table = (
+    <PokerTable
+      moneyToggle={money}
+      size={seatCount}
+      seats={navSeats}
+      onSeatClick={onSeatClick}
+      className="w-full"
+      maxWidthClassName="max-w-none"
+      potAmount={pot != null ? Math.max(0, pot) : undefined}
+      potLabel={pot != null ? solverPotLabel(pot, money) : undefined}
+      center={
+        board && board.length > 0
+          ? ({ cardWidth }) => <SolverTableCenter board={board} cardWidth={cardWidth} />
+          : undefined
+      }
+    />
+  );
+  const stats = (
+    <SeatStatsPanel
+      stats={nodeStats ?? null}
+      actorSeat={actorSeat}
+      names={seatNames}
+      money={money}
+    />
+  );
+  const actions = (vertical: boolean) => (
+    <ActionSummary
+      sizeRef={sizeRef}
+      data={activeGrid}
+      loading={!activeDataLoaded}
+      vertical={vertical}
+      onActionClick={(action) => activeFile && onActionClick(action, activeFile)}
+      playedAction={playedAction}
+    />
+  );
 
   return (
     <div className="relative flex w-full justify-center py-2">
@@ -219,44 +278,35 @@ const SingleRangeStudy: React.FC<SingleRangeStudyProps> = ({
           </div>
         </div>
 
-        {/* Table + action summary + hand breakdown */}
+        {/* Table + seat stats + action summary + hand breakdown. Narrow
+            columns stack all four; wide ones (see WIDE_RIGHT) seat the stats
+            and the vertical action panels beside the table, and the hands
+            grid gets the whole width below. */}
         <div
+          data-testid="study-right-column"
+          data-arrangement={wide ? "wide" : "stacked"}
           className="flex min-w-0 flex-shrink-0 flex-col gap-3"
           style={{ width: rightW, height: matrixSize + HDR_H }}
         >
-          <div className="relative mx-auto w-full flex-shrink-0" style={{ width: tableW }}>
-            <PokerTable
-              moneyToggle={money}
-              size={seatCount}
-              seats={navSeats}
-              onSeatClick={onSeatClick}
-              className="w-full"
-              maxWidthClassName="max-w-none"
-              aspectClassName="aspect-[7/5]"
-              potAmount={pot != null ? Math.max(0, pot) : undefined}
-              potLabel={pot != null ? solverPotLabel(pot, money) : undefined}
-              center={
-                board && board.length > 0 ? (
-                  <SolverTableCenter board={board} cardWidth={boardCardWidth(tableW)} />
-                ) : undefined
-              }
-            />
-          </div>
-
-          <SeatStatsPanel
-            stats={nodeStats ?? null}
-            actorSeat={actorSeat}
-            names={seatNames}
-            money={money}
-          />
-
-          <ActionSummary
-            sizeRef={sizeRef}
-            data={activeGrid}
-            loading={!activeDataLoaded}
-            onActionClick={(action) => activeFile && onActionClick(action, activeFile)}
-            playedAction={playedAction}
-          />
+          {wide ? (
+            <div className="flex flex-shrink-0 items-stretch gap-3" style={{ height: tableH }}>
+              <div className="relative flex-shrink-0" style={{ width: tableW }}>
+                {table}
+              </div>
+              <div className="flex min-w-0 flex-1 flex-col gap-3">
+                {stats}
+                <div className="min-h-0 flex-1">{actions(true)}</div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="relative mx-auto flex-shrink-0" style={{ width: tableW }}>
+                {table}
+              </div>
+              {stats}
+              {actions(false)}
+            </>
+          )}
 
           <HandBreakdown
             sizeRef={sizeRef}

@@ -50,11 +50,3 @@ export const fmtMoney = (amount: number, money?: MoneyOpts | null): string => {
 /** "Pot 12.5 bb" - matches the hand replayer's pot label. */
 export const solverPotLabel = (pot: number, money?: MoneyOpts | null): string =>
   `Pot ${fmtMoney(Math.max(0, pot), money)}`;
-
-/**
- * Board card width for a table of `tableWidth` px. The felt is ~82% of the
- * table box, so five cards plus gaps stay comfortably inside it on a small
- * phone while still reading clearly on the desktop study layout.
- */
-export const boardCardWidth = (tableWidth: number): number =>
-  Math.max(20, Math.min(36, Math.round(tableWidth * 0.082)));

@@ -50,6 +50,95 @@ test("the dock opens on the table and the tabs switch its panel", async ({
   await expect(page.getByTestId("segment-table")).toHaveAttribute("data-active", "true");
 });
 
+/**
+ * The poker table reserves its own gutter for the seat clusters that straddle
+ * its rim, so the dock - whose `overflow-y: auto` would otherwise turn any
+ * sideways overhang into a horizontal scrollbar - never scrolls sideways, and
+ * no seat (UTG / CO on the side rails, SB at the bottom) is ever cut off.
+ */
+test("the table fits the dock: no sideways scroll, every seat inside its box", async ({
+  page,
+}) => {
+  const dock = page.getByTestId("mobile-dock");
+  await expect(page.getByTestId("segment-table")).toHaveAttribute("data-active", "true");
+  await expect(dock.getByRole("button", { name: "Seat UTG", exact: true })).toBeVisible();
+
+  const fit = await dock.evaluate((el) => {
+    const box = el.querySelector('[data-testid="poker-table"]')!.getBoundingClientRect();
+    const seats = Array.from(el.querySelectorAll('button[aria-label^="Seat "]')).map((b) => {
+      const r = b.getBoundingClientRect();
+      return {
+        name: b.getAttribute("aria-label"),
+        inside:
+          r.left >= box.left - 0.5 &&
+          r.right <= box.right + 0.5 &&
+          r.top >= box.top - 0.5 &&
+          r.bottom <= box.bottom + 0.5,
+      };
+    });
+    return { overflowX: el.scrollWidth - el.clientWidth, seats };
+  });
+
+  expect(fit.overflowX, "dock scrolls sideways").toBeLessThanOrEqual(1);
+  expect(fit.seats.length).toBe(8);
+  for (const seat of fit.seats) {
+    expect(seat.inside, `${seat.name} leaves the table box`).toBe(true);
+  }
+});
+
+/**
+ * The dock adapts to the room it gets. A phone shows one panel at a time
+ * behind the tabs (every test above), but a portrait tablet has room beside
+ * the table and a tall narrow window has room below it: there the hands
+ * panel is simply on screen next to / under the table, with no tab to tap,
+ * so none of that width or height is left as empty backdrop.
+ */
+test("a portrait tablet seats the hands panel beside the table, no tabs", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 820, height: 1180 }); // iPad Air portrait
+  const dock = page.getByTestId("mobile-dock");
+  await expect(dock).toHaveAttribute("data-arrangement", "wide");
+  await expect(page.getByTestId("segment-table")).toHaveCount(0);
+  await expect(dock.getByRole("button", { name: "Seat UTG", exact: true })).toBeVisible();
+  await expect(dock.getByText(/hover or click a hand/i)).toBeVisible();
+
+  // Side by side: the hands panel starts to the right of the table.
+  const table = await dock.locator('[data-testid="poker-table"]').boundingBox();
+  const hint = await dock.getByText(/hover or click a hand/i).boundingBox();
+  if (!table || !hint) throw new Error("dock panels not rendered");
+  expect(hint.x).toBeGreaterThan(table.x + table.width);
+
+  const overflow = await page.evaluate(() => {
+    const de = document.documentElement;
+    return { y: de.scrollHeight - de.clientHeight, x: de.scrollWidth - de.clientWidth };
+  });
+  expect(overflow.y).toBeLessThanOrEqual(1);
+  expect(overflow.x).toBeLessThanOrEqual(1);
+});
+
+test("a tall narrow window seats the hands panel under the table, no tabs", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 430, height: 1100 });
+  const dock = page.getByTestId("mobile-dock");
+  await expect(dock).toHaveAttribute("data-arrangement", "tall");
+  await expect(page.getByTestId("segment-table")).toHaveCount(0);
+  await expect(dock.getByText(/hover or click a hand/i)).toBeVisible();
+
+  const table = await dock.locator('[data-testid="poker-table"]').boundingBox();
+  const hint = await dock.getByText(/hover or click a hand/i).boundingBox();
+  if (!table || !hint) throw new Error("dock panels not rendered");
+  expect(hint.y).toBeGreaterThan(table.y + table.height);
+
+  const overflow = await page.evaluate(() => {
+    const de = document.documentElement;
+    return { y: de.scrollHeight - de.clientHeight, x: de.scrollWidth - de.clientWidth };
+  });
+  expect(overflow.y).toBeLessThanOrEqual(1);
+  expect(overflow.x).toBeLessThanOrEqual(1);
+});
+
 test("the matrix and solution controls are both reachable on mobile", async ({
   page,
 }) => {
