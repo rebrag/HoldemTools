@@ -22,6 +22,12 @@ import fixture from "./fixtures/postflop.json" with { type: "json" };
 
 const { stacks, board, index, manifest, flopBundle } = fixture;
 
+/** LINE_CARD_H from pages/solver/lineCard.ts, "h-[5.25rem] sm:h-28", as the
+ *  pixels each project renders: the phone card is shorter because every row
+ *  the strip takes comes off the matrix below it. */
+const LINE_CARD_H_SM = 112;
+const LINE_CARD_H_PHONE = 84;
+
 const seatCard = (page: Page, seat: string) =>
   page.locator(`[data-testid="line-card"][data-seat="${seat}"]`);
 
@@ -58,14 +64,15 @@ test.describe("preflop line", () => {
     await expect(page.getByTitle("Reset to start of hand")).toHaveCount(0);
   });
 
-  test("every seat card is the one fixed size", async ({ page }) => {
-    /* LINE_CARD_W_PREFLOP (5.5rem) x LINE_CARD_H (7rem) from
-       pages/solver/lineCard.ts, pinned as numbers rather than as "they all
-       match": the row stretches its children to a common height whatever they
-       hold, so equality alone never failed. What used to drift is the row's
-       own size - with the seat count, the viewport, and the busiest card's
-       option count - and only a number catches that. Same figure on both
-       projects, which is the point of a fixed card. */
+  test("every seat card is the one fixed size", async ({ page, isMobile }) => {
+    /* LINE_CARD_W_PREFLOP (5.5rem) x LINE_CARD_H from pages/solver/lineCard.ts,
+       pinned as numbers rather than as "they all match": the row stretches its
+       children to a common height whatever they hold, so equality alone never
+       failed. What used to drift is the row's own size - with the seat count,
+       the viewport, and the busiest card's option count - and only a number
+       catches that. The height is the one figure that differs by project;
+       within a project it is still one fixed card. */
+    const expected = `88x${isMobile ? LINE_CARD_H_PHONE : LINE_CARD_H_SM}`;
     const sizes = () =>
       page.locator('[data-testid="line-card"]').evaluateAll((cards) =>
         cards.map((c) => {
@@ -76,7 +83,7 @@ test.describe("preflop line", () => {
 
     const atRoot = await sizes();
     expect(atRoot.length).toBeGreaterThan(1);
-    expect(new Set(atRoot)).toEqual(new Set(["88x112"]));
+    expect(new Set(atRoot)).toEqual(new Set([expected]));
 
     // Walking the tree changes which seats are live and what their cards hold.
     await clickCard(seatCard(page, "BTN"), "BTN");
@@ -184,10 +191,13 @@ test.describe("postflop line", () => {
     await expect(page.getByTitle("Exit postflop view")).toHaveCount(0);
   });
 
-  test("board cards keep the preflop strip's geometry", async ({ page }) => {
+  test("board cards keep the preflop strip's geometry", async ({
+    page,
+    isMobile,
+  }) => {
     /* One strip, three kinds of card: PostflopLine draws the preflop cards,
        the board tiles and the postflop decisions, so all three have to land on
-       LINE_CARD_H - the same 112 the preflop strip is pinned to above. The
+       LINE_CARD_H - the same figure the preflop strip is pinned to above. The
        board tiles are as wide as the cards they show; the preflop cards keep
        LINE_CARD_W_PREFLOP, which is what makes lineCard.ts shared rather than
        duplicated per component. */
@@ -202,7 +212,9 @@ test.describe("postflop line", () => {
         cards.map((c) => Math.round(c.getBoundingClientRect().height))
       );
     expect(heights.length).toBeGreaterThan(1);
-    expect(new Set(heights)).toEqual(new Set([112]));
+    expect(new Set(heights)).toEqual(
+      new Set([isMobile ? LINE_CARD_H_PHONE : LINE_CARD_H_SM])
+    );
 
     const preflopWidths = await preflopCards(page).evaluateAll((cards) =>
       cards.map((c) => Math.round(c.getBoundingClientRect().width))
