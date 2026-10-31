@@ -1,29 +1,21 @@
 // src/components/RangeSelector.tsx
 //
-// Pick or paint a starting range, with a library to save it into.
+// Pick or select a  range, with a library to save it into.
 //
-// Replaces the two ad-hoc "here is a 13x13 grid" overlays the tree-building
-// screens used to carry. The grid is still the centre of it; what is new is
-// everything around the grid, because painting the same BTN open by hand
-// before every solve was the actual complaint.
+// Throughout HoldemTools, there are multiple places/pages that creating a 'range' is
+// useful. A prior issue users had was recreating the same range they've already made
+// in the past. This component allows users to reuse ranges they've already input.
 //
 // Three sources, in the order a user reaches for them:
-//   - Saved: their own ranges, in folders they nest however they like.
+//   - Manually: users click on the hand classes and the weight for that hand class
+//   - Saved: ranges they've saved in the past, they can also create folders/subfolders to 
+//     better organize previous saves.
 //   - Built-in: canned charts from lib/solver/defaultRanges, read-only. These
 //     are what a signed-out user gets, so the picker is never empty.
-//   - Paste: one click. It reads the clipboard and loads whatever range is on
-//     it - Pio shorthand ("TT+,ATs+,KQo") or weighted tokens ("AA:1,AKs:0.5").
-//     A textarea is kept as a FALLBACK only, revealed when the browser refuses
-//     the clipboard read (Firefox has no readText for ordinary pages, and
-//     Chrome needs the tab focused) or when what came back does not parse.
-//     Without that fallback Paste would simply be unusable in Firefox - the
-//     same lesson TreeBuilding's config paste already learned.
+//   - Paste: There's a somewhat standardized text format that many poker applications use for
+//     communicating a poker range, it's best to use the format other platforms are already using.
 //
-// The grid and the library sit side by side from `sm` up. Stacked, the panel
-// was taller than the drawer hosting it; beside each other, the library is
-// visible while painting, which is the point of having one.
-//
-// Saving needs an account; everything else works signed out.
+// Saving needs an account, everything else works signed out.
 import { useMemo, useState } from "react";
 import RangeEditorGrid, {
   RangeMiniGrid,
