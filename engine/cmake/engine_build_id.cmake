@@ -1,17 +1,26 @@
 # Writes engine_build_id.hpp with HT_ENGINE_BUILD: the short id of the LAST
-# COMMIT THAT TOUCHED engine/ (not HEAD: a commit elsewhere in the monorepo
-# does not make a different engine, and two machines built from different
-# HEADs with the same engine sources must stamp the same id), "-dirty" when
-# engine/ has uncommitted changes, "unknown" without git. Run as a build step (cmake -P) rather than at configure time,
-# so a plain `cmake --build` after a commit still stamps the new id. The file
-# is only rewritten when the id changes, so an unchanged id rebuilds nothing.
+# COMMIT THAT TOUCHED WHAT THE BINARY IS BUILT FROM - src/, CMakeLists.txt and
+# cmake/ - suffixed "-dirty" when any of those has uncommitted changes, and
+# "unknown" without git.
+#
+# Not HEAD, and not all of engine/: a commit elsewhere in the monorepo, or to
+# the engine's docs, configs or tests, does not make a different engine, and
+# two machines built from different HEADs with the same sources must stamp
+# the same id. The htsolver worker republishes a board when the id recorded
+# beside it differs from the engine that re-solved it, so an id that moved for
+# no reason would cost real work.
+#
+# Run as a build step (cmake -P) rather than at configure time, so a plain
+# `cmake --build` after a commit still stamps the new id. The file is only
+# rewritten when the id changes, so an unchanged id rebuilds nothing.
 #
 # Inputs: -DENGINE_SOURCE_DIR=<engine/> -DOUT=<header path>
+set(build_inputs src CMakeLists.txt cmake)
 find_package(Git QUIET)
 set(id "unknown")
 if(GIT_FOUND)
   execute_process(
-    COMMAND "${GIT_EXECUTABLE}" -C "${ENGINE_SOURCE_DIR}" log -1 --format=%h --abbrev=12 -- .
+    COMMAND "${GIT_EXECUTABLE}" -C "${ENGINE_SOURCE_DIR}" log -1 --format=%h --abbrev=12 -- ${build_inputs}
     OUTPUT_VARIABLE commit
     RESULT_VARIABLE rc
     OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -19,7 +28,7 @@ if(GIT_FOUND)
   if(rc EQUAL 0 AND NOT commit STREQUAL "")
     set(id "${commit}")
     execute_process(
-      COMMAND "${GIT_EXECUTABLE}" -C "${ENGINE_SOURCE_DIR}" status --porcelain --untracked-files=no -- .
+      COMMAND "${GIT_EXECUTABLE}" -C "${ENGINE_SOURCE_DIR}" status --porcelain --untracked-files=no -- ${build_inputs}
       OUTPUT_VARIABLE dirty
       RESULT_VARIABLE rc2
       OUTPUT_STRIP_TRAILING_WHITESPACE

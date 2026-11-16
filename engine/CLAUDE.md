@@ -85,7 +85,7 @@ It reads **only the node blobs a street emits**, resolving colon ids against the
 `--equity` computes per-hand equity and matchups for both seats from the node's stored reach through the engine's own `RiverEvaluator` (gated against brute force to 1e-6 in `tests/test_dump_streets.cpp`), and writes `eq: null` where there are no matchups, because a zero would read as a real equity.
 And every number is computed serially in a fixed order inside one task, so the output is byte-identical at any `--threads`.
 
-**`metadata.engine_build` is the last commit that touched `engine/`** (`cmake/engine_build_id.cmake`, regenerated on every build), not HEAD: a commit elsewhere in the monorepo does not make a different engine.
+**`metadata.engine_build` is the last commit that touched what the binary is built from** - `src/`, `CMakeLists.txt`, `cmake/` (`cmake/engine_build_id.cmake`, regenerated on every build) - not HEAD and not all of `engine/`: a commit to the docs, the configs or anywhere else in the monorepo does not make a different engine.
 The htsolver worker records it beside every published board and republishes a board's flop and turns when a river is first served by a different build, so no board mixes two builds' output.
 `solver_version` stays a static release string and cannot tell two builds apart.
 

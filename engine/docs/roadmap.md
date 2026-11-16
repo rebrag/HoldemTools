@@ -52,18 +52,20 @@ In progress:
   - **`merge_similar_pct` is not pinned.** No PioViewer output on disk has two sizes close enough to merge, so the implemented rule (drop a size within that percentage of the pot after calling of the next larger kept size) is the best reading, not a verified one. A PioViewer script for pot 100, stack 1000, AllinThreshold 100, merge 12 and river bets `10 12 50 55 150 165` dropped into the fixtures directory settles it; the parity test picks it up automatically.
   - Pio's `CapPerStreet 0` means unlimited where the engine's `max_raises: 0` means none. The frontend always sends PioViewer's own value (4), so the two never meet.
 
-  **Recorded-hand-shaped flop solves, measured 2026-11-16** (9800X3D, 16 threads, 0.2% of pot, the panel's sizes, `configs/bench/hh_*.json`; the worker's end-to-end time adds about 7 s to dump and publish 295 streets):
+  **Recorded-hand-shaped flop solves, measured 2026-11-16** (9800X3D, 0.2% of pot, the panel's sizes, `configs/bench/hh_*.json`, timed by `watcher/deploy/bench.ps1` on an otherwise idle machine; the worker's end-to-end time adds about 7 s to dump and publish 295 streets):
 
-  | spot | decision nodes | hands | iterations | solve | export | peak (whole run) | artifact |
+  | spot | decision nodes | hands | iterations | solve (16 threads) | export | peak (whole run) | artifact |
   |---|---|---|---|---|---|---|---|
-  | small - a real recorded hand's own ranges (11% vs 46%), SPR 7.2 | 312,092 | 530 | 275 | 75-81 s | 12-13 s | 7.8 GB | 3.0 GB |
-  | medium - 40% vs 42%, SPR 12 | 345,068 | 506 | 375 | 334 s | 16 s | 10.9 GB | 4.6 GB |
-  | large - 62% vs 59%, SPR 20 | 359,082 | 739 | 525 | 666 s | 23 s | 17.5 GB | 6.1 GB |
+  | small - a real recorded hand's own ranges (11% vs 46%), SPR 7.2 | 312,092 | 530 | 275 | 69 s | 12 s | 7.8 GB | 3.0 GB |
+  | medium - 40% vs 42%, SPR 12 | 345,068 | 506 | 375 | 282 s | 16 s | 10.9 GB | 4.6 GB |
+  | large - 62% vs 59%, SPR 20 (one run, machine not idle) | 359,082 | 739 | 525 | 666 s | 23 s | 17.5 GB | 6.1 GB |
 
-  Thread scaling on the medium spot is 1.0x / 1.5x / 2.7x / 3.3x / 3.2x at 1 / 2 / 4 / 8 / 16 threads, with identical iterations and exploitability at every count.
-  It flattens at the physical core count, which reads as memory-bound, and is why the worker supports one solve per NUMA node (`HT_SOLVE_SLOTS`, `HT_SLOT_AFFINITY`) rather than assuming more threads per solve help.
-  PioSOLVER's own time on real recorded hands is 28-48 s of solve plus about 9 s of extraction, so **on these trees htsolver is currently two to three times slower than Pio on the same PC, and the whole-run peak is the artifact export, not the solve** (1.3 GB at the end of the small spot's solve loop against 7.8 GB after export).
-  Those are the two things to work on before this path is the default: the export pass holding every decision node's record at once, and time to target on flop trees.
+  **Thread scaling on these trees is nearly flat, and that is the finding.**
+  The small spot solves in 78.6 s at 4 threads, 66.5 s at 8 and 69.2 s at 16, with identical iterations and exploitability at every count; an earlier sweep of the medium spot gave 1.0x / 1.5x / 2.7x / 3.3x / 3.2x at 1 / 2 / 4 / 8 / 16.
+  Two small solves run side by side, each pinned to 8 logical processors, took 83 s apiece: 25% slower each, nearly twice the throughput.
+  One solve is bound by memory, not cores, which is why the worker has solve slots with per-slot affinity (`HT_SOLVE_SLOTS`, `HT_SLOT_AFFINITY`) and why a many-core server should run several solves of 8 to 10 threads rather than one wide one.
+  PioSOLVER's own time on real recorded hands is 28-48 s of solve plus about 9 s of extraction, so **on these trees htsolver is currently about twice as slow as Pio on the same PC, and the whole-run peak is the artifact export, not the solve** (1.3 GB at the end of the small spot's solve loop against 7.8 GB after export).
+  Those are the two things to work on before this path is the default: the export pass holding every decision node's record at once, and time to target on flop trees, where the flat scaling says the lever is memory traffic per iteration rather than more parallelism.
 
 - **M6.7 - multithreaded traversal.** Landed 2026-08-26.
   Sibling subtrees are independent - they write disjoint slices of the flat regret/strategy arrays - so `CfrSolver::traverse_impl` and the best-response walk fork their children onto a shared `ThreadPool` (`src/util/parallel.hpp`) while every cross-child fold-back stays serial and in child order.

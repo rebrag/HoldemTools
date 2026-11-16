@@ -1,0 +1,57 @@
+{
+  // Generates the multistreet dump-streets fixture committed at
+  // watcher/tests/fixtures/tiny_flop_dump/, which pins the contract between
+  // `engine dump-streets` and the watcher's schema-4 adapter
+  // (watcher/ht_bundles.py, watcher/tests/test_ht_real_dump.py) against REAL
+  // engine output rather than hand-written fakes.
+  //
+  // Small on purpose: three hand classes a side and one size a street, with
+  // the Pio-parity tree options on (as every hand-history solve has them) and
+  // stacks shallow enough that an all-in and call happens on the flop, so the
+  // fixture holds an all-in runout as well as ordinary deals.
+  //
+  // Regenerate (from engine/) after any change to the dump-streets output:
+  //   ./build.ps1
+  //   ./build/engine.exe solve configs/fixtures/tiny_flop.json
+  //   ./build/engine.exe dump-streets out/tiny_flop.hta --out-dir ../watcher/tests/fixtures/tiny_flop_dump --equity --threads 1 --seed r:0 --seed r:0:c:c:2c --seed r:0:c:c:2c:c:c:3d
+  // then, from watcher/, rewrite the golden the test compares against:
+  //   python tests/test_ht_real_dump.py --write-golden
+  // streets.json carries the artifact metadata, timings and all; the test
+  // reads only the fields the adapter reads.
+  "schema": 1,
+  "game": "nlhe",
+  "board": "Qh Jh Th",
+  "pot": 100,
+  "chip_scale": 1,
+  "players": [
+    { "seat": "BB",  "stack": 300, "range": "AA,KK,T9s" },
+    { "seat": "BTN", "stack": 300, "range": "QQ,AKs,98s" }
+  ],
+  "bet_sizing": {
+    "flop": {
+      "oop": { "bets": [50], "raises": [10000], "add_allin": true },
+      "ip":  { "bets": [50], "raises": [10000], "add_allin": true },
+      "allin_threshold": 0.6, "max_raises": 4, "add_allin_max_pot_ratio": 2.5, "merge_similar_pct": 12
+    },
+    "turn": {
+      "oop": { "bets": [50], "raises": [10000], "add_allin": true },
+      "ip":  { "bets": [50], "raises": [10000], "add_allin": true },
+      "allin_threshold": 0.6, "max_raises": 4, "add_allin_max_pot_ratio": 2.5, "merge_similar_pct": 12
+    },
+    "river": {
+      "oop": { "bets": [66], "donks": [30], "raises": [10000], "add_allin": true },
+      "ip":  { "bets": [66], "raises": [10000], "add_allin": true },
+      "allin_threshold": 0.6, "max_raises": 4, "add_allin_max_pot_ratio": 2.5, "merge_similar_pct": 12
+    }
+  },
+  "preflop_aggressor": "none",
+  "algorithm": { "update": "dcfr" },
+  "budget": { "iterations": 300, "checkpoint_every": 100 },
+  "threads": 1,
+  "output": {
+    "path": "out/tiny_flop.hta",
+    "strategy_quantize_u8": false,
+    "ev_float32": true,
+    "rollups_169": false
+  }
+}
