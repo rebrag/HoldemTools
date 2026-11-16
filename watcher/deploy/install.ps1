@@ -152,7 +152,9 @@ HT_LOG_DIR=$logDir
 #HT_THREADS=20
 #HT_SLOT_AFFINITY=0-19;20-39
 "@
-    Set-Content -Path $envFile -Value $template -Encoding utf8
+    # No byte-order mark: Windows PowerShell's "-Encoding utf8" writes one,
+    # and python-dotenv would read it as part of the first line.
+    [IO.File]::WriteAllText($envFile, $template + "`r`n", (New-Object Text.UTF8Encoding $false))
     Write-Host "Created watcher\.env with empty secrets. Fill in the three REQUIRED values."
 }
 # Secrets: Administrators and the worker account only.

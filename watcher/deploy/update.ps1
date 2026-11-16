@@ -92,7 +92,7 @@ if ($engineChanged) {
                     "Replace that file with the new build before relying on this update.") -ForegroundColor Yellow
     } else {
         & (Join-Path $engineDir "build.ps1")
-        if ($LASTEXITCODE -ne 0) { Fail "engine/build.ps1 failed; the worker is stopped. Fix the build, then run this script again with -NoPull." }
+        if ($LASTEXITCODE -ne 0) { Fail "engine/build.ps1 failed; the worker is stopped. Fix the build, then run this script again with -NoPull -ForceEngineBuild." }
         & $builtHere version
     }
 }

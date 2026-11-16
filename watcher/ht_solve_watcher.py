@@ -184,8 +184,10 @@ class Settings:
 
     def engine_max_seconds(self) -> float:
         """The engine's own time budget: the kill ceiling minus a margin to
-        run the EV pass and write the artifact, so a long solve is truncated
-        and published rather than killed and lost."""
+        run the EV pass and write the artifact. A solve that runs out of time
+        then ends cleanly, with metadata saying how far it got, and
+        require_converged turns that into a readable failure; a kill would
+        leave only "timed out"."""
         margin = min(300.0, 0.2 * self.solve_timeout_secs)
         return max(60.0, self.solve_timeout_secs - margin)
 

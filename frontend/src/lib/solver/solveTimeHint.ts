@@ -14,8 +14,8 @@ import type { SolverKind } from "./uploadGameTree";
  * pio: watcher/watcher.out.log on recorded hand-history spots, 28-48 s of
  * solve plus about 9 s of extraction.
  * htsolver: engine/configs/bench/hh_*.json on a 9800X3D at 16 threads to the
- * same 0.2%-of-pot target, 2026-11-16: 95 s end to end on a recorded hand's
- * own ranges, 5.8 and 11.6 min on the two wide-range spots.
+ * same 0.2%-of-pot target, 2026-11-16: about 90 s end to end on a recorded
+ * hand's own ranges, 5 and 11.6 min on the two wide-range spots.
  * Change a figure only with a measurement behind it.
  */
 const SOLVE_TIME_FALLBACK: Record<SolverKind, string> = {

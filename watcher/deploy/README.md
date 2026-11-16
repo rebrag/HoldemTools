@@ -53,27 +53,37 @@ C:\HoldemTools\watcher\deploy\bench.ps1
 ```
 
 This needs only `engine.exe`: no `.env`, no network.
-It solves the committed recorded-hand-shaped spots at 1, 2, 4, 8, 10, 16, 20, 32 and 40 threads, then two at once with one pinned to each processor socket, and saves a Markdown table to `%TEMP%\htsolver-bench\bench-<hostname>.md`.
+It solves the small spot (a real recorded hand's ranges) at a handful of thread counts up to every thread, the medium spot on every thread, then the small spot twice at once with one solve pinned to each processor socket, and saves a Markdown table to `%TEMP%\htsolver-bench\bench-<hostname>.md`.
+Expect 30 to 60 minutes on a 2016 Xeon; it took 15 on the development PC.
 Paste that file back.
+`-Full` sweeps all three spots at every count from one thread up and takes hours; `-Threads 10,20,40` picks the counts yourself.
 
 How to read it:
 
 - **Solve seconds down the thread column** is the number a user waits on. If it stops improving well before the box's thread count, more threads are not helping and `HT_THREADS` should be set to where it flattens.
 - **Iterations must be the same in every row of a config.** The engine is bitwise deterministic at any thread count; a different count means something is wrong with the build.
-- **The two-socket section** says whether running two solves side by side (one per NUMA node) beats one solve on every thread. If two pinned solves each finish in about the time one unpinned solve takes, set `HT_SOLVE_SLOTS=2`, `HT_THREADS=<threads per socket>` and `HT_SLOT_AFFINITY=0-19;20-39` (adjust to the box) in `.env`: same wait per solve, twice the throughput.
+- **The two-at-once section** says whether running two solves side by side (one per NUMA node) beats one solve on every thread. If two pinned solves each finish in about the time one unpinned solve takes, set `HT_SOLVE_SLOTS=2`, `HT_THREADS=<threads per socket>` and `HT_SLOT_AFFINITY=0-19;20-39` (the script prints the exact values for the box) in `.env`: same wait per solve, twice the throughput.
 
 If the box is too slow for the product's promise even at its best setting, that is engine work to do under a profiler, not something to tune here.
 
-For reference, the same three spots on the development PC (Ryzen 9800X3D, 8 cores / 16 threads, 2026-11-16):
+For reference, this script's own output on the development PC (one Ryzen 9800X3D, 8 cores / 16 threads, 32 GB, 2026-11-16, 11 minutes):
 
-| config | solve s | export s | iterations | peak GB | artifact GB |
-|---|---|---|---|---|---|
-| hh_small (a real recorded hand's ranges) | 75-81 | 12-13 | 275 | 7.8 | 3.0 |
-| hh_medium | 334 | 16 | 375 | 10.9 | 4.6 |
-| hh_large | 666 | 23 | 525 | 17.5 | 6.1 |
+| config | threads | solve s | export s | process wall s | iterations | exploitable % pot | peak GB | artifact GB |
+|---|---|---|---|---|---|---|---|---|
+| hh_small | 4 | 78.6 | 12.0 | 92.5 | 275 | 0.174 | 7.9 | 2.99 |
+| hh_small | 8 (1.18x of 4) | 66.5 | 11.7 | 79.9 | 275 | 0.174 | 7.9 | 2.99 |
+| hh_small | 16 (1.14x of 4) | 69.2 | 11.6 | 82.3 | 275 | 0.174 | 7.8 | 2.99 |
+| hh_medium | 16 | 281.6 | 15.6 | 299.2 | 375 | 0.179 | 10.9 | 4.55 |
+| hh_small, two at once | 8 on cpus 0-7 | 83.7 | 13.0 | 98.5 | 275 | 0.174 | 7.9 | 2.99 |
+| hh_small, two at once | 8 on cpus 8-15 | 83.2 | 12.3 | 98.8 | 275 | 0.174 | 7.9 | 2.99 |
 
-There the medium spot stops scaling at 8 threads (3.3x over one thread), which is the physical core count.
-The peak is the artifact export, not the solve, so `HT_MEMORY_LIMIT_GB` has to cover the "peak GB" column: the default 24 fits all three, and a box with 256 GB can raise it freely.
+`hh_large` (`-Full`) took 666 s of solve, 23 s of export and 17.5 GB there.
+
+Two things to take from it, because they will very likely hold on a bigger box too.
+**Threads past 8 bought nothing**: 16 threads were no faster than 8, and 8 only 18% faster than 4, so one solve is bound by memory, not by cores.
+**Two solves side by side cost each other only about 25%** (83 s against 67 s), so two slots nearly doubled throughput on a single-socket desktop.
+On a 40-thread, two-socket box the likely best setting is therefore several slots of 8 to 10 threads, not one solve on 40; try `HT_SOLVE_SLOTS=4`, `HT_THREADS=10`, `HT_SLOT_AFFINITY=0-9;10-19;20-29;30-39` after the two-slot result confirms the pattern.
+Each slot needs the "peak GB" column in memory at once, since the peak is the artifact export, not the solve: `HT_MEMORY_LIMIT_GB` is per solve (the default 24 fits all three spots), and four slots on a 256 GB box have room to spare.
 
 ## Start it, and check it is alive
 
@@ -128,7 +138,7 @@ The worker records the engine build beside every board, so the first river reque
 | `HT_SLOT_AFFINITY` | unset | One CPU list per slot, `;` separated, for one solve per NUMA node |
 | `HT_MEMORY_LIMIT_GB` | 24 | A tree whose estimate exceeds this fails fast with a readable message |
 | `HT_ACCURACY_POT_PCT` | 0.2 | Accuracy target, percent of the pot. Same target the Pio watcher uses |
-| `HT_SOLVE_TIMEOUT_SECS` | 1800 | Ceiling on one solve; the engine stops in time to still write its result |
+| `HT_SOLVE_TIMEOUT_SECS` | 1800 | Ceiling on one solve. A solve that has not reached the accuracy target by then fails the job with how far it got; it is never published half-solved |
 
 `watcher\.env.example` documents every key.
 
