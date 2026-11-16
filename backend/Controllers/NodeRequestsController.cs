@@ -1,22 +1,30 @@
-using Azure.Storage.Files.DataLake;
 using Azure.Storage.Queues;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using PokerRangeAPI2.Models;
+using PokerRangeAPI2.Services;
 using System;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace PokerRangeAPI2.Controllers
 {
     // --------------------------------------------------------------------
     // POST api/noderequests
-    // Queues an on-demand street extraction (turn/river card) for the local
-    // solver watcher. The watcher polls noderequests/<today>/ and uploads the
-    // street bundle + manifest update; the frontend polls the manifest.
+    // Queues an on-demand street extraction (turn/river card) for the
+    // watcher that solved the board; the frontend polls the manifest.
+    //
+    // Routed by the board's manifest: when manifest.engine.solver is
+    // "htsolver" the request goes to the htsolver worker's own Storage Queue
+    // and NO blob is written, so the Pio watcher's reconcile listing of
+    // noderequests/ can never find it and re-solve the board with Pio. Every
+    // other board (Pio manifests carry no engine.solver, and a missing
+    // manifest means nothing to route on) takes exactly today's path: blob
+    // under noderequests/<today>/, then a push message on the Pio queue.
     // --------------------------------------------------------------------
     [ApiController]
     [Route("api/[controller]")]
@@ -26,29 +34,25 @@ namespace PokerRangeAPI2.Controllers
         private static readonly Regex NodeIdRe = new(@"^r:\d+(:[a-zA-Z0-9]+)*$", RegexOptions.Compiled);
         private static readonly Regex BoardRe = new(@"^([2-9TJQKA][hdcs]){3,5}$", RegexOptions.Compiled);
 
-        private readonly DataLakeServiceClient _dataLakeServiceClient;
-        private readonly string _containerName;
+        private readonly INodeRequestStore _store;
         private readonly QueueClient _queue;
+        private readonly HtNodeRequestQueue _htQueue;
         private readonly ILogger<NodeRequestsController> _logger;
 
         public NodeRequestsController(
-            IConfiguration configuration,
+            INodeRequestStore store,
             QueueClient queue,
+            HtNodeRequestQueue htQueue,
             ILogger<NodeRequestsController> logger)
         {
-            string? connectionString = configuration["AzureStorage:ConnectionString"];
-            _containerName = configuration["AzureStorage:ContainerName"] ?? "onlinerangedata";
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-                throw new InvalidOperationException("AzureStorage:ConnectionString is missing from configuration.");
-
-            _dataLakeServiceClient = new DataLakeServiceClient(connectionString);
+            _store = store;
             _queue = queue;
+            _htQueue = htQueue;
             _logger = logger;
         }
 
         [HttpPost]
-        public async Task<IActionResult> QueueNodeRequest([FromBody] NodeRequestBody req)
+        public async Task<IActionResult> QueueNodeRequest([FromBody] NodeRequestBody req, CancellationToken ct = default)
         {
             var uid = this.CurrentUid();
             if (string.IsNullOrWhiteSpace(uid))
@@ -61,14 +65,29 @@ namespace PokerRangeAPI2.Controllers
             if (string.IsNullOrWhiteSpace(req.NodeId) || !NodeIdRe.IsMatch(req.NodeId))
                 return BadRequest("Invalid nodeId.");
 
-            var fs = _dataLakeServiceClient.GetFileSystemClient(_containerName);
-            await fs.CreateIfNotExistsAsync();
-
             var now = DateTimeOffset.UtcNow;
+
+            string? solver;
+            try
+            {
+                solver = IsSafeSegment(req.Stacks) && IsSafeSegment(req.Node)
+                    ? await _store.ReadManifestSolverAsync(req.Stacks, req.Node, req.Board, ct)
+                    : null;
+            }
+            catch (Exception ex)
+            {
+                // Storage failing to answer is not "no manifest": treating it
+                // as Pio would hand an htsolver board to the Pio watcher.
+                _logger.LogWarning(ex, "Manifest read failed for {Stacks}/{Node}/{Board}.",
+                    req.Stacks, req.Node, req.Board);
+                return StatusCode(503, "Could not read the board's manifest; try again.");
+            }
+
+            if (solver == SolveJobSolver.HtSolver)
+                return await QueueHtSolverRequestAsync(req, now, ct);
+
             string rand = Guid.NewGuid().ToString("N")[..6];
             string dirPath = $"noderequests/{now:yyyy/MM/dd}/{Sanitize(uid)}";
-            var dir = fs.GetDirectoryClient(dirPath);
-            await dir.CreateIfNotExistsAsync();
 
             var payload = new NodeRequestBlob
             {
@@ -80,9 +99,8 @@ namespace PokerRangeAPI2.Controllers
             };
 
             string fileName = $"{now:HHmmss}_{rand}.json";
-            var file = dir.GetFileClient(fileName);
             string json = JsonSerializer.Serialize(payload);
-            await file.UploadAsync(BinaryData.FromString(json).ToStream(), overwrite: true);
+            await _store.WriteRequestBlobAsync(dirPath, fileName, json);
 
             // Push notification for the watcher, enqueued strictly AFTER the
             // blob write so the only reachable failure shape is
@@ -110,6 +128,44 @@ namespace PokerRangeAPI2.Controllers
 
             return Ok(new { ok = true });
         }
+
+        /// <summary>
+        /// htsolver boards: queue-only. There is no blob to fall back on, so a
+        /// failed enqueue is a 503 the viewer surfaces, rather than a request
+        /// that silently never arrives.
+        /// </summary>
+        private async Task<IActionResult> QueueHtSolverRequestAsync(
+            NodeRequestBody req, DateTimeOffset now, CancellationToken ct)
+        {
+            var message = new NodeRequestBlob
+            {
+                Stacks = req.Stacks,
+                NodeName = req.Node,
+                Board = req.Board,
+                NodeId = req.NodeId,
+                RequestedUtc = now.UtcDateTime.ToString("o"),
+            };
+            try
+            {
+                await _htQueue.SendAsync(JsonSerializer.Serialize(message), ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "htsolver noderequest enqueue failed for {Stacks}/{Node}/{Board} {NodeId}.",
+                    req.Stacks, req.Node, req.Board, req.NodeId);
+                return StatusCode(503, "Could not queue the request; try again.");
+            }
+            return Ok(new { ok = true });
+        }
+
+        /// <summary>
+        /// A client-supplied path segment safe to splice into the manifest's
+        /// blob path. Anything else cannot name a published board, so it is
+        /// treated as "no manifest" and takes today's path unchanged.
+        /// </summary>
+        private static bool IsSafeSegment(string s) =>
+            s.Length <= 200 && !s.Contains('/') && !s.Contains('\\') && s != "." && s != ".."
+            && !s.Contains("..") && !s.Contains('?') && !s.Contains('#');
 
         private static string Sanitize(string s)
         {
@@ -141,7 +197,8 @@ namespace PokerRangeAPI2.Controllers
             [JsonPropertyName("node_id")] public string? NodeId { get; set; }
         }
 
-        // Property names match what the Python watcher parses.
+        // Property names match what the Python watcher parses. Also the
+        // htsolver queue's message shape (there is no blob path to carry).
         public class NodeRequestBlob
         {
             [JsonPropertyName("stacks")] public string? Stacks { get; set; }

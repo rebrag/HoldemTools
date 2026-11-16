@@ -31,19 +31,7 @@ namespace PokerRangeAPI2.Controllers
         // Firebase uid from claims - shared helper in ControllerBaseExtensions.
         private string? CurrentUid() => ControllerBaseExtensions.CurrentUid(this);
 
-        private string? CurrentEmail() => User.FindFirst("email")?.Value;
-
-        private bool IsAdmin()
-        {
-            var adminEmails = _config.GetSection("Admin:Emails").Get<string[]>() ?? Array.Empty<string>();
-            var adminUids = _config.GetSection("Admin:Uids").Get<string[]>() ?? Array.Empty<string>();
-
-            var email = CurrentEmail();
-            var uid = CurrentUid();
-
-            return (email != null && adminEmails.Contains(email, StringComparer.OrdinalIgnoreCase))
-                || (uid != null && adminUids.Contains(uid, StringComparer.Ordinal));
-        }
+        private bool IsAdmin() => ControllerBaseExtensions.IsAdmin(this, _config);
 
         // GET /api/handhistory
         // Returns the caller's hand histories. An admin may pass ?userId= to view another user's.

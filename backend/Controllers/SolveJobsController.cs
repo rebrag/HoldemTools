@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using PokerRangeAPI2.Data;
 using PokerRangeAPI2.Models;
 using System;
@@ -20,10 +21,12 @@ namespace PokerRangeAPI2.Controllers
     public class SolveJobsController : ControllerBase
     {
         private readonly AppDbContext _db;
+        private readonly IConfiguration _config;
 
-        public SolveJobsController(AppDbContext db)
+        public SolveJobsController(AppDbContext db, IConfiguration config)
         {
             _db = db;
+            _config = config;
         }
 
         // --------------------------------------------------------------------
@@ -47,10 +50,13 @@ namespace PokerRangeAPI2.Controllers
             if (job == null || (job.HasSeatMeta && job.UserId != uid))
                 return NotFound();
 
+            // Both counts are per solver: each solver has its own watcher, so
+            // a job only ever waits behind jobs of its own solver.
             int? queuePosition = null;
             if (job.Status == SolveJobStatus.Queued)
             {
                 var ahead = await _db.SolveJobs.CountAsync(j =>
+                    j.Solver == job.Solver &&
                     j.Status == SolveJobStatus.Queued &&
                     (j.Priority > job.Priority ||
                      (j.Priority == job.Priority && j.CreatedAtUtc < job.CreatedAtUtc)));
@@ -58,7 +64,8 @@ namespace PokerRangeAPI2.Controllers
             }
 
             var active = SolveJobStatus.Active.ToArray();
-            var activeAhead = await _db.SolveJobs.CountAsync(j => active.Contains(j.Status));
+            var activeAhead = await _db.SolveJobs.CountAsync(j =>
+                j.Solver == job.Solver && active.Contains(j.Status));
 
             Response.Headers.CacheControl = "no-cache";
             return Ok(ToDto(job, queuePosition, activeAhead));
@@ -84,6 +91,71 @@ namespace PokerRangeAPI2.Controllers
             return Ok(jobs.Select(j => ToDto(j, queuePosition: null, activeAhead: null)));
         }
 
+        // --------------------------------------------------------------------
+        // POST api/solvejobs/reroute   (admin)   body: { from, to }
+        // Moves every still-Queued job of one solver to the other. A queued
+        // row does not follow a Solve:Solver:* flip on its own, so this is how
+        // a backlog follows the switch (or is pulled back on rollback). A job
+        // moves to htsolver only when its upload carried a valid engine tree
+        // and it is not ICM - the same eligibility the upload route applies -
+        // and the rest are reported as skipped. Claimed and later jobs are
+        // never touched: their watcher already owns them.
+        // --------------------------------------------------------------------
+        [HttpPost("reroute")]
+        public async Task<IActionResult> Reroute([FromBody] RerouteRequest req)
+        {
+            var uid = this.CurrentUid();
+            if (string.IsNullOrWhiteSpace(uid))
+                return Unauthorized();
+            if (!this.IsAdmin(_config))
+                return Forbid();
+
+            var from = SolveJobSolver.Normalize(req.From);
+            var to = SolveJobSolver.Normalize(req.To);
+            if (from == null || to == null)
+                return BadRequest("from and to must each be \"pio\" or \"htsolver\".");
+            if (from == to)
+                return BadRequest("from and to must differ.");
+
+            var toHt = to == SolveJobSolver.HtSolver;
+            var candidates = _db.SolveJobs
+                .Where(j => j.Solver == from && j.Status == SolveJobStatus.Queued);
+            var eligible = candidates.Where(j => !toHt || (j.HasEngineTree && !j.IsIcm));
+
+            int moved;
+            if (_db.Database.IsRelational())
+            {
+                // One UPDATE whose WHERE re-checks Status = Queued, so a job a
+                // watcher claims mid-request is never moved under it.
+                moved = await eligible.ExecuteUpdateAsync(s => s.SetProperty(j => j.Solver, to));
+            }
+            else
+            {
+                // EF InMemory (tests) has no ExecuteUpdate; same filter.
+                var rows = await eligible.ToListAsync();
+                foreach (var job in rows) job.Solver = to;
+                await _db.SaveChangesAsync();
+                moved = rows.Count;
+            }
+            var skipped = await candidates.CountAsync();
+
+            return Ok(new RerouteResponse { From = from, To = to, Moved = moved, Skipped = skipped });
+        }
+
+        public class RerouteRequest
+        {
+            public string? From { get; set; }
+            public string? To { get; set; }
+        }
+
+        public class RerouteResponse
+        {
+            public string From { get; set; } = "";
+            public string To { get; set; } = "";
+            public int Moved { get; set; }
+            public int Skipped { get; set; }
+        }
+
         public static SolveJobStatusResponse ToDto(SolveJob job, int? queuePosition, int? activeAhead) => new()
         {
             Id = job.Id,
@@ -93,6 +165,7 @@ namespace PokerRangeAPI2.Controllers
             LineKey = job.LineKey,
             ActingPos = job.ActingPos,
             IsIcm = job.IsIcm,
+            Solver = job.Solver,
             QueuePosition = queuePosition,
             ActiveAhead = activeAhead,
             Error = job.Error,
@@ -117,6 +190,7 @@ namespace PokerRangeAPI2.Controllers
             public string LineKey { get; set; } = "";
             public string ActingPos { get; set; } = "";
             public bool IsIcm { get; set; }
+            public string Solver { get; set; } = SolveJobSolver.Pio;
             public int? QueuePosition { get; set; }
             public int? ActiveAhead { get; set; }
             public string? Error { get; set; }

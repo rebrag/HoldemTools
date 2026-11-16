@@ -253,14 +253,13 @@ namespace PokerRangeAPI2.Controllers
                     .GetBlobContainerClient(_containerName)
                     .GetBlobClient("piosolutions-index.json");
 
+                // An absent Pio index is an empty base, not a 404: the engine
+                // index merged below may still hold boards. The 404 further
+                // down fires only when neither index has anything.
                 if (await indexBlob.ExistsAsync())
                 {
                     BlobDownloadResult result = await indexBlob.DownloadContentAsync();
                     json = result.Content.ToString();
-                }
-                else if (!_engineLocal.Enabled)
-                {
-                    return NotFound("piosolutions-index.json not found. No postflop solutions indexed yet.");
                 }
 
                 _cache.Set(cacheKey, json ?? "", new MemoryCacheEntryOptions
@@ -270,14 +269,15 @@ namespace PokerRangeAPI2.Controllers
             }
 
             // Fold in htsolver-published solves (enginesolutions-index.json,
-            // written by the publish endpoint - kept separate from the Pio
-            // watcher's index so the two writers never race). Same 10s cache.
-            const string engineCacheKey = "enginesolutions:index";
+            // written only by EngineSolutionsIndex - kept separate from the Pio
+            // watcher's index so the two writers never race). Same 10s cache;
+            // the writer evicts it on every upsert.
+            const string engineCacheKey = EngineSolutionsIndex.CacheKey;
             if (!_cache.TryGetValue(engineCacheKey, out string? engineJson))
             {
                 var engineBlob = _blobServiceClient
                     .GetBlobContainerClient(_containerName)
-                    .GetBlobClient("enginesolutions-index.json");
+                    .GetBlobClient(EngineSolutionsIndex.BlobName);
                 engineJson = await engineBlob.ExistsAsync()
                     ? (await engineBlob.DownloadContentAsync()).Value.Content.ToString()
                     : "";

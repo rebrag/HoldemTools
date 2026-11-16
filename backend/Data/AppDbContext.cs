@@ -95,11 +95,21 @@ namespace PokerRangeAPI2.Data
                 entity.Property(e => e.ResultStacks).HasMaxLength(200);
                 entity.Property(e => e.ResultNodeName).HasMaxLength(200);
 
+                // Default 'pio' in the database too, so rows inserted by an
+                // API build that predates the column still route to Pio.
+                entity.Property(e => e.Solver)
+                    .HasMaxLength(16)
+                    .HasDefaultValue(SolveJobSolver.Pio);
+
                 entity.HasIndex(e => e.UserId);
 
-                // Drives the claim ordering (Queued, priority desc, oldest
-                // first) and the queue-position counts.
+                // The stale-claim sweep (Status only).
                 entity.HasIndex(e => new { e.Status, e.Priority, e.CreatedAtUtc });
+
+                // Drives the per-solver claim ordering (one solver's Queued
+                // jobs, priority desc, oldest first) and the per-solver
+                // queue-position counts.
+                entity.HasIndex(e => new { e.Solver, e.Status, e.Priority, e.CreatedAtUtc });
 
                 // Optional FK to the recorded hand this solve came from.
                 // Deleting the hand unlinks the job (the solved board stays in

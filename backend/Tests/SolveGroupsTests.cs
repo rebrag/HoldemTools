@@ -248,7 +248,7 @@ public class SolveGroupsTests
         var uid = "uid-1";
         var first = await QueuePushFold(db, uid, new[] { 0, 1 });
         var other = await QueuePushFold(db, uid, new[] { 2, 3 });
-        var watcher = new EngineCompareWatcherController(db, Config());
+        var watcher = new EngineCompareWatcherController(db, Config(), EngineIndexFactory.New());
 
         async Task Finish(Guid id, string solveId, long iterations)
         {

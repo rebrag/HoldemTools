@@ -103,6 +103,34 @@ builder.Services.AddSingleton(sp =>
     return new QueueClient(conn, queueName);
 });
 
+// === Storage queue: noderequests for the htsolver worker ===
+// Boards whose manifest names htsolver are routed here, queue-only (no blob),
+// so the Pio watcher never sees them. Its own type keeps it apart from the
+// Pio queue above in DI. Created at startup below, and lazily on a 404.
+builder.Services.AddSingleton(sp =>
+{
+    var config = sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
+    var conn = config["AzureStorage:ConnectionString"];
+    var queueName = config["AzureStorage:HtNodeRequestQueueName"]
+        ?? PokerRangeAPI2.Services.HtNodeRequestQueue.DefaultName;
+    if (string.IsNullOrWhiteSpace(conn))
+        throw new InvalidOperationException("AzureStorage:ConnectionString is missing from configuration.");
+    return new PokerRangeAPI2.Services.HtNodeRequestQueue(new QueueClient(conn, queueName));
+});
+
+// === Solve-job storage seams ===
+// The ADLS calls GameTreesController and NodeRequestsController make, and the
+// single writer of enginesolutions-index.json, behind interfaces so those
+// controllers stay constructible in the EF-InMemory test suite.
+builder.Services.AddSingleton<PokerRangeAPI2.Services.IGameTreeBlobStore,
+    PokerRangeAPI2.Services.AdlsGameTreeBlobStore>();
+builder.Services.AddSingleton<PokerRangeAPI2.Services.INodeRequestStore,
+    PokerRangeAPI2.Services.AdlsNodeRequestStore>();
+builder.Services.AddSingleton<PokerRangeAPI2.Services.IEngineIndexBlobStore,
+    PokerRangeAPI2.Services.AzureEngineIndexBlobStore>();
+builder.Services.AddSingleton<PokerRangeAPI2.Services.IEngineSolutionsIndex,
+    PokerRangeAPI2.Services.EngineSolutionsIndex>();
+
 // === Player photo blob storage ===
 // Behind an interface so PlayersController stays constructible in the
 // EF-InMemory test suite without Azure configuration.
@@ -186,6 +214,17 @@ try
 catch (Exception ex)
 {
     app.Logger.LogWarning(ex, "Noderequest queue create failed; push notifications degraded.");
+}
+
+// Same for the htsolver noderequest queue. Not fatal either: its client
+// creates the queue on a 404 and retries, and a failed enqueue is a 503.
+try
+{
+    app.Services.GetRequiredService<PokerRangeAPI2.Services.HtNodeRequestQueue>().Client.CreateIfNotExists();
+}
+catch (Exception ex)
+{
+    app.Logger.LogWarning(ex, "htsolver noderequest queue create failed; it will be retried on first use.");
 }
 
 // CORS

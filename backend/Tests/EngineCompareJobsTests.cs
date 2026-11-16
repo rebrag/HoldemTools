@@ -47,7 +47,7 @@ public class EngineCompareJobsTests
     }
 
     private static EngineCompareWatcherController WatcherController(AppDbContext db) =>
-        new(db, Config());
+        new(db, Config(), EngineIndexFactory.New());
 
     private static JsonObject SpotConfig() => new()
     {
