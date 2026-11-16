@@ -9,3 +9,7 @@ play
 # Per-machine benchmark output (watcher/bench_boards.py); the durable summary
 # lives in engine/docs/roadmap.md.
 bench_*.json
+# htsolver worker scratch and default artifact store (ht_solve_watcher.py)
+ht_work/
+ht_artifacts/
+.pytest_cache/

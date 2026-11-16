@@ -79,9 +79,16 @@ Hand-history uploads also carry an optional `Seats` list (pos, name, flop-time s
 |---|---|
 | `watch_adls_and_run_pio_headless.py` | The watcher. The only entry point to run for solves. |
 | `api_client.py` | SolveJobs queue client (claim, status reports, heartbeat). No pywinauto/Azure imports, so it runs anywhere for testing. |
-| `extraction.py` | Tree walk, 1326-to-169 aggregation, doc/manifest/bundle builders. |
+| `extraction.py` | Tree walk, 1326-to-169 aggregation, doc/manifest/bundle builders. The one schema-4 definition for both solvers. |
 | `adls_store.py` | ADLS uploads + library index upserts. |
-| `cfr_registry.py` | Local `.cfr` LRU disk budget (`registry.json`). |
+| `publish.py` | The publish sequence both watchers share: bundles for unpublished streets, parallel upload, manifest merge, index entry out (the caller decides who writes the index). |
+| `artifact_registry.py` | Local solve-artifact LRU disk budget (`registry.json`) with a lock and pinning; any extension. |
+| `cfr_registry.py` | The `.cfr` flavour of the registry (same file names and `registry.json` as always). |
+| `ht_solve_watcher.py` | The headless htsolver worker for the SolveJobs queue (see below). No Pio, no GUI. |
+| `ht_bundles.py` | The one adapter from `engine dump-streets` to `extraction.py`'s builders; also `python ht_bundles.py export` for local viewing. |
+| `engine_proc.py` | engine.exe child-process helpers (streamed output, deadline, cooperative stop, CPU affinity) shared by both htsolver watchers. |
+| `requirements-ht.txt` | Pio-free dependencies for the htsolver worker and the test suite. |
+| `tests/` | pytest suite (fakes only, runs in `.github/workflows/watcher-ci.yml`), including a golden that pins the Pio path's schema-4 output. |
 | `reextract.py` | Regenerate bundles from local cfrs without re-solving (`--all`). |
 | `pio_headless_from_block.py` | Headless tree build via UPI from a config block (used by `run_one.py`). |
 | `pyosolver.py` | Vendored from github.com/weston/pyosolver (no PyPI package, no upstream LICENSE). |
@@ -114,6 +121,26 @@ In blob mode only **today's UTC** `gametrees/yyyy/MM/dd/` folder is watched and 
 ```bash
 python watch_adls_and_run_pio_headless.py
 ```
+
+## htsolver SolveJobs worker (`ht_solve_watcher.py`)
+
+The headless counterpart of the Pio watcher for jobs the API routed to htsolver.
+It claims from `POST /api/solvejobs/claim/htsolver` (a 404 there means the API predates the route, and is logged and treated as an empty queue), so it can never pop a Pio job and the Pio watcher can never pop one of its jobs.
+It imports nothing Pio or GUI (`tests/test_ht_import_set.py`) and installs from `requirements-ht.txt`.
+
+Per job: download the gametree blob, which must carry an `EngineTree` and not be ICM; compose the solve config (`compose_solve_config`: the tree block verbatim, every solver knob owned by the worker); `engine dry-run`, whose refusal fails the job with the engine's own message; `Solving`; `Extracting`, where the flop is dumped and published first and its index entry rides a heartbeat so the board lists early; `Uploading`, where the turns follow; then `solve.json` beside the manifest and `Done` with the coordinates and the final index entry.
+Coordinates come from the blob path exactly as on the Pio path, and the manifest is built by the same `extraction.py` builders from the same blob, plus an `engine` block and a `cfr` block saying there is no `.cfr`.
+The worker never writes `piosolutions-index.json`; the API upserts the entries it reports into `enginesolutions-index.json`.
+
+Rivers are on demand, from a Storage Queue of their own (`HT_NODEREQ_QUEUE_NAME`), on a thread separate from the solve slots.
+A held artifact is dumped for the one street.
+An evicted one is flagged `resolving`, re-solved from `solve.json` pinned to the iterations the original solve ran, in a solve slot so two solves never share one, and then extracted.
+If the engine build changed since the board was published, its flop and turns are republished and every earlier river entry is dropped, so a board never mixes two engines' output.
+The Pio watcher, for its part, ignores node requests for any board whose manifest names another solver, and in blob mode skips gametrees routed elsewhere.
+
+`HT_DRAIN_FILE` drains the worker for a restart: while the file exists nothing new is claimed or received, in-flight work finishes, and the process logs `drained` and exits 0.
+Every setting is documented in `.env.example`.
+Run it with `python ht_solve_watcher.py`.
 
 ## Engine validation harness (`engine_compare.py`)
 
