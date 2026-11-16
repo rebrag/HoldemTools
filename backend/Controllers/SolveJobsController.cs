@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using PokerRangeAPI2.Data;
 using PokerRangeAPI2.Models;
+using PokerRangeAPI2.Services;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
@@ -67,8 +68,13 @@ namespace PokerRangeAPI2.Controllers
             var activeAhead = await _db.SolveJobs.CountAsync(j =>
                 j.Solver == job.Solver && active.Contains(j.Status));
 
+            var dto = ToDto(job, queuePosition, activeAhead);
+            // Only worth a query while someone is waiting on the answer.
+            if (!SolveJobStatus.Terminal.Contains(job.Status))
+                dto.TypicalSeconds = await SolveJobTimings.TypicalSecondsAsync(_db, job.Solver, job.HasSeatMeta);
+
             Response.Headers.CacheControl = "no-cache";
-            return Ok(ToDto(job, queuePosition, activeAhead));
+            return Ok(dto);
         }
 
         // --------------------------------------------------------------------
@@ -193,6 +199,10 @@ namespace PokerRangeAPI2.Controllers
             public string Solver { get; set; } = SolveJobSolver.Pio;
             public int? QueuePosition { get; set; }
             public int? ActiveAhead { get; set; }
+            // Median claim-to-Done seconds of recent solves of this solver and
+            // kind (SolveJobTimings); null when there is no history yet, and
+            // on a job that is already finished.
+            public int? TypicalSeconds { get; set; }
             public string? Error { get; set; }
             public int AttemptCount { get; set; }
             public int? HandHistoryId { get; set; }

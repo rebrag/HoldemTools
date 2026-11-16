@@ -139,7 +139,11 @@ namespace PokerRangeAPI2.Controllers
                 solver: solver,
                 hasEngineTree: engineTree != null);
 
-            return Ok(new { ok = true, path, jobId = job.Id, deduped, solver = job.Solver });
+            // What recent solves of this kind actually took on this solver, so
+            // the "it will be ready in about..." notice is a measurement.
+            var typicalSeconds = await SolveJobTimings.TypicalSecondsAsync(_db, job.Solver, job.HasSeatMeta);
+
+            return Ok(new { ok = true, path, jobId = job.Id, deduped, solver = job.Solver, typicalSeconds });
         }
 
         /// <summary>Chips per bb when an upload carries no chip scale (Pio's bb * 100 convention).</summary>
