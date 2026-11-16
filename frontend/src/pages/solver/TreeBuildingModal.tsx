@@ -29,16 +29,48 @@ import type { PostflopIndexEntry } from "@/lib/solver/postflopLibrary";
 import { mergeTreeParams, splitTreeParams } from "@/lib/solver/treeParamsView";
 import { pioRangeCodec } from "@/lib/solver/rangeTokens";
 import type { TreeParams } from "@/lib/solver/treeConfig";
+import { engineTreeFromParams } from "@/lib/solver/engineTree";
 
 export interface TreeBuildingInit {
   params: TreeParams;
   flopCards: string[];
+  /** Display labels for the two range cards (may carry a player name). */
   oopLabel: string;
   ipLabel: string;
+  /** The bare solver positions ("SB", "BTN", ...) of the two seats, from
+   *  POSTFLOP_ORDER. They name the engine tree's players, which the solved
+   *  artifact echoes back as its seat names. */
+  oopSeat: string;
+  ipSeat: string;
   /** Unit shown beside the pot and stacks. Sims are in big blinds; a recorded
    *  hand is in its own chips. */
   moneyLabel?: string;
 }
+
+export interface TreeBuildingResult {
+  params: TreeParams;
+  flopCards: string[];
+  /** The same spot as htsolver's tree block, built from the SAME `params`
+   *  the Pio text is serialized from. Null when the engine cannot take the
+   *  spot (ICM) or the builder refused it; the Pio upload goes ahead either
+   *  way, and the API then routes the job to Pio. */
+  engineTree: object | null;
+}
+
+/** The engine tree for a confirmed panel, or null with the reason logged. */
+const engineTreeOrNull = (
+  params: TreeParams,
+  flopCards: string[],
+  seats: { oop: string; ip: string }
+): object | null => {
+  if (params.icm.enabled) return null; // ICM is Pio-only by design, not a failure.
+  try {
+    return engineTreeFromParams(params, flopCards, seats);
+  } catch (err) {
+    console.warn("[TreeBuildingModal] no engine tree for this spot; uploading the Pio text only:", err);
+    return null;
+  }
+};
 
 interface TreeBuildingModalProps {
   init: TreeBuildingInit;
@@ -48,7 +80,7 @@ interface TreeBuildingModalProps {
   /** Success message shown after the upload lands (parent closes shortly after). */
   notice?: string | null;
   error?: string | null;
-  onConfirm: (result: { params: TreeParams; flopCards: string[] }) => void;
+  onConfirm: (result: TreeBuildingResult) => void;
   onClose: () => void;
   onOpenSolvedBoard?: (entry: PostflopIndexEntry) => void;
 }
@@ -100,7 +132,11 @@ const TreeBuildingModal = ({
   const confirm = () => {
     if (!canConfirm) return;
     const { params, boardCards } = mergeTreeParams(carry, view);
-    onConfirm({ params, flopCards: boardCards });
+    const engineTree = engineTreeOrNull(params, boardCards, {
+      oop: init.oopSeat,
+      ip: init.ipSeat,
+    });
+    onConfirm({ params, flopCards: boardCards, engineTree });
   };
 
   /* Already-solved shortcuts. Page-owned content: it is typed on a solver

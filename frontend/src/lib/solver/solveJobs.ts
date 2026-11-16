@@ -3,6 +3,7 @@
 // replacing blind manifest-existence polling. GET /api/solvejobs/{id} is a
 // two-count DB read, so a 2s cadence is fine.
 import { authedFetch } from "@/lib/api";
+import type { SolverKind } from "./uploadGameTree";
 
 export type SolveJobStatus =
   | "Queued"
@@ -33,7 +34,32 @@ export type SolveJobDto = {
   claimedAtUtc: string | null;
   completedAtUtc: string | null;
   lastHeartbeatUtc: string | null;
+  /** The solver the job is queued for. Absent from an API older than solver
+   *  routing, where every job is Pio's. */
+  solver?: SolverKind;
+  /** The saved hand the solve came from, when it came from one. */
+  handHistoryId?: number | null;
 };
+
+/**
+ * How long a solve usually takes, end to end (queue pickup to flop on
+ * screen), per solver. These are MEASURED figures, not hopes: the pio one is
+ * watcher/watcher.out.log on recorded hand-history spots (28-48 s of solve
+ * plus about 9 s of extraction). Change a figure only with a measurement
+ * behind it.
+ */
+const SOLVE_TIME_HINT: Record<SolverKind, string> = {
+  pio: "usually about a minute",
+  // TODO(measure): placeholder until the htsolver bench on the production
+  // worker; set from the coordinating session's benchmark table.
+  htsolver: "usually 1-3 min",
+};
+
+/** The time promise shown beside a pending solve. `solver` is what the API
+ *  said it queued; unknown (an older API) reads as Pio, which is what such an
+ *  API always queues. */
+export const solveTimeHint = (solver?: SolverKind): string =>
+  SOLVE_TIME_HINT[solver ?? "pio"] ?? SOLVE_TIME_HINT.pio;
 
 const TERMINAL: ReadonlySet<SolveJobStatus> = new Set(["Done", "Failed"]);
 

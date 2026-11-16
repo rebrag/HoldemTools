@@ -371,8 +371,12 @@ export function usePostflopSession() {
         resolving: c.manifest.streets?.[seedSuffix]?.status === "resolving",
       };
       setCore({ ...c, pendingStreet: pending, notice: null });
+      // A non-2xx (the API returns 503 when it cannot enqueue the request) is
+      // as final as a thrown network error: nothing will ever extract the
+      // street, so polling the manifest would only spin for six minutes.
+      let queued: boolean;
       try {
-        await postNodeRequest({
+        queued = await postNodeRequest({
           stacks: c.stacks,
           node: c.nodeName,
           board: c.manifest.board,
@@ -380,6 +384,9 @@ export function usePostflopSession() {
         });
       } catch (err) {
         console.warn("Node request failed:", err);
+        queued = false;
+      }
+      if (!queued) {
         setCore({ ...coreRef.current!, pendingStreet: null, notice: "Could not queue the extraction." });
         return;
       }

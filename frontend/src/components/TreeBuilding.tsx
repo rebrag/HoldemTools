@@ -25,6 +25,9 @@ import ResponsiveDrawer from "@/components/ResponsiveDrawer";
 import { RangeMiniGrid, weightedComboCount } from "@/components/RangeEditorGrid";
 import RangeSelector, { type RangeTokenCodec } from "@/components/RangeSelector";
 import { copyText } from "@/lib/clipboard";
+// Streets a board length puts in the tree: the same rule the engine tree is
+// built with, so a greyed-out box is exactly a box that never reaches it.
+import { activeStreetsFor } from "@/lib/solver/engineTree";
 import {
   TREE_STREETS,
   emptySeatView,
@@ -65,16 +68,6 @@ const STREET_LABEL: Record<TreeStreet, string> = {
   flop: "Flop",
   turn: "Turn",
   river: "River",
-};
-
-/** Streets a board length actually puts in the tree. A 5-card board is a river
- *  solve, so flop and turn are inert - their boxes stay on screen and editable,
- *  they just do not reach the solver. */
-const activeStreetsFor = (cardCount: number): Set<TreeStreet> => {
-  const active = new Set<TreeStreet>(["river"]);
-  if (cardCount <= 4) active.add("turn");
-  if (cardCount <= 3) active.add("flop");
-  return active;
 };
 
 const SizeField = ({
