@@ -16,7 +16,7 @@ Nothing in this folder contains a secret, and no step asks you to paste one anyw
 | Python 3.11 or newer, installed for all users | The worker | python.org installer, tick "Install for all users" and "Add to PATH" |
 | Build Tools for Visual Studio 2022 with "Desktop development with C++" | `engine/build.ps1` builds `engine.exe` here | visualstudio.microsoft.com/downloads, "Tools for Visual Studio" |
 | Outbound HTTPS to the API, to `*.blob.core.windows.net`, `*.dfs.core.windows.net`, `*.queue.core.windows.net`, and (install time only) to pypi.org and github.com | Claims, uploads, the river queue | No inbound port is needed |
-| A disk with room for the artifact cache | Each solved board keeps a 0.5 to 3 GB `.hta` so rivers can be served without re-solving | 200 GB is comfortable; the cache is LRU and re-solves on a miss |
+| A disk with room for the artifact cache | Each solved board keeps a 3 to 6 GB `.hta` so rivers can be served without re-solving | 200 GB holds roughly 40 boards; the cache is LRU and re-solves on a miss |
 
 Building on the box is the recommended way to get `engine.exe`: it is the same `build.ps1` every other machine uses, and `update.ps1` can then rebuild it.
 If installing the Build Tools is not acceptable, copy a prebuilt `engine.exe` over instead and install the Microsoft Visual C++ 2015-2022 x64 runtime (`vc_redist.x64.exe`); pass it with `-EnginePath`, and replace that file by hand whenever `engine/` changes.
@@ -64,6 +64,17 @@ How to read it:
 
 If the box is too slow for the product's promise even at its best setting, that is engine work to do under a profiler, not something to tune here.
 
+For reference, the same three spots on the development PC (Ryzen 9800X3D, 8 cores / 16 threads, 2026-11-16):
+
+| config | solve s | export s | iterations | peak GB | artifact GB |
+|---|---|---|---|---|---|
+| hh_small (a real recorded hand's ranges) | 75-81 | 12-13 | 275 | 7.8 | 3.0 |
+| hh_medium | 334 | 16 | 375 | 10.9 | 4.6 |
+| hh_large | 666 | 23 | 525 | 17.5 | 6.1 |
+
+There the medium spot stops scaling at 8 threads (3.3x over one thread), which is the physical core count.
+The peak is the artifact export, not the solve, so `HT_MEMORY_LIMIT_GB` has to cover the "peak GB" column: the default 24 fits all three, and a box with 256 GB can raise it freely.
+
 ## Start it, and check it is alive
 
 ```powershell
@@ -74,7 +85,7 @@ Start-ScheduledTask -TaskName "HoldemTools htsolver worker"
 Get-Content C:\ProgramData\HoldemTools\htsolver\logs\ht_solve_watcher.log -Tail 40 -Wait
 ```
 
-A healthy start logs the engine version, the artifact store's size against its budget, and then a claim poll every few seconds.
+A healthy start logs the engine path, the worker id and its settings, and then sits quiet until a job arrives (it polls the claim route every few seconds without logging each poll).
 The task starts at boot with nobody logged on, restarts itself a minute after any crash, and never runs two copies.
 Reboot the box once and confirm the log resumes on its own; that is the property that replaces "PioViewer must be open on an unlocked desktop".
 

@@ -12,7 +12,7 @@ history preserved** under the `frontend/` and `backend/` subfolders.
 |---|---|---|---|
 | `frontend/` | React + TypeScript + Vite + Tailwind | `rebrag/GTOLite` | Frontend web app |
 | `backend/` | .NET 8 Web API + EF Core + SQL Server | `rebrag/HoldemToolsAPI` | Backend API (namespace `PokerRangeAPI2`, assembly `GTOLiteAPI`) |
-| `watcher/` | Python + pywinauto + PioSOLVER | `rebrag/GTOLite-Helper-Script` (archived; snapshot copy, history stays there) | Postflop solve pipeline: runs on Josh's PC, solves uploaded gametrees with Pio, uploads solution blobs to ADLS |
+| `watcher/` | Python + pywinauto + PioSOLVER | `rebrag/GTOLite-Helper-Script` (archived; snapshot copy, history stays there) | Postflop solve pipeline: claims uploaded gametrees from the SolveJobs queue, solves them, uploads solution blobs to ADLS. Two workers: the PioSOLVER watcher on Josh's PC, and the headless htsolver worker (`ht_solve_watcher.py`, no Pio, no GUI) for a server |
 | `engine/` | C++20 + CMake + Ninja | (new in this monorepo) | Headless CFR/QRE solver CLI: config in, binary `.hta` artifact out. See `engine/CLAUDE.md` |
 
 Each subfolder keeps its own `README.md`, and `frontend/` keeps its own `CLAUDE.md` with
@@ -53,6 +53,41 @@ The stack boundary around it:
 
 Current local-only path (the ADLS/SAS pieces above are not wired yet, deliberately):
 `engine solve` -> `.hta` -> C# reader (`backend/Services/EngineArtifacts/`) -> `POST /api/engine/import` exports schema-4 JSON under `Engine:LocalSolutionsDir` -> `FilesController` serves it ahead of ADLS (dev-gated; never set that config key on a deployed instance) -> the existing `/solutions` viewer renders it unchanged.
+That C# exporter is river-only and is on its way out: `python watcher/ht_bundles.py export` writes the same directory layout for a flop artifact through the path below.
+
+### htsolver on the SolveJobs queue (the path that retires PioSOLVER)
+
+A user-facing flop solve (the one `/hand-history/create` offers after a recorded hand, and the one `/solutions` offers from a preflop line) is a `SolveJobs` row, and **which solver runs it is a server-side switch**, never a client choice.
+
+- `POST /api/gametrees` takes the Pio tree text and, beside it, an `engineTree`: the same spot as htsolver's tree block.
+  Both are serialized from one `TreeParams` object (`frontend/src/lib/solver/engineTree.ts` and `treeConfig.ts`), so they cannot describe different spots.
+  The API rebuilds the tree from a strict whitelist (`EngineTreeValidator`) and stores it in the gametree blob.
+  The client describes WHAT the tree is; the worker owns HOW it is solved (accuracy target, iteration cap, time budget, threads, memory limit), so a public endpoint never hands a budget to a solver.
+- `SolveJob.Solver` is `pio` or `htsolver`, chosen at upload from `Solve:Solver:HandHistory` (uploads with seat metadata) and `Solve:Solver:Sim` (the rest), both defaulting to `pio`.
+  Flipping the App Service setting is the rollout and the rollback, with no deploy.
+  ICM uploads and uploads without an engine tree always go to Pio.
+  An admin may override per request (`localStorage["ht.solverOverride"]` in the browser), which is how one hand gets solved by both for comparison, and `POST /api/solvejobs/reroute` moves jobs still queued for the other solver.
+- Each solver has its own claim route: `POST /api/solvejobs/claim` hands out only `pio` jobs and `/claim/htsolver` only `htsolver` jobs.
+  A watcher can therefore never pop a job it cannot run, and a new worker pointed at an older API gets a 404 rather than Pio's work.
+- `watcher/ht_solve_watcher.py` solves with `engine.exe` and converts on the machine that holds the artifact: `engine dump-streets` writes one JSON document per street, and `watcher/ht_bundles.py` adapts those into the dicts `watcher/extraction.py`'s builders already consume.
+  **Schema 4 has exactly one definition, `extraction.py`, for both solvers**; do not add a second `.hta`-to-schema-4 implementation.
+  A flop artifact is 3 to 6 GB with tens of thousands of river streets, which is why it cannot go through the API and why only the flop and the turns are uploaded.
+- **Rivers are on demand.**
+  `POST /api/noderequests` reads the board's manifest and routes on `manifest.engine.solver`: htsolver boards go to their own Storage Queue (`noderequests-htsolver`), Pio boards go where they always went.
+  The worker keeps each `.hta` under an LRU disk budget and serves a river street in about a tenth of a second.
+  A worker that does not hold the artifact (evicted, or solved on another box) re-solves it from `solve.json` beside the manifest, pinned to the iterations the original solve ran; the engine is bitwise deterministic at a fixed iteration count, so the re-solved river is byte-identical to one served from the original (verified end to end).
+- **Index writers stay single.**
+  The Pio watcher is the only writer of `piosolutions-index.json`.
+  The htsolver worker never writes an index: it sends the entry with its status report and the API upserts `enginesolutions-index.json` with an ETag-conditional write (`EngineSolutionsIndex`), the same blob `/compare` publish mode uses, merged at read time.
+- **Hand-history privacy rides on the `SolveJobs` row, not on the files.**
+  `PostflopLibraryOverlay` shows a hand-history board only to its owner by matching the row's coordinates, so a job's `ResultStacks` / `ResultNodeName` are set when it is inserted, not at Done; a board published before its row had coordinates would list publicly with real names and hole cards.
+- The solve-time notice is measured, not promised: `SolveJobTimings` reports the median claim-to-Done time of recent solves of the same solver and kind (`typicalSeconds`), and the frontend prints that.
+
+The engine builds PioViewer's tree for the same panel settings through three opt-in tree options (`add_allin` per seat, `add_allin_max_pot_ratio`, `merge_similar_pct`), pinned line for line against PioViewer's own scripts in `watcher/fixtures/pio_trees/` (`engine/tests/test_pio_parity.cpp`).
+Known differences: one-chip rounding on exact half-chip ties (Pio rounds the total half-to-even, the engine rounds the increment half away from zero), and `merge_similar_pct`, whose rule no PioViewer output on disk exercises yet.
+
+Putting the worker on a server (install, the bench to run first, the Scheduled Task, updates) is `watcher/deploy/README.md`.
+Still to do after the switch is trusted: delete the C# `EngineSolutionExporter`, `POST /api/engine/import` and the API's `publish-artifact` conversion, and route `/compare` publish mode through `ht_bundles`.
 
 **Building the engine on Windows: always `engine/build.ps1`** (it bootstraps vcvars64 via VsDevCmd, then CMake+Ninja).
 Never call cl, cmake, or ninja directly - they are not on the ambient PATH.
@@ -95,6 +130,7 @@ QRE, multiway solving, and collusion modes are scheduled follow-ups whose config
 - Frontend: `cd frontend && npm run dev` (dev) | `npm run build` (build/type-check)
 - Backend: `cd backend && dotnet run` | migrations: `dotnet ef migrations add <Name>` then `dotnet ef database update` (requires the .NET SDK, not just the runtime); tests: `dotnet test backend/HoldemToolsAPI.sln` (also run by `.github/workflows/backend-ci.yml`)
 - Engine: `cd engine && ./build.ps1 -Test` (Windows; see the build rule above)
+- Watcher: `cd watcher && python -m pytest -q` (fakes only, no Pio and no Azure; also run by `.github/workflows/watcher-ci.yml`)
 
 ## Frontend environment variables
 

@@ -36,7 +36,34 @@ In progress:
   **Flop-to-river PASSED** 2026-08-26 (`configs/validate_flop_small.json`, 85k decision nodes, 1.7GB, ~10.5 min): tree verified node-for-node against Pio (106 betting nodes), root EV 45.276 vs Pio 45.289 (0.013 chips apart, threshold 0.5).
 
   Per-hand EV agreement after the convention fix below: **turn 0.161 chips**, **flop 0.649 chips** (from 23.9 and 33.4 respectively). The flop residual is larger because that spot targets 0.1% of pot exploitable versus the turn's 0.02% - five times looser convergence - and is measured on sampled runouts. Tighten the budget if a closer number is wanted.
-  Remaining: the viewer-facing bundle exporter (publish mode) is still river-only.
+  ~~Remaining: the viewer-facing bundle exporter (publish mode) is still river-only.~~
+  **Closed 2026-11-16 by a different route than "extend the C# exporter"**: a flop artifact is 3 to 6 GB, so conversion moved to the machine that holds it.
+  `engine dump-streets` writes one JSON document per street and `watcher/ht_bundles.py` feeds those to `watcher/extraction.py`'s own builders, so schema 4 keeps one definition for both solvers.
+  Flop and turns are published; rivers are served on demand from the kept artifact (0.1 s for a street of a 3 GB artifact), and from a pinned re-solve when the artifact is gone.
+  The user-facing solve path (`SolveJobs`) now routes to htsolver behind a server-side switch; see "htsolver on the SolveJobs queue" in the monorepo `CLAUDE.md`.
+  `/compare` publish mode still converts in the API with the river-only C# exporter, which is deleted once the switch is trusted.
+
+  **The engine now builds PioViewer's tree, not just a tree Pio can load.**
+  Until this point the harness only ever built the engine's tree inside Pio; nothing compared the engine's builder against PioViewer's own.
+  Three opt-in tree options (`add_allin` per seat, `add_allin_max_pot_ratio`, `merge_similar_pct`; all default off, `tools/tree_hash` digests unchanged) reproduce the hand-history panel's settings, and `tests/test_pio_parity.cpp` checks the result line for line against PioViewer-generated scripts in `watcher/fixtures/pio_trees/`.
+  The all-in rule that fits every script on disk (21 of Pio's shipped scripts, both fixtures and two saved trees): the added all-in is offered only when `stack - current_bet <= ratio * (pot + amount_faced)`; an explicit all-in size is never capped; AddAllin only adds to a non-empty size list.
+  What still differs, and is asserted rather than hidden:
+  - **One-chip rounding on exact half-chip ties.** Pio rounds the cumulative total half-to-even; the engine rounds the increment half away from zero, and truncates the all-in threshold to whole chips. On `temp.txt` that is three ties (40.5, 121.5, 67.5), each cascading into the river below it: 25 engine-only and 26 Pio-only lines out of the tree, all one chip apart, one of which turns a 348-chip river bet into a 349-chip all-in. `riverTest.txt` matches exactly. The engine's rounding was deliberately left alone.
+  - **`merge_similar_pct` is not pinned.** No PioViewer output on disk has two sizes close enough to merge, so the implemented rule (drop a size within that percentage of the pot after calling of the next larger kept size) is the best reading, not a verified one. A PioViewer script for pot 100, stack 1000, AllinThreshold 100, merge 12 and river bets `10 12 50 55 150 165` dropped into the fixtures directory settles it; the parity test picks it up automatically.
+  - Pio's `CapPerStreet 0` means unlimited where the engine's `max_raises: 0` means none. The frontend always sends PioViewer's own value (4), so the two never meet.
+
+  **Recorded-hand-shaped flop solves, measured 2026-11-16** (9800X3D, 16 threads, 0.2% of pot, the panel's sizes, `configs/bench/hh_*.json`; the worker's end-to-end time adds about 7 s to dump and publish 295 streets):
+
+  | spot | decision nodes | hands | iterations | solve | export | peak (whole run) | artifact |
+  |---|---|---|---|---|---|---|---|
+  | small - a real recorded hand's own ranges (11% vs 46%), SPR 7.2 | 312,092 | 530 | 275 | 75-81 s | 12-13 s | 7.8 GB | 3.0 GB |
+  | medium - 40% vs 42%, SPR 12 | 345,068 | 506 | 375 | 334 s | 16 s | 10.9 GB | 4.6 GB |
+  | large - 62% vs 59%, SPR 20 | 359,082 | 739 | 525 | 666 s | 23 s | 17.5 GB | 6.1 GB |
+
+  Thread scaling on the medium spot is 1.0x / 1.5x / 2.7x / 3.3x / 3.2x at 1 / 2 / 4 / 8 / 16 threads, with identical iterations and exploitability at every count.
+  It flattens at the physical core count, which reads as memory-bound, and is why the worker supports one solve per NUMA node (`HT_SOLVE_SLOTS`, `HT_SLOT_AFFINITY`) rather than assuming more threads per solve help.
+  PioSOLVER's own time on real recorded hands is 28-48 s of solve plus about 9 s of extraction, so **on these trees htsolver is currently two to three times slower than Pio on the same PC, and the whole-run peak is the artifact export, not the solve** (1.3 GB at the end of the small spot's solve loop against 7.8 GB after export).
+  Those are the two things to work on before this path is the default: the export pass holding every decision node's record at once, and time to target on flop trees.
 
 - **M6.7 - multithreaded traversal.** Landed 2026-08-26.
   Sibling subtrees are independent - they write disjoint slices of the flat regret/strategy arrays - so `CfrSolver::traverse_impl` and the best-response walk fork their children onto a shared `ThreadPool` (`src/util/parallel.hpp`) while every cross-child fold-back stays serial and in child order.
