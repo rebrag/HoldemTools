@@ -46,6 +46,8 @@ The index is written last and the header is patched by seeking back to offset 0 
 One JSON object. Fields (all present unless marked optional):
 
 - `solver_version`, `format_version`, `config_hash` (SHA-256 hex of the canonical config dump), `config` (the full parsed config, embedded), `game`.
+- `engine_build` - the short id of the last git commit that touched `engine/` when the engine was built, suffixed `-dirty` when `engine/` had uncommitted changes, `"unknown"` without git (additive, no format version bump; absent on artifacts written before 2026-11-16).
+  `solver_version` is a static semantic version, so this is the key that tells whether two artifacts came from the same engine code.
 - `mode` - `"nash"` or `"qre"`. A QRE solve and a Nash solve must be distinguishable downstream; the validation harness refuses `"qre"`.
 - `lambda` - per-seat λ array (in 1/chips) for QRE solves, `null` for Nash.
 - `final_qre_gap_chips`, `final_qre_gap_pct_pot` - per-player exploitability measured in the entropy-augmented game, which is what a QRE solve converges on and stops against. `null` on a Nash solve. `final_nashconv` / `final_exploitable_*` stay the PLAIN measurement of the same strategy; on a QRE solve that number plateaus at a λ-dependent floor by design, so both travel and a consumer should show the plateau rather than report it as a failure to converge.

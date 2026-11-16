@@ -20,6 +20,12 @@ const char* usage() {
          "                                  per-hand data: detail = actor hands with EVs,\n"
          "                                  gate = actor strategies only, both dropping\n"
          "                                  hand_dicts, rollups, and non-actor seats\n"
+         "  engine dump-streets <file.hta> --out-dir <dir> (--through flop|turn | --seed <id>...)\n"
+         "                   [--equity] [--threads N]\n"
+         "                                  one JSON document per street (a seed node and everything\n"
+         "                                  below it before the next deal) plus streets.json; seeds are\n"
+         "                                  Pio colon ids (r:0:c:b30:c:Th); --equity adds per-hand\n"
+         "                                  equity and matchups for both seats at every decision\n"
          "  engine version                  print engine and artifact format versions\n";
 }
 
@@ -35,7 +41,8 @@ CliArgs parse_args(int argc, const char* const* argv) {
     return args;
   }
   if (args.subcommand != "solve" && args.subcommand != "dry-run" &&
-      args.subcommand != "dump-json" && args.subcommand != "plan") {
+      args.subcommand != "dump-json" && args.subcommand != "plan" &&
+      args.subcommand != "dump-streets") {
     args.error = "unknown subcommand '" + args.subcommand + "'";
     return args;
   }
@@ -70,10 +77,33 @@ CliArgs parse_args(int argc, const char* const* argv) {
       args.time_budget_s = std::strtod(argv[++i], nullptr);
     } else if (flag == "--target-pct" && i + 1 < argc && args.subcommand == "plan") {
       args.target_pct = std::strtod(argv[++i], nullptr);
-    } else if (flag == "--threads" && i + 1 < argc && args.subcommand == "plan") {
+    } else if (flag == "--out-dir" && i + 1 < argc && args.subcommand == "dump-streets") {
+      args.out_dir = argv[++i];
+    } else if (flag == "--through" && i + 1 < argc && args.subcommand == "dump-streets") {
+      args.through = argv[++i];
+      if (*args.through != "flop" && *args.through != "turn") {
+        args.error = "--through must be flop or turn (got '" + *args.through + "')";
+        return args;
+      }
+    } else if (flag == "--seed" && i + 1 < argc && args.subcommand == "dump-streets") {
+      args.seeds.push_back(argv[++i]);
+    } else if (flag == "--equity" && args.subcommand == "dump-streets") {
+      args.equity = true;
+    } else if (flag == "--threads" && i + 1 < argc &&
+               (args.subcommand == "plan" || args.subcommand == "dump-streets")) {
       args.threads = static_cast<int>(std::strtol(argv[++i], nullptr, 10));
     } else {
       args.error = "unexpected argument '" + flag + "'";
+      return args;
+    }
+  }
+  if (args.subcommand == "dump-streets") {
+    if (args.out_dir.empty()) {
+      args.error = "dump-streets needs --out-dir";
+      return args;
+    }
+    if (args.through.has_value() == !args.seeds.empty()) {
+      args.error = "dump-streets takes exactly one of --through or --seed";
       return args;
     }
   }
