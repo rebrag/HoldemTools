@@ -64,8 +64,20 @@ In progress:
   The small spot solves in 78.6 s at 4 threads, 66.5 s at 8 and 69.2 s at 16, with identical iterations and exploitability at every count; an earlier sweep of the medium spot gave 1.0x / 1.5x / 2.7x / 3.3x / 3.2x at 1 / 2 / 4 / 8 / 16.
   Two small solves run side by side, each pinned to 8 logical processors, took 83 s apiece: 25% slower each, nearly twice the throughput.
   One solve is bound by memory, not cores, which is why the worker has solve slots with per-slot affinity (`HT_SOLVE_SLOTS`, `HT_SLOT_AFFINITY`) and why a many-core server should run several solves of 8 to 10 threads rather than one wide one.
-  PioSOLVER's own time on real recorded hands is 28-48 s of solve plus about 9 s of extraction, so **on these trees htsolver is currently about twice as slow as Pio on the same PC, and the whole-run peak is the artifact export, not the solve** (1.3 GB at the end of the small spot's solve loop against 7.8 GB after export).
-  Those are the two things to work on before this path is the default: the export pass holding every decision node's record at once, and time to target on flop trees, where the flat scaling says the lever is memory traffic per iteration rather than more parallelism.
+  **Against PioSOLVER on the identical tree** (`engine_compare.py --solve-pio --cross-check` on the small spot's artifact, same PC, same 0.2%-of-pot target; Pio built the engine's tree and it verified node for node, 446 betting nodes):
+
+  | | htsolver | PioSOLVER |
+  |---|---|---|
+  | root EV, OOP | 31.350 | 31.346 |
+  | exploitable for | 0.141 chips | 0.144 chips |
+  | solve | 69.05 s (275 iterations, 16 threads) | 54.53 s |
+  | peak memory, solve phase | 1.29 GB | 2.60 GB |
+  | peak memory, whole run | 8.02 GB (artifact export) | - |
+
+  Root EVs agree to 0.004 chips against a 0.405-chip gate (0.5% of pot).
+  A flop tree is sampled mode for the harness, so the gate is root-EV agreement; full cross-exploitability needs the whole strategy loaded into Pio and is not run at this size.
+  So **htsolver is about 1.3x slower than Pio on the same recorded-hand tree, at half Pio's solve memory, and the whole-run peak is the artifact export, not the solve.**
+  Those are the two things to work on before this path is the default: the export pass holding every decision node's record at once (six times the solve's own footprint), and time to target on flop trees, where the flat scaling says the lever is memory traffic per iteration rather than more parallelism.
 
 - **M6.7 - multithreaded traversal.** Landed 2026-08-26.
   Sibling subtrees are independent - they write disjoint slices of the flat regret/strategy arrays - so `CfrSolver::traverse_impl` and the best-response walk fork their children onto a shared `ThreadPool` (`src/util/parallel.hpp`) while every cross-child fold-back stays serial and in child order.
