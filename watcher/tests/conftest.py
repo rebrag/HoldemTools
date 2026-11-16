@@ -2,8 +2,10 @@
 
 The watcher modules are flat scripts in `watcher/`, not a package, so the
 directory goes on sys.path here once for every test module.
-Nothing in this suite talks to Azure, the API or a real engine: every
-collaborator is a fake defined in the tests themselves.
+Nothing in this suite talks to Azure, the API or an engine process: every
+collaborator is a fake defined in the tests themselves. The one piece of real
+engine output is data, not a process: the committed dump-streets fixture that
+test_ht_real_dump.py feeds the adapter.
 """
 
 import os
