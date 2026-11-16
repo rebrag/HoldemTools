@@ -88,6 +88,8 @@ Hand-history uploads also carry an optional `Seats` list (pos, name, flop-time s
 | `ht_bundles.py` | The one adapter from `engine dump-streets` to `extraction.py`'s builders; also `python ht_bundles.py export` for local viewing. |
 | `engine_proc.py` | engine.exe child-process helpers (streamed output, deadline, cooperative stop, CPU affinity) shared by both htsolver watchers. |
 | `requirements-ht.txt` | Pio-free dependencies for the htsolver worker and the test suite. |
+| `deploy/` | Putting the htsolver worker on a Windows Server box: `install.ps1`, `update.ps1`, `bench.ps1` and the runbook (`deploy/README.md`). |
+| `fixtures/pio_trees/` | PioViewer-generated tree scripts. The engine's tree builder is tested line for line against them (`engine/tests/test_pio_parity.cpp`). |
 | `tests/` | pytest suite (fakes only, runs in `.github/workflows/watcher-ci.yml`), including a golden that pins the Pio path's schema-4 output. |
 | `reextract.py` | Regenerate bundles from local cfrs without re-solving (`--all`). |
 | `pio_headless_from_block.py` | Headless tree build via UPI from a config block (used by `run_one.py`). |
@@ -141,6 +143,35 @@ The Pio watcher, for its part, ignores node requests for any board whose manifes
 `HT_DRAIN_FILE` drains the worker for a restart: while the file exists nothing new is claimed or received, in-flight work finishes, and the process logs `drained` and exits 0.
 Every setting is documented in `.env.example`.
 Run it with `python ht_solve_watcher.py`.
+
+### Running it on a remote box
+
+The worker is built to live on a server nobody is logged on to: no PioSOLVER, no GUI, no unlocked desktop, no inbound port.
+`deploy/README.md` is the runbook, and the short version is three commands in an elevated PowerShell on the box.
+
+```powershell
+git clone https://github.com/rebrag/HoldemTools.git C:\HoldemTools
+```
+
+```powershell
+C:\HoldemTools\watcher\deploy\install.ps1
+```
+
+```powershell
+C:\HoldemTools\watcher\deploy\bench.ps1
+```
+
+`install.ps1` creates a Pio-free virtual environment, builds `engine.exe` with `engine/build.ps1`, writes a `watcher\.env` with the three secrets left empty for you to fill in, and registers a Scheduled Task that starts at boot under `LOCAL SERVICE` and restarts on failure.
+`bench.ps1` needs no secrets and no network: it times the committed recorded-hand spots (`engine/configs/bench/hh_*.json`) at every thread count and one solve per processor socket, which is what decides `HT_THREADS`, `HT_SOLVE_SLOTS` and `HT_SLOT_AFFINITY`.
+`update.ps1` rolls out new code: pull, drain the running solve, rebuild the engine if `engine/` changed, restart.
+Logs are `ht_solve_watcher.log` under the data directory's `logs\`.
+
+Which solver gets a job is decided by the API, not by the box: the App Service setting `Solve__Solver__HandHistory` (`pio` or `htsolver`) is both the rollout and the rollback.
+
+### Local viewing without ADLS
+
+`python ht_bundles.py export <artifact.hta> --gametree <blob.json> --out <dir>` writes the same manifest and bundles the worker uploads into a local directory laid out like the container.
+Point the API's dev-only `Engine:LocalSolutionsDir` at that directory (the `http-engine` launch profile reads `engine/out/solutions`), add the printed entry to a `piosolutions-index.json` there, and `/solutions` renders the board.
 
 ## Engine validation harness (`engine_compare.py`)
 

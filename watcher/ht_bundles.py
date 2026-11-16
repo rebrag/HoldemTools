@@ -109,7 +109,9 @@ def run_dump_streets(
     if (through is None) == (not seeds):
         raise ValueError("pass exactly one of through= or seeds=")
     os.makedirs(out_dir, exist_ok=True)
-    cmd = [engine_exe, "dump-streets", artifact, "--out-dir", out_dir]
+    # Absolute: CreateProcess does not resolve a relative path that uses
+    # forward slashes ("engine/build/engine.exe" is "file not found").
+    cmd = [os.path.abspath(engine_exe), "dump-streets", artifact, "--out-dir", out_dir]
     if through is not None:
         cmd += ["--through", through]
     for seed in seeds:

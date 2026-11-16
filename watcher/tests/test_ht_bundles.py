@@ -1,6 +1,7 @@
 """ht_bundles: dump-streets documents -> extraction.py's own schema-4 output."""
 
 import json
+import os
 
 import pytest
 
@@ -155,8 +156,12 @@ def test_run_dump_streets_builds_the_contract_command(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ht_bundles.subprocess, "run", fake_run)
     out = str(tmp_path / "d")
-    doc = ht_bundles.run_dump_streets("engine.exe", "a.hta", out, seeds=["r:0:c:c:Th", "r:0:c:c:Ts"])
-    assert seen["cmd"] == ["engine.exe", "dump-streets", "a.hta", "--out-dir", out,
+    doc = ht_bundles.run_dump_streets("engine/build/engine.exe", "a.hta", out,
+                                      seeds=["r:0:c:c:Th", "r:0:c:c:Ts"])
+    # The binary is made absolute: CreateProcess cannot find a relative path
+    # written with forward slashes, which is how every doc spells it.
+    assert seen["cmd"] == [os.path.abspath("engine/build/engine.exe"), "dump-streets", "a.hta",
+                           "--out-dir", out,
                            "--seed", "r:0:c:c:Th", "--seed", "r:0:c:c:Ts", "--equity"]
     assert doc["hands"] == HANDS
     with pytest.raises(ValueError):
