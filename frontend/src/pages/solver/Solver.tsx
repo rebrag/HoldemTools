@@ -161,6 +161,7 @@ const PendingSolveCard = ({
   queuePosition,
   error,
   solver,
+  typicalSeconds,
   onDismiss,
 }: {
   board: string[];
@@ -170,6 +171,8 @@ const PendingSolveCard = ({
   error?: string | null;
   /** The solver the API queued the job for; picks the time promise. */
   solver?: SolverKind;
+  /** The API's measured solve time for this solver, when it has one. */
+  typicalSeconds?: number | null;
   onDismiss?: () => void;
 }) => {
   const [now, setNow] = useState(Date.now());
@@ -227,7 +230,7 @@ const PendingSolveCard = ({
           </>
         ) : (
           <span className="text-[11px] tabular-nums text-gray-300">
-            {mm}:{ss} elapsed · {solveTimeHint(solver)}
+            {mm}:{ss} elapsed · {solveTimeHint(solver, typicalSeconds)}
           </span>
         )}
       </div>
@@ -301,6 +304,7 @@ const Solver = ({ user }: SolverProps) => {
     queuePosition?: number | null;
     error?: string | null;
     solver?: SolverKind;
+    typicalSeconds?: number | null;
   } | null>(null);
   const pendingCancelRef = useRef(false);
   /* Preflop line being walked back into after leaving a board: the actions to
@@ -1335,7 +1339,12 @@ const Solver = ({ user }: SolverProps) => {
       // watcher publishes the flop before the turn sweep, so that is usually
       // well before the job reports Done.
       pendingCancelRef.current = false;
-      setPostflopPending({ board: [...flopCards], startedAt: Date.now(), solver: result.solver });
+      setPostflopPending({
+        board: [...flopCards],
+        startedAt: Date.now(),
+        solver: result.solver,
+        typicalSeconds: result.typicalSeconds,
+      });
       void (async () => {
         let opened = false;
         let opening = false;
@@ -1365,6 +1374,7 @@ const Solver = ({ user }: SolverProps) => {
                     queuePosition: dto.queuePosition,
                     error: dto.error,
                     solver: dto.solver ?? prev.solver,
+                    typicalSeconds: dto.typicalSeconds ?? prev.typicalSeconds,
                   }
                 : prev
             );
@@ -1722,6 +1732,7 @@ const Solver = ({ user }: SolverProps) => {
               queuePosition={postflopPending.queuePosition}
               error={postflopPending.error}
               solver={postflopPending.solver}
+              typicalSeconds={postflopPending.typicalSeconds}
               onDismiss={() => {
                 pendingCancelRef.current = true;
                 setPostflopPending(null);

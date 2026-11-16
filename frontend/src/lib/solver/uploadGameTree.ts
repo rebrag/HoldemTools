@@ -58,6 +58,9 @@ export type UploadGameTreeResult = {
   deduped?: boolean;
   /** The solver the API queued the job for. */
   solver?: SolverKind;
+  /** What recent solves of this solver and kind took, measured by the API
+   *  (see solveTimeHint). Null when there is no history yet. */
+  typicalSeconds?: number | null;
 };
 
 /** localStorage key for the dev / admin A/B escape hatch. */

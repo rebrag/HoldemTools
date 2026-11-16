@@ -1144,7 +1144,7 @@ const CreateHandHistory: React.FC<Props> = ({
         ...(solver ? { solver } : {}),
       });
       setSolveNotice(
-        `Solve queued - it will appear in the Solution Library on the Solutions page (${solveTimeHint(result.solver)}).`
+        `Solve queued - it will appear in the Solution Library on the Solutions page (${solveTimeHint(result.solver, result.typicalSeconds)}).`
       );
       // One status fetch for an honest queue position; the job itself is
       // durable, so navigating away loses nothing.
