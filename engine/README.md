@@ -67,6 +67,32 @@ The solve output is a single versioned binary file with a byte-offset node index
 Spec: [docs/artifact-format.md](docs/artifact-format.md).
 Production reads happen through the C# reader in `backend/Services/EngineArtifacts/`; `engine dump-json` is a developer tool.
 
+### `engine dump-streets`
+
+```
+engine dump-streets <file.hta> --out-dir <dir> (--through flop|turn | --seed <colon-id> [--seed ...]) [--equity] [--threads N]
+```
+
+The watcher's read path (`watcher/ht_bundles.py`): a heads-up postflop artifact as one JSON document per STREET.
+A street is a seed decision node plus everything reachable from it without crossing a deal; the root street is seeded at `r:0`, every other street at a dealt card that leads to a decision.
+`--through turn` writes the root street and every turn street; `--seed` writes exactly the named streets, which is how a river is served on demand.
+Node ids are Pio's colon ids: `f`, `c`, `b<hand-cumulative chips>`, and the dealt card (`r:0:c:b30:c:Th`), resolved engine-side from the node table.
+Only the blobs of the emitted decision nodes are read, so a river seed on a 3 GB flop artifact takes about 0.07 s.
+
+`<dir>/streets.json` is `{metadata, hands, streets: [{seed, street, board, decision_nodes, file}]}`, where `hands` is the shared compact hand dictionary as combo strings and every `idx` below indexes it.
+Each `<seed with ':' as '.'>.json` is `{seed, street, board, nodes}`, with `nodes` in node-id order and every child of an emitted decision present:
+
+- every entry: `id`, `node_id`, `kind` (`decision` | `chance` | `terminal`), `pot`, `commit` (both seats);
+- decision: `actor`, `actions`, `children`, `seats` (both seats: `idx`, `reach`, `ev`, and with `--equity` also `eq` and `mu`), `strategy` and `action_ev` as `[action][position in the actor's idx]`;
+- chance: `has_decisions` (false for an all-in runout);
+- terminal: `terminal` (`fold` | `showdown`).
+
+`--equity` mirrors Pio's `calc_eq_node`: for hand h, `eq` = the sum over the remaining runouts and the compatible opponent hands of opponent reach x (win + tie/2), divided by the same sum of reach, and `mu` = that denominator divided by the number of runouts compatible with h (plain compatible opponent reach on the river).
+`eq` is `null` where `mu` is 0.
+It uses the engine's own `RiverEvaluator`, only on the boards the requested streets need, and the result does not depend on `--threads`.
+Floats are rounded to 7 decimals.
+Anything but a 2-seat `nlhe` per-hand vectorized export with per-hand EVs is refused.
+
 ## Config reference
 
 See the commented `configs/example_river_hu.json`. Summary:
@@ -76,7 +102,7 @@ See the commented `configs/example_river_hu.json`. Summary:
 | `game` | `nlhe` (any 3/4/5-card root board), `nlhe_preflop` (multiway jam/fold), `kuhn`, `leduc` |
 | `board`, `pot`, `chip_scale` | 5-card board; root pot in chips; chips per display unit (100 = 1bb) |
 | `players[]` | seat label, stack (chips behind), range string or `@file:` |
-| `bet_sizing.<street>` | per seat: `bets`/`raises` (and OOP `donks`) as %-of-pot lists, plus `no_3bet` (that seat never makes the street's third aggression); `allin_threshold` and `max_raises` are street-wide |
+| `bet_sizing.<street>` | per seat: `bets`/`raises` (and OOP `donks`) as %-of-pot lists, plus `no_3bet` (that seat never makes the street's third aggression) and `add_allin` (PioViewer's AddAllin box: also offer an all-in beside a NON-EMPTY list); `allin_threshold`, `max_raises` (every aggressive action on the street counts, the opening bet included, so it equals PioViewer's `CapPerStreet` for any cap of 1 or more), `add_allin_max_pot_ratio` (PioViewer's AddAllinOnlyIfLessThanThisTimesThePot / 100: the added all-in only when `stack - current bet <= ratio * (pot + amount faced)`; 0 = no cap; an explicit `10000` size is never capped) and `merge_similar_pct` (drop a size within this % of the pot-after-call of the next larger kept size; 0 = off) are street-wide. The three Pio-parity keys default off and leave an existing config's tree and hash unchanged; `tests/test_pio_parity.cpp` checks the tree against PioViewer's own scripts in `watcher/fixtures/pio_trees/` |
 | `algorithm` | `update`: `rm` \| `cfr_plus` \| `dcfr` (+ `dcfr.alpha/beta/gamma`; default DCFR, linear averaging). `family`: `vectorized` (default, exact gradient) \| `sampled` (the deal-sampling core: one concrete deal per iteration, `sampled.{seed, batch, lanes, symmetry}`). The sampled family runs preflop and heads-up postflop; on postflop it needs `isomorphism: false` (no iso redirect yet) and FEW lanes - each lane holds a full copy of solver storage, so the default 16 blows a turn tree past 12 GB - with large batches, and it ignores `update` (linear discount by iteration) |
 | `qre` | `mode: "nash" \| "qre"`; for `"qre"`, `lambda` (per seat, in 1/chips - a scalar broadcasts) and optional `anneal: {factor, full_at}`. A QRE solve stops on the **QRE gap**, not on plain exploitability - see below |
 | `agents` | `partition` (identity only this pass), `payoff_weights`, `collusion` (reserved) |

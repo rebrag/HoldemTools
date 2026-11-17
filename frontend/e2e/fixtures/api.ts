@@ -63,6 +63,8 @@ export type ApiStub = {
   unhandled: string[];
   /** Boards the page asked to hide, minus any it later un-hid (Undo). */
   hidden: SolutionRefFixture[];
+  /** Bodies POSTed to /api/noderequests (on-demand street extraction). */
+  nodeRequests: unknown[];
 };
 
 /** A saved hand as /api/handhistory returns it (rawText carries the replay). */
@@ -107,10 +109,14 @@ export async function stubSolverApi(
     handHistories?: HandHistoryFixture[];
     /** Sessions as /api/bankroll returns them (camelCase BankrollSession). */
     bankrollSessions?: unknown[];
+    /** HTTP status for POST /api/noderequests. Default 200; the API answers
+     *  503 when it cannot enqueue the request. */
+    nodeRequestStatus?: number;
   } = {}
 ): Promise<ApiStub> {
   const unhandled: string[] = [];
   const hidden: SolutionRefFixture[] = [];
+  const nodeRequests: unknown[] = [];
 
   await page.route("**/api/**", async (route) => {
     const { pathname } = new URL(route.request().url());
@@ -151,6 +157,14 @@ export async function stubSolverApi(
         if (i >= 0) hidden.splice(i, 1);
       }
       return route.fulfill({ status: 204, body: "" });
+    }
+
+    /* On-demand street extraction. Recorded, and answered with the status the
+       spec asked for, so a spec can drive the failure path too. */
+    if (pathname.endsWith("/api/noderequests") && route.request().method() === "POST") {
+      nodeRequests.push(route.request().postDataJSON());
+      const status = opts.nodeRequestStatus ?? 200;
+      return route.fulfill({ status, json: status < 300 ? { ok: true } : { error: "unavailable" } });
     }
 
     // Postflop. An empty library is the honest default: a spec that has not
@@ -202,5 +216,5 @@ export async function stubSolverApi(
     return route.fulfill({ status: 404, json: { error: "unstubbed" } });
   });
 
-  return { unhandled, hidden };
+  return { unhandled, hidden, nodeRequests };
 }

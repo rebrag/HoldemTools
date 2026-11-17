@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "cards/cards.hpp"
 
@@ -294,8 +296,30 @@ struct Builder {
         if (target <= bet) continue;  // must exceed a call
         totals.push_back(target);
       }
+      // Both Pio-parity options size against the pot the actor's sizes are
+      // quoted in: the pot for an opening bet, the pot after calling for a
+      // raise (facing is 0 for a bet, so one expression covers both).
+      const double sized_pot = pot_now + static_cast<double>(facing);
+      if (seat.add_allin && !pcts.empty() && my_stack > bet) {
+        const double raise_by = static_cast<double>(my_stack - bet);
+        if (sizing.add_allin_max_pot_ratio <= 0.0 ||
+            raise_by <= sizing.add_allin_max_pot_ratio * sized_pot) {
+          totals.push_back(my_stack);
+        }
+      }
       std::sort(totals.begin(), totals.end());
       totals.erase(std::unique(totals.begin(), totals.end()), totals.end());
+      if (sizing.merge_similar_pct > 0.0 && totals.size() > 1) {
+        // Largest first: each candidate survives only if it is far enough
+        // below the smallest size kept so far.
+        std::vector<Chips> kept{totals.back()};
+        for (std::size_t i = totals.size() - 1; i-- > 0;) {
+          const double gap = static_cast<double>(kept.back() - totals[i]);
+          if (gap * 100.0 >= sizing.merge_similar_pct * sized_pot) kept.push_back(totals[i]);
+        }
+        std::reverse(kept.begin(), kept.end());
+        totals = std::move(kept);
+      }
       for (Chips target : totals) {
         children.push_back(
             {make_node(ActionKind::Bet, target, false), aggressive_state(target - bet)});

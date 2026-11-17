@@ -42,7 +42,9 @@ std::vector<double> parse_pcts(const json& j, const char* key, const char* what)
 // One street's sizing. Two accepted shapes:
 //   legacy: { "bets": [...], "raises": [...] }          - applied to both seats
 //   split:  { "ip": {"bets","raises"}, "oop": {"bets","donks","raises"} }
-// plus allin_threshold / max_raises at the street level in either shape.
+// plus allin_threshold / max_raises / add_allin_max_pot_ratio /
+// merge_similar_pct at the street level in either shape. add_allin is per
+// seat in the split shape and street-wide (both seats) in the legacy one.
 StreetSizing parse_sizing(const json& j) {
   StreetSizing sizing;
   if (j.contains("ip") || j.contains("oop")) {
@@ -51,6 +53,7 @@ StreetSizing parse_sizing(const json& j) {
       sizing.ip.bets = parse_pcts(ip, "bets", "bet size");
       sizing.ip.raises = parse_pcts(ip, "raises", "raise size");
       sizing.ip.no_3bet = ip.value("no_3bet", false);
+      sizing.ip.add_allin = ip.value("add_allin", false);
     }
     if (j.contains("oop")) {
       const json& oop = j.at("oop");
@@ -58,12 +61,27 @@ StreetSizing parse_sizing(const json& j) {
       sizing.oop.donks = parse_pcts(oop, "donks", "donk size");
       sizing.oop.raises = parse_pcts(oop, "raises", "raise size");
       sizing.oop.no_3bet = oop.value("no_3bet", false);
+      sizing.oop.add_allin = oop.value("add_allin", false);
     }
   } else {
     sizing.oop.bets = sizing.ip.bets = parse_pcts(j, "bets", "bet size");
     sizing.oop.raises = sizing.ip.raises = parse_pcts(j, "raises", "raise size");
     // Legacy shape has no donk concept: donking uses the same sizes.
     sizing.oop.donks = sizing.oop.bets;
+    sizing.oop.add_allin = sizing.ip.add_allin = j.value("add_allin", false);
+  }
+  // Pio-parity options (contract: default off, so an existing config builds
+  // the identical tree and - since config_hash covers the raw JSON - keeps
+  // its hash; a key only enters the hash when it is written).
+  if (j.contains("add_allin_max_pot_ratio")) {
+    sizing.add_allin_max_pot_ratio = j.at("add_allin_max_pot_ratio").get<double>();
+    if (!(sizing.add_allin_max_pot_ratio >= 0.0)) fail("add_allin_max_pot_ratio must be >= 0");
+  }
+  if (j.contains("merge_similar_pct")) {
+    sizing.merge_similar_pct = j.at("merge_similar_pct").get<double>();
+    if (!(sizing.merge_similar_pct >= 0.0 && sizing.merge_similar_pct < 100.0)) {
+      fail("merge_similar_pct must be in [0, 100)");
+    }
   }
   if (j.contains("allin_threshold")) sizing.allin_threshold = j.at("allin_threshold").get<double>();
   if (j.contains("max_raises")) sizing.max_raises = j.at("max_raises").get<int>();

@@ -32,19 +32,19 @@ import {
   type FolderMetaLike,
 } from "@/lib/stripe/stripeTiers";
 import { startSubscriptionCheckout } from "@/lib/stripe/checkout";
-import { uploadGameTree } from "@/lib/solver/uploadGameTree";
+import { solverOverride, uploadGameTree, type SolverKind } from "@/lib/solver/uploadGameTree";
 import { useCurrentTier } from "@/context/TierContext";
 import PlayingCard from "@/components/PlayingCard";
-import TreeBuildingModal, { type TreeBuildingInit } from "./TreeBuildingModal";
+import TreeBuildingModal, { type TreeBuildingInit, type TreeBuildingResult } from "./TreeBuildingModal";
 import { handleActionClickImpl, type PendingFlopUpload } from "@/lib/solver/handleActionClick";
-import { POSTFLOP_ORDER, buildTreeConfigText, type TreeParams } from "@/lib/solver/treeConfig";
+import { POSTFLOP_ORDER, buildTreeConfigText } from "@/lib/solver/treeConfig";
 import { parseGametreePathForSolution } from "@/lib/solver/postflopClient";
 import {
   fetchBoardManifest,
   solutionKey,
   type PostflopIndexEntry,
 } from "@/lib/solver/postflopLibrary";
-import { pollSolveJob, type SolveJobStatus } from "@/lib/solver/solveJobs";
+import { pollSolveJob, solveTimeHint, type SolveJobStatus } from "@/lib/solver/solveJobs";
 import {
   boardToCards,
   docToJsonData,
@@ -160,6 +160,8 @@ const PendingSolveCard = ({
   status,
   queuePosition,
   error,
+  solver,
+  typicalSeconds,
   onDismiss,
 }: {
   board: string[];
@@ -167,6 +169,10 @@ const PendingSolveCard = ({
   status?: SolveJobStatus;
   queuePosition?: number | null;
   error?: string | null;
+  /** The solver the API queued the job for; picks the time promise. */
+  solver?: SolverKind;
+  /** The API's measured solve time for this solver, when it has one. */
+  typicalSeconds?: number | null;
   onDismiss?: () => void;
 }) => {
   const [now, setNow] = useState(Date.now());
@@ -224,7 +230,7 @@ const PendingSolveCard = ({
           </>
         ) : (
           <span className="text-[11px] tabular-nums text-gray-300">
-            {mm}:{ss} elapsed · usually 2-10 min
+            {mm}:{ss} elapsed · {solveTimeHint(solver, typicalSeconds)}
           </span>
         )}
       </div>
@@ -297,6 +303,8 @@ const Solver = ({ user }: SolverProps) => {
     status?: SolveJobStatus;
     queuePosition?: number | null;
     error?: string | null;
+    solver?: SolverKind;
+    typicalSeconds?: number | null;
   } | null>(null);
   const pendingCancelRef = useRef(false);
   /* Preflop line being walked back into after leaving a board: the actions to
@@ -1263,16 +1271,12 @@ const Solver = ({ user }: SolverProps) => {
       flopCards: [],
       oopLabel: `${sorted[0]} (OOP)`,
       ipLabel: `${sorted[1]} (IP)`,
+      oopSeat: sorted[0],
+      ipSeat: sorted[1],
     };
   }, [pendingFlopUpload, alivePositions]);
 
-  const confirmFlopAndUpload = async ({
-    params,
-    flopCards,
-  }: {
-    params: TreeParams;
-    flopCards: string[];
-  }) => {
+  const confirmFlopAndUpload = async ({ params, flopCards, engineTree }: TreeBuildingResult) => {
     if (!pendingFlopUpload || flopCards.length !== 3) return;
     if (alivePositions.length !== 2) {
       console.warn(
@@ -1294,6 +1298,7 @@ const Solver = ({ user }: SolverProps) => {
     } = pendingFlopUpload;
 
     const adjustedText = buildTreeConfigText(params, flopCards);
+    const solver = solverOverride();
 
     try {
       const result = await uploadGameTree({
@@ -1303,6 +1308,10 @@ const Solver = ({ user }: SolverProps) => {
         isICM: pfICM,
         text: adjustedText,
         alivePositions,
+        // Sent for every non-ICM sim. The API still routes sims to Pio until
+        // Solve:Solver:Sim is flipped, so this changes nothing on its own.
+        ...(engineTree && !pfICM ? { engineTree } : {}),
+        ...(solver ? { solver } : {}),
       });
 
       console.log("✅ Game tree uploaded:", result);
@@ -1330,7 +1339,12 @@ const Solver = ({ user }: SolverProps) => {
       // watcher publishes the flop before the turn sweep, so that is usually
       // well before the job reports Done.
       pendingCancelRef.current = false;
-      setPostflopPending({ board: [...flopCards], startedAt: Date.now() });
+      setPostflopPending({
+        board: [...flopCards],
+        startedAt: Date.now(),
+        solver: result.solver,
+        typicalSeconds: result.typicalSeconds,
+      });
       void (async () => {
         let opened = false;
         let opening = false;
@@ -1359,6 +1373,8 @@ const Solver = ({ user }: SolverProps) => {
                     status: dto.status,
                     queuePosition: dto.queuePosition,
                     error: dto.error,
+                    solver: dto.solver ?? prev.solver,
+                    typicalSeconds: dto.typicalSeconds ?? prev.typicalSeconds,
                   }
                 : prev
             );
@@ -1715,6 +1731,8 @@ const Solver = ({ user }: SolverProps) => {
               status={postflopPending.status}
               queuePosition={postflopPending.queuePosition}
               error={postflopPending.error}
+              solver={postflopPending.solver}
+              typicalSeconds={postflopPending.typicalSeconds}
               onDismiss={() => {
                 pendingCancelRef.current = true;
                 setPostflopPending(null);

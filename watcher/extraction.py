@@ -871,6 +871,12 @@ def context_from_manifest(
     ctx["stacks"] = manifest.get("stacks") or ctx["stacks"]
     ctx["node_name"] = manifest.get("node_name") or ctx["node_name"]
     ctx["pot_chips"] = manifest.get("pot_chips")
+    # Which solver produced the board. Only an htsolver manifest has the
+    # block, and the key is only set when it does, so a Pio board's context
+    # (and every manifest rebuilt from it) stays exactly what it was.
+    if isinstance(manifest.get("engine"), dict):
+        ctx["engine"] = dict(manifest["engine"])
+        ctx["effective_stack_chips"] = manifest.get("effective_stack_chips")
     return ctx
 
 
@@ -1064,16 +1070,25 @@ def build_manifest(
     streets_map: Dict[str, Dict[str, Any]],
     cfr_size_bytes: Optional[int],
     existing: Optional[Dict[str, Any]] = None,
+    engine: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build (or update) the per-board manifest. Later extractions merge their
     street entries into an existing manifest's streets map. Legal dealt cards
-    at any chance node are derivable (52 minus board), so no card lists here."""
+    at any chance node are derivable (52 minus board), so no card lists here.
+
+    `engine` (or `ctx["engine"]`, which context_from_manifest round-trips) is
+    the htsolver solver block. With it the manifest carries `"engine": {...}`
+    and a `cfr` block saying no .cfr exists; without it the output is exactly
+    the Pio manifest, byte for byte (tests/test_extraction_golden.py)."""
     streets: Dict[str, Dict[str, Any]] = {}
     if existing and isinstance(existing.get("streets"), dict):
         streets.update(existing["streets"])
     streets.update(streets_map)
 
-    return {
+    if engine is None:
+        engine = ctx.get("engine")
+
+    manifest = {
         "schema": SCHEMA_VERSION,
         "board": ctx["board"],
         "stacks": ctx["stacks"],
@@ -1114,3 +1129,17 @@ def build_manifest(
         },
         "streets": streets,
     }
+    if engine is None:
+        return manifest
+
+    # htsolver board: no .cfr anywhere (the artifact is a worker-local .hta,
+    # re-solvable from solve.json), and the solver block sits where the cfr
+    # block was so a reader sees both together.
+    out: Dict[str, Any] = {}
+    for key, value in manifest.items():
+        if key == "cfr":
+            out["engine"] = dict(engine)
+            out["cfr"] = {"file": "", "available": False, "size_bytes": None}
+        else:
+            out[key] = value
+    return out

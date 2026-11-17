@@ -1,0 +1,6 @@
+# Deps for the headless htsolver worker (ht_solve_watcher.py) and the watcher
+# test suite. Deliberately nothing GUI or Pio: no pywinauto, no pyperclip.
+requests>=2.31                    # SolveJobs queue API client (api_client.py)
+python-dotenv>=1.0                # watcher/.env
+azure-storage-file-datalake>=12.14  # bundles, manifest, solve.json
+azure-storage-queue>=12.9         # htsolver node requests from the API

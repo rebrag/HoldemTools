@@ -1,0 +1,124 @@
+// Benchmark: a recorded-hand-shaped heads-up flop solve on the Pio-parity tree
+// options (the hand-history panel: add_allin everywhere, all-in threshold 60%,
+// AddAllin cap 2.5x pot, merge similar 12%, cap 4 per street).
+// ~40% vs ~42% ranges on Kd 7c 2s, SPR 12.
+// Generated with the solve settings the htsolver watcher owns; run from engine/.
+{
+  "schema": 1,
+  "game": "nlhe",
+  "board": "Kd 7c 2s",
+  "pot": 100,
+  "chip_scale": 1,
+  "players": [
+    {
+      "seat": "BB",
+      "stack": 1200,
+      "range": "22,33,44,55,66,77,88,99,TT,JJ,QQ,KK,AA,A2s,A3s,A4s,A5s,A6s,A7s,A8s,A9s,ATs,AJs,AQs,AKs,K2s,K3s,K4s,K5s,K6s,K7s,K8s,K9s,KTs,KJs,KQs,Q5s,Q6s,Q7s,Q8s,Q9s,QTs,QJs,J7s,J8s,J9s,JTs,T7s,T8s,T9s,96s,97s,98s,86s,87s,75s,76s,64s,65s,54s,A2o,A3o,A4o,A5o,A6o,A7o,A8o,A9o,ATo,AJo,AQo,AKo,K9o,KTo,KJo,KQo,Q9o,QTo,QJo,J9o,JTo,T9o"
+    },
+    {
+      "seat": "BTN",
+      "stack": 1200,
+      "range": "22,33,44,55,66,77,88,99,TT,JJ,QQ,KK,AA,A2s,A3s,A4s,A5s,A6s,A7s,A8s,A9s,ATs,AJs,AQs,AKs,K2s,K3s,K4s,K5s,K6s,K7s,K8s,K9s,KTs,KJs,KQs,Q4s,Q5s,Q6s,Q7s,Q8s,Q9s,QTs,QJs,J6s,J7s,J8s,J9s,JTs,T6s,T7s,T8s,T9s,96s,97s,98s,85s,86s,87s,75s,76s,64s,65s,53s,54s,A2o,A3o,A4o,A5o,A6o,A7o,A8o,A9o,ATo,AJo,AQo,AKo,K8o,K9o,KTo,KJo,KQo,Q9o,QTo,QJo,J9o,JTo,T9o"
+    }
+  ],
+  "bet_sizing": {
+    "flop": {
+      "oop": {
+        "bets": [
+          33
+        ],
+        "raises": [
+          33
+        ],
+        "add_allin": true
+      },
+      "ip": {
+        "bets": [
+          33,
+          100
+        ],
+        "raises": [
+          10000
+        ],
+        "add_allin": true
+      },
+      "allin_threshold": 0.6,
+      "max_raises": 4,
+      "add_allin_max_pot_ratio": 2.5,
+      "merge_similar_pct": 12
+    },
+    "turn": {
+      "oop": {
+        "bets": [
+          50
+        ],
+        "raises": [
+          10000
+        ],
+        "add_allin": true
+      },
+      "ip": {
+        "bets": [
+          50
+        ],
+        "raises": [
+          10000
+        ],
+        "add_allin": true
+      },
+      "allin_threshold": 0.6,
+      "max_raises": 4,
+      "add_allin_max_pot_ratio": 2.5,
+      "merge_similar_pct": 12
+    },
+    "river": {
+      "oop": {
+        "bets": [
+          30,
+          66
+        ],
+        "donks": [
+          30
+        ],
+        "raises": [
+          10000
+        ],
+        "add_allin": true
+      },
+      "ip": {
+        "bets": [
+          30,
+          66
+        ],
+        "raises": [
+          10000
+        ],
+        "add_allin": true
+      },
+      "allin_threshold": 0.6,
+      "max_raises": 4,
+      "add_allin_max_pot_ratio": 2.5,
+      "merge_similar_pct": 12
+    }
+  },
+  "preflop_aggressor": "none",
+  "algorithm": {
+    "update": "dcfr"
+  },
+  "qre": {
+    "mode": "nash"
+  },
+  "budget": {
+    "iterations": 2000,
+    "target_exploitable_pct": 0.2,
+    "checkpoint_every": 25
+  },
+  "threads": 0,
+  "memory_limit_gb": 24,
+  "output": {
+    "path": "out/bench/hh_medium.hta",
+    "strategy_quantize_u8": false,
+    "ev_float32": true,
+    "rollups_169": false
+  }
+}

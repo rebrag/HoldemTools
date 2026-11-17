@@ -21,6 +21,12 @@ struct SeatSizing {
   // opponent's opening bet - it just cannot re-raise a raise. Per seat, so
   // it composes with the street-wide max_raises cap rather than replacing it.
   bool no_3bet = false;
+  // PioViewer's AddAllin box: also offer an all-in in whichever list is in use
+  // at a node (bets, donks or raises), but only when that list is non-empty
+  // and only within StreetSizing::add_allin_max_pot_ratio. Distinct from an
+  // explicit all-in SIZE (10000, Pio's `a`), which is always offered. Default
+  // off, which builds exactly the tree the engine built before the key existed.
+  bool add_allin = false;
 };
 
 // One street's sizing for both seats. A computed size at or above
@@ -30,6 +36,21 @@ struct StreetSizing {
   SeatSizing ip;
   double allin_threshold = 0.9;
   int max_raises = 3;
+  // PioViewer's #AddAllinOnlyIfLessThanThisTimesThePot# / 100. An add_allin
+  // all-in is offered only when the chips it puts in ABOVE the current bet are
+  // at most this multiple of the pot after calling: (stack - bet) <=
+  // ratio * (pot + facing). For an opening bet that is (stack - commit) <=
+  // ratio * pot. Pinned against PioViewer's own scripts (see
+  // tests/test_pio_parity.cpp). 0 = no cap.
+  double add_allin_max_pot_ratio = 0.0;
+  // PioViewer's #MergeSimilarBetsThreshold# when #MergeSimilarBets#True.
+  // After a node's candidate totals are computed (threshold conversion and
+  // add_allin included), a candidate is dropped when it is within this
+  // percentage of the pot after calling of the next LARGER surviving
+  // candidate, so the larger size (typically the all-in) absorbs the smaller.
+  // NOT pinned by PioViewer output yet: no fixture on disk exercises it (see
+  // tests/test_pio_parity.cpp). 0 = off.
+  double merge_similar_pct = 0.0;
 };
 
 enum class Aggressor : std::uint8_t { None, Oop, Ip };
