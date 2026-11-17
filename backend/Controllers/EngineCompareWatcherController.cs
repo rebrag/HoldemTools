@@ -26,19 +26,18 @@ namespace PokerRangeAPI2.Controllers
     [WatcherKey]
     public class EngineCompareWatcherController : ControllerBase
     {
-        // Serializes upserts of the shared engine solutions index blob.
-        private static readonly SemaphoreSlim IndexGate = new(1, 1);
-        private const string EngineIndexBlob = "enginesolutions-index.json";
-
         private readonly AppDbContext _db;
         private readonly IConfiguration _config;
+        private readonly IEngineSolutionsIndex _engineIndex;
         private readonly int _claimTimeoutSeconds;
         private readonly int _maxAttempts;
 
-        public EngineCompareWatcherController(AppDbContext db, IConfiguration config)
+        public EngineCompareWatcherController(AppDbContext db, IConfiguration config,
+                                              IEngineSolutionsIndex engineIndex)
         {
             _db = db;
             _config = config;
+            _engineIndex = engineIndex;
             _claimTimeoutSeconds = int.TryParse(config["Watcher:ClaimTimeoutSeconds"], out var t) ? t : 300;
             _maxAttempts = int.TryParse(config["Watcher:MaxAttempts"], out var a) ? a : 2;
         }
@@ -280,10 +279,17 @@ namespace PokerRangeAPI2.Controllers
                     await container.GetBlobClient(relative).UploadAsync(stream, overwrite: true, ct);
                 }
 
-                // Upsert this solve's entry into the engine solutions index.
+                // Upsert this solve's entry into the engine solutions index,
+                // through the same single writer the SolveJobs path uses.
                 var localIndex = JsonNode.Parse(
                     await System.IO.File.ReadAllTextAsync(Path.Combine(runDir, "piosolutions-index.json"), ct))!;
-                await UpsertEngineIndexAsync(container, localIndex.AsObject(), ct);
+                foreach (var entry in localIndex["entries"]?.AsArray() ?? new JsonArray())
+                {
+                    await _engineIndex.UpsertAsync(
+                        EngineSolutionsIndex.SanitizeEntry(entry, result.Stacks, result.NodeName,
+                                                           result.Board, SolveJobSolver.HtSolver),
+                        ct);
+                }
 
                 job.ResultStacks = Truncate(result.Stacks, 200);
                 job.ResultNodeName = Truncate(result.NodeName, 200);
@@ -296,33 +302,6 @@ namespace PokerRangeAPI2.Controllers
             finally
             {
                 try { Directory.Delete(runDir, true); } catch { /* best effort */ }
-            }
-        }
-
-        private static async Task UpsertEngineIndexAsync(BlobContainerClient container,
-                                                         JsonObject localIndex, CancellationToken ct)
-        {
-            await IndexGate.WaitAsync(ct);
-            try
-            {
-                var blob = container.GetBlobClient(EngineIndexBlob);
-                JsonObject merged;
-                if (await blob.ExistsAsync(ct))
-                {
-                    var existing = (await blob.DownloadContentAsync(ct)).Value.Content.ToString();
-                    merged = JsonNode.Parse(
-                        EngineLocalSolutions.MergeIndexJson(existing, localIndex.ToJsonString()))!.AsObject();
-                }
-                else
-                {
-                    merged = localIndex;
-                }
-                merged["updated_utc"] = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'+00:00'");
-                await blob.UploadAsync(BinaryData.FromString(merged.ToJsonString()), overwrite: true, ct);
-            }
-            finally
-            {
-                IndexGate.Release();
             }
         }
 

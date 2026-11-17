@@ -41,6 +41,16 @@ namespace PokerRangeAPI2.Models
         public int? HandHistoryId { get; set; }
         public HandHistory? HandHistory { get; set; }
 
+        // Which solver this job is routed to (SolveJobSolver). Chosen
+        // server-side at upload; each solver's watcher claims from its own
+        // route, so a watcher can never pop a job meant for the other one.
+        public string Solver { get; set; } = SolveJobSolver.Pio;
+
+        // The upload carried a valid engine tree (stored in the gametree
+        // blob). A job-row fact so routing decisions after upload, such as
+        // the admin re-route, never need a blob read.
+        public bool HasEngineTree { get; set; }
+
         public string Status { get; set; } = SolveJobStatus.Queued;
 
         public int Priority { get; set; }      // higher claims first; 0 default
@@ -48,8 +58,11 @@ namespace PokerRangeAPI2.Models
         public string? Error { get; set; }
         public string? WatcherId { get; set; } // machine name of the claiming watcher
 
-        // Manifest coordinates as the watcher resolved them, reported on Done
-        // so the frontend can fetch the manifest without re-deriving them.
+        // Manifest coordinates. Set at insert (they are deterministic from
+        // BlobPath, see GameTreeCoordinates) so the library overlay can
+        // owner-filter a hand-history board from the moment any of it is
+        // published; the watcher's Done report restates the same values.
+        // Non-null does NOT mean solved - Status says that.
         public string? ResultStacks { get; set; }
         public string? ResultNodeName { get; set; }
 
@@ -62,6 +75,21 @@ namespace PokerRangeAPI2.Models
     public static class SolveJobType
     {
         public const string GameTree = "gametree";
+    }
+
+    public static class SolveJobSolver
+    {
+        public const string Pio = "pio";
+        public const string HtSolver = "htsolver";
+
+        public static readonly IReadOnlyList<string> All = new[] { Pio, HtSolver };
+
+        /// <summary>The canonical name for a solver string, or null when it names none.</summary>
+        public static string? Normalize(string? value)
+        {
+            var v = value?.Trim().ToLowerInvariant();
+            return v == Pio || v == HtSolver ? v : null;
+        }
     }
 
     public static class SolveJobStatus

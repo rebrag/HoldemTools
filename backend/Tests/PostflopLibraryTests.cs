@@ -171,6 +171,37 @@ namespace HoldemToolsAPI.Tests
             Assert.Equal(2, Entries(theirs).Count);
         }
 
+        [Theory]
+        [InlineData(SolveJobSolver.Pio, SolveJobStatus.Queued)]
+        [InlineData(SolveJobSolver.Pio, SolveJobStatus.Extracting)]
+        [InlineData(SolveJobSolver.HtSolver, SolveJobStatus.Queued)]
+        [InlineData(SolveJobSolver.HtSolver, SolveJobStatus.Uploading)]
+        public async Task Overlay_OwnerFiltersAHandHistoryBoard_BeforeItsJobIsDone(string solver, string status)
+        {
+            // The flop is indexed before Done (Pio at flop-ready, htsolver with
+            // its report). Coordinates set at insert mean the board is already
+            // private in that window instead of showing as a public sim board.
+            using var db = NewDb();
+            var (job, _) = await GameTreesController.CreateOrDedupeJobAsync(
+                db, "owner", "gametrees/2026/11/16/owner/folder=750SB_2000BB/101500_line=Call_pos=BB_icm=0.json",
+                "750SB_2000BB", "Call", "BB", isIcm: false, board: "4hJh5s", hasSeatMeta: true,
+                handHistoryId: 42, solver: solver);
+            job.Status = status;
+            await db.SaveChangesAsync();
+            Assert.Equal("750SB_2000BB", job.ResultStacks);
+            Assert.Equal("101500_line=Call_pos=BB_icm=0", job.ResultNodeName);
+
+            var json = IndexJson((job.ResultStacks!, job.ResultNodeName!, "4hJh5s"), ("40-27.5", "node-b", "AsKdQc"));
+
+            var theirs = await PostflopLibraryOverlay.ApplyAsync(db, "someone-else", json);
+            Assert.Equal("node-b", Str(Assert.Single(Entries(theirs))!, "node_name"));
+
+            var mine = await PostflopLibraryOverlay.ApplyAsync(db, "owner", json);
+            var own = Entries(mine).Single(e => Str(e!, "board") == "4hJh5s")!;
+            Assert.Equal("handHistory", Str(own, "source"));
+            Assert.Equal(42, own["hand_history_id"]!.GetValue<int>());
+        }
+
         // ---------------- hide / unhide ----------------
 
         [Fact]

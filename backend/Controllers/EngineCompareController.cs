@@ -537,17 +537,6 @@ namespace PokerRangeAPI2.Controllers
             return NoContent();
         }
 
-        private bool IsAdmin()
-        {
-            // The default JWT inbound claim map renames "email" to
-            // ClaimTypes.Email, so check both shapes.
-            var email = User.FindFirst("email")?.Value
-                ?? User.FindFirst(ClaimTypes.Email)?.Value;
-            var uid = this.CurrentUid();
-            var adminEmails = _config.GetSection("Admin:Emails").Get<string[]>() ?? Array.Empty<string>();
-            var adminUids = _config.GetSection("Admin:Uids").Get<string[]>() ?? Array.Empty<string>();
-            return (email != null && adminEmails.Contains(email, StringComparer.OrdinalIgnoreCase))
-                || (uid != null && adminUids.Contains(uid, StringComparer.Ordinal));
-        }
+        private bool IsAdmin() => this.IsAdmin(_config);
     }
 }

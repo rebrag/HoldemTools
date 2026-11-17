@@ -528,6 +528,9 @@ namespace GTOLiteAPI.Migrations
                     b.Property<int?>("HandHistoryId")
                         .HasColumnType("int");
 
+                    b.Property<bool>("HasEngineTree")
+                        .HasColumnType("bit");
+
                     b.Property<bool>("HasSeatMeta")
                         .HasColumnType("bit");
 
@@ -552,6 +555,13 @@ namespace GTOLiteAPI.Migrations
                     b.Property<string>("ResultStacks")
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("Solver")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .HasDefaultValue("pio");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -581,6 +591,8 @@ namespace GTOLiteAPI.Migrations
                     b.HasIndex("ResultStacks", "ResultNodeName", "Board");
 
                     b.HasIndex("Status", "Priority", "CreatedAtUtc");
+
+                    b.HasIndex("Solver", "Status", "Priority", "CreatedAtUtc");
 
                     b.ToTable("SolveJobs");
                 });

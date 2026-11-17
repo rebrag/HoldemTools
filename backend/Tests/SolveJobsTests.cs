@@ -33,7 +33,7 @@ namespace HoldemToolsAPI.Tests
 
         private static SolveJobsController UserController(AppDbContext db, string uid)
         {
-            var controller = new SolveJobsController(db);
+            var controller = new SolveJobsController(db, Config());
             var identity = new ClaimsIdentity(new[]
             {
                 new Claim("user_id", uid),
@@ -54,7 +54,7 @@ namespace HoldemToolsAPI.Tests
                 values["Watcher:ClaimTimeoutSeconds"] = timeoutSeconds.Value.ToString();
             if (maxAttempts.HasValue)
                 values["Watcher:MaxAttempts"] = maxAttempts.Value.ToString();
-            var controller = new SolveJobsWatcherController(db, Config(values));
+            var controller = new SolveJobsWatcherController(db, Config(values), EngineIndexFactory.New());
             controller.ControllerContext = new ControllerContext
             {
                 HttpContext = new DefaultHttpContext(),
