@@ -12,6 +12,7 @@
 #include "config/sha256.hpp"
 #include "io/artifact_format.hpp"
 #include "solver/memory.hpp"
+#include "util/build_info.hpp"
 
 namespace engine {
 
@@ -619,7 +620,9 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
 
   // Metadata JSON.
   json meta;
-  meta["solver_version"] = "0.1.0";
+  meta["solver_version"] = kSolverVersion;
+  // Static across builds; engine_build is what tells two builds apart.
+  meta["engine_build"] = engine_build_id();
   meta["format_version"] = fmt::kFormatVersion;
   meta["config_hash"] = config_hash(config);
   // The spot's identity - what a checkpoint refuses to continue across. With

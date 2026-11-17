@@ -36,6 +36,11 @@ const activeSeat = (page: Page) =>
 const clickCard = (card: Locator, seat: string) =>
   card.getByText(seat, { exact: true }).click();
 
+/** LINE_CARD_H from pages/solver/lineCard.ts in px: 5.25rem below Tailwind's
+ *  sm breakpoint (640px), where a phone's strip gives its height back to the
+ *  matrix, and 7rem from sm up. */
+const lineCardHeight = (page: Page) => ((page.viewportSize()?.width ?? 0) < 640 ? 84 : 112);
+
 test.describe("preflop line", () => {
   let api: ApiStub;
 
@@ -59,13 +64,13 @@ test.describe("preflop line", () => {
   });
 
   test("every seat card is the one fixed size", async ({ page }) => {
-    /* LINE_CARD_W_PREFLOP (5.5rem) x LINE_CARD_H (7rem) from
-       pages/solver/lineCard.ts, pinned as numbers rather than as "they all
-       match": the row stretches its children to a common height whatever they
-       hold, so equality alone never failed. What used to drift is the row's
-       own size - with the seat count, the viewport, and the busiest card's
-       option count - and only a number catches that. Same figure on both
-       projects, which is the point of a fixed card. */
+    /* LINE_CARD_W_PREFLOP (5.5rem) x LINE_CARD_H (5.25rem on a phone, 7rem
+       from sm) from pages/solver/lineCard.ts, pinned as numbers rather than as
+       "they all match": the row stretches its children to a common height
+       whatever they hold, so equality alone never failed. What used to drift
+       is the row's own size - with the seat count, the viewport, and the
+       busiest card's option count - and only a number catches that. One figure
+       per breakpoint, never per node, which is the point of a fixed card. */
     const sizes = () =>
       page.locator('[data-testid="line-card"]').evaluateAll((cards) =>
         cards.map((c) => {
@@ -76,7 +81,7 @@ test.describe("preflop line", () => {
 
     const atRoot = await sizes();
     expect(atRoot.length).toBeGreaterThan(1);
-    expect(new Set(atRoot)).toEqual(new Set(["88x112"]));
+    expect(new Set(atRoot)).toEqual(new Set([`88x${lineCardHeight(page)}`]));
 
     // Walking the tree changes which seats are live and what their cards hold.
     await clickCard(seatCard(page, "BTN"), "BTN");
@@ -187,7 +192,7 @@ test.describe("postflop line", () => {
   test("board cards keep the preflop strip's geometry", async ({ page }) => {
     /* One strip, three kinds of card: PostflopLine draws the preflop cards,
        the board tiles and the postflop decisions, so all three have to land on
-       LINE_CARD_H - the same 112 the preflop strip is pinned to above. The
+       LINE_CARD_H - the same height the preflop strip is pinned to above. The
        board tiles are as wide as the cards they show; the preflop cards keep
        LINE_CARD_W_PREFLOP, which is what makes lineCard.ts shared rather than
        duplicated per component. */
@@ -202,7 +207,7 @@ test.describe("postflop line", () => {
         cards.map((c) => Math.round(c.getBoundingClientRect().height))
       );
     expect(heights.length).toBeGreaterThan(1);
-    expect(new Set(heights)).toEqual(new Set([112]));
+    expect(new Set(heights)).toEqual(new Set([lineCardHeight(page)]));
 
     const preflopWidths = await preflopCards(page).evaluateAll((cards) =>
       cards.map((c) => Math.round(c.getBoundingClientRect().width))

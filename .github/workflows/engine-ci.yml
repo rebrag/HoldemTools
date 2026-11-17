@@ -3,9 +3,9 @@ name: Engine CI
 on:
   push:
     branches: [main]
-    paths: ["engine/**", ".github/workflows/engine-ci.yml"]
+    paths: ["engine/**", "watcher/fixtures/pio_trees/**", ".github/workflows/engine-ci.yml"]
   pull_request:
-    paths: ["engine/**", ".github/workflows/engine-ci.yml"]
+    paths: ["engine/**", "watcher/fixtures/pio_trees/**", ".github/workflows/engine-ci.yml"]
   workflow_dispatch:
 
 concurrency:

@@ -1,8 +1,11 @@
 // src/lib/solver/solveJobs.ts
 // Client for the SolveJobs queue: cheap status polling for a pending solve,
-// replacing blind manifest-existence polling. GET /api/solvejobs/{id} is a
-// two-count DB read, so a 2s cadence is fine.
+// replacing blind manifest-existence polling. GET /api/solvejobs/{id} is two
+// counts and a 20-row read, so a 2s cadence is fine.
 import { authedFetch } from "@/lib/api";
+import type { SolverKind } from "./uploadGameTree";
+
+export { formatTypicalSolveTime, solveTimeHint } from "./solveTimeHint";
 
 export type SolveJobStatus =
   | "Queued"
@@ -33,6 +36,15 @@ export type SolveJobDto = {
   claimedAtUtc: string | null;
   completedAtUtc: string | null;
   lastHeartbeatUtc: string | null;
+  /** The solver the job is queued for. Absent from an API older than solver
+   *  routing, where every job is Pio's. */
+  solver?: SolverKind;
+  /** The saved hand the solve came from, when it came from one. */
+  handHistoryId?: number | null;
+  /** Median claim-to-Done seconds of recent solves of this solver and kind,
+   *  measured by the API from the queue's own history. Null when there is no
+   *  history yet or the job is finished; absent from an older API. */
+  typicalSeconds?: number | null;
 };
 
 const TERMINAL: ReadonlySet<SolveJobStatus> = new Set(["Done", "Failed"]);

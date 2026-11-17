@@ -77,6 +77,23 @@ Any layout change bumps the format version and updates - in one commit - the spe
 All storage goes through `ArtifactStore` (`src/io/artifact_store.hpp`) - open/write/seek/read-range/close over an opaque path.
 No filesystem calls in solver code; `LocalStore` is the only implementation, and an `AdlsStore` must be able to drop in without touching solver code.
 
+**`engine dump-streets` is how a heads-up postflop artifact reaches the `/solutions` viewer, and it stops at JSON on purpose** (`src/io/dump_streets.*`).
+It writes one document per street - a seed node and everything below it before the next deal, ids as Pio colon ids - and `watcher/ht_bundles.py` adapts those into `watcher/extraction.py`'s builders.
+The engine never writes a schema-4 bundle: that would be a second definition of a viewer contract inside the solver, and the one in `extraction.py` is the one the Pio path already uses.
+Three things there are load-bearing.
+It reads **only the node blobs a street emits**, resolving colon ids against the node table alone, which is what makes a river street of a multi-GB flop artifact a tenth of a second and rivers-on-demand viable; do not add a pass that touches every node.
+`--equity` computes per-hand equity and matchups for both seats from the node's stored reach through the engine's own `RiverEvaluator` (gated against brute force to 1e-6 in `tests/test_dump_streets.cpp`), and writes `eq: null` where there are no matchups, because a zero would read as a real equity.
+And every number is computed serially in a fixed order inside one task, so the output is byte-identical at any `--threads`.
+
+**`metadata.engine_build` is the last commit that touched what the binary is built from** - `src/`, `CMakeLists.txt`, `cmake/` (`cmake/engine_build_id.cmake`, regenerated on every build) - not HEAD and not all of `engine/`: a commit to the docs, the configs or anywhere else in the monorepo does not make a different engine.
+The htsolver worker records it beside every published board and republishes a board's flop and turns when a river is first served by a different build, so no board mixes two builds' output.
+`solver_version` stays a static release string and cannot tell two builds apart.
+
+**The Pio-parity tree options are opt-in and must stay that way.**
+`add_allin` (per seat), `add_allin_max_pot_ratio` and `merge_similar_pct` (per street) default off, so a config that does not name them builds the bit-identical tree and keeps its `config_hash`; `tools/tree_hash` is the check.
+They exist so the engine builds the tree PioViewer builds for the same panel settings, and `tests/test_pio_parity.cpp` holds them to PioViewer's own scripts (`watcher/fixtures/pio_trees/`), with the remaining one-chip rounding differences asserted line by line rather than tolerated.
+`merge_similar_pct`'s rule is the best reading of a setting no fixture exercises yet; treat it as unverified until one does (the roadmap's M6.6 says which script settles it).
+
 ## Hard dependency rules
 
 - **Zero cloud SDKs, zero Firebase, zero GUI dependencies, ever, in this binary.** Uploading artifacts to ADLS is someone else's job (backend/watcher).

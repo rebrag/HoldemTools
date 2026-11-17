@@ -96,10 +96,26 @@ add_library(engine_core STATIC
   src/io/checkpoint.cpp
   src/io/artifact_reader.cpp
   src/io/dump_json.cpp
+  src/io/dump_streets.cpp
   src/ranges/iso.cpp
   src/util/parallel.cpp
+  src/util/build_info.cpp
 )
 target_include_directories(engine_core PUBLIC src)
+
+# The build id (git commit) stamped into artifact metadata as engine_build.
+# A target that runs on EVERY build, so a commit is picked up without a
+# reconfigure; the script rewrites the header only when the id changes.
+set(ENGINE_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+add_custom_target(engine_build_id ALL
+  COMMAND "${CMAKE_COMMAND}" "-DENGINE_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+          "-DOUT=${ENGINE_GENERATED_DIR}/engine_build_id.hpp"
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/engine_build_id.cmake"
+  BYPRODUCTS "${ENGINE_GENERATED_DIR}/engine_build_id.hpp"
+  COMMENT "engine build id"
+  VERBATIM)
+add_dependencies(engine_core engine_build_id)
+target_include_directories(engine_core PRIVATE "${ENGINE_GENERATED_DIR}")
 target_link_libraries(engine_core PUBLIC nlohmann_json::nlohmann_json engine_flags)
 
 # --- CLI ------------------------------------------------------------------
@@ -160,6 +176,12 @@ add_executable(engine_tests
   tests/test_abstraction.cpp
   tests/test_sampled_store.cpp
   tests/test_sampled_pinned.cpp
+  tests/test_pio_parity.cpp
+  tests/test_dump_streets.cpp
 )
 target_link_libraries(engine_tests PRIVATE engine_core doctest::doctest)
+# PioViewer-generated tree scripts, committed beside the watcher that uses the
+# same encoding (tests/test_pio_parity.cpp).
+target_compile_definitions(engine_tests PRIVATE
+  HT_PIO_TREE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/../watcher/fixtures/pio_trees")
 add_test(NAME engine_tests COMMAND engine_tests)

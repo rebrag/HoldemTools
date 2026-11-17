@@ -19,6 +19,7 @@
 #include "io/artifact_writer.hpp"
 #include "io/checkpoint.hpp"
 #include "io/dump_json.hpp"
+#include "io/dump_streets.hpp"
 #include "solver/agents.hpp"
 #include "solver/best_response.hpp"
 #include "solver/cfr.hpp"
@@ -27,6 +28,7 @@
 #include "solver/sampled_cfr.hpp"
 #include "solver/memory.hpp"
 #include "solver/plan.hpp"
+#include "util/build_info.hpp"
 #include "util/parallel.hpp"
 #include "util/stop_signal.hpp"
 
@@ -900,7 +902,24 @@ int main(int argc, char** argv) {
   }
   try {
     if (args.subcommand == "version") {
-      std::cout << "htsolver 0.1.0 (artifact format v" << artifact::kFormatVersion << ")\n";
+      std::cout << "htsolver " << kSolverVersion << " (build " << engine_build_id()
+                << ", artifact format v" << artifact::kFormatVersion << ")\n";
+      return 0;
+    }
+    if (args.subcommand == "dump-streets") {
+      const auto start = std::chrono::steady_clock::now();
+      LocalStore store;
+      DumpStreetsOptions options;
+      options.out_dir = args.out_dir;
+      if (args.through) options.through = *args.through == "flop" ? Street::Flop : Street::Turn;
+      options.seeds = args.seeds;
+      options.equity = args.equity;
+      options.threads = args.threads;
+      const nlohmann::json index = dump_streets(store, args.input_path, options);
+      const double secs =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+      std::cerr << "wrote " << index.at("streets").size() << " streets to " << args.out_dir
+                << " in " << secs << " s\n";
       return 0;
     }
     if (args.subcommand == "dump-json") {

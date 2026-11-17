@@ -67,8 +67,7 @@ import sys
 import tempfile
 import threading
 import time
-from collections import deque
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Dict, Optional
 
 import requests
 
@@ -76,6 +75,9 @@ WATCHER_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, WATCHER_DIR)
 
 from api_client import log, watcher_id, _base, _key, enabled  # noqa: E402
+# The child-process plumbing is shared with ht_solve_watcher.py; re-exported
+# here so existing importers (test_cancel.py) keep working unchanged.
+from engine_proc import Cancellation, Cancelled, ChildResult, run_streamed  # noqa: E402,F401
 from htc_format import read_htc_header  # noqa: E402
 
 POLL_SECS = float(os.getenv("ENGINE_WATCHER_POLL_SECS", "5"))
@@ -199,39 +201,6 @@ def report(job_id: str, status: Optional[str] = None, error: Optional[str] = Non
         return None
 
 
-class Cancelled(Exception):
-    """The solve stopped before it had anything to save. Not a failure."""
-
-
-class Cancellation:
-    """An owner-requested stop, shared between the heartbeat thread and the solve.
-
-    Three facts rather than one flag, because they lead to different endings:
-      requested  the owner pressed Stop. Ask the engine to stop cleanly.
-      applied    the engine was actually asked (the stop file exists), so the
-                 solve on disk is a stopped one and the job ends Cancelled. A
-                 Stop that arrives after the solver already finished leaves
-                 this false and the job ends Done, which is what happened.
-      disowned   the API says this job is not ours any more (409). Stop
-                 working, and do not report - the report would 409 too.
-    """
-
-    def __init__(self) -> None:
-        self.requested = threading.Event()
-        self.applied = False
-        self.disowned = False
-
-    def observe(self, resp: Optional[Dict[str, Any]]) -> None:
-        """Fold one report response into this state."""
-        if not resp:
-            return
-        if resp.get("conflict"):
-            self.disowned = True
-            self.requested.set()
-        elif resp.get("cancelRequested"):
-            self.requested.set()
-
-
 class Heartbeat:
     """Keeps the claim alive, and carries the owner's Stop back to the solve.
 
@@ -284,112 +253,6 @@ def upload_result(job_id: str, result_path: str, solver: str, ext: str = "htc") 
     rel_path = f"enginecompare/{job_id}.{solver}.{ext}.gz"
     fs.get_file_client(rel_path).upload_data(payload, overwrite=True)
     return rel_path
-
-
-class ChildResult:
-    """What a streamed child produced: its exit code and a bounded tail."""
-
-    def __init__(self, returncode: int, tail: Sequence[str]) -> None:
-        self.returncode = returncode
-        self.tail: List[str] = list(tail)
-
-    @property
-    def text(self) -> str:
-        return "\n".join(self.tail)
-
-    def last_line(self) -> str:
-        for line in reversed(self.tail):
-            if line.strip():
-                return line.strip()
-        return ""
-
-
-def run_streamed(cmd: Sequence[str], *, timeout: float, prefix: str,
-                 cwd: Optional[str] = None, tail_lines: int = 60,
-                 cancel: Optional["Cancellation"] = None,
-                 on_cancel: Optional[Callable[[], None]] = None,
-                 cancel_grace: float = 0.0) -> ChildResult:
-    """Run a child, printing its output AS IT ARRIVES, and keep a bounded tail.
-
-    subprocess.run(capture_output=True) only drains the pipes once the child
-    has exited, so a solve that takes ten minutes produced ten minutes of
-    silence in this terminal and then one summary line - even though htsolver
-    prints a progress line every `budget.checkpoint_every` iterations the whole
-    way through. Streaming is the only change needed to surface it; nothing in
-    the engine had to be touched.
-
-    The tail is still retained because the failure path needs it for the
-    RuntimeError message and the success path wants the last line, so this
-    tees rather than simply inheriting stdout.
-
-    The pipe is drained on a THREAD rather than in this one, so the deadline is
-    enforced by proc.wait() no matter what the child does. Reading inline looks
-    simpler and is wrong: a child that produces no output blocks the readline
-    loop until it exits on its own, so a hung solve would never be killed - the
-    exact guarantee subprocess.run(timeout=...) was giving before.
-
-    `cancel` makes the child stoppable mid-run. When it fires, `on_cancel` is
-    called once (the engine's stop file gets created there) and the child is
-    given `cancel_grace` seconds to finish the way it wants to - writing its
-    checkpoint and artifact - before being killed. A child with no cooperative
-    stop passes no on_cancel and a grace of 0, and is simply killed.
-    """
-    proc = subprocess.Popen(
-        list(cmd), cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1,
-    )
-    tail: deque = deque(maxlen=tail_lines)
-
-    def drain() -> None:
-        assert proc.stdout is not None
-        for raw in proc.stdout:
-            line = raw.rstrip("\n")
-            tail.append(line)
-            if line.strip():
-                print(f"    {prefix}| {line}", flush=True)
-
-    reader = threading.Thread(target=drain, name=f"{prefix}-stdout", daemon=True)
-    reader.start()
-    deadline = time.monotonic() + timeout
-    kill_at: Optional[float] = None       # set once a cancel starts its grace
-    try:
-        while True:
-            try:
-                proc.wait(timeout=0.5)
-                break
-            except subprocess.TimeoutExpired:
-                pass
-            now = time.monotonic()
-            if cancel is not None and cancel.requested.is_set() and kill_at is None:
-                # Recorded here rather than in on_cancel, so it means the same
-                # thing for a child that stops cooperatively and one that is
-                # simply killed: this run was cut short by the owner.
-                cancel.applied = True
-                if on_cancel is not None:
-                    on_cancel()
-                kill_at = now + cancel_grace
-                if cancel_grace > 0:
-                    log(f"  cancel requested - asked {prefix} to stop cleanly "
-                        f"(up to {cancel_grace:.0f}s to write its results)")
-            if kill_at is not None and now >= kill_at:
-                if cancel_grace > 0:
-                    log(f"  {prefix} did not stop within the grace period; killing it")
-                proc.kill()
-                proc.wait()
-                reader.join(timeout=5)
-                return ChildResult(proc.returncode, tail)
-            if now >= deadline:
-                raise subprocess.TimeoutExpired(list(cmd), timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-        reader.join(timeout=5)
-        raise
-    # The child is gone; let the reader finish whatever is still buffered.
-    reader.join(timeout=10)
-    if proc.stdout is not None:
-        proc.stdout.close()
-    return ChildResult(proc.returncode, tail)
 
 
 def solver_family(config: Dict[str, Any]) -> str:

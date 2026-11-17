@@ -46,6 +46,16 @@ def _download_json(fs, rel_path: str) -> Optional[Any]:
         return None
 
 
+def upload_json(fs, rel_path: str, obj: Any) -> bool:
+    """Public form of the plain-JSON upload (the htsolver worker's solve.json)."""
+    return _upload_json(fs, rel_path, obj)
+
+
+def download_json(fs, rel_path: str) -> Optional[Any]:
+    """Public form of the plain-JSON download; None when absent or unreadable."""
+    return _download_json(fs, rel_path)
+
+
 def upload_gzip_json(fs, rel_path: str, obj: Any) -> bool:
     raw = json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     packed = gzip.compress(raw)

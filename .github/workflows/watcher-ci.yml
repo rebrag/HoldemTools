@@ -1,0 +1,40 @@
+name: Watcher CI
+
+on:
+  push:
+    branches: [main]
+    paths: ["watcher/**", ".github/workflows/watcher-ci.yml"]
+  pull_request:
+    paths: ["watcher/**", ".github/workflows/watcher-ci.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: watcher-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # Everything here runs without PioSOLVER, a GUI, an engine binary, Azure
+    # or the API: the pytest suite uses fakes, and the plain-script tests
+    # below are the Pio-free ones. test_flop_walk.py and
+    # test_pyosolver_load.py need a Pio install and are not run.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: watcher
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: watcher/requirements-ht.txt
+      - name: Install
+        run: pip install -r requirements-ht.txt pytest
+      - name: pytest (fakes only)
+        run: python -m pytest -q
+      - name: Script tests (htc format, compare-watcher config, cancel protocol)
+        run: |
+          python test_htc_format.py
+          python test_engine_config.py
+          python test_cancel.py

@@ -4,7 +4,9 @@ import { authedFetch } from "@/lib/api";
 
 /** Optional per-seat metadata carried with hand-history uploads so the
  *  solutions viewer can show real player names/stacks/cards. stackChips is
- *  measured AT THE FLOP (net of preflop money) in Pio chips = bb * 100. */
+ *  measured AT THE FLOP (net of preflop money) in Pio chips at the hand's
+ *  `chipScale`: the hand's own money times chipScale, the same unit as the
+ *  config's #Pot# and #EffectiveStacks#. */
 export type SeatMeta = {
   pos: string;
   name: string;
@@ -33,7 +35,17 @@ export type UploadGameTreeBody = {
    *  before storing it, and the solved-flops library uses it to preview and
    *  link back to the hand. */
   handHistoryId?: number | null;
+  /** The same spot as `text`, as htsolver's tree block (lib/solver/engineTree.ts,
+   *  built from the same TreeParams). Omitted for ICM spots, which the engine
+   *  cannot solve. Its presence is what lets the API route a job to htsolver. */
+  engineTree?: object;
+  /** Admin-only override of the API's solver choice, for A/B checks; the API
+   *  ignores it for everyone else. Normal callers never set it - see
+   *  solverOverride() below. */
+  solver?: SolverKind;
 };
+
+export type SolverKind = "pio" | "htsolver";
 
 export type UploadGameTreeResult = {
   ok?: boolean;
@@ -44,7 +56,32 @@ export type UploadGameTreeResult = {
   /** True when an identical sim-path solve was already queued or running and
    *  jobId points at that job instead of a new one. */
   deduped?: boolean;
+  /** The solver the API queued the job for. */
+  solver?: SolverKind;
+  /** What recent solves of this solver and kind took, measured by the API
+   *  (see solveTimeHint). Null when there is no history yet. */
+  typicalSeconds?: number | null;
 };
+
+/** localStorage key for the dev / admin A/B escape hatch. */
+const SOLVER_OVERRIDE_KEY = "ht.solverOverride";
+
+/**
+ * The solver to force on uploads, read from `localStorage["ht.solverOverride"]`
+ * ("pio" | "htsolver"), or undefined to let the API decide. There is no UI for
+ * it on purpose: it exists so the same hand can be solved by both solvers
+ * before the server-side switch is flipped, and the API honours it for admins
+ * only. Storage can throw (private mode, blocked site data), which reads as
+ * "not set".
+ */
+export function solverOverride(): SolverKind | undefined {
+  try {
+    const v = window.localStorage.getItem(SOLVER_OVERRIDE_KEY);
+    return v === "pio" || v === "htsolver" ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export async function uploadGameTree(body: UploadGameTreeBody): Promise<UploadGameTreeResult> {
   const start = performance.now();
@@ -56,6 +93,8 @@ export async function uploadGameTree(body: UploadGameTreeBody): Promise<UploadGa
     actingPos: body.actingPos,
     isICM: body.isICM,
     textLen: body.text?.length ?? 0,
+    engineTree: !!body.engineTree,
+    solver: body.solver,
   });
 
   let res: Response;
@@ -84,5 +123,5 @@ export async function uploadGameTree(body: UploadGameTreeBody): Promise<UploadGa
 
   const payload: UploadGameTreeResult = isJson ? await res.json() : {};
   console.info(`[uploadGameTree] Uploaded in ${dur}ms`, payload);
-  return payload; // { ok, path, jobId, deduped }
+  return payload; // { ok, path, jobId, deduped, solver }
 }

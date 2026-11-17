@@ -46,11 +46,14 @@ import { serializeHand, type EquityInfo, type StreetEquity } from "./serialize";
 import { useShowdownEquity, type EquityRequest } from "./useShowdownEquity";
 import { evalWinners, exactEquity } from "@/lib/handEval";
 import ResponsiveDrawer from "@/components/ResponsiveDrawer";
-import TreeBuildingModal, { type TreeBuildingInit } from "@/pages/solver/TreeBuildingModal";
+import TreeBuildingModal, {
+  type TreeBuildingInit,
+  type TreeBuildingResult,
+} from "@/pages/solver/TreeBuildingModal";
 import { POSTFLOP_ENABLED } from "@/lib/solver/constants";
 import { buildTreeConfigText } from "@/lib/solver/treeConfig";
-import { uploadGameTree } from "@/lib/solver/uploadGameTree";
-import { fetchSolveJob } from "@/lib/solver/solveJobs";
+import { solverOverride, uploadGameTree } from "@/lib/solver/uploadGameTree";
+import { fetchSolveJob, solveTimeHint } from "@/lib/solver/solveJobs";
 import { extractHandSolve, type HandSolveExtract } from "./solveBridge";
 import { parseGameString } from "./parseGameString";
 import {
@@ -1091,13 +1094,7 @@ const CreateHandHistory: React.FC<Props> = ({
     finishSolveFlow();
   };
 
-  const confirmSolveUpload = async ({
-    params,
-    flopCards,
-  }: {
-    params: Parameters<typeof buildTreeConfigText>[0];
-    flopCards: string[];
-  }) => {
+  const confirmSolveUpload = async ({ params, flopCards, engineTree }: TreeBuildingResult) => {
     if (!solveOffer) return;
     setSolveBusy(true);
     setSolveError(null);
@@ -1116,6 +1113,7 @@ const CreateHandHistory: React.FC<Props> = ({
         );
       }
       const text = buildTreeConfigText(params, flopCards);
+      const solver = solverOverride();
       // The concurrent save may still be running — or not even started, when
       // the showdown-equity worker is what the auto-save is waiting on — so
       // wait for it, letting the library link the solved board back to this
@@ -1139,9 +1137,14 @@ const CreateHandHistory: React.FC<Props> = ({
         // were scaled with it and are not editable in the panel, so
         // re-deriving it from an edited pot would desync them.
         chipScale: solveOffer.chipScale,
+        // The same spot, built from the same params, for htsolver. Which
+        // solver runs it is the API's call (null: ICM or a spot the engine
+        // builder refused, so Pio).
+        ...(engineTree ? { engineTree } : {}),
+        ...(solver ? { solver } : {}),
       });
       setSolveNotice(
-        "Solve queued - it will appear in the Solution Library on the Solutions page (usually 2-10 min)."
+        `Solve queued - it will appear in the Solution Library on the Solutions page (${solveTimeHint(result.solver, result.typicalSeconds)}).`
       );
       // One status fetch for an honest queue position; the job itself is
       // durable, so navigating away loses nothing.
@@ -1175,6 +1178,8 @@ const CreateHandHistory: React.FC<Props> = ({
       flopCards: solveOffer.flopCards,
       oopLabel: label(solveOffer.oop, "OOP"),
       ipLabel: label(solveOffer.ip, "IP"),
+      oopSeat: solveOffer.oop.solverPos,
+      ipSeat: solveOffer.ip.solverPos,
       // The recorded hand's money, not big blinds.
       moneyLabel: "chips",
     };
