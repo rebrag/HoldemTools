@@ -21,6 +21,24 @@
     <title>HoldemTools</title>
     <meta name="description" content="HoldemTools: free Texas Hold'em poker tools - GTO solver solutions, an equity calculator, a bankroll tracker, hand history replays and a poker course." />
     <meta name="theme-color" content="#020617" />
+    <!-- Google tag (gtag.js) for GA4 stream "holdemtools" (G-EJDE5P3M65).
+         Only loads on the real holdemtools.com hosts so localhost, Vercel
+         previews and emulator sessions don't pollute the data. SPA route
+         changes are counted by GA4 enhanced measurement (history events). -->
+    <script>
+      (function () {
+        var h = location.hostname;
+        if (h !== 'holdemtools.com' && h !== 'www.holdemtools.com') return;
+        var s = document.createElement('script');
+        s.async = true;
+        s.src = 'https://www.googletagmanager.com/gtag/js?id=G-EJDE5P3M65';
+        document.head.appendChild(s);
+        window.dataLayer = window.dataLayer || [];
+        window.gtag = function () { window.dataLayer.push(arguments); };
+        window.gtag('js', new Date());
+        window.gtag('config', 'G-EJDE5P3M65');
+      })();
+    </script>
     <style>
       /* Pre-boot loader. Visible from first paint until React mounts and
          replaces #root, which covers the window where the entry bundle (React,
