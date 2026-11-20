@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /private
+Disallow: /hand-history/shared/
+Disallow: /__/
+
+Sitemap: https://www.holdemtools.com/sitemap.xml
