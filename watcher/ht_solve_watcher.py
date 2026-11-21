@@ -71,6 +71,7 @@ from artifact_registry import ArtifactRegistry  # noqa: E402
 from engine_proc import (  # noqa: E402
     ChildResult,
     engine_error_line,
+    parse_progress_line,
     parse_slot_affinity,
     run_streamed,
 )
@@ -100,6 +101,8 @@ SOLVER = "htsolver"
 # the poison queue instead of being retried forever (as the Pio watcher does).
 QUEUE_MAX_DEQUEUE = 5
 NODEREQ_POLL_SECS = 1.0
+# The least time between two progress reports for one job (ProgressReporter).
+PROGRESS_REPORT_MIN_SECS = 5.0
 
 
 def log(msg: str) -> None:
@@ -321,6 +324,43 @@ def engine_identity(metadata: Dict[str, Any]) -> Tuple[Optional[str], Optional[s
     return metadata.get("solver_version"), metadata.get("engine_build")
 
 
+class ProgressReporter:
+    """Turns the engine's per-checkpoint lines into progress reports for one
+    job: the iteration it is on and how exploitable the strategy still is,
+    beside the target the solve stops at.
+
+    Called on the engine's reader thread, once per output line. Reports are
+    spaced `min_interval_secs` apart, because a small tree checkpoints several
+    times a second and each report is a row write on the API; a skipped
+    measurement is simply superseded by the next one. Each report is also a
+    keepalive, and a failed one is the API client's to log and swallow.
+    """
+
+    def __init__(self, api: Any, job_id: str, *, target_pct: float,
+                 min_interval_secs: float = PROGRESS_REPORT_MIN_SECS,
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self.api = api
+        self.job_id = job_id
+        self.target_pct = target_pct
+        self.min_interval_secs = min_interval_secs
+        self._clock = clock
+        self._last_sent: Optional[float] = None
+
+    def __call__(self, line: str) -> None:
+        progress = parse_progress_line(line)
+        if progress is None:
+            return
+        now = self._clock()
+        if self._last_sent is not None and now - self._last_sent < self.min_interval_secs:
+            return
+        self._last_sent = now
+        self.api.report(self.job_id, heartbeat=True, progress={
+            "iteration": progress["iteration"],
+            "exploitable_pct": progress["exploitable_pct"],
+            "target_pct": self.target_pct,
+        })
+
+
 # =========================
 # Engine CLI
 # =========================
@@ -344,9 +384,10 @@ class EngineCli:
         return True, engine_error_line(text)
 
     def solve(self, config_path: str, *, timeout: float,
-              affinity: Optional[List[int]] = None) -> ChildResult:
+              affinity: Optional[List[int]] = None,
+              on_line: Optional[Callable[[str], None]] = None) -> ChildResult:
         return run_streamed([self.exe, "solve", config_path], timeout=timeout,
-                            prefix="ht", affinity=affinity)
+                            prefix="ht", affinity=affinity, on_line=on_line)
 
     def dump_streets(self, artifact: str, out_dir: str, *, through: Optional[str] = None,
                      seeds: Optional[List[str]] = None, equity: bool = True) -> Dict[str, Any]:
@@ -544,13 +585,15 @@ class Worker:
             json.dump(config, f)
         return path
 
-    def _solve(self, config_path: str, artifact: str, slot: int, *, timeout: float) -> None:
+    def _solve(self, config_path: str, artifact: str, slot: int, *, timeout: float,
+               on_line: Optional[Callable[[str], None]] = None) -> None:
         if os.path.exists(artifact):
             # A leftover from an earlier solve of these coordinates must not
             # pass for this solve's output if this one writes nothing.
             os.remove(artifact)
         out = self.engine.solve(config_path, timeout=timeout,
-                                affinity=self.settings.affinity_for_slot(slot))
+                                affinity=self.settings.affinity_for_slot(slot),
+                                on_line=on_line)
         if out.returncode != 0 or not os.path.exists(artifact):
             raise JobFailed(
                 f"htsolver solve failed (exit {out.returncode}): "
@@ -613,7 +656,9 @@ class Worker:
             self.api.report(job_id, status="Solving")
             with self.api.Heartbeat(job_id):
                 t0 = time.perf_counter()
-                self._solve(config_path, artifact, slot, timeout=self.settings.solve_timeout_secs)
+                self._solve(config_path, artifact, slot, timeout=self.settings.solve_timeout_secs,
+                            on_line=ProgressReporter(
+                                self.api, job_id, target_pct=self.settings.accuracy_pot_pct))
                 log(f"  solved in {time.perf_counter() - t0:.1f}s")
 
                 self.api.report(job_id, status="Extracting")

@@ -12,7 +12,7 @@ from ht_fakes import (
     BASE, BLOB_PATH, BOARD_KEY, METADATA, NODE_NAME, RIVER_SEED, STACKS, FakeApi, FakeEngine, FakeFs,
     FakeMessage, FakeQueue, gametree_blob,
 )
-from ht_solve_watcher import Settings, Worker
+from ht_solve_watcher import ProgressReporter, Settings, Worker
 
 
 def _settings(tmp_path, **kw):
@@ -87,6 +87,37 @@ def test_job_flow_stages_publish_and_solve_json(tmp_path):
     assert not os.path.exists(os.path.join(worker.settings.work_dir, "job-job-1"))
     # The worker never writes the Pio watcher's index.
     assert "piosolutions-index.json" not in fs.files
+
+
+def test_solve_progress_rides_a_report_while_solving(tmp_path):
+    worker, fs = _worker(tmp_path)
+    worker.process_job(_job(fs))
+    reports = worker.api.reports
+    progress = [r for r in reports if r["progress"]]
+    # The fake engine's two checkpoints land inside one reporting interval:
+    # the first is sent and the second is superseded, not queued.
+    assert [r["progress"] for r in progress] == [
+        {"iteration": 25, "exploitable_pct": 4.8, "target_pct": 0.2}]
+    # A keepalive, never a status change, and only while the job is Solving.
+    assert progress[0]["heartbeat"] and progress[0]["status"] is None
+    assert [r["status"] for r in reports[:reports.index(progress[0])] if r["status"]] == ["Solving"]
+
+
+def test_progress_reporter_spaces_reports_and_ignores_other_lines():
+    api, now = FakeApi(), [100.0]
+    reporter = ProgressReporter(api, "job-1", target_pct=0.2, min_interval_secs=5.0, clock=lambda: now[0])
+    line = "iter {}  nashconv 2  exploitable 1 ({}% of pot)  ev 46 54  elapsed 3 s"
+    reporter("solve id abc123")
+    reporter("iter 25")                    # a sampled solve's line: no accuracy on it
+    assert api.reports == []
+    reporter(line.format(25, 4.8))
+    now[0] += 1.0
+    reporter(line.format(50, 1.1))         # too soon: dropped
+    now[0] += 5.0
+    reporter(line.format(75, 0.4))
+    assert [(r["job_id"], r["progress"]["iteration"], r["progress"]["exploitable_pct"])
+            for r in api.reports] == [("job-1", 25, 4.8), ("job-1", 75, 0.4)]
+    assert all(r["progress"]["target_pct"] == 0.2 for r in api.reports)
 
 
 def test_dry_run_refusal_fails_the_job_before_solving(tmp_path):

@@ -5,7 +5,10 @@
 import { authedFetch } from "@/lib/api";
 import type { SolverKind } from "./uploadGameTree";
 
+import type { SolveJobProgress } from "./solveProgress";
+
 export { formatTypicalSolveTime, solveTimeHint } from "./solveTimeHint";
+export { solveProgressText, solveProgressTitle, type SolveJobProgress } from "./solveProgress";
 
 export type SolveJobStatus =
   | "Queued"
@@ -45,6 +48,10 @@ export type SolveJobDto = {
    *  measured by the API from the queue's own history. Null when there is no
    *  history yet or the job is finished; absent from an older API. */
   typicalSeconds?: number | null;
+  /** The solver's last measurement of the running solve. Null until it has
+   *  measured once (and for PioSOLVER, which reports none); absent from an
+   *  older API. */
+  progress?: SolveJobProgress | null;
 };
 
 const TERMINAL: ReadonlySet<SolveJobStatus> = new Set(["Done", "Failed"]);

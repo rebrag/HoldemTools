@@ -66,6 +66,16 @@ namespace PokerRangeAPI2.Models
         public string? ResultStacks { get; set; }
         public string? ResultNodeName { get; set; }
 
+        // How far the running solve has got, as its watcher last measured it:
+        // the iteration it is on, and how exploitable the strategy still is
+        // beside the accuracy it stops at (both a percent of the pot). All
+        // null until a watcher reports one, and cleared when a stale claim is
+        // requeued, so a number here always belongs to the current attempt.
+        // On a finished job it is the last measurement before the solve ended.
+        public int? ProgressIteration { get; set; }
+        public double? ProgressExploitablePct { get; set; }
+        public double? ProgressTargetPct { get; set; }
+
         public DateTimeOffset CreatedAtUtc { get; set; }
         public DateTimeOffset? ClaimedAtUtc { get; set; }
         public DateTimeOffset? CompletedAtUtc { get; set; }

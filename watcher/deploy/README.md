@@ -96,6 +96,14 @@ Get-Content C:\ProgramData\HoldemTools\htsolver\logs\ht_solve_watcher.log -Tail 
 ```
 
 A healthy start logs the engine path, the worker id and its settings, and then sits quiet until a job arrives (it polls the claim route every few seconds without logging each poll).
+While a job is solving, the engine's own lines appear there prefixed `ht|`, one per checkpoint (every `HT_CHECKPOINT_EVERY` iterations, 25 by default):
+
+```
+    ht| iter 150  nashconv 2.79  exploitable 1.395 (0.45% of pot)  ev 152.1 157.9  elapsed 96.4 s
+```
+
+The bracket is the number to watch: the solve stops when it reaches `HT_ACCURACY_POT_PCT`.
+The same measurement goes to the API with the job's keepalives, which is what the site shows under the elapsed time on a pending solve.
 The task starts at boot with nobody logged on, restarts itself a minute after any crash, and never runs two copies.
 Reboot the box once and confirm the log resumes on its own; that is the property that replaces "PioViewer must be open on an unlocked desktop".
 

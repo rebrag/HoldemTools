@@ -548,6 +548,15 @@ namespace GTOLiteAPI.Migrations
                     b.Property<int>("Priority")
                         .HasColumnType("int");
 
+                    b.Property<double?>("ProgressExploitablePct")
+                        .HasColumnType("float");
+
+                    b.Property<int?>("ProgressIteration")
+                        .HasColumnType("int");
+
+                    b.Property<double?>("ProgressTargetPct")
+                        .HasColumnType("float");
+
                     b.Property<string>("ResultNodeName")
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");

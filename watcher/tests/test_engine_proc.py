@@ -18,6 +18,41 @@ def test_parse_cpu_lists():
         engine_proc.parse_cpu_list("a-b")
 
 
+def test_parse_progress_line():
+    parsed = engine_proc.parse_progress_line(
+        "iter 150  nashconv 2.79  exploitable 1.395 (0.45% of pot)  ev 152.1 157.9  elapsed 96.4 s")
+    assert parsed == {"iteration": 150, "exploitable_pct": 0.45, "elapsed_secs": 96.4}
+    # The stream's default formatting goes scientific on a tight solve.
+    assert engine_proc.parse_progress_line(
+        "iter 2000  nashconv 4e-05  exploitable 2e-05 (6.4e-06% of pot)  ev 1 2  elapsed 1e+03 s"
+    ) == {"iteration": 2000, "exploitable_pct": 6.4e-06, "elapsed_secs": 1000.0}
+    # An engine from before the elapsed suffix still reports its accuracy.
+    assert engine_proc.parse_progress_line(
+        "iter 25  nashconv 9.6  exploitable 4.8 (4.8% of pot)  ev 44 56"
+    ) == {"iteration": 25, "exploitable_pct": 4.8, "elapsed_secs": None}
+    # Not progress toward an accuracy target: no measurement, a zero pot, a
+    # number that is not one, and the lines around the loop.
+    for line in ("iter 150", "iter 150  nashconv 2.79  exploitable 1.395  ev 1 2  elapsed 3 s",
+                 "iter 150  nashconv nan  exploitable nan (nan% of pot)  ev 1 2  elapsed 3 s",
+                 "target_exploitable_pct reached", "solve id abc123", ""):
+        assert engine_proc.parse_progress_line(line) is None
+
+
+def test_on_line_sees_each_line_and_cannot_break_the_child(capsys):
+    script = "print('one', flush=True); print(); print('two', flush=True)"
+    seen = []
+    out = engine_proc.run_streamed([sys.executable, "-c", script], timeout=30, prefix="t",
+                                   on_line=seen.append)
+    assert out.returncode == 0 and seen == ["one", "two"]
+
+    def boom(line):
+        raise RuntimeError("report failed")
+
+    out = engine_proc.run_streamed([sys.executable, "-c", script], timeout=30, prefix="t", on_line=boom)
+    assert out.returncode == 0 and out.last_line() == "two"
+    assert capsys.readouterr().out.count("line callback failed") == 1
+
+
 def test_engine_error_line():
     assert engine_proc.engine_error_line("loading\nerror: tree needs 31.2 GB, limit 24 GB\n") == \
         "tree needs 31.2 GB, limit 24 GB"

@@ -91,11 +91,13 @@ class FakeApi:
 
     def report(self, job_id: str, status: Optional[str] = None, error: Optional[str] = None,
                heartbeat: bool = False, result: Optional[Dict[str, Any]] = None,
-               index_entry: Optional[Dict[str, Any]] = None, **_: Any) -> bool:
+               index_entry: Optional[Dict[str, Any]] = None,
+               progress: Optional[Dict[str, Any]] = None, **_: Any) -> bool:
         with self._lock:
             self.reports.append({"job_id": job_id, "status": status, "error": error,
                                  "heartbeat": heartbeat, "result": result,
-                                 "index_entry": copy.deepcopy(index_entry)})
+                                 "index_entry": copy.deepcopy(index_entry),
+                                 "progress": copy.deepcopy(progress)})
         return True
 
     @contextlib.contextmanager
@@ -265,6 +267,17 @@ def write_dump(out_dir: str, streets: List[Dict[str, Any]], metadata: Optional[D
 # ---------------------------------------------------------------------------
 
 
+# What a solve prints, in the engine's own format (engine/src/main.cpp): a
+# header, one line per checkpoint, the stop reason.
+SOLVE_LINES = [
+    "solve id abc123",
+    "iter 25  nashconv 9.6  exploitable 4.8 (4.8% of pot)  ev 44.1 55.9  elapsed 0.4 s",
+    "iter 50  nashconv 0.38  exploitable 0.19 (0.19% of pot)  ev 46 54  elapsed 0.8 s",
+    "target_exploitable_pct reached",
+    "wrote artifact",
+]
+
+
 class FakeEngine:
     """dry_run / solve / dump_streets over the toy street documents.
 
@@ -291,7 +304,7 @@ class FakeEngine:
         self.calls.append("dry_run")
         return self.dry_ok, self.dry_message
 
-    def solve(self, config_path: str, *, timeout: float, affinity=None) -> ChildResult:
+    def solve(self, config_path: str, *, timeout: float, affinity=None, on_line=None) -> ChildResult:
         self.calls.append("solve")
         with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
@@ -303,8 +316,14 @@ class FakeEngine:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "wb") as f:
                 f.write(b"HTA0" * 256)
-            return ChildResult(0, ["iter 640 exploitable 0.19% of pot", "wrote artifact"])
-        return ChildResult(self.solve_exit, ["error: out of memory"])
+            lines = list(SOLVE_LINES)
+        else:
+            lines = ["error: out of memory"]
+        # As run_streamed does: every line reaches the callback as it arrives.
+        for line in lines:
+            if on_line is not None:
+                on_line(line)
+        return ChildResult(self.solve_exit, lines)
 
     def dump_streets(self, artifact: str, out_dir: str, *, through=None, seeds=None, equity=True):
         self.calls.append(f"dump:{through or ','.join(seeds or [])}")

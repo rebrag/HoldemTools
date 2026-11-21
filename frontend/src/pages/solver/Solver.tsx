@@ -44,7 +44,14 @@ import {
   solutionKey,
   type PostflopIndexEntry,
 } from "@/lib/solver/postflopLibrary";
-import { pollSolveJob, solveTimeHint, type SolveJobStatus } from "@/lib/solver/solveJobs";
+import {
+  pollSolveJob,
+  solveProgressText,
+  solveProgressTitle,
+  solveTimeHint,
+  type SolveJobProgress,
+  type SolveJobStatus,
+} from "@/lib/solver/solveJobs";
 import {
   boardToCards,
   docToJsonData,
@@ -162,6 +169,7 @@ const PendingSolveCard = ({
   error,
   solver,
   typicalSeconds,
+  progress,
   onDismiss,
 }: {
   board: string[];
@@ -173,6 +181,8 @@ const PendingSolveCard = ({
   solver?: SolverKind;
   /** The API's measured solve time for this solver, when it has one. */
   typicalSeconds?: number | null;
+  /** The solver's last measurement of this solve, when it has reported one. */
+  progress?: SolveJobProgress | null;
   onDismiss?: () => void;
 }) => {
   const [now, setNow] = useState(Date.now());
@@ -184,6 +194,9 @@ const PendingSolveCard = ({
   const mm = Math.floor(elapsed / 60);
   const ss = String(elapsed % 60).padStart(2, "0");
   const failed = status === "Failed";
+  // Accuracy is a fact about the solve, so it shows only while that is the
+  // stage: past it the number is final and the card is about the publish.
+  const progressText = status === "Solving" ? solveProgressText(progress) : null;
   // items-start on the row is load-bearing: a flex child of a zero-height row
   // stretches to it by default and collapses to nothing but its own padding.
   return (
@@ -229,8 +242,18 @@ const PendingSolveCard = ({
             </button>
           </>
         ) : (
-          <span className="text-[11px] tabular-nums text-gray-300">
-            {mm}:{ss} elapsed · {solveTimeHint(solver, typicalSeconds)}
+          <span className="flex flex-col text-[11px] leading-tight tabular-nums text-gray-300">
+            <span>
+              {mm}:{ss} elapsed · {solveTimeHint(solver, typicalSeconds)}
+            </span>
+            {progressText && (
+              <span
+                className="text-amber-200/90 animate-in fade-in duration-200"
+                title={solveProgressTitle(progress)}
+              >
+                {progressText}
+              </span>
+            )}
           </span>
         )}
       </div>
@@ -305,6 +328,7 @@ const Solver = ({ user }: SolverProps) => {
     error?: string | null;
     solver?: SolverKind;
     typicalSeconds?: number | null;
+    progress?: SolveJobProgress | null;
   } | null>(null);
   const pendingCancelRef = useRef(false);
   /* Preflop line being walked back into after leaving a board: the actions to
@@ -1375,6 +1399,9 @@ const Solver = ({ user }: SolverProps) => {
                     error: dto.error,
                     solver: dto.solver ?? prev.solver,
                     typicalSeconds: dto.typicalSeconds ?? prev.typicalSeconds,
+                    // Not carried over from `prev`: a requeued job starts
+                    // again from nothing, and the API says so with a null.
+                    progress: dto.progress ?? null,
                   }
                 : prev
             );
@@ -1733,6 +1760,7 @@ const Solver = ({ user }: SolverProps) => {
               error={postflopPending.error}
               solver={postflopPending.solver}
               typicalSeconds={postflopPending.typicalSeconds}
+              progress={postflopPending.progress}
               onDismiss={() => {
                 pendingCancelRef.current = true;
                 setPostflopPending(null);

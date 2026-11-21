@@ -387,6 +387,117 @@ namespace HoldemToolsAPI.Tests
         }
 
         [Fact]
+        public async Task Report_Progress_ReachesTheOwnersDto_AndSurvivesPlainReports()
+        {
+            using var db = NewDb();
+            var job = await ClaimedJob(db);
+            var watcher = WatcherController(db);
+            await watcher.Report(job.Id, new SolveJobReportRequest { WatcherId = "w1", Status = SolveJobStatus.Solving });
+
+            async Task<SolveJobsController.SolveJobStatusResponse> Dto()
+            {
+                var ok = Assert.IsType<OkObjectResult>(await UserController(db, "user-1").GetJob(job.Id));
+                return Assert.IsType<SolveJobsController.SolveJobStatusResponse>(ok.Value);
+            }
+
+            // Nothing measured yet is null, never a zero.
+            Assert.Null((await Dto()).Progress);
+
+            var result = await watcher.Report(job.Id, new SolveJobReportRequest
+            {
+                WatcherId = "w1",
+                Heartbeat = true,
+                Progress = new SolveJobProgressReport { Iteration = 150, ExploitablePct = 0.45, TargetPct = 0.2 },
+            });
+            Assert.IsType<OkObjectResult>(result);
+            var progress = (await Dto()).Progress;
+            Assert.NotNull(progress);
+            Assert.Equal(150, progress!.Iteration);
+            Assert.Equal(0.45, progress.ExploitablePct);
+            Assert.Equal(0.2, progress.TargetPct);
+            Assert.Equal(SolveJobStatus.Solving, (await Dto()).Status);
+
+            // A stage change or keepalive that says nothing about progress
+            // leaves the last measurement in place.
+            await watcher.Report(job.Id, new SolveJobReportRequest { WatcherId = "w1", Status = SolveJobStatus.Extracting });
+            Assert.Equal(150, (await Dto()).Progress!.Iteration);
+        }
+
+        [Theory]
+        [InlineData(null, 0.45)]             // no iteration
+        [InlineData(150, null)]              // no measurement
+        [InlineData(-1, 0.45)]
+        [InlineData(150, -0.1)]
+        [InlineData(150, double.NaN)]
+        [InlineData(150, double.PositiveInfinity)]
+        public async Task Report_Progress_ThatIsNotAMeasurement_IsDropped(int? iteration, double? pct)
+        {
+            using var db = NewDb();
+            var job = await ClaimedJob(db);
+
+            var result = await WatcherController(db).Report(job.Id, new SolveJobReportRequest
+            {
+                WatcherId = "w1",
+                Heartbeat = true,
+                Progress = new SolveJobProgressReport { Iteration = iteration, ExploitablePct = pct, TargetPct = 0.2 },
+            });
+
+            // Still a good keepalive; just nothing recorded.
+            Assert.IsType<OkObjectResult>(result);
+            var row = db.SolveJobs.Single(j => j.Id == job.Id);
+            Assert.Null(row.ProgressIteration);
+            Assert.Null(row.ProgressExploitablePct);
+            Assert.Null(row.ProgressTargetPct);
+        }
+
+        [Fact]
+        public async Task Report_Progress_WithoutAUsableTarget_KeepsTheMeasurement()
+        {
+            using var db = NewDb();
+            var job = await ClaimedJob(db);
+
+            await WatcherController(db).Report(job.Id, new SolveJobReportRequest
+            {
+                WatcherId = "w1",
+                Heartbeat = true,
+                Progress = new SolveJobProgressReport { Iteration = 25, ExploitablePct = 4.8, TargetPct = 0 },
+            });
+
+            var row = db.SolveJobs.Single(j => j.Id == job.Id);
+            Assert.Equal(25, row.ProgressIteration);
+            Assert.Equal(4.8, row.ProgressExploitablePct);
+            Assert.Null(row.ProgressTargetPct);
+        }
+
+        [Fact]
+        public async Task StaleClaim_Requeue_ClearsProgress()
+        {
+            using var db = NewDb();
+            var (job, _) = await Submit(db);
+            var watcher = WatcherController(db, timeoutSeconds: 300, maxAttempts: 2);
+            await watcher.Claim(new SolveJobClaimRequest { WatcherId = "w1" });
+            await watcher.Report(job.Id, new SolveJobReportRequest
+            {
+                WatcherId = "w1",
+                Status = SolveJobStatus.Solving,
+                Progress = new SolveJobProgressReport { Iteration = 150, ExploitablePct = 0.45, TargetPct = 0.2 },
+            });
+
+            // The watcher dies mid-solve; the next claim starts the job over.
+            var row = db.SolveJobs.Single(j => j.Id == job.Id);
+            Assert.Equal(150, row.ProgressIteration);
+            row.LastHeartbeatUtc = DateTimeOffset.UtcNow.AddMinutes(-10);
+            await db.SaveChangesAsync();
+            await watcher.Claim(new SolveJobClaimRequest { WatcherId = "w2" });
+
+            row = db.SolveJobs.Single(j => j.Id == job.Id);
+            Assert.Equal("w2", row.WatcherId);
+            Assert.Null(row.ProgressIteration);
+            Assert.Null(row.ProgressExploitablePct);
+            Assert.Null(row.ProgressTargetPct);
+        }
+
+        [Fact]
         public async Task Report_Failed_StoresErrorAndCompletes()
         {
             using var db = NewDb();

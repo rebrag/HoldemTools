@@ -183,7 +183,24 @@ namespace PokerRangeAPI2.Controllers
             ClaimedAtUtc = job.ClaimedAtUtc,
             CompletedAtUtc = job.CompletedAtUtc,
             LastHeartbeatUtc = job.LastHeartbeatUtc,
+            Progress = job.ProgressIteration is { } iteration && job.ProgressExploitablePct is { } pct
+                ? new SolveJobProgress
+                {
+                    Iteration = iteration,
+                    ExploitablePct = pct,
+                    TargetPct = job.ProgressTargetPct,
+                }
+                : null,
         };
+
+        public class SolveJobProgress
+        {
+            public int Iteration { get; set; }
+            // Both a percent of the pot: how exploitable the strategy was at
+            // that iteration, and the accuracy the solve stops at.
+            public double ExploitablePct { get; set; }
+            public double? TargetPct { get; set; }
+        }
 
         // Serialized camelCase by the default JSON options, matching the
         // frontend's SolveJobDto.
@@ -212,6 +229,9 @@ namespace PokerRangeAPI2.Controllers
             public DateTimeOffset? ClaimedAtUtc { get; set; }
             public DateTimeOffset? CompletedAtUtc { get; set; }
             public DateTimeOffset? LastHeartbeatUtc { get; set; }
+            // The watcher's last measurement of the running solve; null until
+            // it reports one (and always, for a solver that reports none).
+            public SolveJobProgress? Progress { get; set; }
         }
     }
 }

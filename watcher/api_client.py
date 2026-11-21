@@ -123,8 +123,15 @@ def _report_body(
     heartbeat: bool,
     result: Optional[Dict[str, Any]],
     index_entry: Optional[Dict[str, Any]],
+    progress: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     body: Dict[str, Any] = {"watcherId": watcher_id(), "heartbeat": heartbeat}
+    if progress and progress.get("iteration") is not None and progress.get("exploitable_pct") is not None:
+        body["progress"] = {
+            "iteration": int(progress["iteration"]),
+            "exploitablePct": float(progress["exploitable_pct"]),
+            "targetPct": progress.get("target_pct"),
+        }
     if status is not None:
         body["status"] = status
     if error is not None:
@@ -149,10 +156,14 @@ def report(
     result: Optional[Dict[str, Any]] = None,
     index_entry: Optional[Dict[str, Any]] = None,
     retry_secs: Optional[float] = None,
+    progress: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Report a status transition, failure, or keepalive for a claimed job.
     `result` may carry {stacks, node_name, board} on Done; `index_entry` is the
     library index entry the API upserts into enginesolutions-index.json.
+    `progress` is {iteration, exploitable_pct, target_pct}: how far a running
+    solve has got, which the API hands to whoever is waiting on the job. An
+    API that predates it ignores the field.
 
     A terminal status (Done / Failed) is retried with backoff for
     `retry_secs` (WATCHER_TERMINAL_RETRY_SECS, default 300). A 409 that
@@ -160,7 +171,7 @@ def report(
     connection drop, 5xx) - means that attempt landed, and counts as recorded.
     A 409 on the first attempt is a real rejection (requeued or cancelled).
     """
-    body = _report_body(status, error, heartbeat, result, index_entry)
+    body = _report_body(status, error, heartbeat, result, index_entry, progress)
     terminal = status in TERMINAL_STATUSES
     if retry_secs is None:
         retry_secs = float(os.getenv("WATCHER_TERMINAL_RETRY_SECS", "300")) if terminal else 0.0

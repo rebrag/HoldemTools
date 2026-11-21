@@ -484,7 +484,7 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
       break;
     }
     if (!br_available) {
-      std::cout << "iter " << done << "\n";
+      std::cout << "iter " << done << "\n" << std::flush;
       continue;
     }
     const BrResult br = compute_best_response(game, solver);
@@ -497,7 +497,10 @@ int run_sampled_solve(const SolveConfig& config, const Game& game, int threads,
     std::cout << "  ev";
     for (double ev : br.ev) std::cout << " " << ev;
     // Appended, never inserted: anything parsing the prefix keeps working.
-    std::cout << "  elapsed " << loop_elapsed() << " s\n";
+    // Flushed for the same reason as the vectorized loop's line in run_solve:
+    // a watcher reads this through a pipe, and an unflushed line sits in the
+    // C runtime's buffer until the process exits.
+    std::cout << "  elapsed " << loop_elapsed() << " s\n" << std::flush;
 
     if (br_exact && config.target_nashconv > 0.0 && nashconv <= config.target_nashconv) {
       std::cout << "target_nashconv reached\n";
@@ -798,7 +801,12 @@ int run_solve(const SolveConfig& config, bool dry_run) {
     std::cout << "  ev";
     for (double ev : br.ev) std::cout << " " << ev;
     // Appended, never inserted: anything parsing the prefix keeps working.
-    std::cout << "  elapsed " << loop_elapsed() << " s\n";
+    // Flushed, because under a worker stdout is a pipe, which the C runtime
+    // buffers in whole blocks: without it a twenty-five-minute solve delivered
+    // every one of these lines together at exit, and the line exists to be
+    // read while the solve is running (the htsolver worker reports it to the
+    // API as the job's progress).
+    std::cout << "  elapsed " << loop_elapsed() << " s\n" << std::flush;
     // The accuracy stop must not fire while the solver is still subsampling
 
     // runouts. Exploitability itself is honest (best response always

@@ -82,6 +82,11 @@ A user-facing flop solve (the one `/hand-history/create` offers after a recorded
 - **Hand-history privacy rides on the `SolveJobs` row, not on the files.**
   `PostflopLibraryOverlay` shows a hand-history board only to its owner by matching the row's coordinates, so a job's `ResultStacks` / `ResultNodeName` are set when it is inserted, not at Done; a board published before its row had coordinates would list publicly with real names and hole cards.
 - The solve-time notice is measured, not promised: `SolveJobTimings` reports the median claim-to-Done time of recent solves of the same solver and kind (`typicalSeconds`), and the frontend prints that.
+- **A running solve reports its accuracy, and that is also a measurement.**
+  The engine prints one line per checkpoint (`iter N ... (X% of pot) ...`) and flushes it, because under a worker its stdout is a pipe and an unflushed line arrives at exit.
+  The worker parses it (`engine_proc.parse_progress_line`) and sends `{iteration, exploitablePct, targetPct}` on a keepalive at most every five seconds; the API keeps the last one on the `SolveJobs` row (cleared when a stale claim is requeued) and `GET /api/solvejobs/{id}` returns it as `progress`, which the pending card on `/solutions` prints under the elapsed time.
+  There is deliberately no bar and no time-to-finish: accuracy falls fast and then slowly, so either would be a promise the numbers do not make.
+  PioSOLVER jobs report none, and the field is null rather than zero until something has been measured.
 
 The engine builds PioViewer's tree for the same panel settings through three opt-in tree options (`add_allin` per seat, `add_allin_max_pot_ratio`, `merge_similar_pct`), pinned line for line against PioViewer's own scripts in `watcher/fixtures/pio_trees/` (`engine/tests/test_pio_parity.cpp`).
 Known differences: one-chip rounding on exact half-chip ties (Pio rounds the total half-to-even, the engine rounds the increment half away from zero), and `merge_similar_pct`, whose rule no PioViewer output on disk exercises yet.

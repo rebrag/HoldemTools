@@ -92,7 +92,7 @@ namespace PokerRangeAPI2.Controllers
         // --------------------------------------------------------------------
         // PATCH api/solvejobs/{id}
         // body: { watcherId, status?, error?, heartbeat?, resultStacks?,
-        //         resultNodeName?, board?, indexEntry? }
+        //         resultNodeName?, board?, indexEntry?, progress? }
         // Status transitions are linear (Claimed -> Solving -> Extracting ->
         // Uploading -> Done); Failed is reachable from any active state.
         // heartbeat:true with no status is a pure keepalive.
@@ -165,8 +165,31 @@ namespace PokerRangeAPI2.Controllers
                 if (req.Board != null) job.Board = Truncate(req.Board, 12);
             }
 
+            ApplyProgress(job, req.Progress);
+
             await _db.SaveChangesAsync(ct);
             return Ok(new { ok = true, status = job.Status });
+        }
+
+        /// <summary>
+        /// Record a report's solve progress on the job. A report without one
+        /// leaves the last measurement in place (most reports are stage
+        /// changes and plain keepalives). A measurement that is not a real
+        /// number is dropped whole rather than stored as a zero, which would
+        /// read as a perfectly solved tree.
+        /// </summary>
+        private static void ApplyProgress(SolveJob job, SolveJobProgressReport? progress)
+        {
+            if (progress?.Iteration is not { } iteration || progress.ExploitablePct is not { } pct)
+                return;
+            if (iteration < 0 || !double.IsFinite(pct) || pct < 0)
+                return;
+
+            job.ProgressIteration = iteration;
+            job.ProgressExploitablePct = pct;
+            job.ProgressTargetPct = progress.TargetPct is { } target && double.IsFinite(target) && target > 0
+                ? target
+                : null;
         }
 
         /// <summary>
@@ -228,6 +251,10 @@ namespace PokerRangeAPI2.Controllers
             foreach (var job in stale)
             {
                 job.WatcherId = null;
+                // The next attempt starts from iteration zero.
+                job.ProgressIteration = null;
+                job.ProgressExploitablePct = null;
+                job.ProgressTargetPct = null;
                 if (job.AttemptCount >= _maxAttempts)
                 {
                     job.Status = SolveJobStatus.Failed;
@@ -330,5 +357,22 @@ OUTPUT inserted.*;", watcherId, solver)
         /// coordinates are replaced by the job's own.
         /// </summary>
         public JsonElement? IndexEntry { get; set; }
+
+        /// <summary>
+        /// How far a running solve has got. Optional on every report; the
+        /// htsolver worker sends it on keepalives while the job is Solving.
+        /// </summary>
+        public SolveJobProgressReport? Progress { get; set; }
+    }
+
+    public class SolveJobProgressReport
+    {
+        public int? Iteration { get; set; }
+
+        /// <summary>How exploitable the strategy is now, as a percent of the pot.</summary>
+        public double? ExploitablePct { get; set; }
+
+        /// <summary>The accuracy the solve stops at, in the same unit.</summary>
+        public double? TargetPct { get; set; }
     }
 }

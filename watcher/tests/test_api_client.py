@@ -83,6 +83,16 @@ def test_report_carries_index_entry(http):
     assert fake.calls[0][2]["heartbeat"] is True
 
 
+def test_report_carries_progress(http):
+    fake = http([Resp(200), Resp(200)])
+    assert api_client.report("j1", heartbeat=True,
+                             progress={"iteration": 150, "exploitable_pct": 0.45, "target_pct": 0.2})
+    assert fake.calls[0][2]["progress"] == {"iteration": 150, "exploitablePct": 0.45, "targetPct": 0.2}
+    # Nothing measured yet is nothing to say, not a zero.
+    assert api_client.report("j1", heartbeat=True, progress={"iteration": 150})
+    assert "progress" not in fake.calls[1][2]
+
+
 def test_terminal_report_retries_then_succeeds(http):
     fake = http([requests.ConnectionError("down"), Resp(503), Resp(200)])
     assert api_client.report("j1", status="Done", result={"stacks": "s", "node_name": "n", "board": "b"})

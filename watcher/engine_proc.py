@@ -12,7 +12,9 @@ Stdlib only: no Azure, no requests, no GUI.
 from __future__ import annotations
 
 import ctypes
+import math
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -157,7 +159,8 @@ def run_streamed(cmd: Sequence[str], *, timeout: float, prefix: str,
                  cancel: Optional[Cancellation] = None,
                  on_cancel: Optional[Callable[[], None]] = None,
                  cancel_grace: float = 0.0,
-                 affinity: Optional[Sequence[int]] = None) -> ChildResult:
+                 affinity: Optional[Sequence[int]] = None,
+                 on_line: Optional[Callable[[str], None]] = None) -> ChildResult:
     """Run a child, printing its output AS IT ARRIVES, and keep a bounded tail.
 
     subprocess.run(capture_output=True) only drains the pipes once the child
@@ -184,6 +187,11 @@ def run_streamed(cmd: Sequence[str], *, timeout: float, prefix: str,
     stop passes no on_cancel and a grace of 0, and is simply killed.
 
     `affinity` pins the child to a CPU list (one solve slot per NUMA node).
+
+    `on_line` is handed every non-empty line as it arrives, on the reader
+    thread. It is how a solve's progress leaves this process while the solve
+    is still running. An exception in it is logged once and never reaches the
+    child: a progress report must not be able to cost a solve.
     """
     proc = subprocess.Popen(
         list(cmd), cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -195,14 +203,24 @@ def run_streamed(cmd: Sequence[str], *, timeout: float, prefix: str,
         except OSError as e:
             log(f"  {prefix}: could not set CPU affinity ({e}); running unpinned")
     tail: deque = deque(maxlen=tail_lines)
+    on_line_failed = False
 
     def drain() -> None:
+        nonlocal on_line_failed
         assert proc.stdout is not None
         for raw in proc.stdout:
             line = raw.rstrip("\n")
             tail.append(line)
-            if line.strip():
-                print(f"    {prefix}| {line}", flush=True)
+            if not line.strip():
+                continue
+            print(f"    {prefix}| {line}", flush=True)
+            if on_line is not None:
+                try:
+                    on_line(line)
+                except Exception as e:  # noqa: BLE001 - see the docstring
+                    if not on_line_failed:
+                        on_line_failed = True
+                        log(f"  {prefix}: line callback failed ({e}); the solve continues")
 
     reader = threading.Thread(target=drain, name=f"{prefix}-stdout", daemon=True)
     reader.start()
@@ -246,6 +264,37 @@ def run_streamed(cmd: Sequence[str], *, timeout: float, prefix: str,
     if proc.stdout is not None:
         proc.stdout.close()
     return ChildResult(proc.returncode, tail)
+
+
+# The engine's per-checkpoint line (engine/src/main.cpp):
+#   iter 150  nashconv 2.79  exploitable 1.395 (0.45% of pot)  ev 152.1 157.9  elapsed 96.4 s
+# Only the vectorized core with an exact best response prints the bracket, so
+# a line without it (a sampled solve, `iter 150` alone) is not progress toward
+# an accuracy target and parses to None.
+_PROGRESS_RE = re.compile(
+    r"^iter\s+(?P<iter>\d+)\s+nashconv\s+\S+\s+exploitable\s+\S+\s+"
+    r"\((?P<pct>[-+0-9.eE]+|nan|inf|-inf)% of pot\)"
+    r"(?:.*?\s+elapsed\s+(?P<elapsed>[-+0-9.eE]+)\s+s)?"
+)
+
+
+def parse_progress_line(line: str) -> Optional[Dict[str, Any]]:
+    """`{iteration, exploitable_pct, elapsed_secs}` out of one engine progress
+    line, or None when the line is not one. `elapsed_secs` is None on an
+    engine old enough not to print it."""
+    m = _PROGRESS_RE.match((line or "").strip())
+    if not m:
+        return None
+    try:
+        pct = float(m.group("pct"))
+        elapsed = float(m.group("elapsed")) if m.group("elapsed") else None
+    except ValueError:
+        return None
+    if not math.isfinite(pct) or pct < 0:
+        return None
+    if elapsed is not None and not math.isfinite(elapsed):
+        elapsed = None
+    return {"iteration": int(m.group("iter")), "exploitable_pct": pct, "elapsed_secs": elapsed}
 
 
 def engine_error_line(text: str) -> str:
