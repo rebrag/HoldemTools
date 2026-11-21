@@ -146,7 +146,7 @@ The worker records the engine build beside every board, so the first river reque
 | `HT_SLOT_AFFINITY` | unset | One CPU list per slot, `;` separated, for one solve per NUMA node |
 | `HT_MEMORY_LIMIT_GB` | 24 | A tree whose estimate exceeds this fails fast with a readable message |
 | `HT_ACCURACY_POT_PCT` | 0.2 | Accuracy target, percent of the pot. Same target the Pio watcher uses |
-| `HT_SOLVE_TIMEOUT_SECS` | 1800 | Ceiling on one solve. A solve that has not reached the accuracy target by then fails the job with how far it got; it is never published half-solved |
+| `HT_SOLVE_TIMEOUT_SECS` | 1800 | Ceiling on one solve. A solve that has not reached the accuracy target by then is still published, marked: its manifest carries `engine.converged: false` and the accuracy it reached, and the viewer shows "Stopped early" with that number on the board. Only a solve that never measured its accuracy at all fails the job |
 
 `watcher\.env.example` documents every key.
 
@@ -156,6 +156,7 @@ The worker records the engine build beside every board, so the first river reque
 |---|---|
 | Jobs sit at "Queued" | Is the task running? Does the log show claim polls? A 404 on the claim means the API is older than the worker |
 | A job fails with a memory message | The tree is bigger than `HT_MEMORY_LIMIT_GB` allows. Raise it if the box has the RAM |
+| Boards show "Stopped early" | The log's `not converged:` lines say how far each got. The solve ran out of `HT_SOLVE_TIMEOUT_SECS` before reaching `HT_ACCURACY_POT_PCT`; raise the timeout if the gap is small, and read the bench if it is not |
 | River clicks spin | The log's node-request lines. "resolving" means the artifact was evicted and is being re-solved, which takes one solve |
 | The task will not stay up | `logs\ht_solve_watcher.log`, then run `.venv-ht\Scripts\python.exe -u ht_solve_watcher.py` from `C:\HoldemTools\watcher` in a console to see the error directly |
 | Disk filling | `HT_ARTIFACT_MAX_GB` is the cap for `artifacts\`; `work\` is per-job scratch and is emptied after each job |

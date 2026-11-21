@@ -40,6 +40,13 @@ export interface PostflopLineProps {
   money?: MoneyOpts | null;
   lineNodes: PostflopSessionLineNode[];
   notice: string | null;
+  /**
+   * Set when this board's solve ran out of time short of its accuracy target:
+   * `text` is the accuracy it reached ("0.23% of pot · 0.07 chips"), `title`
+   * the sentence behind it. Shown beside the root card for as long as the
+   * board is open, because it qualifies every number on the page.
+   */
+  stoppedEarly?: { text: string; title: string } | null;
   onJump: (nodeId: string) => void;
   /** Branch: take `display` at the decision node `parentId`. */
   onPickAction?: (parentId: string, display: string) => void;
@@ -192,6 +199,7 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
   money,
   lineNodes,
   notice,
+  stoppedEarly,
   onJump,
   onPickAction,
   onPreflopJump,
@@ -305,6 +313,20 @@ const PostflopLine: React.FC<PostflopLineProps> = ({
               ))}
             </div>
           </div>
+
+          {/* A solve that stopped short of its target says so, with how far
+              it got. Right after the root card so it is on screen without
+              scrolling the strip, and absent on every other board. */}
+          {stoppedEarly && (
+            <span
+              data-testid="solve-stopped-early"
+              title={stoppedEarly.title}
+              className="flex flex-shrink-0 flex-col justify-center self-center rounded-md border border-amber-400/40 bg-amber-500/15 px-2 py-1 text-[0.6rem] leading-tight text-amber-200 animate-in fade-in duration-200"
+            >
+              <span className="font-semibold">Stopped early</span>
+              <span className="tabular-nums">exploitable {stoppedEarly.text}</span>
+            </span>
+          )}
 
           {/* Visited postflop nodes */}
           {lineNodes.map((node, i) => {

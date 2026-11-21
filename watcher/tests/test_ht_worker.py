@@ -304,30 +304,99 @@ def test_drain_finishes_in_flight_work_then_exits_0(tmp_path, capsys):
 
 
 # ---------------------------------------------------------------- convergence
-def test_a_solve_that_missed_its_target_is_failed_not_published(tmp_path):
-    engine = FakeEngine()
-    engine.metadata = {
-        **METADATA,
-        "solved": {"target_exploitable_pct": 0.2, "reached": False,
-                   "last_exploitable_pct_pot": 0.913, "stopped_reason": "time_budget"},
+# What the engine stamps on a solve that ran out of time 0.913% of the pot
+# exploitable, against a 0.2% target (pot 100, so 0.913 chips per player).
+TIMED_OUT = {
+    **METADATA,
+    "final_nashconv": 1.826,
+    "final_exploitable_pct_pot": 0.913,
+    "solved": {"target_exploitable_pct": 0.2, "reached": False,
+               "last_exploitable_pct_pot": 0.913, "stopped_reason": "time_budget"},
+}
+
+
+def test_a_solve_that_missed_its_target_is_published_and_says_so(tmp_path, capsys):
+    engine = FakeEngine(metadata=TIMED_OUT)
+    worker, fs = _worker(tmp_path, engine=engine)
+    worker.process_job(_job(fs))
+
+    # The whole flow ran: the job is Done and the board is in the library.
+    assert worker.api.statuses() == ["Solving", "Extracting", "Uploading", "Done"]
+    assert worker.api.reports[-1]["index_entry"]["turn_streets"] == 1
+    out = capsys.readouterr().out
+    assert "not converged: stopped at 0.913% of pot after 640 iterations (time_budget)" in out
+
+    # ... and the manifest says how far it got, beside the target it missed.
+    block = fs.json(f"{BASE}/manifest.json")["engine"]
+    assert block["converged"] is False
+    assert block["exploitable_pct_pot"] == pytest.approx(0.913)
+    assert block["target_exploitable_pct"] == pytest.approx(0.2)
+    assert block["exploitable"] == pytest.approx(0.913)      # chips, as before
+    # The record a river re-solve pins to keeps the target it was solved against.
+    record = fs.json(f"{BASE}/solve.json")
+    assert record["iterations_run"] == 640
+    assert record["config"]["budget"]["target_exploitable_pct"] == 0.2
+
+
+def test_a_board_that_stopped_short_still_says_so_after_a_pinned_rebuild(tmp_path):
+    # Solved short of the target, artifact evicted, engine rebuilt: the first
+    # river request re-solves pinned (no target, so the artifact claims no
+    # shortfall of its own) and republishes the flop and turns from it.
+    worker, fs = _worker(tmp_path, engine=FakeEngine(metadata=TIMED_OUT))
+    worker.process_job(_job(fs))
+    os.remove(worker.registry.lookup(STACKS, NODE_NAME, BOARD_KEY))
+    worker.engine.metadata = {
+        **TIMED_OUT, "engine_build": "build-2",
+        "solved": {"target_exploitable_pct": None, "reached": None,
+                   "last_exploitable_pct_pot": 0.913, "stopped_reason": "budget"},
     }
+    worker.handle_node_request(_req())
+
+    block = fs.json(f"{BASE}/manifest.json")["engine"]
+    assert block["build"] == "build-2"
+    assert block["converged"] is False
+    assert block["exploitable_pct_pot"] == pytest.approx(0.913)
+    assert block["target_exploitable_pct"] == pytest.approx(0.2)
+
+
+def test_a_converged_board_carries_its_accuracy_too(tmp_path):
+    engine = FakeEngine(metadata={
+        **METADATA, "final_exploitable_pct_pot": 0.19,
+        "solved": {"target_exploitable_pct": 0.2, "reached": True,
+                   "last_exploitable_pct_pot": 0.19, "stopped_reason": "budget"},
+    })
+    worker, fs = _worker(tmp_path, engine=engine)
+    worker.process_job(_job(fs))
+    block = fs.json(f"{BASE}/manifest.json")["engine"]
+    assert block["converged"] is True and block["exploitable_pct_pot"] == pytest.approx(0.19)
+
+
+@pytest.mark.parametrize("solved, expected", [
+    # Never measured: there is no number to put on the board.
+    ({"target_exploitable_pct": 0.2, "reached": None, "last_exploitable_pct_pot": None,
+      "stopped_reason": "time_budget"}, "before its accuracy was measured"),
+    # Stopped on request, not by its budget: not a result.
+    ({"target_exploitable_pct": 0.2, "reached": False, "last_exploitable_pct_pot": 0.913,
+      "stopped_reason": "cancelled"}, "stopped on request at 0.913% of pot"),
+])
+def test_a_solve_that_cannot_be_labelled_is_still_failed(tmp_path, solved, expected):
+    engine = FakeEngine(metadata={**METADATA, "solved": solved})
     worker, fs = _worker(tmp_path, engine=engine)
     worker.process_job(_job(fs))
 
     status, error = worker.api.reports[-1]["status"], worker.api.reports[-1]["error"]
-    assert status == "Failed"
-    assert "0.913% of pot" in error and "0.2% target" in error and "time_budget" in error
+    assert status == "Failed" and expected in error and "0.2% target" in error
     # Nothing was published: no manifest, no bundle, no index entry.
     assert not [p for p in fs.files if p.startswith("piosolutions/")]
     assert all(r.get("index_entry") is None for r in worker.api.reports)
 
 
-def test_a_solve_that_reached_its_target_and_a_pinned_resolve_both_pass():
-    from ht_solve_watcher import require_converged
+def test_a_solve_that_reached_its_target_and_a_pinned_resolve_have_no_shortfall():
+    from ht_solve_watcher import convergence_shortfall
 
-    require_converged({"solved": {"target_exploitable_pct": 0.2, "reached": True}})
+    assert convergence_shortfall({"solved": {"target_exploitable_pct": 0.2, "reached": True}}) is None
     # A pinned re-solve reproduces a published solve by iteration count and
     # sets no target, so there is nothing to have missed.
-    require_converged({"solved": {"target_exploitable_pct": None, "reached": None}})
-    require_converged({"solved": {"target_exploitable_pct": 0, "reached": None}})
-    require_converged({})
+    assert convergence_shortfall({"solved": {"target_exploitable_pct": None, "reached": None}}) is None
+    assert convergence_shortfall({"solved": {"target_exploitable_pct": 0, "reached": None}}) is None
+    assert convergence_shortfall({}) is None

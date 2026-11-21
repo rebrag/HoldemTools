@@ -5,6 +5,7 @@
 // All reads go through authedFetch (endpoints require a signed-in user).
 import { authedFetch } from "@/lib/api";
 import type { PioSolutionDoc } from "@/lib/solver/postflopClient";
+import type { EngineAccuracy } from "@/lib/solver/solveProgress";
 
 export type ManifestNode = {
   type: string; // "OOP_DEC" | "IP_DEC" | "SPLIT_NODE" | "terminal"
@@ -68,6 +69,10 @@ export type BoardManifest = {
   effective_stack_chips?: number | null;
   summary: { ev_oop: number | null; ev_ip: number | null; exploitable: number | null };
   cfr: { file: string; available: boolean; size_bytes: number | null };
+  /** htsolver boards only: which solver produced the board and, when the
+   *  solve had an accuracy target, whether it reached it. Absent on PioSOLVER
+   *  boards. */
+  engine?: (EngineAccuracy & { solver?: string; iterations?: number | null }) | null;
   /** v3: keyed by dotted seed suffix ("r.0", "r.0.c.c.Th", ...). */
   streets: Record<string, ManifestStreetEntry>;
 };

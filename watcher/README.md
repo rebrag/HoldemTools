@@ -131,6 +131,8 @@ It claims from `POST /api/solvejobs/claim/htsolver` (a 404 there means the API p
 It imports nothing Pio or GUI (`tests/test_ht_import_set.py`) and installs from `requirements-ht.txt`.
 
 Per job: download the gametree blob, which must carry an `EngineTree` and not be ICM; compose the solve config (`compose_solve_config`: the tree block verbatim, every solver knob owned by the worker); `engine dry-run`, whose refusal fails the job with the engine's own message; `Solving`; `Extracting`, where the flop is dumped and published first and its index entry rides a heartbeat so the board lists early; `Uploading`, where the turns follow; then `solve.json` beside the manifest and `Done` with the coordinates and the final index entry.
+A solve that ran out of time or iterations short of its accuracy target is published all the same, and says so: `manifest.engine` carries `converged`, `exploitable_pct_pot` and `target_exploitable_pct` (`ht_bundles.solve_accuracy`), which the viewer turns into a "Stopped early" note on the board.
+A rebuild from a pinned re-solve is measured against the ORIGINAL target out of `solve.json`, since a pinned solve has none of its own.
 Coordinates come from the blob path exactly as on the Pio path, and the manifest is built by the same `extraction.py` builders from the same blob, plus an `engine` block and a `cfr` block saying there is no `.cfr`.
 The worker never writes `piosolutions-index.json`; the API upserts the entries it reports into `enginesolutions-index.json`.
 

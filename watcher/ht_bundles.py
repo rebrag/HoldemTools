@@ -369,9 +369,45 @@ def extract_from_dump(
     }
 
 
-def engine_block(metadata: Dict[str, Any], *, watcher_id: Optional[str]) -> Dict[str, Any]:
-    """manifest.engine for an htsolver board (contract section 3)."""
+def solve_accuracy(metadata: Dict[str, Any], *, target_pct: Optional[float] = None) -> Dict[str, Any]:
+    """How converged a solve is, against the accuracy it was asked for:
+    `{exploitable_pct_pot, target_exploitable_pct, converged}`, every value
+    None when it is not known.
+
+    `target_pct` overrides the artifact's own target. A pinned re-solve needs
+    that: it reproduces a published solve by iteration count and so runs with
+    no target of its own, but the board it rebuilds was solved against one,
+    and whether that solve reached it must not change with how the artifact
+    happened to be produced. The engine is bitwise deterministic at a fixed
+    iteration count, so the measurement itself is the same number either way.
+
+    `converged` uses the engine's own rule for stopping (at or under the
+    target), so a solve the engine stopped as "reached" can never read as
+    unconverged here."""
+    solved = metadata.get("solved") or {}
+    target = target_pct if _finite(target_pct) and target_pct > 0 else solved.get("target_exploitable_pct")
+    if not _finite(target) or target <= 0:
+        target = None
+    pct = metadata.get("final_exploitable_pct_pot")
+    if not _finite(pct):
+        pct = solved.get("last_exploitable_pct_pot")
+    if not _finite(pct):
+        pct = None
     return {
+        "exploitable_pct_pot": pct,
+        "target_exploitable_pct": target,
+        "converged": (pct <= target) if pct is not None and target is not None else None,
+    }
+
+
+def engine_block(metadata: Dict[str, Any], *, watcher_id: Optional[str],
+                 target_pct: Optional[float] = None) -> Dict[str, Any]:
+    """manifest.engine for an htsolver board (contract section 3).
+
+    The three accuracy keys are present only when the solve had a target to
+    be measured against, which is what lets the viewer say a board stopped
+    short of it. A block without them makes no claim either way."""
+    block = {
         "solver": "htsolver",
         "version": metadata.get("solver_version"),
         "build": metadata.get("engine_build"),
@@ -380,6 +416,10 @@ def engine_block(metadata: Dict[str, Any], *, watcher_id: Optional[str]) -> Dict
         "exploitable": solve_results(metadata)["exploitable"],
         "watcher_id": watcher_id,
     }
+    accuracy = solve_accuracy(metadata, target_pct=target_pct)
+    if accuracy["converged"] is not None:
+        block.update(accuracy)
+    return block
 
 
 # =========================

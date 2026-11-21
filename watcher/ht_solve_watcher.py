@@ -44,6 +44,7 @@ import copy
 import io
 import json
 import logging
+import math
 import os
 import shutil
 import socket
@@ -294,30 +295,46 @@ def pinned_config(
     return cfg
 
 
-def require_converged(metadata: Dict[str, Any]) -> None:
-    """Refuse to publish a solve that stopped short of its accuracy target.
+def convergence_shortfall(metadata: Dict[str, Any]) -> Optional[str]:
+    """How a solve that stopped short of its accuracy target is described, or
+    None for one that reached it (or had none to reach).
 
-    The engine always writes an artifact, even when it ran out of iterations
-    or hit the time budget first. Publishing that would put a half-solved tree
-    in the library with nothing in the viewer to say so, which is the same
-    reason the Pio watcher raises when a solve does not converge inside
-    PIO_SOLVE_WAIT_SECS. A failed job is visible and retryable; a quietly
-    loose strategy is neither.
+    The engine always writes an artifact, even when it ran out of time or
+    iterations first, and that solve is PUBLISHED: twenty-five minutes of
+    work a few hundredths of a percent short of the target is worth more to
+    the person who asked for it than a failed job. What makes that honest is
+    that the manifest says so - `engine.converged` is false and
+    `engine.exploitable_pct_pot` is the accuracy it actually reached
+    (ht_bundles.engine_block) - and the viewer prints it on the board.
+
+    Two endings are still refused, because neither can be labelled with a
+    number: a solve that never measured its accuracy at all, and one that was
+    stopped on request rather than by its budget.
 
     A pinned re-solve sets no target (it reproduces a published solve by
-    iteration count), so `target_exploitable_pct` null or 0 passes.
+    iteration count), so `target_exploitable_pct` null or 0 is not a
+    shortfall.
     """
     solved = metadata.get("solved") or {}
     target = solved.get("target_exploitable_pct")
     if not target or solved.get("reached") is True:
-        return
+        return None
+    reason = solved.get("stopped_reason") or "budget"
+    iterations = metadata.get("iterations")
     got = solved.get("last_exploitable_pct_pot")
-    got_text = f"{got:.3f}% of pot" if isinstance(got, (int, float)) else "an unmeasured accuracy"
-    raise JobFailed(
-        f"the solve stopped at {got_text} after {metadata.get('iterations')} iterations "
-        f"({solved.get('stopped_reason') or 'budget'}) without reaching the {target}% target; "
-        "raise HT_MAX_ITERATIONS or HT_SOLVE_TIMEOUT_SECS on the worker if this tree is expected to be this hard"
-    )
+    if not isinstance(got, (int, float)) or isinstance(got, bool) or not math.isfinite(got):
+        raise JobFailed(
+            f"the solve stopped after {iterations} iterations ({reason}) before its accuracy was "
+            f"measured even once, so there is nothing to say about how close to the {target}% "
+            "target it got; raise HT_SOLVE_TIMEOUT_SECS on the worker if this tree is expected to be this hard"
+        )
+    if reason == "cancelled":
+        raise JobFailed(
+            f"the solve was stopped on request at {got:.3f}% of pot after {iterations} iterations, "
+            f"short of the {target}% target"
+        )
+    return (f"stopped at {got:.3f}% of pot after {iterations} iterations ({reason}), "
+            f"short of the {target}% target")
 
 
 def engine_identity(metadata: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
@@ -531,13 +548,17 @@ class Worker:
 
     # --- context / publishing -------------------------------------------
     def _board_publisher(self, *, board: str, key: str, metadata: Dict[str, Any],
-                         build_ctx: Callable[[Dict[str, Any]], Dict[str, Any]]) -> BoardPublisher:
+                         build_ctx: Callable[[Dict[str, Any]], Dict[str, Any]],
+                         target_pct: Optional[float] = None) -> BoardPublisher:
+        """`target_pct` is the accuracy the board's ORIGINAL solve was asked
+        for, passed when `metadata` comes from a pinned re-solve, which has no
+        target of its own (ht_bundles.solve_accuracy)."""
         return BoardPublisher(
             self.fs,
             board=board,
             build_ctx=build_ctx,
             upload_workers=self.settings.upload_workers,
-            engine=engine_block(metadata, watcher_id=self.settings.watcher_id),
+            engine=engine_block(metadata, watcher_id=self.settings.watcher_id, target_pct=target_pct),
             cfr_available=False,
             manifest_lock=lambda: self.board_lock(key),
         )
@@ -666,7 +687,9 @@ class Worker:
                 flop = extract_from_dump(
                     self.engine.dump_streets(artifact, flop_dir, through="flop", equity=True), flop_dir)
                 metadata = flop["metadata"]
-                require_converged(metadata)
+                shortfall = convergence_shortfall(metadata)
+                if shortfall:
+                    log(f"  not converged: {shortfall}; publishing it marked as such")
                 publisher = self._board_publisher(
                     board=board, key=key, metadata=metadata,
                     build_ctx=self._blob_ctx_builder(board, blob, blob_path))
@@ -861,8 +884,13 @@ class Worker:
         turn_dir = os.path.join(run_dir, "dump-turn")
         full = extract_from_dump(
             self.engine.dump_streets(artifact, turn_dir, through="turn", equity=True), turn_dir)
+        # The artifact in hand is a pinned re-solve with no target of its own;
+        # the board keeps the one its original solve was measured against, so
+        # a board that stopped short still says so after the rebuild.
+        budget = (record.get("config") or {}).get("budget") or {}
         publisher = self._board_publisher(board=board, key=key, metadata=full["metadata"],
-                                          build_ctx=self._manifest_ctx_builder(manifest))
+                                          build_ctx=self._manifest_ctx_builder(manifest),
+                                          target_pct=budget.get("target_exploitable_pct"))
         publisher.publish(full)
 
         version, build = engine_identity(full["metadata"])

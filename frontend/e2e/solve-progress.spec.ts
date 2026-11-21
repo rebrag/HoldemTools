@@ -6,7 +6,80 @@
 // These pin what is printed, and that nothing unmeasured is ever printed as a
 // number.
 import { test, expect } from "@playwright/test";
-import { formatPotPct, solveProgressText, solveProgressTitle } from "../src/lib/solver/solveProgress";
+import {
+  formatPotPct,
+  formatSmallAmount,
+  solveProgressText,
+  solveProgressTitle,
+  stoppedEarly,
+  stoppedEarlyText,
+  stoppedEarlyTitle,
+} from "../src/lib/solver/solveProgress";
+
+// A solve that ran out of time is published anyway, and the board says how
+// far it got. These pin when the note appears and what it reads.
+test.describe("stoppedEarly", () => {
+  // The recorded hand that prompted this: 575 iterations in 1500 s, pot 310.
+  const engine = {
+    converged: false,
+    exploitable_pct_pot: 0.226939,
+    target_exploitable_pct: 0.2,
+    exploitable: 0.703511,
+  };
+
+  test("a board that stopped short reports its accuracy, target and chips", () => {
+    expect(stoppedEarly(engine)).toEqual({
+      exploitablePct: 0.226939,
+      targetPct: 0.2,
+      exploitableChips: 0.703511,
+    });
+  });
+
+  test("a board that reached its target, or does not say, shows nothing", () => {
+    expect(stoppedEarly({ ...engine, converged: true })).toBeNull();
+    // Every PioSOLVER board, and htsolver boards from before the keys.
+    expect(stoppedEarly(null)).toBeNull();
+    expect(stoppedEarly(undefined)).toBeNull();
+    expect(stoppedEarly({})).toBeNull();
+    expect(stoppedEarly({ ...engine, converged: null })).toBeNull();
+    // A verdict with no number behind it is not shown either.
+    expect(stoppedEarly({ converged: false })).toBeNull();
+    expect(stoppedEarly({ converged: false, exploitable_pct_pot: Number.NaN })).toBeNull();
+  });
+
+  test("missing pieces drop out instead of printing as zero", () => {
+    expect(stoppedEarly({ converged: false, exploitable_pct_pot: 0.9 })).toEqual({
+      exploitablePct: 0.9,
+      targetPct: null,
+      exploitableChips: null,
+    });
+    expect(stoppedEarly({ ...engine, target_exploitable_pct: 0 })?.targetPct).toBeNull();
+  });
+
+  test("the note reads as a percent of the pot, with the amount when there is one", () => {
+    const stopped = stoppedEarly(engine);
+    if (!stopped) throw new Error("expected a stopped-early board");
+    expect(stoppedEarlyText(stopped)).toBe("0.23% of pot");
+    expect(stoppedEarlyText(stopped, "0.07 chips")).toBe("0.23% of pot · 0.07 chips");
+    expect(stoppedEarlyTitle(stopped, "0.07 chips")).toBe(
+      "The solver ran out of time before reaching its 0.2% accuracy target. " +
+        "This strategy can still be exploited for 0.23% of the pot (0.07 chips) per player."
+    );
+    expect(stoppedEarlyTitle({ ...stopped, targetPct: null })).toBe(
+      "The solver ran out of time before reaching its accuracy target. " +
+        "This strategy can still be exploited for 0.23% of the pot per player."
+    );
+  });
+
+  test("small amounts are shown to the cent, and never as a false zero", () => {
+    expect(formatSmallAmount(0.0703511, "chips")).toBe("0.07 chips");
+    expect(formatSmallAmount(1.5, "bb")).toBe("1.50 bb");
+    expect(formatSmallAmount(0.004, "bb")).toBe("<0.01 bb");
+    expect(formatSmallAmount(0, "chips")).toBe("0.00 chips");
+    expect(formatSmallAmount(Number.NaN, "chips")).toBeNull();
+    expect(formatSmallAmount(-1, "chips")).toBeNull();
+  });
+});
 
 test.describe("solveProgress", () => {
   test("the measurement is printed beside the target it stops at", () => {

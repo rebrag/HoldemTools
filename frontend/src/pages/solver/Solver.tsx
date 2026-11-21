@@ -53,6 +53,12 @@ import {
   type SolveJobStatus,
 } from "@/lib/solver/solveJobs";
 import {
+  formatSmallAmount,
+  stoppedEarly,
+  stoppedEarlyText,
+  stoppedEarlyTitle,
+} from "@/lib/solver/solveProgress";
+import {
   boardToCards,
   docToJsonData,
   pooledCommitChips,
@@ -1523,6 +1529,28 @@ const Solver = ({ user }: SolverProps) => {
     [pfMoneyDenominated, pfHandBB, pfMoneyMode]
   );
 
+  /* A board whose solve ran out of time short of its accuracy target says so
+   * in the line strip, with how far it got as a percent of the pot and in the
+   * unit the rest of the board is shown in. The manifest's figure is solver
+   * chips; the chip scale turns it into display money (big blinds for a sim),
+   * and the chips/bb toggle follows from there. */
+  const pfChipScale = pf.view?.chipScale ?? 100;
+  const pfStoppedEarly = useMemo(() => {
+    const stopped = stoppedEarly(pfManifest?.engine);
+    if (!stopped) return null;
+    let amount: string | null = null;
+    if (stopped.exploitableChips != null && pfChipScale > 0) {
+      const inMoney = stopped.exploitableChips / pfChipScale;
+      // The hand's big blind, when the board is being read in big blinds.
+      const bbSize = pfMoney && pfMoney.mode === "bb" && pfMoney.bbSize > 0 ? pfMoney.bbSize : null;
+      amount = formatSmallAmount(
+        bbSize != null ? inMoney / bbSize : inMoney,
+        !pfMoney || bbSize != null ? "bb" : "chips"
+      );
+    }
+    return { text: stoppedEarlyText(stopped, amount), title: stoppedEarlyTitle(stopped, amount) };
+  }, [pfManifest, pfChipScale, pfMoney]);
+
   /* Hand-history solves carry the full table (seat_meta): render every player
    * from the hand - real names, stacks, folded state, and known hole cards -
    * instead of the sim-derived seats. */
@@ -1617,6 +1645,7 @@ const Solver = ({ user }: SolverProps) => {
       money={pfMoney}
       lineNodes={pf.view.lineNodes}
       notice={pf.view.notice}
+      stoppedEarly={pfStoppedEarly}
       onJump={pf.jumpTo}
       onPickAction={(parentId, display) => void pf.pickActionAt(parentId, display)}
       onPreflopJump={jumpToPreflopNode}
