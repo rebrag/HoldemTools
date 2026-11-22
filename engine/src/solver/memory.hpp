@@ -32,10 +32,11 @@ struct MemoryEstimate {
   // reach. The fail-fast check wants a bound it cannot undershoot, and the
   // term is small next to regrets+strategy on any tree big enough to matter.
   std::size_t workspace_bytes = 0;
-  // The artifact export pass (io/artifact_writer.cpp). It holds one
-  // NodeExportData per DECISION NODE alive at once, on top of everything
+  // The artifact export pass (io/artifact_writer.cpp). It holds one slice of
+  // a flat float buffer per DECISION NODE alive at once, on top of everything
   // above - the solver state, the tree and the showdown tables are all still
-  // resident while it runs. On a flop tree this term is LARGER than regrets +
+  // resident while it runs. The buffer's size is exact (it is the number the
+  // allocation is made from). On a flop tree this term is LARGER than regrets +
   // strategy and is the high-water mark of the whole run, so a limit check
   // that leaves it out waves through solves that then thrash the box.
   std::size_t export_bytes = 0;

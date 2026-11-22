@@ -72,20 +72,18 @@ TEST_CASE("memory estimate matches the sizing rule") {
   CHECK(estimate.recalc_bytes == game.tree().size() * sizeof(std::uint32_t));
   CHECK(estimate_memory(game, 1, false).recalc_bytes == estimate.recalc_bytes);
 
-  // Artifact export: one record per decision node, all of them alive at once
-  // (io/artifact_writer.cpp). Per node with 2 seats, 3 hands and 2 actions:
-  // reach + ev_cond = 2 x 2 x 3 floats, strategy = 3 x 2, action_ev_cond =
-  // 2 x 3; six inner vector headers; the record itself; and one heap block
-  // for each of the TEN allocations.
-  //
-  // Ten, not eleven, and the record is bare: the store is a contiguous
-  // std::vector<NodeExportData> indexed by decision_index. It was a
-  // std::map<NodeId, ...>, which charged a red-black node per entry - a key,
-  // four links, and its own heap block - for a key that is already a dense
-  // array index.
-  const std::size_t per_node = (2 * 2 * 3 + 2 * 2 * 3) * sizeof(float) + 6 * kVec +
-                               4 * kVec + 10 * kHeapBlockOverhead;
-  // Plus the encode window alive beside the records while the blobs are
+  // Artifact export: one slice per decision node in ONE flat float buffer, all
+  // of them alive at once (io/artifact_writer.cpp). Per node with 2 seats, 3
+  // hands and 2 actions: reach + ev_cond = 2 x 2 x 3 floats, strategy = 3 x 2,
+  // action_ev = 2 x 3. Nothing else per node - no vector headers and no heap
+  // blocks, which is the point of the flat store: this is the exact size of
+  // the allocation, where the per-node vectors it replaced were ten heap
+  // blocks a node and the estimate had to guess what the allocator added.
+  const std::size_t per_node = (2 * 2 * 3 + 2 * 2 * 3) * sizeof(float);
+  // The prefix-sum offset table: one entry per decision node and one past
+  // the end.
+  const std::size_t offsets = (4 + 1) * sizeof(std::size_t);
+  // Plus the encode window alive beside the store while the blobs are
   // written: one buffer per decision node up to the window (all four here),
   // each sized for the largest blob a node can produce - the 8-byte header, a
   // kept-count per seat, 12 bytes per seat per hand (index, reach, EV), 8 per
@@ -93,7 +91,7 @@ TEST_CASE("memory estimate matches the sizing rule") {
   // which is charged whether or not this game writes one.
   const std::size_t max_blob = 8 + 2 * 4 + 2 * 3 * 12 + 3 * 2 * 8 + 169 * (8 + 2 * 2);
   const std::size_t window = 4 * (max_blob + kVec + kHeapBlockOverhead);
-  CHECK(estimate.export_bytes == 4 * per_node + window);
+  CHECK(estimate.export_bytes == 4 * per_node + offsets + window);
   CHECK(estimate.export_bytes == export_pass_bytes(game));
 
   CHECK(estimate.total() == estimate.regret_strategy_bytes + estimate.tree_bytes +
