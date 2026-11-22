@@ -84,6 +84,7 @@ add_library(engine_core STATIC
   src/eval/terminal.cpp
   src/eval/terminal3.cpp
   src/solver/cfr.cpp
+  src/solver/fork_plan.cpp
   src/solver/best_response.cpp
   src/solver/depth_limit.cpp
   src/solver/sampled_cfr.cpp

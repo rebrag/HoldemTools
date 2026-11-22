@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "game/game.hpp"
+#include "solver/fork_plan.hpp"
 #include "solver/updates.hpp"
 #include "util/parallel.hpp"
 
@@ -46,15 +47,11 @@ struct InfosetLayout {
   static InfosetLayout build(const Game& game);
 };
 
-// Hard cap on how many times one root-to-leaf path may fork. Bounds both the
-// helper recursion inside ThreadPool and the number of scratch arenas alive
-// at once (<= threads * (kMaxSplitLevels + 1) + 1), which is what the memory
-// estimator budgets for.
-inline constexpr int kMaxSplitLevels = 4;
-
 // Upper bound on scratch arenas checked out at once: every worker can be
-// nested one level per fork, plus the traversal the caller itself started.
-int max_live_arenas(int threads);
+// nested one level per fork a path takes (ForkPlan::max_levels for the tree
+// being solved), plus the traversal the caller itself started. This is what
+// the memory estimator budgets for.
+int max_live_arenas(int threads, int fork_levels);
 
 class CfrSolver {
  public:
@@ -98,8 +95,6 @@ class CfrSolver {
   bool qre_annealed() const { return qre_.annealed(t_); }
   // Shared with the best-response pass so one solve owns one set of threads.
   ThreadPool& pool() const { return *pool_; }
-  // Fan-out budget handed to the root of a traversal; 1 disables splitting.
-  int split_budget() const { return split_budget_; }
 
   // Subtree traversals the recalc schedule skipped (0 when disabled).
   // Observability, and what keeps the recalc tests non-vacuous.
@@ -188,7 +183,9 @@ class CfrSolver {
   void strat_reserve_headroom(std::uint32_t decision_index, float max_add);
   std::uint64_t t_ = 0;
   std::unique_ptr<ThreadPool> pool_;
-  int split_budget_ = 1;
+  // Where a traversal splits across the pool. Placement never changes a
+  // result, only how the same arithmetic is scheduled.
+  ForkPlan fork_plan_;
 
   // Deferred DCFR discount.
   //
@@ -216,12 +213,11 @@ class CfrSolver {
   std::vector<DiscountFactors> discount_history_;  // index = iteration, entry 0 unused
   std::vector<std::uint32_t> discount_stamp_;      // by decision_index: paid through
 
-  // Returns counterfactual values for `seat`'s hands at `node`. `split` is
-  // the remaining fan-out budget: a node with C children hands each child
-  // split/C, so the fork frontier stops widening once the pool is saturated.
+  // Returns counterfactual values for `seat`'s hands at `node`. Whether the
+  // children run on the pool is fork_plan_'s call, per node.
   void traverse_impl(NodeId node, int seat, int depth,
                      std::vector<std::vector<float>>& reach,
-                     std::vector<float>& out, Arena& arena, int split, int fork_depth);
+                     std::vector<float>& out, Arena& arena);
 
   std::vector<float>& scratch(Arena& arena, int depth, int slot);
 

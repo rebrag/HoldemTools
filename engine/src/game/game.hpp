@@ -79,6 +79,13 @@ class Game {
   // drift from what actually gets allocated.
   virtual std::size_t auxiliary_bytes() const { return 0; }
 
+  // Relative cost of one traversal visit to `node`, in passes over a hand
+  // vector. It only steers where traversals split work across threads
+  // (solver/fork_plan.hpp) and can never change a result, so a rough figure
+  // is enough: override it where a node costs far more than the hand count
+  // suggests, or a tree that is small but expensive will never fork.
+  virtual double visit_cost(NodeId) const { return 1.0; }
+
   // Suit-isomorphism redirection. When a node lies inside a runout subtree
   // that is suit-equivalent to an earlier one, `rep` names the corresponding
   // node in the representative subtree and `map` is the compact-hand gather

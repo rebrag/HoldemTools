@@ -9,6 +9,7 @@
 #include "game/nlhe_river.hpp"
 #include "solver/best_response.hpp"
 #include "solver/cfr.hpp"
+#include "solver/fork_plan.hpp"
 
 using namespace engine;
 
@@ -138,6 +139,9 @@ TEST_CASE("iso with no usable permutation is bitwise identical to iso-off") {
 
 TEST_CASE("iso composes with the recalc schedule and threading") {
   const NlhePostflopGame game(turn_config("Ah Kh 7c 2c", "AA,KK,QQ,JJ,TT,99,88", true));
+  // These trees are far too small to fork under the work rule; fork at every
+  // node instead, which is the hardest case for the invariant being asserted.
+  const ScopedForkWork fork_everywhere(0.0);
   UpdateConfig update;
   CfrSolver serial(game, update, 1);
   CfrSolver parallel(game, update, 8);

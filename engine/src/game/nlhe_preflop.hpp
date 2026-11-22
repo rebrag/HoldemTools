@@ -111,6 +111,16 @@ class NlhePreflopGame final : public Game, public DealGame {
 
   std::size_t auxiliary_bytes() const override;
 
+  // The whole board average lives inside terminal_values, so a showdown here
+  // is at least hands x hands (the pairwise matrix) and far more over a board
+  // sample. The tree is a few dozen nodes; without this it would never fork.
+  double visit_cost(NodeId node) const override {
+    const Node& n = tree_[node];
+    return n.kind == NodeKind::Terminal && n.terminal_kind == TerminalKind::Showdown
+               ? static_cast<double>(universe_.size())
+               : 1.0;
+  }
+
   // Suit isomorphism is deliberately NOT wired here. The sampled board set is
   // not closed under the suit group, so collapsing a "suit-equivalent"
   // subtree would be a lie rather than a relabeling. It becomes available

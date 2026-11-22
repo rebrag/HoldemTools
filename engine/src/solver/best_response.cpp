@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "solver/best_response.hpp"
+#include "solver/fork_plan.hpp"
 
 namespace engine {
 
@@ -24,6 +25,7 @@ struct BrTraverser {
   const Game& game;
   const StrategySource& solver;
   ThreadPool& pool;
+  const ForkPlan& plan;
   int seat;
   // Null = the plain Nash best response, bit-for-bit what this pass has always
   // computed. Non-null = the best response in the entropy-augmented game, whose
@@ -32,7 +34,7 @@ struct BrTraverser {
   std::uint64_t t = 0;
 
   void traverse(NodeId id, std::vector<std::vector<float>>& reach,
-                std::vector<float>& br, std::vector<float>& ev, int split, int fork_depth) {
+                std::vector<float>& br, std::vector<float>& ev) {
     const PublicTree& tree = game.tree();
     const Node& node = tree[id];
     const std::uint32_t my_hands = static_cast<std::uint32_t>(game.num_hands(seat));
@@ -47,9 +49,7 @@ struct BrTraverser {
 
     const int seats = game.num_seats();
     const int children = node.num_children;
-    const bool fork = split > 1 && fork_depth < kMaxSplitLevels && children >= 2;
-    const int child_split = fork ? std::max(1, split / children) : split;
-    const int child_fork_depth = fork ? fork_depth + 1 : fork_depth;
+    const bool fork = plan.fork(id);
 
     std::vector<std::vector<std::vector<float>>> forked_reach;
     std::vector<std::vector<float>> forked_br, forked_ev;
@@ -64,7 +64,7 @@ struct BrTraverser {
         forked_reach[i] = reach;
         prepare(c, forked_reach[i]);
         traverse(node.first_child + static_cast<NodeId>(c), forked_reach[i], forked_br[i],
-                 forked_ev[i], child_split, child_fork_depth);
+                 forked_ev[i]);
       });
     };
 
@@ -108,7 +108,7 @@ struct BrTraverser {
         const int card = tree[child].dealt_card;
         for (int s = 0; s < seats; ++s) saved[s] = reach[s];
         mask_for_card(card, reach);
-        traverse(child, reach, cbr, cev, child_split, child_fork_depth);
+        traverse(child, reach, cbr, cev);
         fold_in(card, cbr, cev);
         for (int s = 0; s < seats; ++s) reach[s] = saved[s];
       }
@@ -163,7 +163,7 @@ struct BrTraverser {
       } else {
         std::vector<float> cbr, cev;
         for (std::uint16_t k = 0; k < actions; ++k) {
-          traverse(node.first_child + k, reach, cbr, cev, child_split, child_fork_depth);
+          traverse(node.first_child + k, reach, cbr, cev);
           fold_in(k, cbr, cev);
         }
       }
@@ -236,7 +236,7 @@ struct BrTraverser {
       for (std::uint32_t h = 0; h < hands; ++h) {
         reach[actor][h] = saved[h] * sigma[static_cast<std::size_t>(h) * actions + k];
       }
-      traverse(node.first_child + k, reach, cbr, cev, child_split, child_fork_depth);
+      traverse(node.first_child + k, reach, cbr, cev);
       fold_in(cbr, cev);
     }
     reach[actor] = saved;
@@ -253,12 +253,17 @@ BrResult run_br(const Game& game, const StrategySource& solver, const QreConfig*
   BrResult result;
   result.br_value.resize(seats);
   result.ev.resize(seats);
+  // Built per pass rather than borrowed from the solver: a plan is indexed by
+  // the node ids of ONE tree, and this pass is also run over trees the source
+  // never solved (a truncated tree, an artifact's). One linear sweep, against
+  // a pass that evaluates every terminal.
+  const ForkPlan plan(game, solver.pool().threads());
   for (int p = 0; p < seats; ++p) {
     std::vector<std::vector<float>> reach(seats);
     for (int s = 0; s < seats; ++s) reach[s] = game.initial_range(s);
     std::vector<float> br, ev;
-    BrTraverser{game, solver, solver.pool(), p, qre, solver.iteration()}.traverse(
-        game.tree().root(), reach, br, ev, solver.split_budget(), 0);
+    BrTraverser{game, solver, solver.pool(), plan, p, qre, solver.iteration()}.traverse(
+        game.tree().root(), reach, br, ev);
     const std::vector<float>& range = game.initial_range(p);
     double br_sum = 0.0, ev_sum = 0.0;
     for (std::size_t h = 0; h < range.size(); ++h) {

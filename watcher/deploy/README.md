@@ -54,7 +54,7 @@ C:\HoldemTools\watcher\deploy\bench.ps1
 
 This needs only `engine.exe`: no `.env`, no network.
 It solves the small spot (a real recorded hand's ranges) at a handful of thread counts up to every thread, the medium spot on every thread, then the small spot twice at once with one solve pinned to each processor socket, and saves a Markdown table to `%TEMP%\htsolver-bench\bench-<hostname>.md`.
-Expect 30 to 60 minutes on a 2016 Xeon; it took 15 on the development PC.
+It takes about 15 minutes on a 2016 two-socket Xeon.
 Paste that file back.
 `-Full` sweeps all three spots at every count from one thread up and takes hours; `-Threads 10,20,40` picks the counts yourself.
 
@@ -66,7 +66,24 @@ How to read it:
 
 If the box is too slow for the product's promise even at its best setting, that is engine work to do under a profiler, not something to tune here.
 
-For reference, this script's own output on the development PC (one Ryzen 9800X3D, 8 cores / 16 threads, 32 GB, 2026-11-16, 11 minutes):
+For reference, this script's own output on the production server (two Xeon E5-2630 v4, 20 cores / 40 threads, 256 GB, 2026-11-22, 15 minutes):
+
+| config | threads | solve s | export s | process wall s | iterations | exploitable % pot | peak GB | artifact GB |
+|---|---|---|---|---|---|---|---|---|
+| hh_small | 4 | 220.7 | 9.8 | 234.1 | 275 | 0.174 | 8.0 | 2.99 |
+| hh_small | 8 (1.92x of 4) | 115.0 | 6.5 | 125.4 | 275 | 0.174 | 8.0 | 2.99 |
+| hh_small | 10 (2.33x of 4) | 94.7 | 6.3 | 104.7 | 275 | 0.174 | 8.0 | 2.99 |
+| hh_small | 20 (3.98x of 4) | 55.5 | 6.1 | 65.8 | 275 | 0.174 | 7.9 | 2.99 |
+| hh_small | 40 (5.30x of 4) | 41.6 | 6.3 | 53.1 | 275 | 0.174 | 7.9 | 2.99 |
+| hh_medium | 40 | 167.0 | 7.4 | 180.2 | 375 | 0.179 | 10.9 | 4.55 |
+| hh_small, two at once | 20 on cpus 0-19 | 75.8 | 6.5 | 87.0 | 275 | 0.174 | 7.9 | 2.99 |
+| hh_small, two at once | 20 on cpus 20-39 | 75.6 | 6.4 | 87.6 | 275 | 0.174 | 7.9 | 2.99 |
+
+What to take from it: **one solve now uses every core** (40 threads are 5.3x four), **two pinned solves still out-produce one wide one**, by about a fifth (1.37 solves a minute against 1.13), and **one wide solve is the shorter wait** (53 s against 87 s).
+So `HT_SOLVE_SLOTS=2` with one slot per socket is the throughput setting and a single slot on every thread is the latency setting; pick by whether the queue is usually deeper than one.
+More, narrower slots are no longer the likely best setting: a slot's solve time now falls with every thread it is given.
+
+The same script on the development PC (one Ryzen 9800X3D, 8 cores / 16 threads, 32 GB, 2026-11-16, 11 minutes), **taken before the engine's fork rule changed on 2026-11-22 and not re-measured since** - on the server above that change took the 40-thread row from 222.8 s to 41.6 s, so read these as a floor:
 
 | config | threads | solve s | export s | process wall s | iterations | exploitable % pot | peak GB | artifact GB |
 |---|---|---|---|---|---|---|---|---|
@@ -79,10 +96,8 @@ For reference, this script's own output on the development PC (one Ryzen 9800X3D
 
 `hh_large` (`-Full`) took 666 s of solve, 23 s of export and 17.5 GB there.
 
-Two things to take from it, because they will very likely hold on a bigger box too.
-**Threads past 8 bought nothing**: 16 threads were no faster than 8, and 8 only 18% faster than 4, so one solve is bound by memory, not by cores.
-**Two solves side by side cost each other only about 25%** (83 s against 67 s), so two slots nearly doubled throughput on a single-socket desktop.
-On a 40-thread, two-socket box the likely best setting is therefore several slots of 8 to 10 threads, not one solve on 40; try `HT_SOLVE_SLOTS=4`, `HT_THREADS=10`, `HT_SLOT_AFFINITY=0-9;10-19;20-29;30-39` after the two-slot result confirms the pattern.
+Those rows showed threads past 8 buying nothing, which was read at the time as "one solve is bound by memory, not by cores" and turned into advice to run several narrow slots.
+It was the engine's traversal failing to split its work (`engine/docs/roadmap.md`, "Work-based forking"), not memory, and that advice is withdrawn.
 Each slot needs the "peak GB" column in memory at once, since the peak is the artifact export, not the solve: `HT_MEMORY_LIMIT_GB` is per solve (the default 24 fits all three spots), and four slots on a 256 GB box have room to spare.
 
 ## Start it, and check it is alive

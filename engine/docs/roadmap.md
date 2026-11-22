@@ -64,6 +64,7 @@ In progress:
   The small spot solves in 78.6 s at 4 threads, 66.5 s at 8 and 69.2 s at 16, with identical iterations and exploitability at every count; an earlier sweep of the medium spot gave 1.0x / 1.5x / 2.7x / 3.3x / 3.2x at 1 / 2 / 4 / 8 / 16.
   Two small solves run side by side, each pinned to 8 logical processors, took 83 s apiece: 25% slower each, nearly twice the throughput.
   One solve is bound by memory, not cores, which is why the worker has solve slots with per-slot affinity (`HT_SOLVE_SLOTS`, `HT_SLOT_AFFINITY`) and why a many-core server should run several solves of 8 to 10 threads rather than one wide one.
+  **Corrected 2026-11-22: it was not memory.** The traversal's fan-out budget ran out a few actions into the flop betting and every deeper line ran as one serial task; with forking decided by subtree work the same spot scales to every core of a 20-core box (one iteration at 40 threads is about 20x one thread). See "Work-based forking" below. The slots are still worth having - two pinned solves out-produce one wide one by 21% there - but not for the reason given here, and "8 to 10 threads" is no longer a ceiling.
   **Against PioSOLVER on the identical tree** (`engine_compare.py --solve-pio --cross-check` on the small spot's artifact, same PC, same 0.2%-of-pot target; Pio built the engine's tree and it verified node for node, 446 betting nodes):
 
   | | htsolver | PioSOLVER |
@@ -480,6 +481,7 @@ So the remaining gap on wide-range multi-size flop trees is the per-iteration wo
 
   **This also re-explains the ~30% CPU report.** The export was only part of it - a solve using an effective 2.7 cores of 16 is the larger half. Fixing the export moved total wall on this spot from 74 s to ~60 s, but the CPU number will not approach Pio's 70% until the solve scales.
 
+  **Resolved 2026-11-22, and it WAS the fan-out, just not the half that was tested.** Raising `kMaxSplitLevels` alone moved nothing because the `threads * 4` budget is exhausted by integer division before the level cap is reached; lifting both took a flop iteration from 0.845 s to 0.186 s on a 40-thread box. "Work-based forking" below is the fix and the measurements.
   **Next step is a profiler, not another hypothesis.** Two mechanisms were proposed and measured wrong today (the showdown gather, the fan-out budget), and a third guess is not worth the tokens. Hardware counters (VTune / uProf) on a flop solve at 2 vs 16 threads would settle whether this is memory bandwidth, L3/V-Cache thrash between threads, or contention on something shared like the arena mutex.
 
   ### The pattern across all three attacks
@@ -1421,6 +1423,85 @@ What no longer needs doing is the thing this milestone started from: the vectori
 `budget.measure_at_seconds` exists because the exact 3-seat best response on the flop tree is 725 s and the old `checkpoint_every` default of 1000 iterations would have measured every two milliseconds; a curve is taken at a few solver-time marks and the trace's `solve_s` excludes the measurements.
 The deadline slice is paced by the measured rate (`SlicePacer`) because a fixed 250k-iteration slice was half an hour on the vectorized hero and a quarter second on the pinned one.
 `engine plan` predicts the rates from this tree's constants and is a factor-of-two estimate; the recorded rates here are the truth it is calibrated to.
+
+### Work-based forking, and the parallel export encode. Landed 2026-11-22.
+
+**A flop solve was not bound by memory. It had stopped forking.**
+Measured on the deployment server (2 x Xeon E5-2630 v4, 20 cores / 40 threads, two NUMA nodes), where the recorded-hand flop spot took the same wall clock at 4 threads as at 40.
+The traversal forked under a fan-out budget of `threads * 4`, divided among the children at every fork and capped at 4 levels.
+Integer division exhausts that a few actions into the flop betting, and the budget knows nothing about subtree size: on `hh_small` the line check, bet, raise, call reached its turn chance node with a budget of 1, so all 49 turn cards and everything under them ran as ONE serial task, as did every deeper line.
+One iteration was about 3.6 s on one thread, 0.97 s on four, and 0.85 s on ten, twenty and forty alike - a critical path, not a shared resource.
+"Thread scaling is nearly flat", "one solve is bound by memory, not cores" and "next step is a profiler" above were all this, and the earlier attempt that raised only `kMaxSplitLevels` moved nothing because the budget ran out first.
+
+`src/solver/fork_plan.hpp` replaces the budget: a node forks when one traversal of its subtree costs at least `clamp(tree total / 32, 1e4, 1e6)` hand-visits (nodes x hands, scaled by `Game::visit_cost`).
+Fork placement cannot change a result - siblings write disjoint storage and fold back serially in child order - and every number below is bit-identical to the old build's (same iterations, same nashconv to the last printed digit, node blobs byte for byte).
+
+The same script that measured the box before (`watcher/deploy/bench.ps1`, 0.2% of pot):
+
+| spot, threads | solve before | solve after | export before | export after | process wall before | after |
+|---|---|---|---|---|---|---|
+| hh_small, 4 | 250.6 s | 220.7 s | 32.6 s | 9.8 s | 287.7 s | 234.1 s |
+| hh_small, 8 | 215.1 s | 115.0 s | 29.4 s | 6.5 s | 249.0 s | 125.4 s |
+| hh_small, 10 | 213.0 s | 94.7 s | 30.4 s | 6.3 s | 247.4 s | 104.7 s |
+| hh_small, 20 | 222.5 s | 55.5 s | 30.4 s | 6.1 s | 256.6 s | 65.8 s |
+| hh_small, 40 | 222.8 s | 41.6 s | 32.8 s | 6.3 s | 260.0 s | **53.1 s** |
+| hh_medium, 40 | 864.8 s | 167.0 s | 42.5 s | 7.4 s | 913.4 s | **180.2 s** |
+| hh_small, two at once, 20 threads pinned per socket | 226.9 s | 75.8 s | 34.2 s | 6.5 s | 265.4 s each | **87.0 s each** |
+
+275 and 375 iterations and 0.174% / 0.179% of pot in every row, before and after.
+One iteration at 40 threads is about 20x one thread, on 20 physical cores.
+
+**The three constants are measured, and each guards a different failure** (20 iterations of `hh_small`, 500 of the full-range turn tree, 2000 of a 15%-range turn tree, 20000 of a full-range river tree; seconds, 40 threads unless said):
+
+| threshold (hand-visits) | flop, 4.65e8 total | turn, 3.65e6 | tight turn, 4.9e5 | river, 3.6e4 |
+|---|---|---|---|---|
+| old budget rule | 16.9 | 1.97 (11.8 at 8 threads) | 3.57 | 19.8 (11.1 on ONE thread) |
+| 1e4 | - | - | 1.95 | 10.9 |
+| 1e5 | - | 1.97 | 2.02 | serial, 11.9 |
+| 2.5e5 | 3.25 | 1.90 | - | - |
+| 3e5 | - | - | **11.2** | - |
+| 1e6 | 3.19 | 1.94 | - | - |
+| 4e6 | 3.50 | **serial, 29.2** | - | - |
+| 1.6e7 | 3.49 | - | - | - |
+| forced 0 (fork everywhere) | - | 20.5 | **90.1** | - |
+| the rule | 3.21 | 1.96 (4.67 at 8) | 1.97 | 10.7 (4.50 at 8) |
+
+The ceiling (1e6, about 3 ms of work) keeps tasks small against a big tree; a flop tree is flat across two orders of magnitude around it.
+The share (total / 32) is what keeps a SMALL tree forking: a fixed 1e6 runs a tight-range turn tree entirely serially, and a threshold near a tree's own total is worse than either extreme because it forks the root alone.
+The floor (1e4, about 30 us) stops a river tree being cut into tasks cheaper than the hand-off - the old rule did exactly that, and a river solve on 40 threads took nearly twice as long as on one.
+Forking everywhere is 45x slower than the rule, so "more forks" is not the lesson; "fork by size" is.
+
+Also measured there, so nobody re-derives it:
+
+- **Deeper forking costs no stack.** Peak thread stack use is 22 KB on `hh_small` (7 fork levels), 68 KB with a fork forced at every node (8 levels), against a 1 MB limit.
+- **NUMA costs about 7% on this box, not a multiple.** One iteration: 0.351 s on 10 physical cores of one socket, 0.189 s on 20 physical cores across both (ideal 0.175), 0.160 s with hyperthreads (1.2x from SMT). `regrets_` is first-touched by one thread and that is the whole penalty, so NUMA-aware allocation is worth at most that 7% for a solve spanning both sockets and nothing for the worker's pinned slots.
+- **Two pinned solves still out-produce one wide one, by 21%:** 1.37 solves per minute against 1.13. A single 40-thread solve finishes in 53 s against 87 s. Which matters depends on whether the queue is usually deeper than one; that is a deployment setting (`HT_SOLVE_SLOTS`), not an engine property.
+- **The pool's hand-off is what limits SMALL trees**, not the rule: a river tree gains 2.5x at 8 threads and nothing at 40, where every `parallel_for` wakes 39 sleeping workers. A brief spin before sleeping is the obvious experiment; it is not what a flop solve waits on.
+
+**The export was serial where it looked parallel.**
+With the fork rule its tree pass is 2.3 s on `hh_small`, and the other 36 s of a 38.7 s export (a 20-iteration artifact, 4.3 GB - less converged, so larger than the 3.0 GB the bench writes) was one thread encoding 312092 node blobs and writing them one `fwrite` at a time.
+The encode now runs across the pool in windows of 4096 nodes and is written out in node order, so the file is byte-identical; the window is counted in `export_pass_bytes`.
+Three measurements decided its shape (encode phase alone, 40 threads): a fresh buffer per node with records released as encoded 7.0 s; the window's buffers reused, records still released 5.0 s; buffers reused and records left for the end **0.6 s**.
+The heap is what does not scale - forty threads handing ~11 small blocks per node back to it cost more than seven times the encoding.
+A 4 MB stdio buffer on the artifact stream took the write itself from 6.0 s to 3.4 s for 4.3 GB.
+
+What is left, in the order the numbers suggest:
+
+1. **Flatten the export records.** `NodeExportData` is ~11 heap blocks per decision node, 3.4 million on this tree, and freeing them when `write_artifact` returns is about 4 s that no timer in the artifact reports (process wall 53.1 s against a printed total of 48.9 s). Every size is known from the tree before the pass starts, so one flat allocation with a prefix-sum offset table removes the frees, the per-node mallocs inside the pass, and the heap overhead the estimator has to guess at.
+2. **The estimator is BELOW the measured peak on this tree, and was before this change**: 7.35 GB estimated against a 7.8-7.9 GB working-set peak on the old build, 7.67 GB against 7.9-8.0 GB now (the "peak GB" column of the two bench reports). An estimate below reality is not a ceiling. Item 1 is also the likeliest fix, since the export term is the one built from guessed heap overhead - but that is a guess until the flat store exists to measure.
+
+**Would a better starting strategy help? Measured answer: not from a heuristic.**
+The question was whether seeding each node with a studied guess ("the top X% of the range bets") gets a solve done sooner.
+This solve's own trace says where the iterations go:
+
+| iteration | 25 | 50 | 75 | 100 | 150 | 200 | 250 | 275 |
+|---|---|---|---|---|---|---|---|---|
+| exploitable, % of pot | 9.00 | 2.58 | 1.23 | 1.02 | 0.48 | 0.31 | 0.203 | 0.174 |
+
+A warm start can at best skip the iterations CFR would have spent reaching the guess's own accuracy (Brown and Sandholm 2016, and that is the lossless case).
+A guess as good as 9% of pot exploitable saves 25 iterations of 275; to save half the solve it has to be within about 0.6% of pot at every one of 312092 decision nodes, which is not a heuristic, it is a solution.
+Two properties of DCFR make it worse than that bound: the state is cumulative regrets rather than a strategy, so a guess has to be turned into regrets of some magnitude (too small and one iteration erases it, too large and a wrong guess holds the solve back), and the average is weighted by t^3, so the first 25 iterations carry under 0.01% of it either way.
+Where a warm start does pay is from a previous SOLVE of nearly the same tree - a range tweak, a node lock, a coarse bet-size tree refined - and that has a price here that is not speed: a river is re-solved on demand pinned to the original iteration count and must come back byte-identical, so any warm source would have to be part of the solve's identity.
 
 - **M10 - Bayesian unknown-collusion**: chance root over team type with probability p - now precisely the p-interpolation between M9's two awareness modes (p=0 is unaware, p=1 is aware); opponents' infosets span branches; honest branch keeps seats independent (the coordination-failure trap). Own pass with LP-verifiable toy games.
 

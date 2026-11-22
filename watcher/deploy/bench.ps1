@@ -8,7 +8,7 @@
 # pinned to half the machine. It prints a table to paste back.
 #
 # Usage:
-#   C:\HoldemTools\watcher\deploy\bench.ps1                 # 30-60 minutes on a 2016 Xeon
+#   C:\HoldemTools\watcher\deploy\bench.ps1                 # about 15 minutes on a 2016 two-socket Xeon
 #   C:\HoldemTools\watcher\deploy\bench.ps1 -Full           # every config at every count (hours)
 #   C:\HoldemTools\watcher\deploy\bench.ps1 -Threads 8,16   # only these counts in the sweep
 #   C:\HoldemTools\watcher\deploy\bench.ps1 -EngineExe D:\drop\engine.exe

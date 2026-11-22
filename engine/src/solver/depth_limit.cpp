@@ -8,6 +8,7 @@
 
 #include "game/types.hpp"
 #include "solver/cfr.hpp"
+#include "solver/fork_plan.hpp"
 #include "util/parallel.hpp"
 
 namespace engine {
@@ -48,6 +49,8 @@ struct ProfileTraverser {
   const Game& game;
   const StrategySource& src;
   ThreadPool& pool;
+  // Null = walk serially (the matrix build parallelizes over columns instead).
+  const ForkPlan* plan;
   int seat;
   // Boundary index by full node id, kNoIndex elsewhere. Every boundary node
   // is reached exactly once, so the recording writes below never race.
@@ -57,8 +60,7 @@ struct ProfileTraverser {
   std::vector<std::vector<float>>* out_ev = nullptr;
   std::vector<std::vector<float>>* out_compat = nullptr;
 
-  void traverse(NodeId id, std::vector<std::vector<float>>& reach, std::vector<float>& ev,
-                int split, int fork_depth) {
+  void traverse(NodeId id, std::vector<std::vector<float>>& reach, std::vector<float>& ev) {
     const PublicTree& tree = game.tree();
     const Node& node = tree[id];
     const std::uint32_t my_hands = static_cast<std::uint32_t>(game.num_hands(seat));
@@ -71,9 +73,7 @@ struct ProfileTraverser {
 
     const int seats = game.num_seats();
     const int children = node.num_children;
-    const bool fork = split > 1 && fork_depth < kMaxSplitLevels && children >= 2;
-    const int child_split = fork ? (split / children > 1 ? split / children : 1) : split;
-    const int child_fork_depth = fork ? fork_depth + 1 : fork_depth;
+    const bool fork = plan != nullptr && plan->fork(id);
 
     std::vector<std::vector<std::vector<float>>> forked_reach;
     std::vector<std::vector<float>> forked_ev;
@@ -86,8 +86,7 @@ struct ProfileTraverser {
         const std::size_t i = static_cast<std::size_t>(c);
         forked_reach[i] = reach;
         prepare(c, forked_reach[i]);
-        traverse(node.first_child + static_cast<NodeId>(c), forked_reach[i], forked_ev[i],
-                 child_split, child_fork_depth);
+        traverse(node.first_child + static_cast<NodeId>(c), forked_reach[i], forked_ev[i]);
       });
     };
 
@@ -119,7 +118,7 @@ struct ProfileTraverser {
           const int card = tree[child].dealt_card;
           for (int s = 0; s < seats; ++s) saved[static_cast<std::size_t>(s)] = reach[static_cast<std::size_t>(s)];
           mask_for_card(card, reach);
-          traverse(child, reach, cev, child_split, child_fork_depth);
+          traverse(child, reach, cev);
           fold_in(card, cev);
           for (int s = 0; s < seats; ++s) reach[static_cast<std::size_t>(s)] = saved[static_cast<std::size_t>(s)];
         }
@@ -148,7 +147,7 @@ struct ProfileTraverser {
       } else {
         std::vector<float> cev;
         for (std::uint16_t k = 0; k < actions; ++k) {
-          traverse(node.first_child + k, reach, cev, child_split, child_fork_depth);
+          traverse(node.first_child + k, reach, cev);
           fold_in(k, cev);
         }
       }
@@ -177,7 +176,7 @@ struct ProfileTraverser {
       const std::vector<float> saved = reach[static_cast<std::size_t>(actor)];
       for (std::uint16_t k = 0; k < actions; ++k) {
         weight_reach(k, reach);
-        traverse(node.first_child + k, reach, cev, child_split, child_fork_depth);
+        traverse(node.first_child + k, reach, cev);
         for (std::uint32_t h = 0; h < my_hands; ++h) ev[h] += cev[h];
         reach[static_cast<std::size_t>(actor)] = saved;
       }
@@ -230,15 +229,17 @@ std::array<std::vector<float>, 2> blueprint_leaf_values(const Game& full_game,
         static_cast<std::size_t>(trunc_terminals) * hands, 0.0f);
   }
 
+  const ForkPlan plan(full_game, blueprint.pool().threads());
   for (int seat = 0; seat < 2; ++seat) {
     std::vector<std::vector<float>> ev(boundaries), compat(boundaries);
-    ProfileTraverser tr{full_game, blueprint, blueprint.pool(), seat, boundary_index, &ev, &compat};
+    ProfileTraverser tr{full_game, blueprint, blueprint.pool(), &plan, seat, boundary_index, &ev,
+                        &compat};
     std::vector<std::vector<float>> reach(static_cast<std::size_t>(full_game.num_seats()));
     for (int s = 0; s < full_game.num_seats(); ++s) {
       reach[static_cast<std::size_t>(s)] = full_game.initial_range(s);
     }
     std::vector<float> root_ev;
-    tr.traverse(full_game.tree().root(), reach, root_ev, blueprint.split_budget(), 0);
+    tr.traverse(full_game.tree().root(), reach, root_ev);
 
     std::vector<float>& out = table[static_cast<std::size_t>(seat)];
     for (std::size_t b = 0; b < boundaries; ++b) {
@@ -312,8 +313,8 @@ std::vector<std::vector<float>> blueprint_leaf_matrices(const Game& full_game,
       reach[1][oi] = 1.0f;
 
       std::vector<float> ev;
-      ProfileTraverser tr{full_game, blueprint, blueprint.pool(), 0, no_boundary};
-      tr.traverse(leaf, reach, ev, 1, kMaxSplitLevels);
+      ProfileTraverser tr{full_game, blueprint, blueprint.pool(), nullptr, 0, no_boundary};
+      tr.traverse(leaf, reach, ev);
 
       float* col = matrix.data() + oi * hands;
       for (std::size_t h = 0; h < hands; ++h) col[h] = blocked[h] ? 0.0f : ev[h];

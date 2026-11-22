@@ -100,6 +100,19 @@ class NlhePostflopGame final : public Game, public DealGame {
 
   std::size_t auxiliary_bytes() const override;
 
+  // Two terminals cost far more than one pass over the hands: a depth-limit
+  // leaf read from the exact matrix is hands x hands, and the three-seat
+  // showdown sweep is ~25x the heads-up one (measured, eval/terminal3.hpp).
+  double visit_cost(NodeId node) const override {
+    const Node& n = tree_[node];
+    if (n.kind != NodeKind::Terminal) return 1.0;
+    if (n.terminal_kind == TerminalKind::DepthLimit && !leaf_matrix_.empty()) {
+      return static_cast<double>(universe_.size());
+    }
+    if (n.terminal_kind == TerminalKind::Showdown && num_seats_ == 3) return 25.0;
+    return 1.0;
+  }
+
   IsoRef iso_rep(NodeId node) const override {
     const NodeId rep = iso_rep_[node];
     if (rep == node) return {node, nullptr};

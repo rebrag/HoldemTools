@@ -96,7 +96,6 @@ class BlueprintOnTruncatedSource final : public StrategySource {
     blueprint_.average_strategy(map_.to_full[node], out);
   }
   ThreadPool& pool() const override { return blueprint_.pool(); }
-  int split_budget() const override { return blueprint_.split_budget(); }
   std::uint64_t iteration() const override { return blueprint_.iteration(); }
   const QreConfig& qre() const override { return blueprint_.qre(); }
 
@@ -118,7 +117,6 @@ class HybridStrategySource final : public StrategySource {
 
   void average_strategy(NodeId node, std::vector<float>& out) const override;
   ThreadPool& pool() const override { return blueprint_.pool(); }
-  int split_budget() const override { return blueprint_.split_budget(); }
   std::uint64_t iteration() const override { return blueprint_.iteration(); }
   const QreConfig& qre() const override { return blueprint_.qre(); }
 

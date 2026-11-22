@@ -58,7 +58,6 @@ class ArtifactStrategySource final : public StrategySource {
       }
     }
     iterations_ = reader.metadata().value("iterations", std::uint64_t{0});
-    split_budget_ = pool_->threads() > 1 ? pool_->threads() * 4 : 1;
   }
 
   void average_strategy(NodeId id, std::vector<float>& out) const override {
@@ -70,7 +69,6 @@ class ArtifactStrategySource final : public StrategySource {
     return reach_[game_.tree()[id].decision_index];
   }
   ThreadPool& pool() const override { return *pool_; }
-  int split_budget() const override { return split_budget_; }
   std::uint64_t iteration() const override { return iterations_; }
   const QreConfig& qre() const override { return qre_; }
 
@@ -80,7 +78,6 @@ class ArtifactStrategySource final : public StrategySource {
   std::vector<std::vector<float>> reach_;  // by decision index, actor's per-hand reach
   std::unique_ptr<ThreadPool> pool_;
   std::uint64_t iterations_ = 0;
-  int split_budget_ = 1;
   QreConfig qre_{};
 };
 
