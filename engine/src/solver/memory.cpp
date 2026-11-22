@@ -9,6 +9,7 @@
 
 #include "io/artifact_writer.hpp"
 #include "solver/cfr.hpp"
+#include "solver/fork_plan.hpp"
 #include "solver/infoset_indexer.hpp"
 #include "util/parallel.hpp"
 
@@ -253,8 +254,10 @@ MemoryEstimate estimate_memory(const Game& game, int threads, bool recalc,
       max_hands * max_actions + (3 + game.num_seats()) * max_hands;
   const std::size_t arena =
       static_cast<std::size_t>(max_depth + 2) * per_level * sizeof(float);
+  const int resolved_threads = resolve_thread_count(threads);
   est.workspace_bytes =
-      arena * static_cast<std::size_t>(max_live_arenas(resolve_thread_count(threads)));
+      arena * static_cast<std::size_t>(max_live_arenas(
+                  resolved_threads, ForkPlan(game, resolved_threads).max_levels()));
   return est;
 }
 

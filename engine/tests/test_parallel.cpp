@@ -18,6 +18,7 @@
 #include "io/artifact_writer.hpp"
 #include "solver/best_response.hpp"
 #include "solver/cfr.hpp"
+#include "solver/fork_plan.hpp"
 #include "util/parallel.hpp"
 
 using namespace engine;
@@ -29,6 +30,9 @@ namespace {
 // disjoint regret ranges and every cross-child fold-back stays in child
 // order, so any drift here is a real bug rather than rounding.
 void check_identical_solutions(const Game& game, std::uint64_t iterations) {
+  // These trees are far too small to fork under the work rule; fork at every
+  // node instead, which is the hardest case for the invariant being asserted.
+  const ScopedForkWork fork_everywhere(0.0);
   UpdateConfig update;  // DCFR defaults
   CfrSolver serial(game, update, 1);
   CfrSolver parallel(game, update, 8);
@@ -83,6 +87,9 @@ std::unique_ptr<NlhePostflopGame> tiny_turn_game() {
 // does, so it needs the same proof.
 std::vector<ArtifactNodeData> export_nodes(const Game& game, int threads,
                                            const std::string& tag) {
+  // These trees are far too small to fork under the work rule; fork at every
+  // node instead, which is the hardest case for the invariant being asserted.
+  const ScopedForkWork fork_everywhere(0.0);
   CfrSolver solver(game, UpdateConfig{}, threads);
   REQUIRE(solver.pool().threads() == resolve_thread_count(threads));
   solver.run(20);
@@ -142,6 +149,53 @@ TEST_CASE("resolve_thread_count follows the config convention") {
   CHECK(resolve_thread_count(6) == 6);
   CHECK(resolve_thread_count(0) >= 1);
   CHECK(resolve_thread_count(-1000) == 1);  // never below one worker
+}
+
+TEST_CASE("the fork plan splits by subtree work, never by thread count alone") {
+  const auto game = tiny_turn_game();
+  const PublicTree& tree = game->tree();
+  const auto forks = [&](const ForkPlan& plan) {
+    int count = 0;
+    for (NodeId id = 0; id < tree.size(); ++id) count += plan.fork(id) ? 1 : 0;
+    return count;
+  };
+  int splittable = 0;
+  for (const Node& node : tree.nodes) {
+    splittable += node.kind != NodeKind::Terminal && node.num_children >= 2 ? 1 : 0;
+  }
+  REQUIRE(splittable > 1);
+
+  // One thread never forks, whatever the tree.
+  CHECK(forks(ForkPlan(*game, 1)) == 0);
+  CHECK(ForkPlan(*game, 1).max_levels() == 0);
+
+  // The automatic rule forks SOME of this tree and not all of it: the root
+  // is far above the floor, a single river subtree far below.
+  const ForkPlan automatic(*game, 8);
+  CHECK(automatic.fork(tree.root()));
+  CHECK(forks(automatic) < splittable);
+  CHECK(automatic.max_levels() >= 1);
+  CHECK(automatic.max_levels() <= kMaxSplitLevels);
+  // Thread count beyond one does not move it: the plan follows the tree.
+  CHECK(forks(ForkPlan(*game, 2)) == forks(automatic));
+
+  {
+    // Forced to zero, every node with two or more children forks (this tree
+    // is shallower than the level cap), and terminals never do.
+    const ScopedForkWork everywhere(0.0);
+    const ForkPlan all(*game, 8);
+    CHECK(forks(all) == splittable);
+    for (NodeId id = 0; id < tree.size(); ++id) {
+      if (tree[id].kind == NodeKind::Terminal || tree[id].num_children < 2) CHECK(!all.fork(id));
+    }
+  }
+  {
+    // A threshold above the whole tree's work forks nothing.
+    const ScopedForkWork never(1.0e18);
+    CHECK(forks(ForkPlan(*game, 8)) == 0);
+  }
+  // ...and the scope restores the automatic rule.
+  CHECK(forks(ForkPlan(*game, 8)) == forks(automatic));
 }
 
 TEST_CASE("leduc solves identically on one thread and on eight") {
@@ -208,6 +262,9 @@ SamplingConfig sampling_on(int runouts) {
 // Same shape as check_identical_solutions, but carries a sampling config.
 void check_identical_sampled(const Game& game, std::uint64_t iterations,
                              SamplingConfig sampling) {
+  // These trees are far too small to fork under the work rule; fork at every
+  // node instead, which is the hardest case for the invariant being asserted.
+  const ScopedForkWork fork_everywhere(0.0);
   UpdateConfig update;
   RecalcConfig recalc;
   CfrSolver serial(game, update, 1, recalc, sampling);

@@ -116,12 +116,9 @@ class SampledCfrSolver final : public StrategySource {
   std::uint64_t iteration() const override { return t_; }
   void average_strategy(NodeId node, std::vector<float>& out) const override;
   ThreadPool& pool() const override { return *pool_; }
-  // NOT about this core's own traversal - iterations parallelize across
-  // lanes. This is the fan-out budget the CONSUMERS read: the best-response
-  // pass and the artifact export pass both fork sibling subtrees onto the
-  // pool with it. Returning 1 pinned both to a single core, which on a
-  // 4-way solve is most of the wall clock. Same policy as CfrSolver.
-  int split_budget() const override { return split_budget_; }
+  // This core's own iterations parallelize across lanes, but its CONSUMERS -
+  // the best-response pass and the artifact export pass - fork sibling
+  // subtrees onto this pool, each under a ForkPlan it builds for the tree.
   const QreConfig& qre() const override { return qre_; }
   const InfosetIndexer* bucket_indexer() const override { return &indexer_; }
   void bucket_strategy(std::uint32_t group, std::vector<float>& out) const override;
@@ -361,7 +358,6 @@ class SampledCfrSolver final : public StrategySource {
   QreConfig qre_{};  // never enabled here; StrategySource contract only
   std::uint64_t t_ = 0;
   int max_depth_ = 0;
-  int split_budget_ = 1;
 };
 
 }  // namespace engine

@@ -80,7 +80,6 @@ class BucketProjectedSource final : public StrategySource {
     }
   }
   ThreadPool& pool() const override { return exact_.pool(); }
-  int split_budget() const override { return exact_.split_budget(); }
   std::uint64_t iteration() const override { return exact_.iteration(); }
   const QreConfig& qre() const override { return exact_.qre(); }
 

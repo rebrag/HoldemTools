@@ -14,6 +14,7 @@
 #include "game/toy/leduc.hpp"
 #include "solver/best_response.hpp"
 #include "solver/cfr.hpp"
+#include "solver/fork_plan.hpp"
 
 using namespace engine;
 
@@ -161,6 +162,8 @@ TEST_CASE("qre is bitwise identical at any thread count") {
   // reward transform is per (node, hand, action) from node-local data, so
   // threading must change when the arithmetic happens and never what it is.
   const auto check = [](const Game& game, std::uint64_t iterations) {
+    // Too small to fork under the work rule; fork at every node instead.
+    const ScopedForkWork fork_everywhere(0.0);
     CfrSolver serial(game, UpdateConfig{}, 1, {}, {}, qre_at(3.0));
     CfrSolver parallel(game, UpdateConfig{}, 8, {}, {}, qre_at(3.0));
     REQUIRE(parallel.pool().threads() > 1);

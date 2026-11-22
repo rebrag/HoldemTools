@@ -124,6 +124,11 @@ Note the existing warning: anything that reads regrets or strategy sums must run
 The 9800X3D is single-socket, single-node.
 It only pays on a deploy server or cloud instance.
 
+> **Measured 2026-11-22 on the deploy server (two sockets): about 7%.**
+> One iteration on 20 physical cores across both sockets is 0.189 s against an ideal 0.175 s (twice one socket's 10 cores).
+> That is the ceiling for NUMA-aware allocation there, and the worker's pinned slots already pay none of it.
+> What that box was actually losing was 5x, to the fork rule - see "Work-based forking" in `roadmap.md`, and read "the workload stops scaling" anywhere in these documents as that bug rather than as memory.
+
 ### Ruled out, with the reason
 
 - **PCFR+ / predictive Blackwell.** Beats CFR+/DCFR by up to two orders of magnitude on non-poker games and is measured *slower than DCFR* on poker river endgames ([AAAI'21](https://arxiv.org/pdf/2007.14358)). The stale `configs/_bench/ftt_pcfr.json` and `ftt_pdcfr.json` name update rules the parser does not accept; they are aspirational leftovers, not results.

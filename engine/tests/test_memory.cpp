@@ -65,7 +65,7 @@ TEST_CASE("memory estimate matches the sizing rule") {
   // in the suite.
   const std::size_t per_level = 3 * 2 + (3 + 2) * 3;
   const std::size_t arena = (3 + 2) * per_level * sizeof(float);
-  CHECK(estimate.workspace_bytes == arena * max_live_arenas(1));
+  CHECK(estimate.workspace_bytes == arena * max_live_arenas(1, 0));
 
   // No chance nodes, so no cache slots - only the per-node base index array,
   // which the solver assigns whether or not the schedule is enabled.
@@ -85,7 +85,15 @@ TEST_CASE("memory estimate matches the sizing rule") {
   // array index.
   const std::size_t per_node = (2 * 2 * 3 + 2 * 2 * 3) * sizeof(float) + 6 * kVec +
                                4 * kVec + 10 * kHeapBlockOverhead;
-  CHECK(estimate.export_bytes == 4 * per_node);
+  // Plus the encode window alive beside the records while the blobs are
+  // written: one buffer per decision node up to the window (all four here),
+  // each sized for the largest blob a node can produce - the 8-byte header, a
+  // kept-count per seat, 12 bytes per seat per hand (index, reach, EV), 8 per
+  // hand per action (strategy, action EV), and the 169-class rollup block,
+  // which is charged whether or not this game writes one.
+  const std::size_t max_blob = 8 + 2 * 4 + 2 * 3 * 12 + 3 * 2 * 8 + 169 * (8 + 2 * 2);
+  const std::size_t window = 4 * (max_blob + kVec + kHeapBlockOverhead);
+  CHECK(estimate.export_bytes == 4 * per_node + window);
   CHECK(estimate.export_bytes == export_pass_bytes(game));
 
   CHECK(estimate.total() == estimate.regret_strategy_bytes + estimate.tree_bytes +

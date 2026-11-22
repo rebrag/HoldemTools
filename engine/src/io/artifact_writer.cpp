@@ -5,14 +5,18 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 #include "cards/combos.hpp"
 #include "config/sha256.hpp"
 #include "io/artifact_format.hpp"
+#include "solver/fork_plan.hpp"
 #include "solver/memory.hpp"
 #include "util/build_info.hpp"
+#include "util/parallel.hpp"
 
 namespace engine {
 
@@ -50,15 +54,14 @@ struct ExportPass {
   // an O(log n) lookup for each one in the write loop below, to hold a key
   // that is already a dense array index.
   std::vector<NodeExportData> exports;
-
-  // Forking below this many children is not worth a reach-vector copy each.
-  static constexpr int kMinSplitChildren = 2;
+  // Where the pass splits across the pool; same rule as the solver's own
+  // traversal (solver/fork_plan.hpp).
+  ForkPlan plan{};
 
   // Returns counterfactual values per seat.
   //
-  // `split` is the remaining fan-out budget and `fork_depth` the number of
-  // forks already taken on this path, exactly as in CfrSolver::traverse_impl -
-  // and the parallelism keeps that function's discipline for the same reason.
+  // The parallelism keeps CfrSolver::traverse_impl's discipline, for the same
+  // reason.
   // Sibling subtrees are independent (they fill DISJOINT `exports` slots,
   // indexed by decision_index) so they run concurrently, but every
   // cross-child accumulation stays serial and IN CHILD ORDER after the join.
@@ -68,8 +71,7 @@ struct ExportPass {
   // This pass used to be the one serial phase left: 18.5 s on one core at the
   // end of a solve whose loop had been using sixteen, which is where the
   // "engine.exe only reaches ~30% CPU" report came from.
-  std::vector<std::vector<float>> visit(NodeId id, std::vector<std::vector<float>>& reach,
-                                        int split, int fork_depth) {
+  std::vector<std::vector<float>> visit(NodeId id, std::vector<std::vector<float>>& reach) {
     const PublicTree& tree = game.tree();
     const Node& node = tree[id];
     const int seats = game.num_seats();
@@ -87,10 +89,7 @@ struct ExportPass {
     }
 
     const int children = node.num_children;
-    const bool fork =
-        split > 1 && fork_depth < kMaxSplitLevels && children >= kMinSplitChildren;
-    const int child_split = fork ? std::max(1, split / children) : split;
-    const int child_fork_depth = fork ? fork_depth + 1 : fork_depth;
+    const bool fork = plan.fork(id);
 
     if (node.kind == NodeKind::Chance) {
       for (int s = 0; s < seats; ++s) values[s].assign(game.num_hands(s), 0.0f);
@@ -108,8 +107,7 @@ struct ExportPass {
               if (game.hand_blocks_card(s, h, card)) cr[s][h] = 0.0f;
             }
           }
-          forked_values[static_cast<std::size_t>(c)] =
-              visit(child, cr, child_split, child_fork_depth);
+          forked_values[static_cast<std::size_t>(c)] = visit(child, cr);
         });
         for (int c = 0; c < children; ++c) {
           const int card = tree[node.first_child + static_cast<NodeId>(c)].dealt_card;
@@ -132,7 +130,7 @@ struct ExportPass {
             if (game.hand_blocks_card(s, h, card)) reach[s][h] = 0.0f;
           }
         }
-        auto child_values = visit(child, reach, child_split, child_fork_depth);
+        auto child_values = visit(child, reach);
         for (int s = 0; s < seats; ++s) {
           for (int h = 0; h < game.num_hands(s); ++h) {
             if (!game.hand_blocks_card(s, h, card)) values[s][h] += w * child_values[s][h];
@@ -200,8 +198,7 @@ struct ExportPass {
         for (int h = 0; h < hands; ++h) {
           cr[actor][h] = saved[h] * sigma[static_cast<std::size_t>(h) * actions + k];
         }
-        forked_values[static_cast<std::size_t>(c)] =
-            visit(node.first_child + k, cr, child_split, child_fork_depth);
+        forked_values[static_cast<std::size_t>(c)] = visit(node.first_child + k, cr);
       });
       for (std::uint16_t k = 0; k < actions; ++k) {
         fold_child(k, forked_values[static_cast<std::size_t>(k)]);
@@ -211,7 +208,7 @@ struct ExportPass {
         for (int h = 0; h < hands; ++h) {
           reach[actor][h] = saved[h] * sigma[static_cast<std::size_t>(h) * actions + k];
         }
-        auto child_values = visit(node.first_child + k, reach, child_split, child_fork_depth);
+        auto child_values = visit(node.first_child + k, reach);
         fold_child(k, child_values);
       }
     }
@@ -248,8 +245,14 @@ struct ExportPass {
   }
 };
 
+// Decision nodes encoded per window while the blobs are written out. Fixed
+// rather than scaled by the thread count so the memory estimator, which does
+// not know the count, can charge for it exactly.
+constexpr std::size_t kExportWindowNodes = 4096;
+
 // Live bytes of the ExportPass store at its peak, which is the moment the last
 // decision node is filled in: nothing is released until write_artifact returns.
+// Plus the encode window that is alive beside it while the blobs are written.
 std::size_t export_store_bytes(const Game& game) {
   const PublicTree& tree = game.tree();
   const std::size_t seats = static_cast<std::size_t>(game.num_seats());
@@ -272,9 +275,17 @@ std::size_t export_store_bytes(const Game& game) {
   // peak commit with every payload counted correctly.
 
   std::size_t total = 0;
+  std::size_t decisions = 0;
+  std::size_t max_blob = 0;
   for (const Node& n : tree.nodes) {
     if (n.kind != NodeKind::Decision) continue;
     const std::size_t actions = n.num_children;
+    ++decisions;
+    // The largest a node's blob can be: every hand kept, f32 strategy and
+    // EVs, the rollup block present. See encode_node_blob for the layout.
+    max_blob = std::max(max_blob, 8 + seats * 4 + seats * hands * 12 + hands * actions * 8 +
+                                      static_cast<std::size_t>(kNumHandClasses) *
+                                          (8 + 2 * actions));
     // reach and ev_cond: one hand-wide vector per seat each. strategy: one
     // hands x actions block. action_ev_cond: one hand-wide vector per action.
     const std::size_t floats = 2 * seats * hands + 2 * actions * hands;
@@ -284,6 +295,8 @@ std::size_t export_store_bytes(const Game& game) {
     total += floats * sizeof(float) + (2 * seats + actions) * kVec + per_entry +
              blocks * kHeapBlockOverhead;
   }
+  total += std::min(decisions, kExportWindowNodes) *
+           (max_blob + sizeof(std::vector<std::uint8_t>) + kHeapBlockOverhead);
   return total;
 }
 
@@ -314,17 +327,31 @@ void append_node_record(std::vector<std::uint8_t>& out, NodeId id, const Node& n
   }
 }
 
-void append_ev(std::vector<std::uint8_t>& out, float value, bool f16) {
-  if (f16) fmt::put<std::uint16_t>(out, fmt::float_to_half(value));
-  else fmt::put<float>(out, value);
-}
+// Writes little-endian primitives straight into a buffer that is already the
+// right size. encode_node_blob knows a blob's exact length before its first
+// byte, so there is no growth to manage and nothing to check per value; the
+// one check is at the end, that the cursor landed exactly on the last byte.
+struct BlobCursor {
+  std::uint8_t* p;
+  template <typename T>
+  void put(T value) {
+    static_assert(std::is_trivially_copyable_v<T>);
+    std::memcpy(p, &value, sizeof(T));
+    p += sizeof(T);
+  }
+  void put_ev(float value, bool f16) {
+    if (f16) put<std::uint16_t>(fmt::float_to_half(value));
+    else put<float>(value);
+  }
+};
 
 // Sparse per-node blob for one decision node; layout documented in
-// docs/artifact-format.md. Returns the encoded bytes.
-std::vector<std::uint8_t> encode_node_blob(const Game& game, const Node& node,
-                                           const NodeExportData& data,
-                                           const std::vector<std::vector<std::uint16_t>>& dicts,
-                                           bool strategy_u8, bool ev_f16, bool rollups) {
+// docs/artifact-format.md. Encodes into `blob`, REPLACING its contents and
+// reusing its capacity, so the caller can hand the same buffers back window
+// after window instead of allocating one per node.
+void encode_node_blob(const Game& game, const Node& node, const NodeExportData& data,
+                      const std::vector<std::vector<std::uint16_t>>& dicts, bool strategy_u8,
+                      bool ev_f16, bool rollups, std::vector<std::uint8_t>& blob) {
   const int seats = game.num_seats();
   const int actor = node.actor;
   const std::uint16_t actions = node.num_children;
@@ -339,34 +366,48 @@ std::vector<std::uint8_t> encode_node_blob(const Game& game, const Node& node,
     }
   }
 
-  std::vector<std::uint8_t> blob;
-  fmt::put<std::uint16_t>(blob, static_cast<std::uint16_t>(seats));
-  fmt::put<std::uint16_t>(blob, actions);
-  fmt::put<std::uint16_t>(blob, static_cast<std::uint16_t>(actor));
-  fmt::put<std::uint16_t>(blob, 0);  // reserved
+  // The blob's exact size, from the layout below.
+  const std::size_t ev_size = ev_f16 ? sizeof(std::uint16_t) : sizeof(float);
+  std::size_t blob_bytes = 8 + static_cast<std::size_t>(seats) * sizeof(std::uint32_t);
   for (int s = 0; s < seats; ++s) {
-    fmt::put<std::uint32_t>(blob, static_cast<std::uint32_t>(kept[s].size()));
+    blob_bytes += kept[s].size() * (sizeof(std::uint32_t) + sizeof(float) + ev_size);
+  }
+  blob_bytes += kept[actor].size() * actions *
+                ((strategy_u8 ? sizeof(std::uint8_t) : sizeof(float)) + ev_size);
+  if (rollups) {
+    blob_bytes += static_cast<std::size_t>(kNumHandClasses) *
+                  (2 * sizeof(float) + actions * sizeof(std::uint16_t));
+  }
+
+  blob.resize(blob_bytes);
+  BlobCursor cur{blob.data()};
+  cur.put<std::uint16_t>(static_cast<std::uint16_t>(seats));
+  cur.put<std::uint16_t>(actions);
+  cur.put<std::uint16_t>(static_cast<std::uint16_t>(actor));
+  cur.put<std::uint16_t>(0);  // reserved
+  for (int s = 0; s < seats; ++s) {
+    cur.put<std::uint32_t>(static_cast<std::uint32_t>(kept[s].size()));
   }
   for (int s = 0; s < seats; ++s) {
-    for (int h : kept[s]) fmt::put<std::uint32_t>(blob, static_cast<std::uint32_t>(h));
-    for (int h : kept[s]) fmt::put<float>(blob, data.reach[s][h]);
-    for (int h : kept[s]) append_ev(blob, data.ev_cond[s][h], ev_f16);
+    for (int h : kept[s]) cur.put<std::uint32_t>(static_cast<std::uint32_t>(h));
+    for (int h : kept[s]) cur.put<float>(data.reach[s][h]);
+    for (int h : kept[s]) cur.put_ev(data.ev_cond[s][h], ev_f16);
   }
   // Actor strategy rows (renormalized on read) and per-action EVs.
   for (int h : kept[actor]) {
     for (std::uint16_t k = 0; k < actions; ++k) {
       const float p = data.strategy[static_cast<std::size_t>(h) * actions + k];
       if (strategy_u8) {
-        fmt::put<std::uint8_t>(blob, static_cast<std::uint8_t>(
+        cur.put<std::uint8_t>(static_cast<std::uint8_t>(
                                          std::lround(std::clamp(p, 0.0f, 1.0f) * 255.0f)));
       } else {
-        fmt::put<float>(blob, p);
+        cur.put<float>(p);
       }
     }
   }
   for (int h : kept[actor]) {
     for (std::uint16_t k = 0; k < actions; ++k) {
-      append_ev(blob, data.action_ev_cond[k][h], ev_f16);
+      cur.put_ev(data.action_ev_cond[k][h], ev_f16);
     }
   }
 
@@ -397,19 +438,21 @@ std::vector<std::uint8_t> encode_node_blob(const Game& game, const Node& node,
       }
     }
     for (int cls = 0; cls < kNumHandClasses; ++cls) {
-      fmt::put<float>(blob, static_cast<float>(weight[cls]));
-      fmt::put<float>(blob, weight[cls] > 0.0
+      cur.put<float>(static_cast<float>(weight[cls]));
+      cur.put<float>(weight[cls] > 0.0
                                 ? static_cast<float>(ev_sum[cls] / weight[cls])
                                 : 0.0f);
       for (std::uint16_t k = 0; k < actions; ++k) {
         double freq = 0.0;
         if (weight[cls] > 0.0) freq = freq_sum[cls][k] / weight[cls];
         else if (plain_count[cls] > 0) freq = freq_plain[cls][k] / plain_count[cls];
-        fmt::put<std::uint16_t>(blob, static_cast<std::uint16_t>(std::lround(freq * 10000.0)));
+        cur.put<std::uint16_t>(static_cast<std::uint16_t>(std::lround(freq * 10000.0)));
       }
     }
   }
-  return blob;
+  if (cur.p != blob.data() + blob.size()) {
+    throw std::logic_error("node blob size drifted from its layout");
+  }
 }
 
 void pad_to(ArtifactStore& store, std::uint64_t alignment) {
@@ -456,9 +499,10 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
     pass.exports.resize(tree.num_decision_nodes);
     std::vector<std::vector<float>> reach(game.num_seats());
     for (int s = 0; s < game.num_seats(); ++s) reach[s] = game.initial_range(s);
-    // Same fan-out budget the solver uses, so the export saturates the same
-    // pool rather than inventing its own policy.
-    pass.visit(tree.root(), reach, source.split_budget(), 0);
+    // Same fork rule the solver uses, so the export saturates the same pool
+    // rather than inventing its own policy.
+    pass.plan = ForkPlan(game, source.pool().threads());
+    pass.visit(tree.root(), reach);
   }
 
   // Hand dictionaries: entry h is the universe id of solver hand h, so a
@@ -596,15 +640,52 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
       index.push_back({g, off, blob.size()});
     }
   } else {
+    // Encode across the pool, write in node order. A blob is a pure function
+    // of its own node's record, so a window of nodes encodes concurrently and
+    // is then written out serially - the file is byte for byte what a serial
+    // loop writes (the committed fixture and tests/test_parallel.cpp hold it
+    // to that). Encoding one node at a time on one core was most of the
+    // export on a flop tree.
+    //
+    // Two choices here are measured rather than obvious (hh_small, 312092
+    // decision nodes, 40 threads; the encode phase alone):
+    //   a fresh buffer per node, records released as encoded   7.0 s
+    //   the window's buffers reused, records still released    5.0 s
+    //   buffers reused, records left for the end               0.6 s
+    // The heap is what does not scale: forty threads handing ~11 small blocks
+    // per node back to it cost more than seven times the encoding itself. So
+    // the buffers are allocated once and refilled, and the records are NOT
+    // released as their blobs are written, tempting as that is for the peak.
+    // The window is therefore extra memory at the export's high-water mark,
+    // and export_pass_bytes counts it.
+    std::vector<NodeId> decisions;
+    decisions.reserve(tree.num_decision_nodes);
     for (NodeId id = 0; id < tree.size(); ++id) {
-      const Node& node = tree[id];
-      if (node.kind != NodeKind::Decision) continue;
-      pad_to(store, 64);
-      const std::uint64_t off = store.tell();
-      const auto blob = encode_node_blob(game, node, pass.exports[node.decision_index], dicts,
-                                         strategy_u8, ev_f16, rollups);
-      store.write(blob.data(), blob.size());
-      index.push_back({id, off, blob.size()});
+      if (tree[id].kind == NodeKind::Decision) decisions.push_back(id);
+    }
+    ThreadPool& pool = source.pool();
+    constexpr std::size_t kNodesPerTask = 16;
+    const std::size_t window = std::min(decisions.size(), kExportWindowNodes);
+    std::vector<std::vector<std::uint8_t>> blobs(window);
+    index.reserve(decisions.size());
+    for (std::size_t begin = 0; begin < decisions.size(); begin += window) {
+      const std::size_t count = std::min(window, decisions.size() - begin);
+      const int tasks = static_cast<int>((count + kNodesPerTask - 1) / kNodesPerTask);
+      pool.parallel_for(tasks, [&](int t) {
+        const std::size_t lo = static_cast<std::size_t>(t) * kNodesPerTask;
+        const std::size_t hi = std::min(count, lo + kNodesPerTask);
+        for (std::size_t i = lo; i < hi; ++i) {
+          const Node& node = tree[decisions[begin + i]];
+          encode_node_blob(game, node, pass.exports[node.decision_index], dicts, strategy_u8,
+                           ev_f16, rollups, blobs[i]);
+        }
+      });
+      for (std::size_t i = 0; i < count; ++i) {
+        pad_to(store, 64);
+        const std::uint64_t off = store.tell();
+        store.write(blobs[i].data(), blobs[i].size());
+        index.push_back({decisions[begin + i], off, blobs[i].size()});
+      }
     }
   }
 

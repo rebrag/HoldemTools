@@ -34,9 +34,6 @@ class StrategySource {
   // set of threads.
   virtual ThreadPool& pool() const = 0;
 
-  // Fan-out budget handed to the root of a traversal; 1 disables splitting.
-  virtual int split_budget() const = 0;
-
   // Iterations completed. The QRE best response reads it for the lambda
   // schedule.
   virtual std::uint64_t iteration() const = 0;
@@ -64,7 +61,6 @@ class CfrStrategySource final : public StrategySource {
     solver_.average_strategy(node, out);
   }
   ThreadPool& pool() const override { return solver_.pool(); }
-  int split_budget() const override { return solver_.split_budget(); }
   std::uint64_t iteration() const override { return solver_.iteration(); }
   const QreConfig& qre() const override { return solver_.qre(); }
 

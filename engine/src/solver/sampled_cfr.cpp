@@ -100,7 +100,6 @@ SampledCfrSolver::SampledCfrSolver(const Game& game, const DealGame& deals,
     lane.value_stack.resize(static_cast<std::size_t>(max_depth_) + 2);
   }
   pool_ = std::make_unique<ThreadPool>(resolve_thread_count(threads));
-  split_budget_ = pool_->threads() > 1 ? pool_->threads() * 4 : 1;
   // Fold shards: contiguous group ranges with roughly equal cell counts.
   // Groups are numbered in store order, so a range of groups is a range of
   // cells and no cell can belong to two shards.

@@ -10,6 +10,7 @@
 #include "game/toy/leduc.hpp"
 #include "solver/best_response.hpp"
 #include "solver/cfr.hpp"
+#include "solver/fork_plan.hpp"
 
 using namespace engine;
 
@@ -107,6 +108,9 @@ TEST_CASE("recalc schedule is identical on one thread and on eight") {
   // must be too. This is the invariant that lets recalc stay ON by default
   // without weakening the threading guarantee.
   const auto game = turn_game();
+  // These trees are far too small to fork under the work rule; fork at every
+  // node instead, which is the hardest case for the invariant being asserted.
+  const ScopedForkWork fork_everywhere(0.0);
   UpdateConfig update;
   CfrSolver serial(*game, update, 1);
   CfrSolver parallel(*game, update, 8);

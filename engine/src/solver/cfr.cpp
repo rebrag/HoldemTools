@@ -41,10 +41,6 @@ constexpr int kSlotsPerLevel = kSlotSavedBase + kMaxSeats;
 // accumulates its node value directly into the caller's `out` buffer, so the
 // slot it used to need is gone. Keep memory.cpp's per_level term in step.
 
-// Forking below this many children is not worth a reach-vector copy per
-// child; the pool would spend more on hand-off than the subtree costs.
-constexpr int kMinSplitChildren = 2;
-
 // Regret matching, action-major in and out. `sums` is scratch of length
 // `hands`.
 //
@@ -194,13 +190,13 @@ void qre_fold_in(float* ENGINE_RESTRICT out, float* ENGINE_RESTRICT regret_col,
 constexpr std::size_t kDiscountChunk = 1u << 16;
 }  // namespace
 
-int max_live_arenas(int threads) {
+int max_live_arenas(int threads, int fork_levels) {
   const int t = std::max(1, threads);
-  if (t <= 1) return 1;
+  if (t <= 1 || fork_levels <= 0) return 1;
   // One arena per worker per fork level - a worker that helps with a nested
   // batch while waiting on its own holds one lease per level - plus the
   // traversal the calling thread started.
-  return t * (kMaxSplitLevels + 1) + 1;
+  return t * (fork_levels + 1) + 1;
 }
 
 InfosetLayout InfosetLayout::build(const Game& game) {
@@ -255,10 +251,7 @@ CfrSolver::CfrSolver(const Game& game, UpdateConfig update, int threads, RecalcC
     strat_sum_.assign(layout_.total, 0.0f);
   }
   pool_ = std::make_unique<ThreadPool>(resolve_thread_count(threads));
-  // Aim for a few subtrees per worker so a slow branch cannot strand the
-  // pool; the budget divides among children at each fork, which is what
-  // stops the frontier from widening forever.
-  split_budget_ = pool_->threads() > 1 ? pool_->threads() * 4 : 1;
+  fork_plan_ = ForkPlan(game, pool_->threads());
 
   // Arena slots cover the full tree depth. scratch() must never grow an
   // arena mid-traversal: callers hold references into it across recursive
@@ -416,7 +409,7 @@ void CfrSolver::iterate() {
   ArenaLease arena(*this);
   for (int p = 0; p < seats; ++p) {
     for (int s = 0; s < seats; ++s) reach[s] = game_.initial_range(s);
-    traverse_impl(game_.tree().root(), p, 0, reach, values, *arena, split_budget_, 0);
+    traverse_impl(game_.tree().root(), p, 0, reach, values, *arena);
   }
   // Record this iteration's discount factors. Nodes pay on their next visit
   // (or at flush); a skipped subtree simply accrues more than one entry.
@@ -624,7 +617,7 @@ void CfrSolver::recalc_store(RecalcSlot& slot, int seat, const std::vector<float
 
 void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
                               std::vector<std::vector<float>>& reach,
-                              std::vector<float>& out, Arena& arena, int split, int fork_depth) {
+                              std::vector<float>& out, Arena& arena) {
   const PublicTree& tree = game_.tree();
   const Node& node = tree[id];
   const std::uint32_t my_hands = static_cast<std::uint32_t>(game_.num_hands(seat));
@@ -653,9 +646,7 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
 
   const int seats = game_.num_seats();
   const int children = node.num_children;
-  const bool fork = split > 1 && fork_depth < kMaxSplitLevels && children >= kMinSplitChildren;
-  const int child_split = fork ? std::max(1, split / children) : split;
-  const int child_fork_depth = fork ? fork_depth + 1 : fork_depth;
+  const bool fork = fork_plan_.fork(id);
 
   // Forked layout: every child gets its own reach copy and its own output
   // buffer, so the subtrees never touch each other. The parent then folds
@@ -673,8 +664,7 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
       child_reach = reach;
       prepare(c, child_reach);
       traverse_impl(node.first_child + static_cast<NodeId>(c), seat, depth + 1, child_reach,
-                    forked_out[static_cast<std::size_t>(c)], *child_arena, child_split,
-                    child_fork_depth);
+                    forked_out[static_cast<std::size_t>(c)], *child_arena);
     });
   };
 
@@ -818,8 +808,7 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
         child_reach = reach;
         mask_for_card(tree[node.first_child + static_cast<NodeId>(c)].dealt_card, child_reach);
         traverse_impl(node.first_child + static_cast<NodeId>(c), seat, depth + 1, child_reach,
-                      forked_out[static_cast<std::size_t>(c)], *child_arena, child_split,
-                      child_fork_depth);
+                      forked_out[static_cast<std::size_t>(c)], *child_arena);
         // Slot writes are disjoint per child, so doing this inside the task
         // is race-free; the values it derives from are bit-deterministic.
         finish_child(c, forked_out[static_cast<std::size_t>(c)]);
@@ -853,8 +842,7 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
       const int card = tree[child].dealt_card;
       for (int s = 0; s < seats; ++s) scratch(arena, depth, kSlotSavedBase + s) = reach[s];
       mask_for_card(card, reach);
-      traverse_impl(child, seat, depth + 1, reach, child_vals, arena, child_split,
-                    child_fork_depth);
+      traverse_impl(child, seat, depth + 1, reach, child_vals, arena);
       for (int s = 0; s < seats; ++s) reach[s] = scratch(arena, depth, kSlotSavedBase + s);
       finish_child(c, child_vals);
       accumulate(child_vals);
@@ -942,8 +930,7 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
     } else {
       std::vector<float>& child_vals = scratch(arena, depth, kSlotChild);
       for (std::uint16_t k = 0; k < actions; ++k) {
-        traverse_impl(node.first_child + k, seat, depth + 1, reach, child_vals, arena,
-                      child_split, child_fork_depth);
+        traverse_impl(node.first_child + k, seat, depth + 1, reach, child_vals, arena);
         fold_in(k, child_vals);
       }
     }
@@ -1019,8 +1006,7 @@ void CfrSolver::traverse_impl(NodeId id, int seat, int depth,
   for (std::uint16_t k = 0; k < actions; ++k) {
     const float* sigma_col = sigma.data() + static_cast<std::size_t>(k) * hands;
     for (std::uint32_t h = 0; h < hands; ++h) reach[actor][h] = saved[h] * sigma_col[h];
-    traverse_impl(node.first_child + k, seat, depth + 1, reach, child_vals, arena, child_split,
-                  child_fork_depth);
+    traverse_impl(node.first_child + k, seat, depth + 1, reach, child_vals, arena);
     for (std::uint32_t h = 0; h < my_hands; ++h) out[h] += child_vals[h];
   }
   reach[actor] = saved;

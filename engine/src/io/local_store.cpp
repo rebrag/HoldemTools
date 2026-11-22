@@ -1,5 +1,6 @@
 #include "io/artifact_store.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -32,6 +33,11 @@ void LocalStore::open_write(const std::string& path) {
   if (p.has_parent_path()) std::filesystem::create_directories(p.parent_path());
   file_ = std::fopen(path.c_str(), "wb");
   if (!file_) throw std::runtime_error("LocalStore: cannot open '" + path + "' for writing");
+  // A flop artifact is several hundred thousand ~10 KB blobs, each written
+  // with its own padding. On the default 4 KB buffer every one of them is a
+  // system call or two; a large buffer turns that into a few thousand.
+  // Best-effort: a refusal leaves the default buffer in place.
+  std::setvbuf(as_file(file_), nullptr, _IOFBF, std::size_t{1} << 22);
 }
 
 void LocalStore::write(const void* data, std::size_t size) {
