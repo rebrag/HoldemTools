@@ -1,11 +1,13 @@
 #include "io/artifact_writer.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <type_traits>
 #include <vector>
@@ -25,21 +27,187 @@ namespace {
 using nlohmann::json;
 namespace fmt = engine::artifact;
 
-// Per-decision-node export data computed under the average strategy.
-struct NodeExportData {
-  std::vector<std::vector<float>> reach;          // [seat][hand] node reach
-  std::vector<std::vector<float>> ev_cond;        // [seat][hand] conditional EV, node-relative chips
-  std::vector<float> strategy;                    // actor, row-major [hand][action]
-  std::vector<std::vector<float>> action_ev_cond; // [action][hand] actor conditional child EV
+// ---------------------------------------------------------------------------
+// The export store: everything the export pass keeps per decision node, in ONE
+// flat float buffer with a prefix-sum offset table.
+//
+// A decision node's slice holds, in this order:
+//
+//   reach      one hands-wide row per seat      [seat][hand]    node reach
+//   ev_cond    one hands-wide row per seat      [seat][hand]    conditional EV, node-relative chips
+//   strategy   the actor's, row-major           [hand][action]  as average_strategy returns it
+//   action_ev  one hands-wide row per action    [action][hand]  the actor's conditional child EV
+//
+// It was a std::vector of records owning four vectors each: ~11 heap blocks
+// per decision node, 3.4 million on a recorded-hand flop tree. Every size is
+// known from the tree before the pass starts, so the blocks bought nothing,
+// and docs/roadmap.md ("Work-based forking", follow-ups 1 and 2) has what
+// they cost: seconds of frees on the way out of write_artifact that no
+// printed timer covered, and heap rounding and bookkeeping the memory
+// estimator could only guess at. One allocation has neither, and its size is
+// arithmetic rather than a guess at what an allocator does.
+// ---------------------------------------------------------------------------
+
+// Where each section of one node's slice starts, in floats from the start of
+// the slice (reach is at 0), and the size of the whole slice.
+struct SliceShape {
+  std::size_t ev_cond = 0;
+  std::size_t strategy = 0;
+  std::size_t action_ev = 0;
+  std::size_t floats = 0;
 };
 
-// export_pass_bytes() below sizes this struct field by field. A new member
-// that is not counted there silently re-opens the hole the export term was
-// added to close - the memory limit is checked against the ESTIMATE, so an
-// undercount is a solve that should have been refused and instead thrashes
-// the box. Break the build instead.
-static_assert(sizeof(NodeExportData) == 4 * sizeof(std::vector<float>),
-              "NodeExportData gained or lost a member - update export_pass_bytes()");
+// The layout, and the only place it is written down. The store is allocated
+// from `floats`, the pass and the encoder address their sections through the
+// other three, and export_pass_bytes() sums the same `floats` - so the memory
+// estimate cannot drift from the allocation: they are one number. A new
+// section goes HERE (a field above, a line below), and everything that sizes
+// or addresses a slice follows.
+//
+// `seat_hands` is the sum of every seat's hand count, `actor_hands` the
+// acting seat's.
+constexpr SliceShape slice_shape(std::size_t seat_hands, std::size_t actor_hands,
+                                 std::size_t actions) {
+  SliceShape shape;
+  shape.ev_cond = seat_hands;
+  shape.strategy = shape.ev_cond + seat_hands;
+  shape.action_ev = shape.strategy + actor_hands * actions;
+  shape.floats = shape.action_ev + actions * actor_hands;
+  return shape;
+}
+
+// The memory limit is checked against the ESTIMATE, so an export that holds
+// more than export_pass_bytes() counts is a solve that should have been
+// refused and instead thrashes the box. Three things break the build rather
+// than the estimate: a section added to the shape without revisiting the
+// sizing (the first assert), a section sized differently from how it is laid
+// out (the second - the same arithmetic tests/test_memory.cpp pins against a
+// real game), and a second per-node allocation growing beside the flat
+// buffer (the assert under ExportStore).
+static_assert(sizeof(SliceShape) == 4 * sizeof(std::size_t),
+              "the export slice gained or lost a section - update slice_shape(), "
+              "export_pass_bytes() and the expectation in tests/test_memory.cpp");
+static_assert(slice_shape(6, 3, 2).floats == 2 * 6 + 2 * 3 * 2 &&
+                  slice_shape(6, 3, 2).ev_cond == 6 && slice_shape(6, 3, 2).strategy == 12 &&
+                  slice_shape(6, 3, 2).action_ev == 18,
+              "slice_shape() no longer lays a slice out as reach, ev_cond, strategy, action_ev");
+
+// One decision node's slice: a few pointers into the flat buffer. `F` is
+// float for the pass that fills it and const float for the encoder.
+template <typename F>
+struct NodeSlice {
+  F* base = nullptr;
+  SliceShape shape;
+  std::size_t actor_hands = 0;
+  // First float of seat s's row inside a per-seat section.
+  std::array<std::size_t, kMaxSeats> seat_at{};
+
+  F* reach(int s) const { return base + seat_at[static_cast<std::size_t>(s)]; }
+  F* ev_cond(int s) const {
+    return base + shape.ev_cond + seat_at[static_cast<std::size_t>(s)];
+  }
+  F* strategy() const { return base + shape.strategy; }
+  F* action_ev(std::size_t k) const { return base + shape.action_ev + k * actor_hands; }
+};
+
+// What the export holds, from the tree alone.
+struct ExportSizing {
+  std::size_t floats = 0;     // the flat buffer
+  std::size_t decisions = 0;  // slices in it
+  std::size_t max_blob = 0;   // the largest blob any one node can encode to
+};
+
+// The ONE walk that sizes the export. The estimator calls it with no table
+// and gets the totals; the store calls it with one and gets the same totals
+// plus where each slice starts. Allocates nothing of its own.
+ExportSizing size_export(const Game& game, std::vector<std::size_t>* offsets) {
+  const PublicTree& tree = game.tree();
+  const std::size_t seats = static_cast<std::size_t>(game.num_seats());
+  std::size_t seat_hands = 0;
+  for (int s = 0; s < game.num_seats(); ++s) {
+    seat_hands += static_cast<std::size_t>(game.num_hands(s));
+  }
+  ExportSizing sizing;
+  if (offsets != nullptr) {
+    offsets->assign(static_cast<std::size_t>(tree.num_decision_nodes) + 1, 0);
+  }
+  for (const Node& n : tree.nodes) {
+    if (n.kind != NodeKind::Decision) continue;
+    const std::size_t actions = n.num_children;
+    const std::size_t hands = static_cast<std::size_t>(game.num_hands(n.actor));
+    const std::size_t floats = slice_shape(seat_hands, hands, actions).floats;
+    ++sizing.decisions;
+    sizing.floats += floats;
+    // Parked one slot along, so the prefix sum below turns sizes into starts
+    // whatever order decision_index was assigned in.
+    if (offsets != nullptr) (*offsets)[static_cast<std::size_t>(n.decision_index) + 1] = floats;
+    // The largest this node's blob can be: every hand kept, f32 strategy and
+    // EVs, the rollup block present. See encode_node_blob for the layout.
+    sizing.max_blob =
+        std::max(sizing.max_blob, 8 + seats * 4 + seat_hands * 12 + hands * actions * 8 +
+                                      static_cast<std::size_t>(kNumHandClasses) *
+                                          (8 + 2 * actions));
+  }
+  if (offsets != nullptr) {
+    for (std::size_t d = 1; d < offsets->size(); ++d) (*offsets)[d] += (*offsets)[d - 1];
+  }
+  return sizing;
+}
+
+struct ExportStore {
+  // Indexed by Node::decision_index, which is dense over EVERY decision node
+  // including suit-isomorphic members (they carry a valid index; only their
+  // solver storage is redirected). Entry d is the first float of node d's
+  // slice and the last entry is one past the end.
+  std::vector<std::size_t> offset;
+  // Deliberately NOT value-initialized. Zeroing gigabytes on one thread
+  // before a pass that overwrites every float of them would put a serial
+  // phase back into the export, and would first-touch every page from one
+  // NUMA node. The pass writes all four sections of every decision node it
+  // visits, and it visits every node of the tree, so nothing is read before
+  // it is written.
+  std::unique_ptr<float[]> data;
+
+  ExportSizing allocate(const Game& game) {
+    const ExportSizing sizing = size_export(game, &offset);
+    data.reset(new float[sizing.floats]);
+    return sizing;
+  }
+
+  NodeSlice<float> slice(const Game& game, const Node& node) {
+    return slice_at<float>(data.get(), game, node);
+  }
+  NodeSlice<const float> slice(const Game& game, const Node& node) const {
+    return slice_at<const float>(data.get(), game, node);
+  }
+
+ private:
+  template <typename F>
+  NodeSlice<F> slice_at(F* floats, const Game& game, const Node& node) const {
+    NodeSlice<F> slice;
+    std::size_t seat_hands = 0;
+    for (int s = 0; s < game.num_seats(); ++s) {
+      slice.seat_at[static_cast<std::size_t>(s)] = seat_hands;
+      seat_hands += static_cast<std::size_t>(game.num_hands(s));
+    }
+    slice.actor_hands = static_cast<std::size_t>(game.num_hands(node.actor));
+    slice.shape = slice_shape(seat_hands, slice.actor_hands, node.num_children);
+    const std::size_t d = node.decision_index;
+    // The table and the view come from the same slice_shape(), so this can
+    // only fire for a node the sizing walk did not count.
+    if (d + 1 >= offset.size() || offset[d + 1] - offset[d] != slice.shape.floats) {
+      throw std::logic_error("export slice does not match the offset table");
+    }
+    slice.base = floats + offset[d];
+    return slice;
+  }
+};
+
+// Exactly two allocations: the offset table and the float buffer.
+// export_store_bytes() below counts exactly those two.
+static_assert(sizeof(ExportStore) ==
+                  sizeof(std::vector<std::size_t>) + sizeof(std::unique_ptr<float[]>),
+              "ExportStore gained or lost a member - count it in export_store_bytes()");
 
 // One post-order traversal under the average strategy computing, at every
 // decision node, both seats' reach, conditional per-hand EVs, and the
@@ -47,13 +215,7 @@ static_assert(sizeof(NodeExportData) == 4 * sizeof(std::vector<float>),
 struct ExportPass {
   const Game& game;
   const StrategySource& solver;
-  // Indexed by Node::decision_index, which is dense over EVERY decision node
-  // including suit-isomorphic members (they carry a valid index; only their
-  // solver storage is redirected). This was a std::map<NodeId, ...>: one
-  // red-black allocation per node - 248536 of them on a real flop tree - plus
-  // an O(log n) lookup for each one in the write loop below, to hold a key
-  // that is already a dense array index.
-  std::vector<NodeExportData> exports;
+  ExportStore store;
   // Where the pass splits across the pool; same rule as the solver's own
   // traversal (solver/fork_plan.hpp).
   ForkPlan plan{};
@@ -62,8 +224,8 @@ struct ExportPass {
   //
   // The parallelism keeps CfrSolver::traverse_impl's discipline, for the same
   // reason.
-  // Sibling subtrees are independent (they fill DISJOINT `exports` slots,
-  // indexed by decision_index) so they run concurrently, but every
+  // Sibling subtrees are independent (they fill DISJOINT slices of the store,
+  // one per decision_index) so they run concurrently, but every
   // cross-child accumulation stays serial and IN CHILD ORDER after the join.
   // That is what makes a threaded export bit-identical to a serial one, which
   // the committed fixture then checks.
@@ -148,10 +310,18 @@ struct ExportPass {
     std::vector<float> sigma;
     solver.average_strategy(id, sigma);
 
-    NodeExportData data;
-    data.reach = reach;
-    data.strategy = sigma;
-    data.action_ev_cond.resize(actions);
+    if (sigma.size() != static_cast<std::size_t>(hands) * actions) {
+      throw std::logic_error("average_strategy must return hands x actions floats");
+    }
+
+    // This node's slice. Reach is captured now, before the loop below moves
+    // the actor's; the EV sections are filled in as the children return.
+    const NodeSlice<float> data = store.slice(game, node);
+    for (int s = 0; s < seats; ++s) {
+      std::memcpy(data.reach(s), reach[s].data(),
+                  static_cast<std::size_t>(game.num_hands(s)) * sizeof(float));
+    }
+    std::memcpy(data.strategy(), sigma.data(), sigma.size() * sizeof(float));
 
     for (int s = 0; s < seats; ++s) values[s].assign(game.num_hands(s), 0.0f);
     const bool with_ev = game.vectorized_terminals();
@@ -168,11 +338,9 @@ struct ExportPass {
       // normalized by the opponents' reach (which the actor's own action
       // does not change). Chips already committed stay subtracted - see the
       // convention note on ev_cond below.
-      data.action_ev_cond[k].assign(hands, 0.0f);
+      float* const action_ev = data.action_ev(k);
       for (int h = 0; h < hands; ++h) {
-        if (compat[h] > 0.0f) {
-          data.action_ev_cond[k][h] = child_values[actor][h] / compat[h];
-        }
+        action_ev[h] = compat[h] > 0.0f ? child_values[actor][h] / compat[h] : 0.0f;
       }
       for (int s = 0; s < seats; ++s) {
         if (s == actor) {
@@ -225,22 +393,19 @@ struct ExportPass {
     // solver produced the board. Verified empirically 2026-08-26 - adding
     // the commitment back made engine EVs differ from Pio's by exactly the
     // actor's committed chips at every node past the street root.
-    data.ev_cond.resize(seats);
     for (int s = 0; s < seats; ++s) {
-      // Always SIZED, even with no vectorized terminal to fill it from: the
-      // writer downstream indexes this by hand, so leaving it empty reads off
-      // the end. Zero is the honest value when there is no EV to report.
-      data.ev_cond[s].assign(game.num_hands(s), 0.0f);
+      // Always WRITTEN, even with no vectorized terminal to fill it from: the
+      // store is not zeroed, and the writer downstream reads every hand. Zero
+      // is the honest value when there is no EV to report.
+      float* const ev = data.ev_cond(s);
+      std::fill_n(ev, game.num_hands(s), 0.0f);
       if (!with_ev) continue;
       std::vector<float> compat_s;
       game.compat_weights(s, reach, compat_s);
       for (int h = 0; h < game.num_hands(s); ++h) {
-        if (compat_s[h] > 0.0f) {
-          data.ev_cond[s][h] = values[s][h] / compat_s[h];
-        }
+        if (compat_s[h] > 0.0f) ev[h] = values[s][h] / compat_s[h];
       }
     }
-    exports[node.decision_index] = std::move(data);
     return values;
   }
 };
@@ -250,54 +415,21 @@ struct ExportPass {
 // not know the count, can charge for it exactly.
 constexpr std::size_t kExportWindowNodes = 4096;
 
-// Live bytes of the ExportPass store at its peak, which is the moment the last
-// decision node is filled in: nothing is released until write_artifact returns.
-// Plus the encode window that is alive beside it while the blobs are written.
-std::size_t export_store_bytes(const Game& game) {
-  const PublicTree& tree = game.tree();
-  const std::size_t seats = static_cast<std::size_t>(game.num_seats());
-  std::size_t hands = 0;
-  for (int s = 0; s < game.num_seats(); ++s) {
-    hands = std::max(hands, static_cast<std::size_t>(game.num_hands(s)));
-  }
-  // Every vector's control block counts too: at a few hundred hands a
-  // std::vector header is ~2% of the payload it points at, and there are
-  // 2*seats + actions of them per node on top of the four inside the struct.
-  constexpr std::size_t kVec = sizeof(std::vector<float>);
-  // The store is one contiguous std::vector<NodeExportData> indexed by
-  // decision_index, so an entry costs exactly the struct - no key, no links,
-  // and no per-node heap block. It used to be a std::map, which charged all
-  // three.
-  const std::size_t per_entry = sizeof(NodeExportData);
-  // Each of those vectors is its own heap block, and there are ~11 blocks per
-  // decision node here - on a flop tree the bookkeeping alone runs to tens of
-  // megabytes, enough on its own to leave this estimate below the measured
-  // peak commit with every payload counted correctly.
+// The store itself: the float buffer and its offset table, both allocated
+// before the pass starts and released together when write_artifact returns.
+// Exact - it is the same ExportSizing the allocation is made from.
+std::size_t export_store_bytes(const ExportSizing& sizing) {
+  return sizing.floats * sizeof(float) + (sizing.decisions + 1) * sizeof(std::size_t);
+}
 
-  std::size_t total = 0;
-  std::size_t decisions = 0;
-  std::size_t max_blob = 0;
-  for (const Node& n : tree.nodes) {
-    if (n.kind != NodeKind::Decision) continue;
-    const std::size_t actions = n.num_children;
-    ++decisions;
-    // The largest a node's blob can be: every hand kept, f32 strategy and
-    // EVs, the rollup block present. See encode_node_blob for the layout.
-    max_blob = std::max(max_blob, 8 + seats * 4 + seats * hands * 12 + hands * actions * 8 +
-                                      static_cast<std::size_t>(kNumHandClasses) *
-                                          (8 + 2 * actions));
-    // reach and ev_cond: one hand-wide vector per seat each. strategy: one
-    // hands x actions block. action_ev_cond: one hand-wide vector per action.
-    const std::size_t floats = 2 * seats * hands + 2 * actions * hands;
-    // Blocks: the four buffers the struct's own vectors own plus the inner
-    // vectors' buffers. No map node any more - the store is one allocation.
-    const std::size_t blocks = 4 + 2 * seats + actions;
-    total += floats * sizeof(float) + (2 * seats + actions) * kVec + per_entry +
-             blocks * kHeapBlockOverhead;
-  }
-  total += std::min(decisions, kExportWindowNodes) *
-           (max_blob + sizeof(std::vector<std::uint8_t>) + kHeapBlockOverhead);
-  return total;
+// The encode window alive beside the store while the blobs are written: one
+// reused buffer per node of the window, each charged at the largest blob any
+// node can encode to. A ceiling - a blob keeps only the hands that reach its
+// node - and the one place a heap block is still counted, because these are
+// real blocks (at most kExportWindowNodes of them).
+std::size_t export_window_bytes(const ExportSizing& sizing) {
+  return std::min(sizing.decisions, kExportWindowNodes) *
+         (sizing.max_blob + sizeof(std::vector<std::uint8_t>) + kHeapBlockOverhead);
 }
 
 std::uint8_t kind_byte(NodeKind k) { return static_cast<std::uint8_t>(k); }
@@ -349,7 +481,7 @@ struct BlobCursor {
 // docs/artifact-format.md. Encodes into `blob`, REPLACING its contents and
 // reusing its capacity, so the caller can hand the same buffers back window
 // after window instead of allocating one per node.
-void encode_node_blob(const Game& game, const Node& node, const NodeExportData& data,
+void encode_node_blob(const Game& game, const Node& node, const NodeSlice<const float>& data,
                       const std::vector<std::vector<std::uint16_t>>& dicts, bool strategy_u8,
                       bool ev_f16, bool rollups, std::vector<std::uint8_t>& blob) {
   const int seats = game.num_seats();
@@ -362,7 +494,7 @@ void encode_node_blob(const Game& game, const Node& node, const NodeExportData& 
   std::vector<std::vector<int>> kept(seats);
   for (int s = 0; s < seats; ++s) {
     for (int h = 0; h < game.num_hands(s); ++h) {
-      if (data.reach[s][h] > fmt::kSparseEps) kept[s].push_back(h);
+      if (data.reach(s)[h] > fmt::kSparseEps) kept[s].push_back(h);
     }
   }
 
@@ -390,13 +522,13 @@ void encode_node_blob(const Game& game, const Node& node, const NodeExportData& 
   }
   for (int s = 0; s < seats; ++s) {
     for (int h : kept[s]) cur.put<std::uint32_t>(static_cast<std::uint32_t>(h));
-    for (int h : kept[s]) cur.put<float>(data.reach[s][h]);
-    for (int h : kept[s]) cur.put_ev(data.ev_cond[s][h], ev_f16);
+    for (int h : kept[s]) cur.put<float>(data.reach(s)[h]);
+    for (int h : kept[s]) cur.put_ev(data.ev_cond(s)[h], ev_f16);
   }
   // Actor strategy rows (renormalized on read) and per-action EVs.
   for (int h : kept[actor]) {
     for (std::uint16_t k = 0; k < actions; ++k) {
-      const float p = data.strategy[static_cast<std::size_t>(h) * actions + k];
+      const float p = data.strategy()[static_cast<std::size_t>(h) * actions + k];
       if (strategy_u8) {
         cur.put<std::uint8_t>(static_cast<std::uint8_t>(
                                          std::lround(std::clamp(p, 0.0f, 1.0f) * 255.0f)));
@@ -407,7 +539,7 @@ void encode_node_blob(const Game& game, const Node& node, const NodeExportData& 
   }
   for (int h : kept[actor]) {
     for (std::uint16_t k = 0; k < actions; ++k) {
-      cur.put_ev(data.action_ev_cond[k][h], ev_f16);
+      cur.put_ev(data.action_ev(k)[h], ev_f16);
     }
   }
 
@@ -427,12 +559,12 @@ void encode_node_blob(const Game& game, const Node& node, const NodeExportData& 
       // The rollup is by 169 hand class, which is a property of the CANONICAL
       // combo - so the dictionary entry, not the compact hand index.
       const int cls = combo_class_index(dicts[actor][static_cast<std::size_t>(h)]);
-      const double w = data.reach[actor][h];
+      const double w = data.reach(actor)[h];
       ++plain_count[cls];
       weight[cls] += w;
-      ev_sum[cls] += w * data.ev_cond[actor][h];
+      ev_sum[cls] += w * data.ev_cond(actor)[h];
       for (std::uint16_t k = 0; k < actions; ++k) {
-        const double p = data.strategy[static_cast<std::size_t>(h) * actions + k];
+        const double p = data.strategy()[static_cast<std::size_t>(h) * actions + k];
         freq_sum[cls][k] += w * p;
         freq_plain[cls][k] += p;
       }
@@ -464,7 +596,10 @@ void pad_to(ArtifactStore& store, std::uint64_t alignment) {
 
 }  // namespace
 
-std::size_t export_pass_bytes(const Game& game) { return export_store_bytes(game); }
+std::size_t export_pass_bytes(const Game& game) {
+  const ExportSizing sizing = size_export(game, nullptr);
+  return export_store_bytes(sizing) + export_window_bytes(sizing);
+}
 
 double write_artifact(ArtifactStore& store, const std::string& path, const Game& game,
                     const StrategySource& source, const SolveConfig& config,
@@ -494,9 +629,9 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
   // Export pass under the average strategy - the per-hand export only. The
   // bucketed export writes straight from the solver's rows and holds no
   // per-node records at all, which is the whole reason it exists.
-  ExportPass pass{game, source, std::vector<NodeExportData>()};
+  ExportPass pass{game, source, ExportStore{}};
   if (!bucketed) {
-    pass.exports.resize(tree.num_decision_nodes);
+    pass.store.allocate(game);
     std::vector<std::vector<float>> reach(game.num_seats());
     for (int s = 0; s < game.num_seats(); ++s) reach[s] = game.initial_range(s);
     // Same fork rule the solver uses, so the export saturates the same pool
@@ -641,29 +776,30 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
     }
   } else {
     // Encode across the pool, write in node order. A blob is a pure function
-    // of its own node's record, so a window of nodes encodes concurrently and
+    // of its own node's slice, so a window of nodes encodes concurrently and
     // is then written out serially - the file is byte for byte what a serial
     // loop writes (the committed fixture and tests/test_parallel.cpp hold it
     // to that). Encoding one node at a time on one core was most of the
     // export on a flop tree.
     //
-    // Two choices here are measured rather than obvious (hh_small, 312092
+    // The window's buffers are allocated once and refilled. That was measured
+    // while the store was still a heap block per section (hh_small, 312092
     // decision nodes, 40 threads; the encode phase alone):
     //   a fresh buffer per node, records released as encoded   7.0 s
     //   the window's buffers reused, records still released    5.0 s
     //   buffers reused, records left for the end               0.6 s
-    // The heap is what does not scale: forty threads handing ~11 small blocks
-    // per node back to it cost more than seven times the encoding itself. So
-    // the buffers are allocated once and refilled, and the records are NOT
-    // released as their blobs are written, tempting as that is for the peak.
-    // The window is therefore extra memory at the export's high-water mark,
-    // and export_pass_bytes counts it.
+    // The heap is what does not scale. The store is one allocation now, so
+    // there is nothing per node to release and the question of when no longer
+    // comes up; reusing the buffers is the half of that lesson still in
+    // force. The window is extra memory at the export's high-water mark, and
+    // export_pass_bytes counts it.
     std::vector<NodeId> decisions;
     decisions.reserve(tree.num_decision_nodes);
     for (NodeId id = 0; id < tree.size(); ++id) {
       if (tree[id].kind == NodeKind::Decision) decisions.push_back(id);
     }
     ThreadPool& pool = source.pool();
+    const ExportStore& filled = pass.store;  // read-only from here on
     constexpr std::size_t kNodesPerTask = 16;
     const std::size_t window = std::min(decisions.size(), kExportWindowNodes);
     std::vector<std::vector<std::uint8_t>> blobs(window);
@@ -676,8 +812,8 @@ double write_artifact(ArtifactStore& store, const std::string& path, const Game&
         const std::size_t hi = std::min(count, lo + kNodesPerTask);
         for (std::size_t i = lo; i < hi; ++i) {
           const Node& node = tree[decisions[begin + i]];
-          encode_node_blob(game, node, pass.exports[node.decision_index], dicts, strategy_u8,
-                           ev_f16, rollups, blobs[i]);
+          encode_node_blob(game, node, filled.slice(game, node), dicts, strategy_u8, ev_f16,
+                           rollups, blobs[i]);
         }
       });
       for (std::size_t i = 0; i < count; ++i) {

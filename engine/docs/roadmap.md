@@ -1487,8 +1487,48 @@ A 4 MB stdio buffer on the artifact stream took the write itself from 6.0 s to 3
 
 What is left, in the order the numbers suggest:
 
-1. **Flatten the export records.** `NodeExportData` is ~11 heap blocks per decision node, 3.4 million on this tree, and freeing them when `write_artifact` returns is about 4 s that no timer in the artifact reports (process wall 53.1 s against a printed total of 48.9 s). Every size is known from the tree before the pass starts, so one flat allocation with a prefix-sum offset table removes the frees, the per-node mallocs inside the pass, and the heap overhead the estimator has to guess at.
-2. **The estimator is BELOW the measured peak on this tree, and was before this change**: 7.35 GB estimated against a 7.8-7.9 GB working-set peak on the old build, 7.67 GB against 7.9-8.0 GB now (the "peak GB" column of the two bench reports). An estimate below reality is not a ceiling. Item 1 is also the likeliest fix, since the export term is the one built from guessed heap overhead - but that is a guess until the flat store exists to measure.
+1. **Flatten the export records. Done 2026-11-22, same day** (below). `NodeExportData` was ~11 heap blocks per decision node, 3.4 million on this tree, and freeing them when `write_artifact` returned was about 4 s that no timer in the artifact reports (process wall 53.1 s against a printed total of 48.9 s).
+2. **The estimator was BELOW the measured peak on this tree. Fixed by item 1, and the guess about why was right**: 7.35 GB estimated against a 7.8-7.9 GB working-set peak on the old build, 7.67 GB against 7.9-8.0 GB with the fork rule (the "peak GB" column of the two bench reports). The export term was the one built from guessed heap overhead, and the heap was costing far more than the guess.
+
+**The flat export store.**
+The export pass now fills ONE float buffer with a prefix-sum offset table indexed by `Node::decision_index` (`ExportStore` in `src/io/artifact_writer.cpp`); a node's slice is reach per seat, conditional EV per seat, the actor's strategy, the per-action EVs, and the pass and the encoder address it through a small view.
+The buffer is deliberately not zeroed: the pass writes every float of it, and a serial memset of 5.8 GB would be a new serial phase that also first-touches every page from one NUMA node.
+Sibling subtrees write disjoint slices, so the parallel pass is exactly as race-free as it was.
+The artifact is byte-identical outside its metadata: node table, hand dictionaries, every node blob and the index, on both solves below.
+
+Same box, `hh_small`, 40 threads. The 20-iteration artifact is 4.26 GB and was solved four times per build, alternating; the bench solve (0.2% of pot, 275 iterations, 3.20 GB) once per build:
+
+| | 20 iterations, before | after | bench solve, before | after |
+|---|---|---|---|---|
+| export, as printed | 7.0-7.3 s | 5.6-6.6 s | 6.25 s | 5.07 s |
+| printed total | 11.1-11.4 s | 9.7-10.7 s | 48.7 s | 47.6 s |
+| process wall | 14.8-15.5 s | 11.1-12.1 s | 52.5 s | **49.3 s** |
+| process wall minus printed total | 3.6-4.3 s | 1.4-1.5 s | 3.8 s | 1.7 s |
+| estimated peak | 7.67 GB | 7.50 GB | 7.67 GB | 7.50 GB |
+| measured peak, commit | 7.80 GB | 6.91 GB | 7.99 GB | **7.09 GB** |
+| measured peak, working set | 7.67 GB | 6.89 GB | 7.87 GB | 7.07 GB |
+
+Three things in that table.
+The frees were 2 to 3 s of the unprinted time, not all 4, and are gone; what remains after the printed total (1.4 to 1.7 s) is whatever else a 7 GB process does outside the three timers, start and teardown included, and was not broken down further (a `dry-run` of the same config is 0.25 s of process beyond its printed setup).
+The export itself got faster by about a second, since the pass no longer takes ten blocks a node from a heap forty threads share - most of what is left is writing the file (3.4 s for 4.3 GB, above).
+And **the peak fell by 0.9 GB while the estimate fell by 0.17 GB**: the old estimate charged 32 bytes a block and a vector header each, 0.17 GB in all, and 3.4 million blocks of 2 to 13 KB were really costing 0.9 GB over their payload.
+That is the general lesson: a heap-overhead constant is a guess about an allocator, and the fix for a term built from one is to stop having the blocks.
+
+**The estimate is now above the measured peak, by 0.41 GB on the bench solve (7.50 against 7.09 commit) and 0.59 GB on the 20-iteration one.**
+It is honest about which terms carry that margin, because they do not all err the same way (20-iteration run, peak commit sampled between the export's phases):
+
+| | estimated | measured |
+|---|---|---|
+| everything before the export (regrets, tree, showdown, recalc, workspace ceiling) | 1778 MB | 1142 MB |
+| flat buffer + offset table | 5775 MB | 5783 MB at allocation |
+| the tree pass's own transients | not counted | 8 MB |
+| node table written (an 80-byte record per node, built in one buffer) | not counted | 61 MB |
+| encode window, index, write buffer | 127 MB (the window ceiling) | 82 MB more |
+| export term in total | 5902 MB | 5933 MB |
+
+So the export term on its own is still **32 MB (0.5%) under** what `write_artifact` adds, and the total clears the peak only because the workspace ceiling over-reserves by several hundred MB.
+The uncounted pieces are known and exact rather than guessed: the node-table record buffer (`tree.size() * kNodeRecordSize`, 67 MB here, alive between the pass and the encode), the blob index (24 bytes per decision node, 7 MB), the 4 MB write buffer, and the encode window's vectors, which grow geometrically and can therefore hold more than the largest blob they were charged at.
+Counting the first two, or streaming the node table instead of building it, is the follow-up; it was left out here so that the export term stayed exactly "the allocation plus the window" while it was being measured.
 
 **Would a better starting strategy help? Measured answer: not from a heuristic.**
 The question was whether seeding each node with a studied guess ("the top X% of the range bets") gets a solve done sooner.
